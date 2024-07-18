@@ -1,9 +1,5 @@
 package coeusyk.game.chess.models;
 
-import com.fasterxml.jackson.annotation.JsonGetter;
-import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.annotation.JsonInclude;
-
 import java.util.*;
 
 
@@ -21,9 +17,6 @@ public class Board {
 
     // Possible Move Reactions:
     private final String[] reactionIds = { "castle-k", "castle-q", "en-passant", "ep-target" };
-
-    // Only those pieces which can have a reaction:
-    private final int[] piecesWithReaction = { Piece.Pawn, Piece.King };
 
     // Moves made until current position:
     public ArrayList<Move> movesPlayed = new ArrayList<>();
@@ -125,31 +118,44 @@ public class Board {
 
     // Move to make after list of moves are sent to the client and the move made is reported back to the server:
     public void makeMove(Move move) {
-        if (move.reaction == null && Piece.type(grid[move.startSquare])) {
-            return;
-        }
+        if (move.reaction != null) {
+            if (!Arrays.asList(reactionIds).contains(move.reaction)) {
+                throw new IllegalArgumentException("invalid move reaction : does not exist");
+            } else {
+                switch (move.reaction) {
+                    case "castle-k" -> {
+                        castlingReaction(move.startSquare + 3);
+                        if (Piece.isWhite(grid[move.startSquare])) {
+                            castlingAvailability[0] = false;
+                        } else {
+                            castlingAvailability[2] = false;
+                        }
+                    }
 
-        else if (!Arrays.asList(reactionIds).contains(move.reaction)) {
-            throw new IllegalArgumentException("invalid move reaction : does not exist");
-        }
+                    case "castle-q" -> {
+                        castlingReaction(move.startSquare - 4);
+                        if (Piece.isWhite(grid[move.startSquare])) {
+                            castlingAvailability[1] = false;
+                        } else {
+                            castlingAvailability[3] = false;
+                        }
+                    }
 
-        switch (move.reaction) {
-            case "castle-k" -> castlingReaction(move.startSquare + 3);
-            case "castle-q" -> castlingReaction(move.startSquare - 4);
+                    case "en-passant" -> {
+                        if (Piece.isWhite(grid[move.startSquare])) {
+                            grid[move.targetSquare + 8] = Piece.None;
+                        } else {
+                            grid[move.targetSquare - 8] = Piece.None;
+                        }
+                    }
 
-            case "en-passant" -> {
-                if (Piece.isWhite(grid[move.startSquare])) {
-                    grid[move.targetSquare + 8] = Piece.None;
-                } else {
-                    grid[move.targetSquare - 8] = Piece.None;
-                }
-            }
-
-            case "ep-target" -> {
-                if (Piece.isWhite(grid[move.startSquare])) {
-                    epTargetSquare = move.targetSquare + 8;
-                } else {
-                    epTargetSquare = move.targetSquare - 8;
+                    case "ep-target" -> {
+                        if (Piece.isWhite(grid[move.startSquare])) {
+                            epTargetSquare = move.targetSquare + 8;
+                        } else {
+                            epTargetSquare = move.targetSquare - 8;
+                        }
+                    }
                 }
             }
         }
@@ -159,6 +165,7 @@ public class Board {
             activeColor = Piece.Black;
         } else {
             activeColor = Piece.White;
+            fullMoves++;
         }
 
         grid[move.targetSquare] = grid[move.startSquare];
@@ -169,8 +176,10 @@ public class Board {
 
     private void castlingReaction(int rookSquare) {
         if (rookSquare % 8 == 0) {
+            // Queen-side castling:
             grid[rookSquare + 3] = grid[rookSquare];
         } else {
+            // King-side castling:
             grid[rookSquare - 2] = grid[rookSquare];
         }
 

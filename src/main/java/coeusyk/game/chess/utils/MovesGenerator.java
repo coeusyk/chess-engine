@@ -6,10 +6,7 @@ import coeusyk.game.chess.models.Piece;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 
 
 public class MovesGenerator {
@@ -194,7 +191,20 @@ public class MovesGenerator {
 
             // En passant square check:
             if (targetSquare == board.getEpTargetSquare()) {
-                possibleMoves.add(new Move(startSquare, targetSquare, "en-passant"));
+                int epPawnSquare;
+                if (board.getEpTargetSquare() % 3 == 2) {
+                    epPawnSquare = targetSquare + 8;
+                } else {
+                    epPawnSquare = targetSquare - 8;
+                }
+
+                // Obtaining the en-passant pawn (epPawn), and then adding the move only if the current pawn and the
+                // epPawn are of opposite colors:
+                int epPawn = board.getPiece(epPawnSquare);
+
+                if (!Piece.isColor(epPawn, currentPawn)) {
+                    possibleMoves.add(new Move(startSquare, targetSquare, "en-passant"));
+                }
             }
 
             // Opponent pawn on capture square check:
@@ -206,17 +216,17 @@ public class MovesGenerator {
 
     // For knights:
     private void generateKnightMoves(int startSquare, int currentKnight) {
-        // Offsets with their maximum allowed row shifts:
-        Map<Integer, Integer> offsetsWithMaxRowMoves = new HashMap<>() {{
+        // Offsets with their allowed row shifts:
+        Map<Integer, Integer> offsetsWithRowMoves = new HashMap<>() {{
            put(-10, 1); put(-17, 2); put(-15, 2); put(-6, 1);
            put(10, 1); put(17, 2); put(15, 2); put(6, 1);
         }};
 
         // Adding the possible moves:
-        offsetsWithMaxRowMoves.forEach((offset, maxRowMoves) -> {
+        offsetsWithRowMoves.forEach((offset, rowMoves) -> {
             int targetSquare = startSquare + offset;
 
-            if (Math.abs((startSquare / 8) - (targetSquare / 8)) <= maxRowMoves) {
+            if (Math.abs((startSquare / 8) - (targetSquare / 8)) == rowMoves) {
                 if (targetSquare >= 0 && targetSquare <= 63) {
                     int targetPiece = board.getPiece(targetSquare);
 
@@ -242,23 +252,34 @@ public class MovesGenerator {
             }
         }
 
-        // For king side castling:
-        int targetSquareKS = startSquare + 2;
-        int targetPieceKS = board.getPiece(targetSquareKS);
+        boolean[] castlingAvailability = board.getCastlingAvailability();
 
-        if (targetPieceKS == Piece.None) {
-            possibleMoves.add(new Move(startSquare, targetSquareKS, "castle-k"));
+        // Castling availability specific to the selected king:
+        boolean[] kingSpecificCA = (Piece.isWhite(currentKing)) ?
+                Arrays.copyOfRange(castlingAvailability, 0, 2) :
+                Arrays.copyOfRange(castlingAvailability, 2, castlingAvailability.length);
+
+        // For king side castling:
+        if (kingSpecificCA[0]) {
+            int targetSquareKS = startSquare + 2;
+            int targetPieceKS = board.getPiece(targetSquareKS);
+
+            if (targetPieceKS == Piece.None) {
+                possibleMoves.add(new Move(startSquare, targetSquareKS, "castle-k"));
+            }
         }
 
         // For queen side castling:
-        int targetSquareQS = startSquare - 2;
-        int targetPieceQS = board.getPiece(targetSquareQS);
+        if (kingSpecificCA[1]) {
+            int targetSquareQS = startSquare - 2;
+            int targetPieceQS = board.getPiece(targetSquareQS);
 
-        int QSRookOffsetSquare = startSquare - 3;  // The square beside the queen side rook (to check if there's a piece blocking the way)
-        int QSRookOffsetPiece = board.getPiece(QSRookOffsetSquare);
+            int QSRookOffsetSquare = startSquare - 3;  // The square beside the queen side rook (to check if there's a piece blocking the way)
+            int QSRookOffsetPiece = board.getPiece(QSRookOffsetSquare);
 
-        if (targetPieceQS == Piece.None && QSRookOffsetPiece == Piece.None) {
-            possibleMoves.add(new Move(startSquare, QSRookOffsetSquare, "castle-q"));
+            if (targetPieceQS == Piece.None && QSRookOffsetPiece == Piece.None) {
+                possibleMoves.add(new Move(startSquare, QSRookOffsetSquare, "castle-q"));
+            }
         }
     }
 }

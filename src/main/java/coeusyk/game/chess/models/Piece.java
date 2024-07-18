@@ -26,11 +26,6 @@ public class Piece {
         return (piece == id) ? piece & ~0b10000 : piece;
     }
 
-    public static boolean isSliding(int id) {
-        int pieceType = type(id);
-        return pieceType == Bishop || pieceType == Queen || pieceType == Rook;
-    }
-
     public static int color(int id) {
         if (id > 16) {
             return Piece.Black;
@@ -39,6 +34,21 @@ public class Piece {
         }
 
         return 0;
+    }
+
+    /**
+     * Checks if the piece is capable of having a reaction or not
+     *
+     * @param id The piece to check
+     */
+    public static boolean hasReaction(int id) {
+        int pieceType = type(id);
+        return pieceType == Pawn || pieceType == King;
+    }
+
+    public static boolean isSliding(int id) {
+        int pieceType = type(id);
+        return pieceType == Bishop || pieceType == Queen || pieceType == Rook;
     }
 
     /**
