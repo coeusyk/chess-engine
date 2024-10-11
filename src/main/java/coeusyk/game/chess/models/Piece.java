@@ -16,6 +16,7 @@ public class Piece {
     public final static int Rook = 4;
     public final static int Queen = 5;
     public final static int King = 6;
+
     public final static int White = 8;
     public final static int Black = 16;
 
@@ -27,9 +28,9 @@ public class Piece {
     }
 
     public static int color(int id) {
-        if (id > 16) {
+        if (id >= 16) {
             return Piece.Black;
-        } else if (id > 8) {
+        } else if (id >= 8) {
             return Piece.White;
         }
 
@@ -62,10 +63,10 @@ public class Piece {
     }
 
     public static boolean isWhite(int id) {
-        return id > 8 && id < 16;
+        return id >= 8 && id < 16;
     }
 
     public static boolean isBlack(int id) {
-        return id > 16;
+        return id >= 16;
     }
 }

@@ -28,10 +28,19 @@ public class BoardController {
     @GetMapping("/get-piece-moves")
     public PieceMovesContainer getPieceMoves(@RequestParam @NonNull int pieceSquare) {
         ArrayList<Move> pieceMoves = movesGen.getPieceMoves(pieceSquare);
-
         PieceMovesContainer pieceMovesContainer = new PieceMovesContainer(pieceMoves);
 
         return pieceMovesContainer;
+    }
+
+    @GetMapping("/get-king-in-check")
+    public KingInCheckContainer getKingSquare(@RequestParam @NonNull int activeColor) {
+        int kingSquare = board.getKingSquare(activeColor);
+        boolean[] isKingInCheck = movesGen.isKingInCheck(kingSquare, activeColor);
+
+        KingInCheckContainer kingSquareContainer = new KingInCheckContainer(kingSquare, isKingInCheck);
+
+        return kingSquareContainer;
     }
 
     @PutMapping("/load-fen")

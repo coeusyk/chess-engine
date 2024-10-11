@@ -11,16 +11,17 @@ import java.util.*;
 
 public class MovesGenerator {
     public static final int[] DirectionOffsets = { -8, 1, 8, -1, -9, -7, 9, 7 };
-    private static final Logger log = LoggerFactory.getLogger(MovesGenerator.class);
+//    private static final Logger log = LoggerFactory.getLogger(MovesGenerator.class);
     public static int[][] SquaresToEdges = new int[64][8];  // Holds the number of squares to each edge from each square (for easier computation)
     private final Board board;
 
-    private final ArrayList<Move> possibleMoves = new ArrayList<>();
+    private static final ArrayList<Move> possibleMoves = new ArrayList<>();
 
     public MovesGenerator(Board board) {
         this.board = board;
         ComputeMoveData();
         generateMoves();
+        makeMovesLegal(board.getActiveColor());
     }
 
     // Computes all possible moves from each square, and stores it in SquaresToEdges:
@@ -51,6 +52,8 @@ public class MovesGenerator {
 
     // Generates all the possible moves of each piece:
     private void generateMoves() {
+        possibleMoves.clear();  // Removing previous moves
+
         for (int sq = 0; sq < 64; sq++) {
             int currentPiece = board.getPiece(sq);
 
@@ -66,20 +69,62 @@ public class MovesGenerator {
         }
     }
 
+    // Returns if the king is in check, and if it is in a double check:
+    public boolean[] isKingInCheck(int kingSquare, int activeColor) {
+        int inactiveColor = (Piece.isWhite(activeColor)) ? Piece.Black : Piece.White;
+        ArrayList<Move> opponentMoves = getActiveMoves(inactiveColor);
+
+        ArrayList<Move> kingCaptureMoves = new ArrayList<>();
+
+        for (Move move : opponentMoves) {
+            if (move.targetSquare == kingSquare) {
+                kingCaptureMoves.add(move);
+            }
+        }
+
+        return new boolean[] {!kingCaptureMoves.isEmpty(), kingCaptureMoves.size() == 2};
+    }
+
     public ArrayList<Move> getAllMoves() {
-        return possibleMoves;
+        return (ArrayList<Move>) possibleMoves.clone();
     }
 
     public ArrayList<Move> getActiveMoves(int activeColor) {
         ArrayList<Move> colorSpecificMoves = new ArrayList<>();
 
-        possibleMoves.forEach(move -> {
-            if (Piece.color(board.getGrid()[move.startSquare]) == activeColor) {
+        for (Move move : possibleMoves) {
+            if (Piece.isColor(board.getGrid()[move.startSquare], activeColor)) {
                 colorSpecificMoves.add(move);
             }
-        });
+        }
 
         return colorSpecificMoves;
+    }
+
+    private void makeMovesLegal(int activeColor) {
+        ArrayList<Move> initialPossibleMoves = getAllMoves();
+        ArrayList<Move> colorSpecificMoves = getActiveMoves(activeColor);
+
+        for (Move move : colorSpecificMoves) {
+            board.makeMove(move);
+            generateMoves();  // To update the possible moves after a move was made
+
+            // Obtaining the king square here so that if the move made was a king move, then the updated square is taken into account:
+            int kingSquare = board.getKingSquare(activeColor);
+
+            boolean[] kingCheck = isKingInCheck(kingSquare, activeColor);
+            boolean inCheck = kingCheck[0], doubleCheck = kingCheck[1];
+
+            if (inCheck || doubleCheck) {
+                initialPossibleMoves.remove(move);
+            }
+
+            board.unmakeMove();
+
+            // Reverting the possible moves back to the initial state (before the move was made):
+            possibleMoves.clear();
+            possibleMoves.addAll(initialPossibleMoves);
+        }
     }
 
     /**
@@ -240,15 +285,20 @@ public class MovesGenerator {
 
     // For kings:
     private void generateKingMoves(int startSquare, int currentKing) {
+        // So that the king moves don't go through the board from one side to the other (depending on how far a king is from the edge):
+        int[] kingSquaresToEdges = SquaresToEdges[startSquare];
+
         // Natural moves:
-        for (int offset : DirectionOffsets) {
-            int targetSquare = startSquare + offset;
-            if (targetSquare < 0 || targetSquare > 63) continue;
+        for (int direction = 0; direction < DirectionOffsets.length; direction++) {
+            if (kingSquaresToEdges[direction] > 0) {
+                int targetSquare = startSquare + DirectionOffsets[direction];
+                if (targetSquare < 0 || targetSquare > 63) continue;
 
-            int targetPiece = board.getPiece(targetSquare);
+                int targetPiece = board.getPiece(targetSquare);
 
-            if (!Piece.isColor(currentKing, targetPiece)) {
-                possibleMoves.add(new Move(startSquare, targetSquare));
+                if (!Piece.isColor(currentKing, targetPiece)) {
+                    possibleMoves.add(new Move(startSquare, targetSquare));
+                }
             }
         }
 
