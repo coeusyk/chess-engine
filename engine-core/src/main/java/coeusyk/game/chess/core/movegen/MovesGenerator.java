@@ -1,8 +1,8 @@
-package coeusyk.game.chess.utils;
+package coeusyk.game.chess.core.movegen;
 
-import coeusyk.game.chess.models.Board;
-import coeusyk.game.chess.models.Move;
-import coeusyk.game.chess.models.Piece;
+import coeusyk.game.chess.core.models.Board;
+import coeusyk.game.chess.core.models.Move;
+import coeusyk.game.chess.core.models.Piece;
 
 import java.util.*;
 

@@ -14,9 +14,9 @@ public class CorsConfig {
            return new WebMvcConfigurer() {
                @Override
                public void addCorsMappings(@NonNull CorsRegistry registry) {
-                   registry.addMapping("/api/**")  // Defining the path to allow CORS for
+                   registry.addMapping("/engine/**")  // Defining the path to allow CORS for
                            .allowedOrigins("http://localhost:3000")  // Allowing requests from React app
-                           .allowedMethods("GET", "POST")  // Specifying the allowed http methods
+                       .allowedMethods("GET", "POST", "PUT")  // Specifying the allowed http methods
                            .allowCredentials(true);  // Allowing cookies
                }
            };

@@ -1,4 +1,4 @@
-package coeusyk.game.chess.models;
+package coeusyk.game.chess.core.models;
 
 
 public class Move {

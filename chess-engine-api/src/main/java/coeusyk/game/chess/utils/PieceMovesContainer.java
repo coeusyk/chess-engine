@@ -1,6 +1,6 @@
 package coeusyk.game.chess.utils;
 
-import coeusyk.game.chess.models.Move;
+import coeusyk.game.chess.core.models.Move;
 
 import java.util.ArrayList;
 
