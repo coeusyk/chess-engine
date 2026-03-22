@@ -3,19 +3,16 @@ package coeusyk.game.chess.utils;
 import coeusyk.game.chess.models.Board;
 import coeusyk.game.chess.models.Move;
 import coeusyk.game.chess.models.Piece;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.*;
 
 
 public class MovesGenerator {
     public static final int[] DirectionOffsets = { -8, 1, 8, -1, -9, -7, 9, 7 };
-//    private static final Logger log = LoggerFactory.getLogger(MovesGenerator.class);
     public static int[][] SquaresToEdges = new int[64][8];  // Holds the number of squares to each edge from each square (for easier computation)
     private final Board board;
 
-    private static final ArrayList<Move> possibleMoves = new ArrayList<>();
+    private final ArrayList<Move> possibleMoves = new ArrayList<>();
 
     public MovesGenerator(Board board) {
         this.board = board;

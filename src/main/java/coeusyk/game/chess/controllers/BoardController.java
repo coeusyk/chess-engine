@@ -14,53 +14,77 @@ import java.util.ArrayList;
 public class BoardController {
     Board board = new Board();
     MovesGenerator movesGen;
+    private final Object boardLock = new Object();
 
     @GetMapping("/setup")
     public SetupContainer setup() {
-        movesGen = new MovesGenerator(board);
-        ArrayList<Move> possibleMoves = movesGen.getActiveMoves(board.getActiveColor());
+        synchronized (boardLock) {
+            movesGen = new MovesGenerator(board);
+            ArrayList<Move> possibleMoves = movesGen.getActiveMoves(board.getActiveColor());
 
-        SetupContainer setupContainer = new SetupContainer(board, possibleMoves);
+            SetupContainer setupContainer = new SetupContainer(board, possibleMoves);
 
-        return setupContainer;
+            return setupContainer;
+        }
     }
 
     @GetMapping("/get-piece-moves")
     public PieceMovesContainer getPieceMoves(@RequestParam @NonNull int pieceSquare) {
-        ArrayList<Move> pieceMoves = movesGen.getPieceMoves(pieceSquare);
-        PieceMovesContainer pieceMovesContainer = new PieceMovesContainer(pieceMoves);
+        synchronized (boardLock) {
+            if (movesGen == null) {
+                movesGen = new MovesGenerator(board);
+            }
 
-        return pieceMovesContainer;
+            ArrayList<Move> pieceMoves = movesGen.getPieceMoves(pieceSquare);
+            PieceMovesContainer pieceMovesContainer = new PieceMovesContainer(pieceMoves);
+
+            return pieceMovesContainer;
+        }
     }
 
     @GetMapping("/get-king-in-check")
     public KingInCheckContainer getKingSquare(@RequestParam @NonNull int activeColor) {
-        int kingSquare = board.getKingSquare(activeColor);
-        boolean[] isKingInCheck = movesGen.isKingInCheck(kingSquare, activeColor);
+        synchronized (boardLock) {
+            if (movesGen == null) {
+                movesGen = new MovesGenerator(board);
+            }
 
-        KingInCheckContainer kingSquareContainer = new KingInCheckContainer(kingSquare, isKingInCheck);
+            int kingSquare = board.getKingSquare(activeColor);
+            boolean[] isKingInCheck = movesGen.isKingInCheck(kingSquare, activeColor);
 
-        return kingSquareContainer;
+            KingInCheckContainer kingSquareContainer = new KingInCheckContainer(kingSquare, isKingInCheck);
+
+            return kingSquareContainer;
+        }
     }
 
     @PutMapping("/load-fen")
     public void loadFen(@RequestBody @NonNull FENStringHandler fenStringHandler) {
-        board = new Board(fenStringHandler.getFenString());
+        synchronized (boardLock) {
+            board = new Board(fenStringHandler.getFenString());
+            movesGen = new MovesGenerator(board);
+        }
     }
 
     @PutMapping("/make-move")
     public ResponseContainer makeMove(@RequestBody @NonNull MoveHandler moveHandler) {
-        int[] moveDetails = moveHandler.getMoveDetails();
-        Move move = movesGen.findMove(moveDetails[0], moveDetails[1]);
+        synchronized (boardLock) {
+            if (movesGen == null) {
+                movesGen = new MovesGenerator(board);
+            }
 
-        if (move != null) {
-            // Updating the board and the possible moves:
-            board.makeMove(move);
-            movesGen = new MovesGenerator(board);
+            int[] moveDetails = moveHandler.getMoveDetails();
+            Move move = movesGen.findMove(moveDetails[0], moveDetails[1]);
 
-            return new ResponseContainer(true, board, movesGen.getActiveMoves(board.getActiveColor()));
+            if (move != null) {
+                // Updating the board and the possible moves:
+                board.makeMove(move);
+                movesGen = new MovesGenerator(board);
+
+                return new ResponseContainer(true, board, movesGen.getActiveMoves(board.getActiveColor()));
+            }
+
+            return new ResponseContainer(false);
         }
-
-        return new ResponseContainer(false);
     }
 }
