@@ -1,5 +1,7 @@
 package coeusyk.game.chess.core.models;
 
+import coeusyk.game.chess.core.bitboard.BitboardPosition;
+
 import java.util.*;
 
 
@@ -400,5 +402,9 @@ public class Board {
 
     public int getFullMoves() {
         return fullMoves;
+    }
+
+    public BitboardPosition toBitboardPosition() {
+        return BitboardPosition.fromBoard(this);
     }
 }

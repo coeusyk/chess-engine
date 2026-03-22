@@ -7,13 +7,17 @@ This repository is now organized as a multi-module Maven project.
 - `chess-engine-api`: Spring Boot REST adapter for UI integration.
 - `engine-uci`: UCI protocol runner skeleton (stdin/stdout loop).
 
-## Current Phase 0 Progress
+## Phase 0 Status
 - Core logic extracted into `engine-core`.
 - API module now depends on `engine-core` instead of in-module engine classes.
 - Session-aware API state introduced using optional `gameId`.
 - `new-game` endpoint added: `PUT /engine/new-game`.
+- Controllers now delegate to a service facade (`ChessGameService`) as thin transport adapters.
+- Parallel game-isolation integration tests added in `chess-engine-api`.
+- `Board -> BitboardPosition` snapshot conversion added in `engine-core`.
 - CI workflow bootstrapped in `.github/workflows/ci.yml`.
-- Bitboard migration target documented in `docs/phase0-architecture.md`.
+
+Phase 0 is functionally complete in code. CI pass/green state depends on running the Maven workflow in GitHub.
 
 ## Next Steps
 - Complete migration from legacy array board to bitboards in `engine-core`.
