@@ -1,6 +1,7 @@
 package coeusyk.game.chess.core.models;
 
 import coeusyk.game.chess.core.bitboard.BitboardPosition;
+import coeusyk.game.chess.core.bitboard.ZobristHash;
 
 import java.util.*;
 
@@ -47,6 +48,9 @@ public class Board {
     private int epTargetSquare = -1;  // The current target square for En Passant
     private int halfmoveClock;  // This takes care of enforcing the 50-move rule (resets after captures and pawn moves)
     private int fullMoves = 1;  // Starts at 1 and updates after black's move
+    
+    // Zobrist hash for the current position
+    private long zobristHash;
 
     // Possible Move Reactions:
     private final String[] reactionIds = { "castle-k", "castle-q", "en-passant", "ep-target" };
@@ -196,6 +200,9 @@ public class Board {
         if (!boardStates.contains(fenString)) {
             boardStates.add(fenString);
         }
+        
+        // Compute Zobrist hash for the initial position
+        zobristHash = recomputeZobristHash();
     }
 
     // Function for obtaining the FEN string of the current position (for storing states of the board):
@@ -315,6 +322,40 @@ public class Board {
         allOccupancy = whiteOccupancy | blackOccupancy;
     }
     
+    private long recomputeZobristHash() {
+        long hash = 0L;
+        
+        // XOR in all piece-square keys
+        for (int square = 0; square < 64; square++) {
+            int piece = getPieceFromBitboards(square);
+            if (piece != Piece.None) {
+                hash ^= ZobristHash.getKeyForPieceSquare(piece, square);
+            }
+        }
+        
+        // XOR in side-to-move
+        if (Piece.isBlack(activeColor)) {
+            hash ^= ZobristHash.getKeyForBlackToMove();
+        }
+        
+        // XOR in castling rights
+        hash ^= ZobristHash.getKeyForCastlingRights(castlingAvailabilityToInt());
+        
+        // XOR in en passant file
+        hash ^= ZobristHash.getKeyForEnPassantFile(ZobristHash.getEPFileFromTargetSquare(epTargetSquare));
+        
+        return hash;
+    }
+    
+    private int castlingAvailabilityToInt() {
+        int rights = 0;
+        if (castlingAvailability[0]) rights |= 0x1; // White kingside
+        if (castlingAvailability[1]) rights |= 0x2; // White queenside
+        if (castlingAvailability[2]) rights |= 0x4; // Black kingside
+        if (castlingAvailability[3]) rights |= 0x8; // Black queenside
+        return rights;
+    }
+    
     private long getBitboard(int pieceType, int color) {
         if (color == Piece.White) {
             return switch (pieceType) {
@@ -412,13 +453,28 @@ public class Board {
         UnmakeInfo unmakeInfo = new UnmakeInfo(move, capturedPiece, capturedEPPiece, 
                 epTargetSquare, castlingAvailability, halfmoveClock, fullMoves);
         
+        // Update Zobrist hash for side-to-move
+        zobristHash ^= ZobristHash.getKeyForBlackToMove();
+        
+        // Save old castling rights for hash
+        int oldCastlingRights = castlingAvailabilityToInt();
+        
         if (move.reaction != null) {
             if (!Arrays.asList(reactionIds).contains(move.reaction)) {
                 throw new IllegalArgumentException("invalid move reaction : does not exist");
             } else {
                 switch (move.reaction) {
                     case "castle-k" -> {
-                        castlingReaction(move.startSquare + 3, false);
+                        // Update hash for rook on start and end position
+                        int rookSquare = move.startSquare + 3;
+                        int rookPiece = getPiece(rookSquare);
+                        zobristHash ^= ZobristHash.getKeyForPieceSquare(rookPiece, rookSquare);
+                        
+                        castlingReaction(rookSquare, false);
+                        
+                        // Update hash for rook on new position
+                        zobristHash ^= ZobristHash.getKeyForPieceSquare(rookPiece, rookSquare - 2);
+                        
                         if (Piece.isWhite(movingPiece)) {
                             castlingAvailability[0] = false;
                         } else {
@@ -427,7 +483,16 @@ public class Board {
                     }
 
                     case "castle-q" -> {
-                        castlingReaction(move.startSquare - 4, false);
+                        // Update hash for rook on start and end position
+                        int rookSquare = move.startSquare - 4;
+                        int rookPiece = getPiece(rookSquare);
+                        zobristHash ^= ZobristHash.getKeyForPieceSquare(rookPiece, rookSquare);
+                        
+                        castlingReaction(rookSquare, false);
+                        
+                        // Update hash for rook on new position
+                        zobristHash ^= ZobristHash.getKeyForPieceSquare(rookPiece, rookSquare + 3);
+                        
                         if (Piece.isWhite(movingPiece)) {
                             castlingAvailability[1] = false;
                         } else {
@@ -439,6 +504,10 @@ public class Board {
                         int captureSquare = Piece.isWhite(movingPiece) ? move.targetSquare + 8 : move.targetSquare - 8;
                         capturedEPPiece = getPiece(captureSquare);
                         unmakeInfo.capturedEPPiece = capturedEPPiece;
+                        
+                        // Update hash for captured pawn
+                        zobristHash ^= ZobristHash.getKeyForPieceSquare(capturedEPPiece, captureSquare);
+                        
                         clearBit(captureSquare, capturedEPPiece);
                         isCapture = true;  // Mark as capture for halfmove clock
                     }
@@ -453,16 +522,23 @@ public class Board {
                 }
             }
         }
+        
+        // Update hash for en passant file
+        zobristHash ^= ZobristHash.getKeyForEnPassantFile(ZobristHash.getEPFileFromTargetSquare(epTargetSquare));
+        epTargetSquare = -1;  // Clear en passant square after the move (might be set above for ep-target reaction)
 
         // Clear captured piece if any
         if (capturedPiece != Piece.None) {
+            zobristHash ^= ZobristHash.getKeyForPieceSquare(capturedPiece, move.targetSquare);
             clearBit(move.targetSquare, capturedPiece);
         }
         
         // Remove piece from source square
+        zobristHash ^= ZobristHash.getKeyForPieceSquare(movingPiece, move.startSquare);
         clearBit(move.startSquare, movingPiece);
         
         // Place piece at target square
+        zobristHash ^= ZobristHash.getKeyForPieceSquare(movingPiece, move.targetSquare);
         setBit(move.targetSquare, movingPiece);
 
         // Changing the active color after the move is made:
@@ -478,6 +554,13 @@ public class Board {
             halfmoveClock = 0;
         } else {
             halfmoveClock++;
+        }
+        
+        // Update hash for castling rights if they changed
+        int newCastlingRights = castlingAvailabilityToInt();
+        if (oldCastlingRights != newCastlingRights) {
+            zobristHash ^= ZobristHash.getKeyForCastlingRights(oldCastlingRights);
+            zobristHash ^= ZobristHash.getKeyForCastlingRights(newCastlingRights);
         }
 
         // Update occupancy masks
@@ -544,6 +627,9 @@ public class Board {
         
         // Update occupancy masks
         recomputeOccupancies();
+        
+        // Recompute Zobrist hash after restoring state
+        zobristHash = recomputeZobristHash();
         
         movesPlayed.remove(movesPlayed.size() - 1);
         boardStates.remove(boardStates.size() - 1);
@@ -649,6 +735,10 @@ public class Board {
     public long getWhiteOccupancy() { return whiteOccupancy; }
     public long getBlackOccupancy() { return blackOccupancy; }
     public long getAllOccupancy() { return allOccupancy; }
+    
+    public long getZobristHash() {
+        return zobristHash;
+    }
 
     public BitboardPosition toBitboardPosition() {
         BitboardPosition position = new BitboardPosition();
