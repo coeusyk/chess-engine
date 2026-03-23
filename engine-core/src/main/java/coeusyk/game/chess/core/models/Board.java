@@ -770,6 +770,10 @@ public class Board {
         return repetitions >= 3;
     }
 
+    public boolean isFiftyMoveRuleDraw() {
+        return halfmoveClock >= 100;
+    }
+
     // Getters and setters:
     public int getPiece(int square) {
         if (square < 0 || square > 63) {
