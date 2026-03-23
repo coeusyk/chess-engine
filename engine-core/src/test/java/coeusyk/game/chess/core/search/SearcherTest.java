@@ -123,6 +123,34 @@ class SearcherTest {
         assertMoveEquals(ttHint, result.bestMove());
     }
 
+    @Test
+    void transpositionTableHitRateIsNonZeroOnRepeatedSearch() {
+        Board board = new Board("r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/2N5/PPPP1PPP/R1BQK1NR b KQkq - 2 3");
+        Searcher searcher = new Searcher();
+
+        searcher.searchDepth(board, 4);
+        SearchResult second = searcher.searchDepth(new Board("r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/2N5/PPPP1PPP/R1BQK1NR b KQkq - 2 3"), 4);
+
+        assertTrue(second.ttHitRate() > 0.0);
+    }
+
+    @Test
+    void ttBoundGatingWorksForExactLowerUpper() {
+        Searcher searcher = new Searcher();
+
+        TranspositionTable.Entry exact = new TranspositionTable.Entry(1L, null, 4, 50, TTBound.EXACT);
+        TranspositionTable.Entry lower = new TranspositionTable.Entry(1L, null, 4, 120, TTBound.LOWER_BOUND);
+        TranspositionTable.Entry upper = new TranspositionTable.Entry(1L, null, 4, -80, TTBound.UPPER_BOUND);
+
+        assertEquals(50, searcher.applyTtBound(exact, 3, -100, 100));
+        assertEquals(120, searcher.applyTtBound(lower, 3, -100, 100));
+        assertEquals(-80, searcher.applyTtBound(upper, 3, -70, 100));
+
+        assertNull(searcher.applyTtBound(lower, 3, -100, 200));
+        assertNull(searcher.applyTtBound(upper, 3, -120, 100));
+        assertNull(searcher.applyTtBound(exact, 5, -100, 100));
+    }
+
     private Move findMove(Board board, int startSquare, int targetSquare) {
         List<Move> moves = new MovesGenerator(board).getActiveMoves(board.getActiveColor());
         for (Move move : moves) {

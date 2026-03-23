@@ -12,6 +12,7 @@ public record SearchResult(
         long nodesVisited,
         long leafNodes,
         long quiescenceNodes,
+        double ttHitRate,
         boolean aborted
 ) {
 }

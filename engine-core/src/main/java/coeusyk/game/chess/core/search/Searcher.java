@@ -26,6 +26,7 @@ public class Searcher {
     private final MoveOrderer moveOrderer = new MoveOrderer();
     private final Move[][] killerMoves = new Move[MAX_PLY][2];
     private final int[][] historyHeuristic = new int[7][64];
+    private final TranspositionTable transpositionTable = new TranspositionTable();
 
     private Move rootTtMoveHint;
 
@@ -41,6 +42,14 @@ public class Searcher {
 
     public void setRootTtMoveHintForTesting(Move rootTtMoveHint) {
         this.rootTtMoveHint = rootTtMoveHint;
+    }
+
+    public void setTranspositionTableSizeMb(int sizeMb) {
+        transpositionTable.resize(sizeMb);
+    }
+
+    public double getTranspositionTableHitRate() {
+        return transpositionTable.getHitRate();
     }
 
     public SearchResult searchDepth(Board board, int depth) {
@@ -65,6 +74,7 @@ public class Searcher {
         long totalQuiescenceNodes = 0;
 
         aborted = false;
+        transpositionTable.resetStats();
 
         for (int depth = 1; depth <= maxDepth; depth++) {
             if (shouldAbort.getAsBoolean()) {
@@ -108,6 +118,7 @@ public class Searcher {
             totalNodes,
             totalLeafNodes,
             totalQuiescenceNodes,
+            transpositionTable.getHitRate(),
             aborted
         );
     }
@@ -115,6 +126,7 @@ public class Searcher {
     private RootResult searchRoot(Board board, int depth, Move preferredMove, BooleanSupplier shouldAbort) {
         MovesGenerator generator = new MovesGenerator(board);
         List<Move> moves = new ArrayList<>(generator.getActiveMoves(board.getActiveColor()));
+        TranspositionTable.Entry rootEntry = transpositionTable.probe(board.getZobristHash());
 
         if (moves.isEmpty()) {
             int terminalScore = evaluateTerminal(board, 0);
@@ -123,7 +135,9 @@ public class Searcher {
 
         prioritizeMove(moves, preferredMove);
         if (moveOrderingEnabled) {
-            Move ttMove = (rootTtMoveHint != null) ? rootTtMoveHint : preferredMove;
+            Move ttMove = (rootTtMoveHint != null)
+                    ? rootTtMoveHint
+                    : (rootEntry != null ? rootEntry.bestMove() : preferredMove);
             moves = moveOrderer.orderMoves(board, moves, 0, ttMove, killerMoves, historyHeuristic);
         }
 
@@ -185,12 +199,21 @@ public class Searcher {
             return quiescence(board, alpha, beta, ply, shouldAbort);
         }
 
+        long zobrist = board.getZobristHash();
+        int alphaOrig = alpha;
+        TranspositionTable.Entry ttEntry = transpositionTable.probe(zobrist);
+        Integer ttScore = applyTtBound(ttEntry, depth, alpha, beta);
+        if (ttScore != null) {
+            return ttScore;
+        }
+
         nodesVisited++;
 
         MovesGenerator generator = new MovesGenerator(board);
         List<Move> moves = generator.getActiveMoves(board.getActiveColor());
         if (moveOrderingEnabled) {
-            moves = moveOrderer.orderMoves(board, moves, ply, null, killerMoves, historyHeuristic);
+            Move ttMove = ttEntry != null ? ttEntry.bestMove() : null;
+            moves = moveOrderer.orderMoves(board, moves, ply, ttMove, killerMoves, historyHeuristic);
         }
 
         if (moves.isEmpty()) {
@@ -199,6 +222,7 @@ public class Searcher {
         }
 
         int bestScore = -INF;
+        Move bestMove = null;
         for (Move move : moves) {
             board.makeMove(move);
             int score = -alphaBeta(board, depth - 1, ply + 1, -beta, -alpha, shouldAbort);
@@ -210,6 +234,7 @@ public class Searcher {
 
             if (score > bestScore) {
                 bestScore = score;
+                bestMove = move;
 
                 pvTable[ply][0] = move;
                 int childPvLength = pvLength[ply + 1];
@@ -232,7 +257,34 @@ public class Searcher {
             }
         }
 
+        if (!aborted && bestScore != -INF) {
+            TTBound bound = resolveBound(bestScore, alphaOrig, beta);
+            transpositionTable.store(zobrist, bestMove, depth, bestScore, bound);
+        }
+
         return bestScore;
+    }
+
+    Integer applyTtBound(TranspositionTable.Entry entry, int depth, int alpha, int beta) {
+        if (entry == null || entry.depth() < depth) {
+            return null;
+        }
+
+        return switch (entry.bound()) {
+            case EXACT -> entry.score();
+            case LOWER_BOUND -> (entry.score() >= beta) ? entry.score() : null;
+            case UPPER_BOUND -> (entry.score() <= alpha) ? entry.score() : null;
+        };
+    }
+
+    private TTBound resolveBound(int bestScore, int alphaOrig, int beta) {
+        if (bestScore <= alphaOrig) {
+            return TTBound.UPPER_BOUND;
+        }
+        if (bestScore >= beta) {
+            return TTBound.LOWER_BOUND;
+        }
+        return TTBound.EXACT;
     }
 
     private int quiescence(Board board, int alpha, int beta, int ply, BooleanSupplier shouldAbort) {
