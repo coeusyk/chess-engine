@@ -24,6 +24,3 @@ jobs:
 
       - name: Build and test modules
         run: mvn -B clean test
-
-      - name: Perft harness gate
-        run: mvn -B -pl engine-core -Dtest=PerftHarnessTest test
