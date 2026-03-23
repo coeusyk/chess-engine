@@ -54,4 +54,20 @@ public class BoardController {
 
         return new ResponseContainer(false);
     }
+
+    /**
+     * Run an iterative-deepening search to the given depth and return the
+     * best move together with the principal variation in UCI info format.
+     *
+     * @param depth maximum search depth (1..{@value Search#MAX_DEPTH}, default 4)
+     */
+    @GetMapping("/search")
+    public SearchResult search(@RequestParam(defaultValue = "4") int depth) {
+        if (depth < 1 || depth > Search.MAX_DEPTH) {
+            throw new IllegalArgumentException(
+                    "depth must be between 1 and " + Search.MAX_DEPTH + ", got " + depth);
+        }
+        Search search = new Search();
+        return search.search(board, depth);
+    }
 }
