@@ -16,6 +16,7 @@ public class Searcher {
 
     private long nodesVisited;
     private long leafNodes;
+    private long quiescenceNodes;
 
     private boolean aborted;
 
@@ -37,6 +38,7 @@ public class Searcher {
         int depthReached = 0;
         long totalNodes = 0;
         long totalLeafNodes = 0;
+        long totalQuiescenceNodes = 0;
 
         aborted = false;
 
@@ -48,11 +50,13 @@ public class Searcher {
 
             nodesVisited = 0;
             leafNodes = 0;
+            quiescenceNodes = 0;
 
             RootResult iteration = searchRoot(board, depth, previousBestMove, shouldAbort);
 
             totalNodes += nodesVisited;
             totalLeafNodes += leafNodes;
+            totalQuiescenceNodes += quiescenceNodes;
 
             if (iteration.bestMove == null) {
                 aborted = true;
@@ -69,7 +73,15 @@ public class Searcher {
             }
         }
 
-        return new SearchResult(previousBestMove, bestScore, depthReached, totalNodes, totalLeafNodes, aborted);
+        return new SearchResult(
+            previousBestMove,
+            bestScore,
+            depthReached,
+            totalNodes,
+            totalLeafNodes,
+            totalQuiescenceNodes,
+            aborted
+        );
     }
 
     private RootResult searchRoot(Board board, int depth, Move preferredMove, BooleanSupplier shouldAbort) {
@@ -128,8 +140,7 @@ public class Searcher {
         }
 
         if (depth == 0) {
-            leafNodes++;
-            return evaluate(board);
+            return quiescence(board, alpha, beta, ply, shouldAbort);
         }
 
         nodesVisited++;
@@ -150,6 +161,62 @@ public class Searcher {
 
             if (aborted) {
                 return bestScore == -INF ? alpha : bestScore;
+            }
+
+            if (score > bestScore) {
+                bestScore = score;
+            }
+
+            if (score > alpha) {
+                alpha = score;
+            }
+
+            if (alpha >= beta) {
+                break;
+            }
+        }
+
+        return bestScore;
+    }
+
+    private int quiescence(Board board, int alpha, int beta, int ply, BooleanSupplier shouldAbort) {
+        quiescenceNodes++;
+
+        if (shouldAbort.getAsBoolean()) {
+            aborted = true;
+            return alpha;
+        }
+
+        MovesGenerator generator = new MovesGenerator(board);
+        List<Move> legalMoves = generator.getActiveMoves(board.getActiveColor());
+        if (legalMoves.isEmpty()) {
+            leafNodes++;
+            return evaluateTerminal(board, ply);
+        }
+
+        int standPat = evaluate(board);
+        if (standPat >= beta) {
+            leafNodes++;
+            return standPat;
+        }
+        if (standPat > alpha) {
+            alpha = standPat;
+        }
+
+        List<Move> qMoves = extractQuiescenceMoves(board, legalMoves);
+        if (qMoves.isEmpty()) {
+            leafNodes++;
+            return standPat;
+        }
+
+        int bestScore = standPat;
+        for (Move move : qMoves) {
+            board.makeMove(move);
+            int score = -quiescence(board, -beta, -alpha, ply + 1, shouldAbort);
+            board.unmakeMove();
+
+            if (aborted) {
+                return bestScore;
             }
 
             if (score > bestScore) {
@@ -222,6 +289,23 @@ public class Searcher {
         if (index > 0) {
             Collections.swap(moves, 0, index);
         }
+    }
+
+    private List<Move> extractQuiescenceMoves(Board board, List<Move> legalMoves) {
+        List<Move> qMoves = new ArrayList<>();
+        for (Move move : legalMoves) {
+            if (isQuiescenceMove(board, move)) {
+                qMoves.add(move);
+            }
+        }
+        return qMoves;
+    }
+
+    private boolean isQuiescenceMove(Board board, Move move) {
+        boolean isQueenPromotion = "promote-q".equals(move.reaction);
+        boolean isEnPassant = "en-passant".equals(move.reaction);
+        boolean isCapture = isEnPassant || board.getPiece(move.targetSquare) != Piece.None;
+        return isCapture || isQueenPromotion;
     }
 
     private boolean sameMove(Move a, Move b) {

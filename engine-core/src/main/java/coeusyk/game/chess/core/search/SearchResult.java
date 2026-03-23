@@ -8,6 +8,7 @@ public record SearchResult(
         int depthReached,
         long nodesVisited,
         long leafNodes,
+        long quiescenceNodes,
         boolean aborted
 ) {
 }

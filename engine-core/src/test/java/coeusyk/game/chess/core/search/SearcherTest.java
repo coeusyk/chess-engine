@@ -55,6 +55,29 @@ class SearcherTest {
         assertMoveEquals(idRunOne.bestMove(), idRunTwo.bestMove());
     }
 
+    @Test
+    void quiescenceNodesAreTrackedSeparately() {
+        Board board = new Board();
+        Searcher searcher = new Searcher();
+
+        SearchResult result = searcher.searchDepth(board, 1);
+
+        assertTrue(result.quiescenceNodes() > 0);
+        assertTrue(result.quiescenceNodes() <= 40);
+    }
+
+    @Test
+    void tacticalHangingQueenIsEvaluatedCorrectly() {
+        Board board = new Board("4k3/8/8/4q3/2N5/8/8/4K3 w - - 0 1");
+        Searcher searcher = new Searcher();
+
+        SearchResult result = searcher.searchDepth(board, 1);
+
+        assertNotNull(result.bestMove());
+        assertEquals(34, result.bestMove().startSquare);
+        assertEquals(28, result.bestMove().targetSquare);
+    }
+
     private int bruteForceNegamax(Board board, int depth, NodeCounter counter) {
         counter.increment();
 
