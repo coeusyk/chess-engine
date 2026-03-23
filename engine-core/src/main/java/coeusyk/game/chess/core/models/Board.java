@@ -2,6 +2,7 @@ package coeusyk.game.chess.core.models;
 
 import coeusyk.game.chess.core.bitboard.BitboardPosition;
 import coeusyk.game.chess.core.bitboard.ZobristHash;
+import coeusyk.game.chess.core.movegen.MovesGenerator;
 
 import java.util.*;
 
@@ -731,6 +732,25 @@ public class Board {
         }
 
         throw new IllegalStateException("error: could not find king on board");
+    }
+
+    public boolean isActiveColorInCheck() {
+        MovesGenerator movesGenerator = new MovesGenerator(this);
+        return movesGenerator.isKingInCheck(getKingSquare(activeColor), activeColor)[0];
+    }
+
+    public boolean isCheckmate() {
+        MovesGenerator movesGenerator = new MovesGenerator(this);
+        boolean inCheck = movesGenerator.isKingInCheck(getKingSquare(activeColor), activeColor)[0];
+        boolean hasLegalMoves = !movesGenerator.getActiveMoves(activeColor).isEmpty();
+        return inCheck && !hasLegalMoves;
+    }
+
+    public boolean isStalemate() {
+        MovesGenerator movesGenerator = new MovesGenerator(this);
+        boolean inCheck = movesGenerator.isKingInCheck(getKingSquare(activeColor), activeColor)[0];
+        boolean hasLegalMoves = !movesGenerator.getActiveMoves(activeColor).isEmpty();
+        return !inCheck && !hasLegalMoves;
     }
 
     // Getters and setters:
