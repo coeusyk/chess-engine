@@ -345,10 +345,40 @@ public class Board {
         // XOR in castling rights
         hash ^= ZobristHash.getKeyForCastlingRights(castlingAvailabilityToInt());
         
-        // XOR in en passant file
-        hash ^= ZobristHash.getKeyForEnPassantFile(ZobristHash.getEPFileFromTargetSquare(epTargetSquare));
+        // XOR in en passant file only when an actual EP capture is legal for the side to move.
+        // This ensures positions with the same pieces/rights but unreachable EP hash the same
+        // (important for correct threefold-repetition detection).
+        if (epTargetSquare >= 0 && isEnPassantCapturePossible(activeColor)) {
+            hash ^= ZobristHash.getKeyForEnPassantFile(epTargetSquare % 8);
+        }
         
         return hash;
+    }
+    
+    /**
+     * Returns true if the side given by {@code capturingColor} has a pawn that can capture
+     * en passant at the current {@code epTargetSquare}.
+     *
+     * <p>This is used to make the Zobrist hash EP-aware only when a capture is actually legal,
+     * which avoids false non-repetitions in threefold-repetition detection.</p>
+     */
+    private boolean isEnPassantCapturePossible(int capturingColor) {
+        if (epTargetSquare < 0) return false;
+        // The pawn that was double-pushed is one step away from the EP target square,
+        // in the direction opposite to the capturing side's pawn advance.
+        //   White captures (black pushed): moved pawn is at epTarget + 8 (one "down" in 0=a8 indexing)
+        //   Black captures (white pushed): moved pawn is at epTarget - 8 (one "up")
+        int movedPawnSquare = Piece.isWhite(capturingColor) ? epTargetSquare + 8 : epTargetSquare - 8;
+        int file = movedPawnSquare % 8;
+        if (file > 0) {
+            int piece = getPiece(movedPawnSquare - 1);
+            if (Piece.isColor(piece, capturingColor) && Piece.type(piece) == Piece.Pawn) return true;
+        }
+        if (file < 7) {
+            int piece = getPiece(movedPawnSquare + 1);
+            if (Piece.isColor(piece, capturingColor) && Piece.type(piece) == Piece.Pawn) return true;
+        }
+        return false;
     }
     
     private int castlingAvailabilityToInt() {
@@ -455,6 +485,11 @@ public class Board {
         int newEpTargetSquare = -1;
         int pieceOnTarget = movingPiece;
         
+        // Validate reaction before any state/hash mutations to avoid partial corruption on error
+        if (move.reaction != null && !Arrays.asList(reactionIds).contains(move.reaction)) {
+            throw new IllegalArgumentException("invalid move reaction : does not exist");
+        }
+        
         // Save undo information before modifying the board
         UnmakeInfo unmakeInfo = new UnmakeInfo(move, capturedPiece, capturedEPPiece, 
                 epTargetSquare, castlingAvailability, halfmoveClock, fullMoves);
@@ -466,10 +501,7 @@ public class Board {
         int oldCastlingRights = castlingAvailabilityToInt();
         
         if (move.reaction != null) {
-            if (!Arrays.asList(reactionIds).contains(move.reaction)) {
-                throw new IllegalArgumentException("invalid move reaction : does not exist");
-            } else {
-                switch (move.reaction) {
+            switch (move.reaction) {
                     case "castle-k" -> {
                         // Update hash for rook on start and end position
                         int rookSquare = move.startSquare + 3;
@@ -519,13 +551,20 @@ public class Board {
                     case "promote-q", "promote-r", "promote-b", "promote-n" ->
                             pieceOnTarget = getPromotionPieceForReaction(movingPiece, move.reaction);
                 }
-            }
         }
         
-        // Update hash for en passant file (remove old ep, then add new ep if present)
-        zobristHash ^= ZobristHash.getKeyForEnPassantFile(ZobristHash.getEPFileFromTargetSquare(epTargetSquare));
+        // Update hash for en passant file.
+        // Only include EP in the hash when a capture is actually legal (FIDE rule for position identity).
+        // Remove old EP hash contribution if one was present and capturable.
+        if (epTargetSquare >= 0 && isEnPassantCapturePossible(activeColor)) {
+            zobristHash ^= ZobristHash.getKeyForEnPassantFile(epTargetSquare % 8);
+        }
         epTargetSquare = newEpTargetSquare;
-        zobristHash ^= ZobristHash.getKeyForEnPassantFile(ZobristHash.getEPFileFromTargetSquare(epTargetSquare));
+        // Add new EP hash contribution only if the opponent can actually capture.
+        int opponentColor = Piece.isWhite(activeColor) ? Piece.Black : Piece.White;
+        if (newEpTargetSquare >= 0 && isEnPassantCapturePossible(opponentColor)) {
+            zobristHash ^= ZobristHash.getKeyForEnPassantFile(newEpTargetSquare % 8);
+        }
 
         // Clear captured piece if any
         if (capturedPiece != Piece.None) {
@@ -634,8 +673,15 @@ public class Board {
         // Update occupancy masks
         recomputeOccupancies();
         
-        // Recompute Zobrist hash after restoring state
-        zobristHash = recomputeZobristHash();
+        // Restore Zobrist hash in O(1) from history instead of full recomputation.
+        // zobristHistory contains the hash after each move; the second-to-last entry is
+        // the hash for the position we are restoring to.
+        if (zobristHistory.size() >= 2) {
+            zobristHash = zobristHistory.get(zobristHistory.size() - 2);
+        } else {
+            // Edge case (unmaking the very first move): fall back to full recomputation.
+            zobristHash = recomputeZobristHash();
+        }
         
         movesPlayed.remove(movesPlayed.size() - 1);
         boardStates.remove(boardStates.size() - 1);

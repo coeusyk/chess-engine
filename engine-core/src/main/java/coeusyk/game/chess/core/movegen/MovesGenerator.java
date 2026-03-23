@@ -10,6 +10,11 @@ import java.util.*;
 public class MovesGenerator {
     public static final int[] DirectionOffsets = { -8, 1, 8, -1, -9, -7, 9, 7 };
     public static int[][] SquaresToEdges = new int[64][8];  // Holds the number of squares to each edge from each square (for easier computation)
+    
+    // Knight move offsets and corresponding expected rank-distance for wrap-around validation.
+    private static final int[] KNIGHT_OFFSETS      = { -10, -17, -15, -6, 10, 17, 15,  6 };
+    private static final int[] KNIGHT_RANK_DISTANCE = {   1,   2,   2,  1,  1,  2,  2,  1 };
+    
     private final Board board;
 
     private final ArrayList<Move> possibleMoves = new ArrayList<>();
@@ -90,7 +95,7 @@ public class MovesGenerator {
         ArrayList<Move> colorSpecificMoves = new ArrayList<>();
 
         for (Move move : possibleMoves) {
-            if (Piece.isColor(board.getGrid()[move.startSquare], activeColor)) {
+            if (Piece.isColor(board.getPiece(move.startSquare), activeColor)) {
                 colorSpecificMoves.add(move);
             }
         }
@@ -282,17 +287,11 @@ public class MovesGenerator {
 
     // For knights:
     private void generateKnightMoves(int startSquare, int currentKnight) {
-        // Offsets with their allowed row shifts:
-        Map<Integer, Integer> offsetsWithRowMoves = new HashMap<>() {{
-           put(-10, 1); put(-17, 2); put(-15, 2); put(-6, 1);
-           put(10, 1); put(17, 2); put(15, 2); put(6, 1);
-        }};
+        // Adding the possible moves using precomputed static offset arrays:
+        for (int i = 0; i < KNIGHT_OFFSETS.length; i++) {
+            int targetSquare = startSquare + KNIGHT_OFFSETS[i];
 
-        // Adding the possible moves:
-        offsetsWithRowMoves.forEach((offset, rowMoves) -> {
-            int targetSquare = startSquare + offset;
-
-            if (Math.abs((startSquare / 8) - (targetSquare / 8)) == rowMoves) {
+            if (Math.abs((startSquare / 8) - (targetSquare / 8)) == KNIGHT_RANK_DISTANCE[i]) {
                 if (targetSquare >= 0 && targetSquare <= 63) {
                     int targetPiece = board.getPiece(targetSquare);
 
@@ -301,7 +300,7 @@ public class MovesGenerator {
                     }
                 }
             }
-        });
+        }
     }
 
     // For kings:
@@ -395,17 +394,12 @@ public class MovesGenerator {
             }
         }
 
-        // Knight attacks
-        Map<Integer, Integer> knightOffsetsWithRowMoves = new HashMap<>() {{
-            put(-10, 1); put(-17, 2); put(-15, 2); put(-6, 1);
-            put(10, 1); put(17, 2); put(15, 2); put(6, 1);
-        }};
-
-        for (Map.Entry<Integer, Integer> entry : knightOffsetsWithRowMoves.entrySet()) {
-            int sourceSquare = square + entry.getKey();
+        // Knight attacks – use static arrays to avoid per-call allocation
+        for (int i = 0; i < KNIGHT_OFFSETS.length; i++) {
+            int sourceSquare = square + KNIGHT_OFFSETS[i];
             if (sourceSquare < 0 || sourceSquare > 63) continue;
 
-            if (Math.abs((sourceSquare / 8) - (square / 8)) != entry.getValue()) continue;
+            if (Math.abs((sourceSquare / 8) - (square / 8)) != KNIGHT_RANK_DISTANCE[i]) continue;
 
             int piece = board.getPiece(sourceSquare);
             if (Piece.isColor(piece, attackerColor) && Piece.type(piece) == Piece.Knight) {
