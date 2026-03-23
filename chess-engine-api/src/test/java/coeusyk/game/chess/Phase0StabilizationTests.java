@@ -2,7 +2,6 @@ package coeusyk.game.chess;
 
 import coeusyk.game.chess.core.bitboard.BitboardPosition;
 import coeusyk.game.chess.core.models.Board;
-import coeusyk.game.chess.core.models.Piece;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
