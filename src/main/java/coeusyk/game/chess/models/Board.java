@@ -36,6 +36,15 @@ public class Board {
         initWithFEN(fenString);
     }
 
+    public Board(Board other) {
+        System.arraycopy(other.grid, 0, this.grid, 0, 64);
+        this.activeColor = other.activeColor;
+        System.arraycopy(other.castlingAvailability, 0, this.castlingAvailability, 0, 4);
+        this.epTargetSquare = other.epTargetSquare;
+        this.halfmoveClock = other.halfmoveClock;
+        this.fullMoves = other.fullMoves;
+    }
+
     private void initWithFEN(String fenString) {
         String[] fenFields = fenString.split(" ");
 
@@ -125,44 +134,53 @@ public class Board {
 
     // Move to make after list of moves are sent to the client and the move made is reported back to the server:
     public void makeMove(Move move) {
-        if (move.reaction == null && Piece.type(grid[move.startSquare])) {
-            return;
-        }
+        int movingPiece = grid[move.startSquare];
 
-        else if (!Arrays.asList(reactionIds).contains(move.reaction)) {
-            throw new IllegalArgumentException("invalid move reaction : does not exist");
-        }
+        // Reset ep target square by default; "ep-target" reaction will set it again if needed:
+        epTargetSquare = 0;
 
-        switch (move.reaction) {
-            case "castle-k" -> castlingReaction(move.startSquare + 3);
-            case "castle-q" -> castlingReaction(move.startSquare - 4);
-
-            case "en-passant" -> {
-                if (Piece.isWhite(grid[move.startSquare])) {
-                    grid[move.targetSquare + 8] = Piece.None;
-                } else {
-                    grid[move.targetSquare - 8] = Piece.None;
-                }
+        if (move.reaction != null) {
+            if (!Arrays.asList(reactionIds).contains(move.reaction)) {
+                throw new IllegalArgumentException("invalid move reaction : does not exist");
             }
 
-            case "ep-target" -> {
-                if (Piece.isWhite(grid[move.startSquare])) {
-                    epTargetSquare = move.targetSquare + 8;
-                } else {
-                    epTargetSquare = move.targetSquare - 8;
+            switch (move.reaction) {
+                case "castle-k" -> castlingReaction(move.startSquare + 3);
+                case "castle-q" -> castlingReaction(move.startSquare - 4);
+
+                case "en-passant" -> {
+                    if (Piece.isWhite(movingPiece)) {
+                        grid[move.targetSquare + 8] = Piece.None;
+                    } else {
+                        grid[move.targetSquare - 8] = Piece.None;
+                    }
+                }
+
+                case "ep-target" -> {
+                    if (Piece.isWhite(movingPiece)) {
+                        epTargetSquare = move.targetSquare + 8;
+                    } else {
+                        epTargetSquare = move.targetSquare - 8;
+                    }
                 }
             }
         }
 
         // Changing the active color after the move is made:
-        if (Piece.isWhite(grid[move.startSquare])) {
-            activeColor = Piece.Black;
-        } else {
-            activeColor = Piece.White;
-        }
+        activeColor = Piece.isWhite(movingPiece) ? Piece.Black : Piece.White;
 
-        grid[move.targetSquare] = grid[move.startSquare];
+        grid[move.targetSquare] = movingPiece;
         grid[move.startSquare] = Piece.None;
+
+        // Pawn promotion: auto-promote to queen on the back rank:
+        int targetRank = move.targetSquare / 8;
+        if (Piece.type(movingPiece) == Piece.Pawn) {
+            if (Piece.isWhite(movingPiece) && targetRank == 0) {
+                grid[move.targetSquare] = Piece.White | Piece.Queen;
+            } else if (Piece.isBlack(movingPiece) && targetRank == 7) {
+                grid[move.targetSquare] = Piece.Black | Piece.Queen;
+            }
+        }
 
         movesPlayed.add(move);
     }

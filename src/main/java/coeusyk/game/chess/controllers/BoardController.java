@@ -54,4 +54,13 @@ public class BoardController {
 
         return new ResponseContainer(false);
     }
+
+    @GetMapping("/best-move")
+    public SearchResult getBestMove(@RequestParam(defaultValue = "3") int depth) {
+        if (depth < 1) depth = 1;
+        if (depth > 10) depth = 10;
+        Search search = new Search();
+        Move bestMove = search.findBestMove(board, depth);
+        return new SearchResult(bestMove, search.getNodes(), search.getQNodes());
+    }
 }
