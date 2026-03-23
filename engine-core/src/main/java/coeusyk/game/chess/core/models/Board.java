@@ -475,11 +475,6 @@ public class Board {
                         // Update hash for rook on new position
                         zobristHash ^= ZobristHash.getKeyForPieceSquare(rookPiece, rookSquare - 2);
                         
-                        if (Piece.isWhite(movingPiece)) {
-                            castlingAvailability[0] = false;
-                        } else {
-                            castlingAvailability[2] = false;
-                        }
                     }
 
                     case "castle-q" -> {
@@ -493,11 +488,6 @@ public class Board {
                         // Update hash for rook on new position
                         zobristHash ^= ZobristHash.getKeyForPieceSquare(rookPiece, rookSquare + 3);
                         
-                        if (Piece.isWhite(movingPiece)) {
-                            castlingAvailability[1] = false;
-                        } else {
-                            castlingAvailability[3] = false;
-                        }
                     }
 
                     case "en-passant" -> {
@@ -540,6 +530,8 @@ public class Board {
         // Place piece at target square
         zobristHash ^= ZobristHash.getKeyForPieceSquare(movingPiece, move.targetSquare);
         setBit(move.targetSquare, movingPiece);
+
+        updateCastlingAvailabilityForMove(movingPiece, move.startSquare, capturedPiece, move.targetSquare);
 
         // Changing the active color after the move is made:
         if (Piece.isWhite(activeColor)) {
@@ -655,6 +647,38 @@ public class Board {
             } else {
                 clearBit(rookSquare - 2, rook);
                 setBit(rookSquare, rook);
+            }
+        }
+    }
+
+    private void updateCastlingAvailabilityForMove(int movingPiece, int startSquare, int capturedPiece, int targetSquare) {
+        if (Piece.type(movingPiece) == Piece.King) {
+            if (Piece.isWhite(movingPiece)) {
+                castlingAvailability[0] = false;
+                castlingAvailability[1] = false;
+            } else {
+                castlingAvailability[2] = false;
+                castlingAvailability[3] = false;
+            }
+        }
+
+        if (Piece.type(movingPiece) == Piece.Rook) {
+            if (Piece.isWhite(movingPiece)) {
+                if (startSquare == 63) castlingAvailability[0] = false;
+                if (startSquare == 56) castlingAvailability[1] = false;
+            } else {
+                if (startSquare == 7) castlingAvailability[2] = false;
+                if (startSquare == 0) castlingAvailability[3] = false;
+            }
+        }
+
+        if (capturedPiece != Piece.None && Piece.type(capturedPiece) == Piece.Rook) {
+            if (Piece.isWhite(capturedPiece)) {
+                if (targetSquare == 63) castlingAvailability[0] = false;
+                if (targetSquare == 56) castlingAvailability[1] = false;
+            } else {
+                if (targetSquare == 7) castlingAvailability[2] = false;
+                if (targetSquare == 0) castlingAvailability[3] = false;
             }
         }
     }

@@ -284,6 +284,7 @@ public class MovesGenerator {
     private void generateKingMoves(int startSquare, int currentKing) {
         // So that the king moves don't go through the board from one side to the other (depending on how far a king is from the edge):
         int[] kingSquaresToEdges = SquaresToEdges[startSquare];
+        int opponentColor = Piece.isWhite(currentKing) ? Piece.Black : Piece.White;
 
         // Natural moves:
         for (int direction = 0; direction < DirectionOffsets.length; direction++) {
@@ -306,27 +307,121 @@ public class MovesGenerator {
                 Arrays.copyOfRange(castlingAvailability, 0, 2) :
                 Arrays.copyOfRange(castlingAvailability, 2, castlingAvailability.length);
 
-        // For king side castling:
-        if (kingSpecificCA[0]) {
-            int targetSquareKS = startSquare + 2;
-            int targetPieceKS = board.getPiece(targetSquareKS);
+        boolean kingOnHomeSquare = (Piece.isWhite(currentKing) && startSquare == 60)
+                || (Piece.isBlack(currentKing) && startSquare == 4);
 
-            if (targetPieceKS == Piece.None) {
-                possibleMoves.add(new Move(startSquare, targetSquareKS, "castle-k"));
+        // For king side castling:
+        if (kingOnHomeSquare && kingSpecificCA[0]) {
+            int rookSquare = startSquare + 3;
+            int throughSquare = startSquare + 1;
+            int targetSquare = startSquare + 2;
+
+            int expectedRook = Piece.isWhite(currentKing)
+                    ? (Piece.White | Piece.Rook)
+                    : (Piece.Black | Piece.Rook);
+
+            if (board.getPiece(rookSquare) == expectedRook
+                    && board.getPiece(throughSquare) == Piece.None
+                    && board.getPiece(targetSquare) == Piece.None
+                    && !isSquareAttacked(startSquare, opponentColor)
+                    && !isSquareAttacked(throughSquare, opponentColor)
+                    && !isSquareAttacked(targetSquare, opponentColor)) {
+                possibleMoves.add(new Move(startSquare, targetSquare, "castle-k"));
             }
         }
 
         // For queen side castling:
-        if (kingSpecificCA[1]) {
-            int targetSquareQS = startSquare - 2;
-            int targetPieceQS = board.getPiece(targetSquareQS);
+        if (kingOnHomeSquare && kingSpecificCA[1]) {
+            int rookSquare = startSquare - 4;
+            int throughSquare = startSquare - 1;
+            int targetSquare = startSquare - 2;
+            int rookSideSquare = startSquare - 3;
 
-            int QSRookOffsetSquare = startSquare - 3;  // The square beside the queen side rook (to check if there's a piece blocking the way)
-            int QSRookOffsetPiece = board.getPiece(QSRookOffsetSquare);
+            int expectedRook = Piece.isWhite(currentKing)
+                    ? (Piece.White | Piece.Rook)
+                    : (Piece.Black | Piece.Rook);
 
-            if (targetPieceQS == Piece.None && QSRookOffsetPiece == Piece.None) {
-                possibleMoves.add(new Move(startSquare, QSRookOffsetSquare, "castle-q"));
+            if (board.getPiece(rookSquare) == expectedRook
+                    && board.getPiece(throughSquare) == Piece.None
+                    && board.getPiece(targetSquare) == Piece.None
+                    && board.getPiece(rookSideSquare) == Piece.None
+                    && !isSquareAttacked(startSquare, opponentColor)
+                    && !isSquareAttacked(throughSquare, opponentColor)
+                    && !isSquareAttacked(targetSquare, opponentColor)) {
+                possibleMoves.add(new Move(startSquare, targetSquare, "castle-q"));
             }
         }
+    }
+
+    private boolean isSquareAttacked(int square, int attackerColor) {
+        // Pawn attacks
+        int[] pawnAttackSourceOffsets = Piece.isWhite(attackerColor)
+                ? new int[] { 7, 9 }
+                : new int[] { -7, -9 };
+
+        for (int offset : pawnAttackSourceOffsets) {
+            int sourceSquare = square + offset;
+            if (sourceSquare < 0 || sourceSquare > 63) continue;
+
+            if (Math.abs((sourceSquare % 8) - (square % 8)) != 1) continue;
+
+            int piece = board.getPiece(sourceSquare);
+            if (Piece.isColor(piece, attackerColor) && Piece.type(piece) == Piece.Pawn) {
+                return true;
+            }
+        }
+
+        // Knight attacks
+        Map<Integer, Integer> knightOffsetsWithRowMoves = new HashMap<>() {{
+            put(-10, 1); put(-17, 2); put(-15, 2); put(-6, 1);
+            put(10, 1); put(17, 2); put(15, 2); put(6, 1);
+        }};
+
+        for (Map.Entry<Integer, Integer> entry : knightOffsetsWithRowMoves.entrySet()) {
+            int sourceSquare = square + entry.getKey();
+            if (sourceSquare < 0 || sourceSquare > 63) continue;
+
+            if (Math.abs((sourceSquare / 8) - (square / 8)) != entry.getValue()) continue;
+
+            int piece = board.getPiece(sourceSquare);
+            if (Piece.isColor(piece, attackerColor) && Piece.type(piece) == Piece.Knight) {
+                return true;
+            }
+        }
+
+        // Sliding attacks (rook/queen orthogonal, bishop/queen diagonal)
+        for (int direction = 0; direction < DirectionOffsets.length; direction++) {
+            for (int distance = 0; distance < SquaresToEdges[square][direction]; distance++) {
+                int sourceSquare = square + DirectionOffsets[direction] * (distance + 1);
+                int piece = board.getPiece(sourceSquare);
+
+                if (piece == Piece.None) continue;
+                if (!Piece.isColor(piece, attackerColor)) break;
+
+                int type = Piece.type(piece);
+                boolean orthogonalDirection = direction <= 3;
+
+                if ((orthogonalDirection && (type == Piece.Rook || type == Piece.Queen))
+                        || (!orthogonalDirection && (type == Piece.Bishop || type == Piece.Queen))) {
+                    return true;
+                }
+
+                break;
+            }
+        }
+
+        // King attacks
+        for (int direction = 0; direction < DirectionOffsets.length; direction++) {
+            if (SquaresToEdges[square][direction] <= 0) continue;
+
+            int sourceSquare = square + DirectionOffsets[direction];
+            int piece = board.getPiece(sourceSquare);
+
+            if (Piece.isColor(piece, attackerColor) && Piece.type(piece) == Piece.King) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
