@@ -18,6 +18,9 @@ public class Searcher {
     private long leafNodes;
     private long quiescenceNodes;
 
+    private Move[][] pvTable;
+    private int[] pvLength;
+
     private boolean aborted;
 
     public SearchResult searchDepth(Board board, int depth) {
@@ -36,6 +39,7 @@ public class Searcher {
         Move previousBestMove = null;
         int bestScore = 0;
         int depthReached = 0;
+        List<Move> bestPrincipalVariation = List.of();
         long totalNodes = 0;
         long totalLeafNodes = 0;
         long totalQuiescenceNodes = 0;
@@ -51,6 +55,8 @@ public class Searcher {
             nodesVisited = 0;
             leafNodes = 0;
             quiescenceNodes = 0;
+            pvTable = new Move[depth + 4][depth + 4];
+            pvLength = new int[depth + 4];
 
             RootResult iteration = searchRoot(board, depth, previousBestMove, shouldAbort);
 
@@ -66,6 +72,7 @@ public class Searcher {
             previousBestMove = iteration.bestMove;
             bestScore = iteration.bestScore;
             depthReached = depth;
+            bestPrincipalVariation = iteration.principalVariation;
 
             if (iteration.aborted) {
                 aborted = true;
@@ -77,6 +84,7 @@ public class Searcher {
             previousBestMove,
             bestScore,
             depthReached,
+            bestPrincipalVariation,
             totalNodes,
             totalLeafNodes,
             totalQuiescenceNodes,
@@ -90,7 +98,7 @@ public class Searcher {
 
         if (moves.isEmpty()) {
             int terminalScore = evaluateTerminal(board, 0);
-            return new RootResult(null, terminalScore, false);
+            return new RootResult(null, terminalScore, List.of(), false);
         }
 
         prioritizeMove(moves, preferredMove);
@@ -99,10 +107,11 @@ public class Searcher {
         int bestScore = -INF;
         int alpha = -INF;
         int beta = INF;
+        pvLength[0] = 0;
 
         for (Move move : moves) {
             if (shouldAbort.getAsBoolean()) {
-                return new RootResult(bestMove, bestScore, true);
+                return new RootResult(bestMove, bestScore, buildPrincipalVariation(), true);
             }
 
             board.makeMove(move);
@@ -110,12 +119,19 @@ public class Searcher {
             board.unmakeMove();
 
             if (aborted) {
-                return new RootResult(bestMove, bestScore, true);
+                return new RootResult(bestMove, bestScore, buildPrincipalVariation(), true);
             }
 
             if (score > bestScore || bestMove == null) {
                 bestScore = score;
                 bestMove = move;
+
+                pvTable[0][0] = move;
+                int childPvLength = pvLength[1];
+                for (int i = 0; i < childPvLength; i++) {
+                    pvTable[0][i + 1] = pvTable[1][i];
+                }
+                pvLength[0] = 1 + childPvLength;
             }
 
             if (score > alpha) {
@@ -123,7 +139,7 @@ public class Searcher {
             }
         }
 
-        return new RootResult(bestMove, bestScore, false);
+        return new RootResult(bestMove, bestScore, buildPrincipalVariation(), false);
     }
 
     private int alphaBeta(
@@ -134,6 +150,8 @@ public class Searcher {
             int beta,
             BooleanSupplier shouldAbort
     ) {
+        pvLength[ply] = 0;
+
         if (shouldAbort.getAsBoolean()) {
             aborted = true;
             return alpha;
@@ -165,6 +183,13 @@ public class Searcher {
 
             if (score > bestScore) {
                 bestScore = score;
+
+                pvTable[ply][0] = move;
+                int childPvLength = pvLength[ply + 1];
+                for (int i = 0; i < childPvLength; i++) {
+                    pvTable[ply][i + 1] = pvTable[ply + 1][i];
+                }
+                pvLength[ply] = 1 + childPvLength;
             }
 
             if (score > alpha) {
@@ -320,6 +345,18 @@ public class Searcher {
         return a.reaction.equals(b.reaction);
     }
 
-    private record RootResult(Move bestMove, int bestScore, boolean aborted) {
+    private List<Move> buildPrincipalVariation() {
+        if (pvLength[0] <= 0) {
+            return List.of();
+        }
+
+        List<Move> line = new ArrayList<>(pvLength[0]);
+        for (int i = 0; i < pvLength[0]; i++) {
+            line.add(pvTable[0][i]);
+        }
+        return List.copyOf(line);
+    }
+
+    private record RootResult(Move bestMove, int bestScore, List<Move> principalVariation, boolean aborted) {
     }
 }

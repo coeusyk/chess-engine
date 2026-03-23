@@ -53,6 +53,10 @@ class SearcherTest {
         assertNotNull(idRunTwo.bestMove());
         assertEquals(idRunOne.depthReached(), idRunTwo.depthReached());
         assertMoveEquals(idRunOne.bestMove(), idRunTwo.bestMove());
+        assertEquals(idRunOne.principalVariation().size(), idRunTwo.principalVariation().size());
+        for (int i = 0; i < idRunOne.principalVariation().size(); i++) {
+            assertMoveEquals(idRunOne.principalVariation().get(i), idRunTwo.principalVariation().get(i));
+        }
     }
 
     @Test
@@ -76,6 +80,19 @@ class SearcherTest {
         assertNotNull(result.bestMove());
         assertEquals(34, result.bestMove().startSquare);
         assertEquals(28, result.bestMove().targetSquare);
+    }
+
+    @Test
+    void principalVariationIsPresentAndBoundedByDepth() {
+        Board board = new Board("r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/2N5/PPPP1PPP/R1BQK1NR b KQkq - 2 3");
+        Searcher searcher = new Searcher();
+
+        SearchResult result = searcher.searchDepth(board, 4);
+
+        assertNotNull(result.bestMove());
+        assertFalse(result.principalVariation().isEmpty());
+        assertTrue(result.principalVariation().size() <= result.depthReached());
+        assertMoveEquals(result.bestMove(), result.principalVariation().get(0));
     }
 
     private int bruteForceNegamax(Board board, int depth, NodeCounter counter) {
