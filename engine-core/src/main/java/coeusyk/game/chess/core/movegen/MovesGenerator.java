@@ -233,18 +233,15 @@ public class MovesGenerator {
 
             // En passant square check:
             if (targetSquare == board.getEpTargetSquare()) {
-                int epPawnSquare;
-                if (board.getEpTargetSquare() % 3 == 2) {
-                    epPawnSquare = targetSquare + 8;
-                } else {
-                    epPawnSquare = targetSquare - 8;
-                }
+                int epPawnSquare = Piece.isWhite(currentPawn)
+                        ? targetSquare + 8
+                        : targetSquare - 8;
 
                 // Obtaining the en-passant pawn (epPawn), and then adding the move only if the current pawn and the
                 // epPawn are of opposite colors:
                 int epPawn = board.getPiece(epPawnSquare);
 
-                if (!Piece.isColor(epPawn, currentPawn)) {
+                if (Piece.type(epPawn) == Piece.Pawn && !Piece.isColor(epPawn, currentPawn)) {
                     possibleMoves.add(new Move(startSquare, targetSquare, "en-passant"));
                 }
             }

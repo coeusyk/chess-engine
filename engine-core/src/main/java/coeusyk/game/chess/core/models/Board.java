@@ -182,12 +182,9 @@ public class Board {
         if (!boardInformation[2].equals("-")) {
             checkEPTargetSquare(boardInformation[2]);
 
-            int baseFileAscii = 'a';
-            int fileAscii = boardInformation[2].charAt(0);
-
-            int eptsRank = Character.getNumericValue(boardInformation[2].charAt(1));
-
-            epTargetSquare = (8 * (eptsRank - 1)) + (fileAscii - baseFileAscii) + 1;
+            int file = boardInformation[2].charAt(0) - 'a';
+            int rank = Character.getNumericValue(boardInformation[2].charAt(1));
+            epTargetSquare = (8 - rank) * 8 + file;
         }
 
         // Initializing the Halfmove Clock:
@@ -448,6 +445,7 @@ public class Board {
         int capturedPiece = getPiece(move.targetSquare);
         int capturedEPPiece = Piece.None;
         boolean isCapture = capturedPiece != Piece.None;
+        int newEpTargetSquare = -1;
         
         // Save undo information before modifying the board
         UnmakeInfo unmakeInfo = new UnmakeInfo(move, capturedPiece, capturedEPPiece, 
@@ -504,18 +502,19 @@ public class Board {
 
                     case "ep-target" -> {
                         if (Piece.isWhite(movingPiece)) {
-                            epTargetSquare = move.targetSquare + 8;
+                            newEpTargetSquare = move.targetSquare + 8;
                         } else {
-                            epTargetSquare = move.targetSquare - 8;
+                            newEpTargetSquare = move.targetSquare - 8;
                         }
                     }
                 }
             }
         }
         
-        // Update hash for en passant file
+        // Update hash for en passant file (remove old ep, then add new ep if present)
         zobristHash ^= ZobristHash.getKeyForEnPassantFile(ZobristHash.getEPFileFromTargetSquare(epTargetSquare));
-        epTargetSquare = -1;  // Clear en passant square after the move (might be set above for ep-target reaction)
+        epTargetSquare = newEpTargetSquare;
+        zobristHash ^= ZobristHash.getKeyForEnPassantFile(ZobristHash.getEPFileFromTargetSquare(epTargetSquare));
 
         // Clear captured piece if any
         if (capturedPiece != Piece.None) {
@@ -689,7 +688,7 @@ public class Board {
             throw new IllegalArgumentException("invalid square : index out of bounds");
         }
 
-        int rank = (square / 8) + 1;
+        int rank = 8 - (square / 8);
         char file = (char) (97 + (square % 8));
 
         return String.format("%s%d", file, rank);
