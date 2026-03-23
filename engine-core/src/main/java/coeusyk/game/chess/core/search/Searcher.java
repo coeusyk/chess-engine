@@ -11,6 +11,11 @@ import java.util.List;
 import java.util.function.BooleanSupplier;
 
 public class Searcher {
+    @FunctionalInterface
+    public interface IterationListener {
+        void onIteration(int depth, int scoreCp, Move bestMove);
+    }
+
     private static final int INF = 1_000_000;
     private static final int MATE_SCORE = 100_000;
     private static final int MAX_PLY = 128;
@@ -61,20 +66,35 @@ public class Searcher {
     }
 
     public SearchResult iterativeDeepening(Board board, int maxDepth, BooleanSupplier shouldAbort) {
-        return iterativeDeepening(board, maxDepth, shouldAbort, shouldAbort);
+        return iterativeDeepening(board, maxDepth, shouldAbort, shouldAbort, null);
     }
 
     public SearchResult searchWithTimeManager(Board board, int maxDepth, TimeManager timeManager) {
         timeManager.startNow();
-        return iterativeDeepening(board, maxDepth, timeManager::shouldStopSoft, timeManager::shouldStopHard);
+        return iterativeDeepening(board, maxDepth, timeManager::shouldStopSoft, timeManager::shouldStopHard, null);
     }
 
-    private SearchResult iterativeDeepening(
+    public SearchResult searchWithTimeManager(
+            Board board,
+            int maxDepth,
+            TimeManager timeManager,
+            BooleanSupplier externalStop,
+            IterationListener listener
+    ) {
+        timeManager.startNow();
+        BooleanSupplier softStop = () -> externalStop.getAsBoolean() || timeManager.shouldStopSoft();
+        BooleanSupplier hardStop = () -> externalStop.getAsBoolean() || timeManager.shouldStopHard();
+        return iterativeDeepening(board, maxDepth, softStop, hardStop, listener);
+    }
+
+    public SearchResult iterativeDeepening(
             Board board,
             int maxDepth,
             BooleanSupplier shouldStopSoft,
-            BooleanSupplier shouldStopHard
+            BooleanSupplier shouldStopHard,
+            IterationListener listener
     ) {
+        
         if (maxDepth < 1) {
             throw new IllegalArgumentException("depth must be >= 1");
         }
@@ -117,6 +137,10 @@ public class Searcher {
             bestScore = iteration.bestScore;
             depthReached = depth;
             bestPrincipalVariation = iteration.principalVariation;
+
+            if (listener != null && previousBestMove != null) {
+                listener.onIteration(depth, bestScore, previousBestMove);
+            }
 
             if (iteration.aborted) {
                 aborted = true;
