@@ -125,11 +125,9 @@ public class Board {
 
     // Move to make after list of moves are sent to the client and the move made is reported back to the server:
     public void makeMove(Move move) {
-        if (move.reaction == null && Piece.type(grid[move.startSquare])) {
+        if (move.reaction == null && Piece.type(grid[move.startSquare]) == Piece.None) {
             return;
-        }
-
-        else if (!Arrays.asList(reactionIds).contains(move.reaction)) {
+        } else if (move.reaction != null && !Arrays.asList(reactionIds).contains(move.reaction)) {
             throw new IllegalArgumentException("invalid move reaction : does not exist");
         }
 
