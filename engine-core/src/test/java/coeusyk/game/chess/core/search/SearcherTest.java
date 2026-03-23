@@ -44,10 +44,11 @@ class SearcherTest {
     void iterativeDeepeningConvergesDeterministically() {
         Board boardA = new Board("r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/2N5/PPPP1PPP/R1BQK1NR b KQkq - 2 3");
         Board boardB = new Board("r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/2N5/PPPP1PPP/R1BQK1NR b KQkq - 2 3");
-        Searcher searcher = new Searcher();
+        Searcher searcherOne = new Searcher();
+        Searcher searcherTwo = new Searcher();
 
-        SearchResult idRunOne = searcher.iterativeDeepening(boardA, 4, neverAbort());
-        SearchResult idRunTwo = searcher.iterativeDeepening(boardB, 4, neverAbort());
+        SearchResult idRunOne = searcherOne.iterativeDeepening(boardA, 4, neverAbort());
+        SearchResult idRunTwo = searcherTwo.iterativeDeepening(boardB, 4, neverAbort());
 
         assertNotNull(idRunOne.bestMove());
         assertNotNull(idRunTwo.bestMove());
@@ -93,6 +94,44 @@ class SearcherTest {
         assertFalse(result.principalVariation().isEmpty());
         assertTrue(result.principalVariation().size() <= result.depthReached());
         assertMoveEquals(result.bestMove(), result.principalVariation().get(0));
+    }
+
+    @Test
+    void moveOrderingReducesNodesComparedToDisabledOrdering() {
+        Board boardOrdered = new Board("r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/2N5/PPPP1PPP/R1BQK1NR b KQkq - 2 3");
+        Board boardUnordered = new Board("r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/2N5/PPPP1PPP/R1BQK1NR b KQkq - 2 3");
+
+        SearchResult ordered = new Searcher(true).searchDepth(boardOrdered, 4);
+        SearchResult unordered = new Searcher(false).searchDepth(boardUnordered, 4);
+
+        long orderedNodes = ordered.nodesVisited() + ordered.leafNodes() + ordered.quiescenceNodes();
+        long unorderedNodes = unordered.nodesVisited() + unordered.leafNodes() + unordered.quiescenceNodes();
+
+        assertTrue(orderedNodes <= unorderedNodes);
+    }
+
+    @Test
+    void ttMoveHintIsTriedFirstAtRoot() {
+        Board board = new Board();
+        Searcher searcher = new Searcher(true);
+        Move ttHint = findMove(board, 52, 36); // e2e4 (ep-target reaction)
+        searcher.setRootTtMoveHintForTesting(ttHint);
+
+        SearchResult result = searcher.searchDepth(board, 1);
+
+        assertNotNull(result.bestMove());
+        assertMoveEquals(ttHint, result.bestMove());
+    }
+
+    private Move findMove(Board board, int startSquare, int targetSquare) {
+        List<Move> moves = new MovesGenerator(board).getActiveMoves(board.getActiveColor());
+        for (Move move : moves) {
+            if (move.startSquare == startSquare && move.targetSquare == targetSquare) {
+                return move;
+            }
+        }
+        fail("Expected legal move not found");
+        return null;
     }
 
     private int bruteForceNegamax(Board board, int depth, NodeCounter counter) {

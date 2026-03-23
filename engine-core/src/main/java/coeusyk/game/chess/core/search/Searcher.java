@@ -13,6 +13,7 @@ import java.util.function.BooleanSupplier;
 public class Searcher {
     private static final int INF = 1_000_000;
     private static final int MATE_SCORE = 100_000;
+    private static final int MAX_PLY = 128;
 
     private long nodesVisited;
     private long leafNodes;
@@ -21,7 +22,26 @@ public class Searcher {
     private Move[][] pvTable;
     private int[] pvLength;
 
+    private final boolean moveOrderingEnabled;
+    private final MoveOrderer moveOrderer = new MoveOrderer();
+    private final Move[][] killerMoves = new Move[MAX_PLY][2];
+    private final int[][] historyHeuristic = new int[7][64];
+
+    private Move rootTtMoveHint;
+
     private boolean aborted;
+
+    public Searcher() {
+        this(true);
+    }
+
+    public Searcher(boolean moveOrderingEnabled) {
+        this.moveOrderingEnabled = moveOrderingEnabled;
+    }
+
+    public void setRootTtMoveHintForTesting(Move rootTtMoveHint) {
+        this.rootTtMoveHint = rootTtMoveHint;
+    }
 
     public SearchResult searchDepth(Board board, int depth) {
         return iterativeDeepening(board, depth, () -> false);
@@ -102,6 +122,10 @@ public class Searcher {
         }
 
         prioritizeMove(moves, preferredMove);
+        if (moveOrderingEnabled) {
+            Move ttMove = (rootTtMoveHint != null) ? rootTtMoveHint : preferredMove;
+            moves = moveOrderer.orderMoves(board, moves, 0, ttMove, killerMoves, historyHeuristic);
+        }
 
         Move bestMove = null;
         int bestScore = -INF;
@@ -165,6 +189,9 @@ public class Searcher {
 
         MovesGenerator generator = new MovesGenerator(board);
         List<Move> moves = generator.getActiveMoves(board.getActiveColor());
+        if (moveOrderingEnabled) {
+            moves = moveOrderer.orderMoves(board, moves, ply, null, killerMoves, historyHeuristic);
+        }
 
         if (moves.isEmpty()) {
             leafNodes++;
@@ -197,6 +224,10 @@ public class Searcher {
             }
 
             if (alpha >= beta) {
+                if (moveOrderingEnabled && isQuietMove(board, move)) {
+                    storeKillerMove(ply, move);
+                    updateHistory(move, board, depth);
+                }
                 break;
             }
         }
@@ -331,6 +362,40 @@ public class Searcher {
         boolean isEnPassant = "en-passant".equals(move.reaction);
         boolean isCapture = isEnPassant || board.getPiece(move.targetSquare) != Piece.None;
         return isCapture || isQueenPromotion;
+    }
+
+    private boolean isQuietMove(Board board, Move move) {
+        if (moveOrderer.isCapture(board, move)) {
+            return false;
+        }
+
+        return !isPromotion(move.reaction);
+    }
+
+    private boolean isPromotion(String reaction) {
+        return "promote-q".equals(reaction)
+                || "promote-r".equals(reaction)
+                || "promote-b".equals(reaction)
+                || "promote-n".equals(reaction);
+    }
+
+    private void storeKillerMove(int ply, Move move) {
+        if (killerMoves[ply][0] != null && sameMove(killerMoves[ply][0], move)) {
+            return;
+        }
+
+        killerMoves[ply][1] = killerMoves[ply][0];
+        killerMoves[ply][0] = new Move(move.startSquare, move.targetSquare, move.reaction);
+    }
+
+    private void updateHistory(Move move, Board board, int depth) {
+        int movingPiece = board.getPiece(move.startSquare);
+        int pieceType = Piece.type(movingPiece);
+        if (pieceType <= 0 || pieceType >= historyHeuristic.length) {
+            return;
+        }
+
+        historyHeuristic[pieceType][move.targetSquare] += depth * depth;
     }
 
     private boolean sameMove(Move a, Move b) {
