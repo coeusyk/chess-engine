@@ -645,23 +645,25 @@ public class Board {
     }
     
     private void castlingReaction(int rookSquare, boolean reverse) {
-        int rook = getPiece(rookSquare);
-        
         if (rookSquare % 8 == 0) {
             // Queen-side castling:
             if (!reverse) {
+                int rook = getPiece(rookSquare);
                 clearBit(rookSquare, rook);
                 setBit(rookSquare + 3, rook);
             } else {
+                int rook = getPiece(rookSquare + 3);
                 clearBit(rookSquare + 3, rook);
                 setBit(rookSquare, rook);
             }
         } else {
             // King-side castling:
             if (!reverse) {
+                int rook = getPiece(rookSquare);
                 clearBit(rookSquare, rook);
                 setBit(rookSquare - 2, rook);
             } else {
+                int rook = getPiece(rookSquare - 2);
                 clearBit(rookSquare - 2, rook);
                 setBit(rookSquare, rook);
             }
