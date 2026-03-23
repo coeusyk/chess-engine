@@ -61,6 +61,20 @@ public class Searcher {
     }
 
     public SearchResult iterativeDeepening(Board board, int maxDepth, BooleanSupplier shouldAbort) {
+        return iterativeDeepening(board, maxDepth, shouldAbort, shouldAbort);
+    }
+
+    public SearchResult searchWithTimeManager(Board board, int maxDepth, TimeManager timeManager) {
+        timeManager.startNow();
+        return iterativeDeepening(board, maxDepth, timeManager::shouldStopSoft, timeManager::shouldStopHard);
+    }
+
+    private SearchResult iterativeDeepening(
+            Board board,
+            int maxDepth,
+            BooleanSupplier shouldStopSoft,
+            BooleanSupplier shouldStopHard
+    ) {
         if (maxDepth < 1) {
             throw new IllegalArgumentException("depth must be >= 1");
         }
@@ -77,7 +91,7 @@ public class Searcher {
         transpositionTable.resetStats();
 
         for (int depth = 1; depth <= maxDepth; depth++) {
-            if (shouldAbort.getAsBoolean()) {
+            if (shouldStopSoft.getAsBoolean()) {
                 aborted = true;
                 break;
             }
@@ -88,7 +102,7 @@ public class Searcher {
             pvTable = new Move[depth + 4][depth + 4];
             pvLength = new int[depth + 4];
 
-            RootResult iteration = searchRoot(board, depth, previousBestMove, shouldAbort);
+            RootResult iteration = searchRoot(board, depth, previousBestMove, shouldStopHard);
 
             totalNodes += nodesVisited;
             totalLeafNodes += leafNodes;
@@ -123,7 +137,7 @@ public class Searcher {
         );
     }
 
-    private RootResult searchRoot(Board board, int depth, Move preferredMove, BooleanSupplier shouldAbort) {
+    private RootResult searchRoot(Board board, int depth, Move preferredMove, BooleanSupplier shouldStopHard) {
         MovesGenerator generator = new MovesGenerator(board);
         List<Move> moves = new ArrayList<>(generator.getActiveMoves(board.getActiveColor()));
         TranspositionTable.Entry rootEntry = transpositionTable.probe(board.getZobristHash());
@@ -148,12 +162,12 @@ public class Searcher {
         pvLength[0] = 0;
 
         for (Move move : moves) {
-            if (shouldAbort.getAsBoolean()) {
+            if (shouldStopHard.getAsBoolean()) {
                 return new RootResult(bestMove, bestScore, buildPrincipalVariation(), true);
             }
 
             board.makeMove(move);
-            int score = -alphaBeta(board, depth - 1, 1, -beta, -alpha, shouldAbort);
+            int score = -alphaBeta(board, depth - 1, 1, -beta, -alpha, shouldStopHard);
             board.unmakeMove();
 
             if (aborted) {
@@ -186,17 +200,17 @@ public class Searcher {
             int ply,
             int alpha,
             int beta,
-            BooleanSupplier shouldAbort
+            BooleanSupplier shouldStopHard
     ) {
         pvLength[ply] = 0;
 
-        if (shouldAbort.getAsBoolean()) {
+        if (shouldStopHard.getAsBoolean()) {
             aborted = true;
             return alpha;
         }
 
         if (depth == 0) {
-            return quiescence(board, alpha, beta, ply, shouldAbort);
+            return quiescence(board, alpha, beta, ply, shouldStopHard);
         }
 
         long zobrist = board.getZobristHash();
@@ -225,7 +239,7 @@ public class Searcher {
         Move bestMove = null;
         for (Move move : moves) {
             board.makeMove(move);
-            int score = -alphaBeta(board, depth - 1, ply + 1, -beta, -alpha, shouldAbort);
+            int score = -alphaBeta(board, depth - 1, ply + 1, -beta, -alpha, shouldStopHard);
             board.unmakeMove();
 
             if (aborted) {
@@ -287,10 +301,10 @@ public class Searcher {
         return TTBound.EXACT;
     }
 
-    private int quiescence(Board board, int alpha, int beta, int ply, BooleanSupplier shouldAbort) {
+    private int quiescence(Board board, int alpha, int beta, int ply, BooleanSupplier shouldStopHard) {
         quiescenceNodes++;
 
-        if (shouldAbort.getAsBoolean()) {
+        if (shouldStopHard.getAsBoolean()) {
             aborted = true;
             return alpha;
         }
@@ -320,7 +334,7 @@ public class Searcher {
         int bestScore = standPat;
         for (Move move : qMoves) {
             board.makeMove(move);
-            int score = -quiescence(board, -beta, -alpha, ply + 1, shouldAbort);
+            int score = -quiescence(board, -beta, -alpha, ply + 1, shouldStopHard);
             board.unmakeMove();
 
             if (aborted) {
