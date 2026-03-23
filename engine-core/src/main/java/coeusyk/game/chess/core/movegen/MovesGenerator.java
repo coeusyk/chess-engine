@@ -192,10 +192,11 @@ public class MovesGenerator {
     private void generatePawnMoves(int startSquare, int currentPawn) {
         int naturalOffset;
         int numOfSquaresToCheck = 1;
+        boolean isWhitePawn = Piece.isWhite(currentPawn);
 
         int[] captureOffsets = new int[2];
 
-        if (Piece.isWhite(currentPawn)) {
+        if (isWhitePawn) {
             naturalOffset = -8;
             if ((startSquare / 8) == 6) {
                 numOfSquaresToCheck = 2;
@@ -219,7 +220,9 @@ public class MovesGenerator {
             // Breaking if the path is blocked by any piece:
             if (Piece.type(targetPiece) != Piece.None) break;
 
-            if (i == 0) {
+            if (i == 0 && isPromotionRank(targetSquare, currentPawn)) {
+                addPromotionMoves(startSquare, targetSquare);
+            } else if (i == 0) {
                 possibleMoves.add(new Move(startSquare, targetSquare));
             } else {
                 possibleMoves.add(new Move(startSquare, targetSquare, "ep-target"));
@@ -229,11 +232,19 @@ public class MovesGenerator {
         // Capturing moves:
         for (int offset : captureOffsets) {
             int targetSquare = startSquare + offset;
+            if (targetSquare < 0 || targetSquare > 63) {
+                continue;
+            }
+
+            if (Math.abs((startSquare % 8) - (targetSquare % 8)) != 1) {
+                continue;
+            }
+
             int targetPiece = board.getPiece(targetSquare);
 
             // En passant square check:
             if (targetSquare == board.getEpTargetSquare()) {
-                int epPawnSquare = Piece.isWhite(currentPawn)
+                int epPawnSquare = isWhitePawn
                         ? targetSquare + 8
                         : targetSquare - 8;
 
@@ -248,9 +259,25 @@ public class MovesGenerator {
 
             // Opponent pawn on capture square check:
             else if ((Piece.color(targetPiece) != 0) && (!Piece.isColor(currentPawn, targetPiece))) {
-                possibleMoves.add(new Move(startSquare, targetSquare));
+                if (isPromotionRank(targetSquare, currentPawn)) {
+                    addPromotionMoves(startSquare, targetSquare);
+                } else {
+                    possibleMoves.add(new Move(startSquare, targetSquare));
+                }
             }
         }
+    }
+
+    private boolean isPromotionRank(int square, int pawn) {
+        return (Piece.isWhite(pawn) && (square / 8) == 0)
+                || (Piece.isBlack(pawn) && (square / 8) == 7);
+    }
+
+    private void addPromotionMoves(int startSquare, int targetSquare) {
+        possibleMoves.add(new Move(startSquare, targetSquare, "promote-q"));
+        possibleMoves.add(new Move(startSquare, targetSquare, "promote-r"));
+        possibleMoves.add(new Move(startSquare, targetSquare, "promote-b"));
+        possibleMoves.add(new Move(startSquare, targetSquare, "promote-n"));
     }
 
     // For knights:

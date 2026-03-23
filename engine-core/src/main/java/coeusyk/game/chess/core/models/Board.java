@@ -53,7 +53,10 @@ public class Board {
     private long zobristHash;
 
     // Possible Move Reactions:
-    private final String[] reactionIds = { "castle-k", "castle-q", "en-passant", "ep-target" };
+    private final String[] reactionIds = {
+        "castle-k", "castle-q", "en-passant", "ep-target",
+        "promote-q", "promote-r", "promote-b", "promote-n"
+    };
 
     // Moves made until current position:
     public ArrayList<Move> movesPlayed = new ArrayList<>();
@@ -446,6 +449,7 @@ public class Board {
         int capturedEPPiece = Piece.None;
         boolean isCapture = capturedPiece != Piece.None;
         int newEpTargetSquare = -1;
+        int pieceOnTarget = movingPiece;
         
         // Save undo information before modifying the board
         UnmakeInfo unmakeInfo = new UnmakeInfo(move, capturedPiece, capturedEPPiece, 
@@ -507,6 +511,9 @@ public class Board {
                             newEpTargetSquare = move.targetSquare - 8;
                         }
                     }
+
+                    case "promote-q", "promote-r", "promote-b", "promote-n" ->
+                            pieceOnTarget = getPromotionPieceForReaction(movingPiece, move.reaction);
                 }
             }
         }
@@ -526,9 +533,9 @@ public class Board {
         zobristHash ^= ZobristHash.getKeyForPieceSquare(movingPiece, move.startSquare);
         clearBit(move.startSquare, movingPiece);
         
-        // Place piece at target square
-        zobristHash ^= ZobristHash.getKeyForPieceSquare(movingPiece, move.targetSquare);
-        setBit(move.targetSquare, movingPiece);
+        // Place piece at target square (promotion can change piece type)
+        zobristHash ^= ZobristHash.getKeyForPieceSquare(pieceOnTarget, move.targetSquare);
+        setBit(move.targetSquare, pieceOnTarget);
 
         updateCastlingAvailabilityForMove(movingPiece, move.startSquare, capturedPiece, move.targetSquare);
 
@@ -573,12 +580,15 @@ public class Board {
         UnmakeInfo undoInfo = unmakeStack.pop();
         Move move = undoInfo.move;
         int movingPiece = getPiece(move.targetSquare);
+        int pieceAtStartAfterUnmake = isPromotionReaction(move.reaction)
+            ? (Piece.color(movingPiece) | Piece.Pawn)
+            : movingPiece;
         
         // Remove piece from target square
         clearBit(move.targetSquare, movingPiece);
         
         // Place piece back at source square
-        setBit(move.startSquare, movingPiece);
+        setBit(move.startSquare, pieceAtStartAfterUnmake);
         
         // Restore captured piece if any
         if (undoInfo.capturedPiece != Piece.None) {
@@ -680,6 +690,24 @@ public class Board {
                 if (targetSquare == 0) castlingAvailability[3] = false;
             }
         }
+    }
+
+    private boolean isPromotionReaction(String reaction) {
+        return "promote-q".equals(reaction)
+                || "promote-r".equals(reaction)
+                || "promote-b".equals(reaction)
+                || "promote-n".equals(reaction);
+    }
+
+    private int getPromotionPieceForReaction(int pawnPiece, String reaction) {
+        int color = Piece.color(pawnPiece);
+        return switch (reaction) {
+            case "promote-q" -> color | Piece.Queen;
+            case "promote-r" -> color | Piece.Rook;
+            case "promote-b" -> color | Piece.Bishop;
+            case "promote-n" -> color | Piece.Knight;
+            default -> pawnPiece;
+        };
     }
 
     // Function for converting an index to a chess square notation (e5, d4, etc.):
