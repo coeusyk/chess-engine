@@ -6,6 +6,28 @@ import java.util.*;
 
 
 public class Board {
+    // Inner class to store move undo information for efficient unmake without FEN parsing
+    private static class UnmakeInfo {
+        int capturedPiece;              // Piece captured on target square (Piece.None if none)
+        int capturedEPPiece;            // For en passant: piece captured on EP square
+        int previousEpTargetSquare;     // En passant target square before the move
+        boolean[] previousCastlingRights; // Castling availability before the move
+        int previousHalfmoveClock;      // Halfmove clock before the move
+        int previousFullMoves;          // Full move counter before the move
+        Move move;                      // The move that was made
+
+        UnmakeInfo(Move move, int capturedPiece, int capturedEPPiece, int prevEP, 
+                   boolean[] prevCastling, int prevHalf, int prevFull) {
+            this.move = move;
+            this.capturedPiece = capturedPiece;
+            this.capturedEPPiece = capturedEPPiece;
+            this.previousEpTargetSquare = prevEP;
+            this.previousCastlingRights = prevCastling.clone();
+            this.previousHalfmoveClock = prevHalf;
+            this.previousFullMoves = prevFull;
+        }
+    }
+
     // Bitboard representation (12 piece types: 6 per color)
     private long whitePawns, whiteKnights, whiteBishops, whiteRooks, whiteQueens, whiteKing;
     private long blackPawns, blackKnights, blackBishops, blackRooks, blackQueens, blackKing;
@@ -32,6 +54,9 @@ public class Board {
     // Moves made until current position:
     public ArrayList<Move> movesPlayed = new ArrayList<>();
     public ArrayList<String> boardStates = new ArrayList<>();  // Storing the states of the board
+    
+    // Stack of move undo information for efficient unmake without FEN parsing
+    private Stack<UnmakeInfo> unmakeStack = new Stack<>();
 
     public Board() {
         initWithFEN(STARTING_FEN);
@@ -380,7 +405,12 @@ public class Board {
     public void makeMove(Move move) {
         int movingPiece = getPiece(move.startSquare);
         int capturedPiece = getPiece(move.targetSquare);
+        int capturedEPPiece = Piece.None;
         boolean isCapture = capturedPiece != Piece.None;
+        
+        // Save undo information before modifying the board
+        UnmakeInfo unmakeInfo = new UnmakeInfo(move, capturedPiece, capturedEPPiece, 
+                epTargetSquare, castlingAvailability, halfmoveClock, fullMoves);
         
         if (move.reaction != null) {
             if (!Arrays.asList(reactionIds).contains(move.reaction)) {
@@ -407,7 +437,8 @@ public class Board {
 
                     case "en-passant" -> {
                         int captureSquare = Piece.isWhite(movingPiece) ? move.targetSquare + 8 : move.targetSquare - 8;
-                        int capturedEPPiece = getPiece(captureSquare);
+                        capturedEPPiece = getPiece(captureSquare);
+                        unmakeInfo.capturedEPPiece = capturedEPPiece;
                         clearBit(captureSquare, capturedEPPiece);
                         isCapture = true;  // Mark as capture for halfmove clock
                     }
@@ -452,22 +483,70 @@ public class Board {
         // Update occupancy masks
         recomputeOccupancies();
         
+        // Push undo information
+        unmakeStack.push(unmakeInfo);
+        
         movesPlayed.add(move);
         boardStates.add(getCurrentFEN());
     }
 
-    // Reversing the latest move made:
+    // Reversing the latest move made using efficient bitboard operations:
     public void unmakeMove() {
-        if (movesPlayed.isEmpty()) {
+        if (movesPlayed.isEmpty() || unmakeStack.isEmpty()) {
             throw new IllegalStateException("tried to unmake move when no move was made yet");
         }
 
+        UnmakeInfo undoInfo = unmakeStack.pop();
+        Move move = undoInfo.move;
+        int movingPiece = getPiece(move.targetSquare);
+        
+        // Remove piece from target square
+        clearBit(move.targetSquare, movingPiece);
+        
+        // Place piece back at source square
+        setBit(move.startSquare, movingPiece);
+        
+        // Restore captured piece if any
+        if (undoInfo.capturedPiece != Piece.None) {
+            setBit(move.targetSquare, undoInfo.capturedPiece);
+        }
+        
+        // Handle special moves
+        if (move.reaction != null) {
+            switch (move.reaction) {
+                case "castle-k" -> {
+                    castlingReaction(move.startSquare + 3, true);
+                    castlingAvailability[Piece.isWhite(movingPiece) ? 0 : 2] = true;
+                }
+                
+                case "castle-q" -> {
+                    castlingReaction(move.startSquare - 4, true);
+                    castlingAvailability[Piece.isWhite(movingPiece) ? 1 : 3] = true;
+                }
+                
+                case "en-passant" -> {
+                    int captureSquare = Piece.isWhite(movingPiece) ? move.targetSquare + 8 : move.targetSquare - 8;
+                    setBit(captureSquare, undoInfo.capturedEPPiece);
+                }
+                
+                case "ep-target" -> {
+                    // Just restore the previous ep square (already handled below)
+                }
+            }
+        }
+        
+        // Restore game state
+        activeColor = Piece.isWhite(activeColor) ? Piece.Black : Piece.White;
+        epTargetSquare = undoInfo.previousEpTargetSquare;
+        halfmoveClock = undoInfo.previousHalfmoveClock;
+        fullMoves = undoInfo.previousFullMoves;
+        System.arraycopy(undoInfo.previousCastlingRights, 0, castlingAvailability, 0, 4);
+        
+        // Update occupancy masks
+        recomputeOccupancies();
+        
         movesPlayed.remove(movesPlayed.size() - 1);
         boardStates.remove(boardStates.size() - 1);
-
-        // Setting the board back to the previous state by re-setting the board based on previous state's FEN string:
-        String prevBoardState = boardStates.get(boardStates.size() - 1);
-        initWithFEN(prevBoardState);
     }
     
     private void castlingReaction(int rookSquare, boolean reverse) {
