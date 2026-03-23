@@ -62,6 +62,7 @@ public class Board {
     // Moves made until current position:
     public ArrayList<Move> movesPlayed = new ArrayList<>();
     public ArrayList<String> boardStates = new ArrayList<>();  // Storing the states of the board
+    private final ArrayList<Long> zobristHistory = new ArrayList<>();
     
     // Stack of move undo information for efficient unmake without FEN parsing
     private Stack<UnmakeInfo> unmakeStack = new Stack<>();
@@ -88,6 +89,7 @@ public class Board {
         whitePawns = whiteKnights = whiteBishops = whiteRooks = whiteQueens = whiteKing = 0L;
         blackPawns = blackKnights = blackBishops = blackRooks = blackQueens = blackKing = 0L;
         whiteOccupancy = blackOccupancy = allOccupancy = 0L;
+        zobristHistory.clear();
 
         String[] fenFields = fenString.split(" ");
 
@@ -204,6 +206,7 @@ public class Board {
         
         // Compute Zobrist hash for the initial position
         zobristHash = recomputeZobristHash();
+        zobristHistory.add(zobristHash);
     }
 
     // Function for obtaining the FEN string of the current position (for storing states of the board):
@@ -570,6 +573,7 @@ public class Board {
         
         movesPlayed.add(move);
         boardStates.add(getCurrentFEN());
+        zobristHistory.add(zobristHash);
     }
 
     // Reversing the latest move made using efficient bitboard operations:
@@ -635,6 +639,9 @@ public class Board {
         
         movesPlayed.remove(movesPlayed.size() - 1);
         boardStates.remove(boardStates.size() - 1);
+        if (!zobristHistory.isEmpty()) {
+            zobristHistory.remove(zobristHistory.size() - 1);
+        }
     }
     
     private void castlingReaction(int rookSquare, boolean reverse) {
@@ -751,6 +758,16 @@ public class Board {
         boolean inCheck = movesGenerator.isKingInCheck(getKingSquare(activeColor), activeColor)[0];
         boolean hasLegalMoves = !movesGenerator.getActiveMoves(activeColor).isEmpty();
         return !inCheck && !hasLegalMoves;
+    }
+
+    public boolean isThreefoldRepetition() {
+        int repetitions = 0;
+        for (long hash : zobristHistory) {
+            if (hash == zobristHash) {
+                repetitions++;
+            }
+        }
+        return repetitions >= 3;
     }
 
     // Getters and setters:
