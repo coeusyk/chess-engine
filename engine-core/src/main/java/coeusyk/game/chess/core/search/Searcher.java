@@ -94,10 +94,12 @@ public class Searcher {
             BooleanSupplier shouldStopHard,
             IterationListener listener
     ) {
-        
+
         if (maxDepth < 1) {
             throw new IllegalArgumentException("depth must be >= 1");
         }
+
+        int effectiveMaxDepth = Math.min(maxDepth, MAX_PLY - 1);
 
         Move previousBestMove = null;
         int bestScore = 0;
@@ -110,7 +112,7 @@ public class Searcher {
         aborted = false;
         transpositionTable.resetStats();
 
-        for (int depth = 1; depth <= maxDepth; depth++) {
+        for (int depth = 1; depth <= effectiveMaxDepth; depth++) {
             if (shouldStopSoft.getAsBoolean()) {
                 aborted = true;
                 break;
@@ -251,7 +253,8 @@ public class Searcher {
         List<Move> moves = generator.getActiveMoves(board.getActiveColor());
         if (moveOrderingEnabled) {
             Move ttMove = ttEntry != null ? ttEntry.bestMove() : null;
-            moves = moveOrderer.orderMoves(board, moves, ply, ttMove, killerMoves, historyHeuristic);
+            int orderPly = Math.min(ply, MAX_PLY - 1);
+            moves = moveOrderer.orderMoves(board, moves, orderPly, ttMove, killerMoves, historyHeuristic);
         }
 
         if (moves.isEmpty()) {
@@ -470,6 +473,10 @@ public class Searcher {
     }
 
     private void storeKillerMove(int ply, Move move) {
+        if (ply < 0 || ply >= MAX_PLY) {
+            return;
+        }
+
         if (killerMoves[ply][0] != null && sameMove(killerMoves[ply][0], move)) {
             return;
         }
@@ -482,6 +489,10 @@ public class Searcher {
         int movingPiece = board.getPiece(move.startSquare);
         int pieceType = Piece.type(movingPiece);
         if (pieceType <= 0 || pieceType >= historyHeuristic.length) {
+            return;
+        }
+
+        if (move.targetSquare < 0 || move.targetSquare >= historyHeuristic[pieceType].length) {
             return;
         }
 

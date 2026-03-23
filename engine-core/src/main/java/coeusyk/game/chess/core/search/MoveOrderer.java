@@ -5,7 +5,6 @@ import coeusyk.game.chess.core.models.Move;
 import coeusyk.game.chess.core.models.Piece;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 
 public class MoveOrderer {
@@ -32,8 +31,18 @@ public class MoveOrderer {
             Move[][] killerMoves,
             int[][] historyHeuristic
     ) {
-        List<Move> ordered = new ArrayList<>(moves);
-        ordered.sort(Comparator.comparingInt((Move m) -> scoreMove(board, m, ply, ttMove, killerMoves, historyHeuristic)).reversed());
+        List<ScoredMove> scoredMoves = new ArrayList<>(moves.size());
+        for (Move move : moves) {
+            int score = scoreMove(board, move, ply, ttMove, killerMoves, historyHeuristic);
+            scoredMoves.add(new ScoredMove(move, score));
+        }
+
+        scoredMoves.sort((a, b) -> Integer.compare(b.score(), a.score()));
+
+        List<Move> ordered = new ArrayList<>(moves.size());
+        for (ScoredMove scoredMove : scoredMoves) {
+            ordered.add(scoredMove.move());
+        }
         return ordered;
     }
 
@@ -99,5 +108,8 @@ public class MoveOrderer {
         }
 
         return a.reaction.equals(b.reaction);
+    }
+
+    private record ScoredMove(Move move, int score) {
     }
 }

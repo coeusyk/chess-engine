@@ -16,12 +16,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class UciApplication {
     private static final String ENGINE_NAME = "ChessEngine-UCI";
     private static final String ENGINE_AUTHOR = "coeusyk";
+    private static final int MAX_SEARCH_DEPTH = 127;
 
     private Board board = new Board();
 
     private final AtomicBoolean stopRequested = new AtomicBoolean(false);
     private volatile boolean searchRunning = false;
     private volatile Move latestIterativeBestMove;
+    private volatile Thread searchThread;
 
     public static void main(String[] args) throws IOException {
         new UciApplication().run();
@@ -55,7 +57,9 @@ public class UciApplication {
                 handleGo(line);
             } else if ("stop".equals(line)) {
                 stopRequested.set(true);
-                emitBestMove(latestIterativeBestMove);
+                if (!searchRunning) {
+                    emitBestMove(latestIterativeBestMove);
+                }
             } else if ("quit".equals(line)) {
                 stopRequested.set(true);
                 break;
@@ -105,14 +109,24 @@ public class UciApplication {
     }
 
     private void handleGo(String command) {
+        // Keep input processing responsive by running search on a worker thread.
         if (searchRunning) {
             stopRequested.set(true);
+            return;
         }
 
         stopRequested.set(false);
         latestIterativeBestMove = null;
         searchRunning = true;
 
+        String positionSnapshot = board.boardStates.get(board.boardStates.size() - 1);
+        Thread worker = new Thread(() -> runSearch(command, new Board(positionSnapshot)), "uci-search-thread");
+        worker.setDaemon(true);
+        searchThread = worker;
+        worker.start();
+    }
+
+    private void runSearch(String command, Board searchBoard) {
         try {
             String[] parts = command.split("\\s+");
             Searcher searcher = new Searcher();
@@ -123,7 +137,7 @@ public class UciApplication {
                 TimeManager manager = new TimeManager();
                 manager.configureMovetime(movetime);
                 result = searcher.searchWithTimeManager(
-                        board,
+                        searchBoard,
                         64,
                         manager,
                         stopRequested::get,
@@ -136,19 +150,19 @@ public class UciApplication {
                 long binc = parseLongArg(parts, "binc", 0L);
 
                 TimeManager manager = new TimeManager();
-                manager.configureClock(board.getActiveColor(), wtime, btime, winc, binc);
+                manager.configureClock(searchBoard.getActiveColor(), wtime, btime, winc, binc);
                 result = searcher.searchWithTimeManager(
-                        board,
+                        searchBoard,
                         64,
                         manager,
                         stopRequested::get,
                         this::printInfoLine
                 );
             } else {
-                int depth = (int) parseLongArg(parts, "depth", 4L);
+                int depth = parseDepthArg(parts, "depth", 4);
                 result = searcher.iterativeDeepening(
-                        board,
-                        Math.max(1, depth),
+                        searchBoard,
+                        depth,
                         stopRequested::get,
                         stopRequested::get,
                         this::printInfoLine
@@ -159,6 +173,7 @@ public class UciApplication {
             emitBestMove(bestMove);
         } finally {
             searchRunning = false;
+            searchThread = null;
             System.out.flush();
         }
     }
@@ -226,5 +241,11 @@ public class UciApplication {
             }
         }
         return fallback;
+    }
+
+    private int parseDepthArg(String[] parts, String key, int fallback) {
+        long rawDepth = parseLongArg(parts, key, fallback);
+        long clampedDepth = Math.max(1L, Math.min((long) MAX_SEARCH_DEPTH, rawDepth));
+        return (int) clampedDepth;
     }
 }

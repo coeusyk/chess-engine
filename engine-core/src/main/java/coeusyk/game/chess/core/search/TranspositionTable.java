@@ -5,6 +5,7 @@ import coeusyk.game.chess.core.models.Move;
 public class TranspositionTable {
     private static final int DEFAULT_SIZE_MB = 64;
     private static final int APPROX_ENTRY_BYTES = 32;
+    private static final int MAX_ENTRY_COUNT = 1 << 23;
 
     private Entry[] table;
     private int mask;
@@ -27,13 +28,11 @@ public class TranspositionTable {
 
         long bytes = (long) sizeMb * 1024L * 1024L;
         long desiredEntries = Math.max(1L, bytes / APPROX_ENTRY_BYTES);
+        long cappedDesiredEntries = Math.min(desiredEntries, (long) MAX_ENTRY_COUNT);
 
         int entryCount = 1;
-        while (entryCount < desiredEntries && entryCount > 0) {
+        while (entryCount < cappedDesiredEntries) {
             entryCount <<= 1;
-        }
-        if (entryCount <= 0) {
-            entryCount = 1 << 20;
         }
 
         table = new Entry[entryCount];
@@ -54,7 +53,7 @@ public class TranspositionTable {
     public void store(long key, Move bestMove, int depth, int score, TTBound bound) {
         int index = indexFor(key);
         Entry existing = table[index];
-        if (existing == null || depth >= existing.depth()) {
+        if (existing == null || existing.key() != key || depth >= existing.depth()) {
             table[index] = new Entry(key, copyMove(bestMove), depth, score, bound);
         }
     }
@@ -81,7 +80,7 @@ public class TranspositionTable {
     }
 
     private int indexFor(long key) {
-        return (int) key & mask;
+        return (int) (key ^ (key >>> 32)) & mask;
     }
 
     private Move copyMove(Move move) {

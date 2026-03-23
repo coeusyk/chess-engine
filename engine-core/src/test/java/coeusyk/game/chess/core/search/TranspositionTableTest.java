@@ -57,4 +57,21 @@ class TranspositionTableTest {
         assertTrue((largeCount & (largeCount - 1)) == 0);
         assertTrue(largeCount >= smallCount);
     }
+
+    @Test
+    void differentKeyCanReplaceOnIndexCollision() {
+        TranspositionTable table = new TranspositionTable(1);
+        long keyA = 1L;
+        long keyB = 1L << 32;
+
+        table.store(keyA, new Move(10, 18), 8, 50, TTBound.EXACT);
+        table.store(keyB, new Move(12, 20), 1, 25, TTBound.LOWER_BOUND);
+
+        assertNull(table.probe(keyA));
+        TranspositionTable.Entry entryB = table.probe(keyB);
+        assertNotNull(entryB);
+        assertEquals(keyB, entryB.key());
+        assertEquals(1, entryB.depth());
+        assertEquals(25, entryB.score());
+    }
 }

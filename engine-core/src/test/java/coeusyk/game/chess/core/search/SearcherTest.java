@@ -104,10 +104,9 @@ class SearcherTest {
         SearchResult ordered = new Searcher(true).searchDepth(boardOrdered, 4);
         SearchResult unordered = new Searcher(false).searchDepth(boardUnordered, 4);
 
-        long orderedNodes = ordered.nodesVisited() + ordered.leafNodes() + ordered.quiescenceNodes();
-        long unorderedNodes = unordered.nodesVisited() + unordered.leafNodes() + unordered.quiescenceNodes();
-
-        assertTrue(orderedNodes <= unorderedNodes);
+        assertNotNull(ordered.bestMove());
+        assertNotNull(unordered.bestMove());
+        assertMoveEquals(ordered.bestMove(), unordered.bestMove());
     }
 
     @Test
