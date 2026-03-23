@@ -1,0 +1,12 @@
+# Tactical suite template (expected: 50 mate-in-2/3 positions)
+#
+# Format per line:
+# <piece-placement> <side-to-move> <castling> <ep-square> bm <uci-move>[ <uci-move> ...]; id "optional-id";
+#
+# Example:
+# 6k1/5ppp/8/8/8/5Q2/6PP/6K1 w - - bm f3a8; id "example-1";
+#
+# Notes:
+# - Use UCI coordinate moves in bm values (for example: e2e4, g7g8q).
+# - Multiple bm moves are supported.
+# - Replace this file with your real 50-position suite.

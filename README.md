@@ -70,6 +70,22 @@ Run perft harness gate only:
 .\mvnw.cmd -pl engine-core -Dtest=PerftHarnessTest test
 ```
 
+Run tactical mate suite benchmark (>= 80% expected):
+
+```powershell
+.\mvnw.cmd -pl engine-core -Dtest=TacticalSuiteTest test -Dtactical.enabled=true -Dtactical.suite.file="C:\path\to\mate_2_3_50.epd" -Dtactical.movetime.ms=2000 -Dtactical.min.pass.rate=0.80 -Dtactical.expected.positions=50
+```
+
+Alternative (depth-limited instead of movetime):
+
+```powershell
+.\mvnw.cmd -pl engine-core -Dtest=TacticalSuiteTest test -Dtactical.enabled=true -Dtactical.suite.file="C:\path\to\mate_2_3_50.epd" -Dtactical.depth=8 -Dtactical.min.pass.rate=0.80 -Dtactical.expected.positions=50
+```
+
+Default suite template path:
+
+- `engine-core/src/test/resources/tactical/mate_2_3_50.epd`
+
 ## API Module Notes
 
 - Session-aware gameplay via optional `gameId` support.
