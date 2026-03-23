@@ -190,6 +190,8 @@ public class MovesGenerator {
         // Capturing moves:
         for (int offset : captureOffsets) {
             int targetSquare = startSquare + offset;
+            if (targetSquare < 0 || targetSquare > 63) continue;
+
             int targetPiece = board.getPiece(targetSquare);
 
             // En passant square check:
@@ -244,21 +246,25 @@ public class MovesGenerator {
 
         // For king side castling:
         int targetSquareKS = startSquare + 2;
-        int targetPieceKS = board.getPiece(targetSquareKS);
+        if (targetSquareKS <= 63) {
+            int targetPieceKS = board.getPiece(targetSquareKS);
 
-        if (targetPieceKS == Piece.None) {
-            possibleMoves.add(new Move(startSquare, targetSquareKS, "castle-k"));
+            if (targetPieceKS == Piece.None) {
+                possibleMoves.add(new Move(startSquare, targetSquareKS, "castle-k"));
+            }
         }
 
         // For queen side castling:
         int targetSquareQS = startSquare - 2;
-        int targetPieceQS = board.getPiece(targetSquareQS);
-
         int QSRookOffsetSquare = startSquare - 3;  // The square beside the queen side rook (to check if there's a piece blocking the way)
-        int QSRookOffsetPiece = board.getPiece(QSRookOffsetSquare);
 
-        if (targetPieceQS == Piece.None && QSRookOffsetPiece == Piece.None) {
-            possibleMoves.add(new Move(startSquare, QSRookOffsetSquare, "castle-q"));
+        if (targetSquareQS >= 0 && QSRookOffsetSquare >= 0) {
+            int targetPieceQS = board.getPiece(targetSquareQS);
+            int QSRookOffsetPiece = board.getPiece(QSRookOffsetSquare);
+
+            if (targetPieceQS == Piece.None && QSRookOffsetPiece == Piece.None) {
+                possibleMoves.add(new Move(startSquare, QSRookOffsetSquare, "castle-q"));
+            }
         }
     }
 }

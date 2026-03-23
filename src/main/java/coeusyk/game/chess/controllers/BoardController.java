@@ -1,6 +1,8 @@
 package coeusyk.game.chess.controllers;
 
 import coeusyk.game.chess.models.*;
+import coeusyk.game.chess.search.IterativeDeepeningSearch;
+import coeusyk.game.chess.search.SearchResult;
 import coeusyk.game.chess.utils.*;
 import org.springframework.lang.NonNull;
 import org.springframework.web.bind.annotation.*;
@@ -49,6 +51,25 @@ public class BoardController {
             board.makeMove(move);
             movesGen = new MovesGenerator(board);
 
+            return new ResponseContainer(true, board, movesGen.getActiveMoves(board.getActiveColor()));
+        }
+
+        return new ResponseContainer(false);
+    }
+
+    /**
+     * Runs iterative-deepening alpha-beta search and applies the best move found.
+     *
+     * @param depth maximum search depth in plies (default: 3)
+     */
+    @GetMapping("/search")
+    public ResponseContainer search(@RequestParam(defaultValue = "3") int depth) {
+        IterativeDeepeningSearch searcher = new IterativeDeepeningSearch();
+        SearchResult result = searcher.search(board, depth);
+
+        if (result.bestMove != null) {
+            board.makeMove(result.bestMove);
+            movesGen = new MovesGenerator(board);
             return new ResponseContainer(true, board, movesGen.getActiveMoves(board.getActiveColor()));
         }
 
