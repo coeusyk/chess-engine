@@ -36,6 +36,16 @@ public class Board {
         initWithFEN(fenString);
     }
 
+    /** Copy constructor used by the search engine to create isolated position copies. */
+    public Board(Board other) {
+        System.arraycopy(other.grid, 0, this.grid, 0, 64);
+        this.activeColor = other.activeColor;
+        System.arraycopy(other.castlingAvailability, 0, this.castlingAvailability, 0, 4);
+        this.epTargetSquare = other.epTargetSquare;
+        this.halfmoveClock = other.halfmoveClock;
+        this.fullMoves = other.fullMoves;
+    }
+
     private void initWithFEN(String fenString) {
         String[] fenFields = fenString.split(" ");
 
@@ -125,31 +135,29 @@ public class Board {
 
     // Move to make after list of moves are sent to the client and the move made is reported back to the server:
     public void makeMove(Move move) {
-        if (move.reaction == null && Piece.type(grid[move.startSquare])) {
-            return;
-        }
-
-        else if (!Arrays.asList(reactionIds).contains(move.reaction)) {
-            throw new IllegalArgumentException("invalid move reaction : does not exist");
-        }
-
-        switch (move.reaction) {
-            case "castle-k" -> castlingReaction(move.startSquare + 3);
-            case "castle-q" -> castlingReaction(move.startSquare - 4);
-
-            case "en-passant" -> {
-                if (Piece.isWhite(grid[move.startSquare])) {
-                    grid[move.targetSquare + 8] = Piece.None;
-                } else {
-                    grid[move.targetSquare - 8] = Piece.None;
-                }
+        if (move.reaction != null) {
+            if (!Arrays.asList(reactionIds).contains(move.reaction)) {
+                throw new IllegalArgumentException("invalid move reaction : does not exist");
             }
 
-            case "ep-target" -> {
-                if (Piece.isWhite(grid[move.startSquare])) {
-                    epTargetSquare = move.targetSquare + 8;
-                } else {
-                    epTargetSquare = move.targetSquare - 8;
+            switch (move.reaction) {
+                case "castle-k" -> castlingReaction(move.startSquare + 3);
+                case "castle-q" -> castlingReaction(move.startSquare - 4);
+
+                case "en-passant" -> {
+                    if (Piece.isWhite(grid[move.startSquare])) {
+                        grid[move.targetSquare + 8] = Piece.None;
+                    } else {
+                        grid[move.targetSquare - 8] = Piece.None;
+                    }
+                }
+
+                case "ep-target" -> {
+                    if (Piece.isWhite(grid[move.startSquare])) {
+                        epTargetSquare = move.targetSquare + 8;
+                    } else {
+                        epTargetSquare = move.targetSquare - 8;
+                    }
                 }
             }
         }

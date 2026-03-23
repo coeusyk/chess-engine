@@ -14,6 +14,7 @@ import java.util.ArrayList;
 public class BoardController {
     Board board = new Board();
     MovesGenerator movesGen;
+    private final SearchEngine searchEngine = new SearchEngine();
 
     @GetMapping("/setup")
     public SetupContainer setup() {
@@ -49,6 +50,28 @@ public class BoardController {
             board.makeMove(move);
             movesGen = new MovesGenerator(board);
 
+            return new ResponseContainer(true, board, movesGen.getActiveMoves(board.getActiveColor()));
+        }
+
+        return new ResponseContainer(false);
+    }
+
+    /**
+     * Asks the engine to find and play the best move for the side to move.
+     *
+     * @param depth search depth in plies (default 3)
+     * @return the updated board state and new list of possible moves, or failure if no legal move exists
+     */
+    @PostMapping("/search")
+    public ResponseContainer search(@RequestParam(defaultValue = "3") int depth) {
+        if (movesGen == null) {
+            movesGen = new MovesGenerator(board);
+        }
+        Move bestMove = searchEngine.findBestMove(board, depth);
+
+        if (bestMove != null) {
+            board.makeMove(bestMove);
+            movesGen = new MovesGenerator(board);
             return new ResponseContainer(true, board, movesGen.getActiveMoves(board.getActiveColor()));
         }
 
