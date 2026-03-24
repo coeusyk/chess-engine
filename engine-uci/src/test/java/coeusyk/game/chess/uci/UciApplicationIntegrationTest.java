@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -143,7 +144,10 @@ class UciApplicationIntegrationTest {
         }
 
         static UciHarness start() throws IOException {
-            String javaExec = System.getProperty("java.home") + "\\bin\\java";
+            String javaBinary = System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win")
+                    ? "java.exe"
+                    : "java";
+            String javaExec = Path.of(System.getProperty("java.home"), "bin", javaBinary).toString();
             String classpath = System.getProperty("java.class.path");
 
             ProcessBuilder builder = new ProcessBuilder(
