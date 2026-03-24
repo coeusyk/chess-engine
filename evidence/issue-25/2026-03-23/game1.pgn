@@ -1,0 +1,26 @@
+[Event "?"]
+[Site "?"]
+[Date "2026.03.24"]
+[Round "?"]
+[White "yashk"]
+[Black "Vex"]
+[Result "1-0"]
+[ECO "B00"]
+[GameDuration "00:13:37"]
+[GameEndTime "2026-03-24T21:35:45.053 India Standard Time"]
+[GameStartTime "2026-03-24T21:22:08.049 India Standard Time"]
+[Opening "King's pawn"]
+[PlyCount "43"]
+[TimeControl "hg600"]
+[Variation "Nimzowitsch defense"]
+
+1. e4 Nc6 {0.00/8 60s} 2. d4 {8.5s} Rb8 {0.00/7 28s} 3. d5 {11s}
+Nb4 {0.00/8 53s} 4. Nf3 {9.4s} Na6 {0.00/7 49s} 5. Nc3 {6.8s} b6 {0.00/7 45s}
+6. Bc4 {14s} Bb7 {0.00/6 23s} 7. Qe2 {10s} Qc8 {0.00/6 40s} 8. Bf4 {9.4s}
+Ra8 {0.00/4 37s} 9. O-O-O {11s} Rb8 {0.00/4 35s} 10. h4 {8.0s} Ra8 {0.00/4 32s}
+11. Nb5 {7.1s} Qd8 {0.00/4 29s} 12. Ne5 {9.2s} Qc8 {0.00/4 27s} 13. d6 {6.4s}
+Nh6 {-1.00/4 25s} 14. Nxc7+ {7.7s} Nxc7 {-1.90/6 21s} 15. dxc7 {6.2s}
+Qxc7 {-1.70/4 22s} 16. Rxd7 {8.3s} Qxe5 {-1.80/6 21s} 17. Bb5 {14s}
+Qxb5 {-3.50/7 16s} 18. Qxb5 {7.1s} a6 {-999.92/7 19s} 19. Rd8+ {6.0s}
+Kxd8 {-999.94/7 18s} 20. Rd1+ {6.5s} Bd5 {-999.96/7 17s} 21. Qxd5+ {5.9s}
+Ke8 {-999.98/7 16s} 22. Qxa8# {11s, White mates} 1-0
