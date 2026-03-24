@@ -4,7 +4,18 @@ Backend repository for a modular chess engine platform with REST and UCI adapter
 
 ## Current Status
 
-Phase 1 (Correctness Foundation) is complete.
+Phase 2 (Search V1 + Transposition Table + UCI Stub) is complete.
+
+Completed Phase 2 scope includes:
+
+- Iterative deepening alpha-beta search.
+- Quiescence search.
+- Move ordering stack (TT move, MVV-LVA, killer/history heuristics).
+- Transposition table integration and measurable TT hit rate.
+- Time management for depth, movetime, and clock modes.
+- Minimal UCI interface with command-loop integration coverage.
+
+Phase 1 (Correctness Foundation) is also complete.
 
 Completed Phase 1 scope includes:
 
@@ -25,7 +36,7 @@ Completed Phase 1 scope includes:
 
 - `engine-core`: pure Java chess domain and move-generation engine.
 - `chess-engine-api`: Spring Boot REST adapter used by the UI.
-- `engine-uci`: UCI runner module (Phase 2 expansion target).
+- `engine-uci`: UCI runner module.
 
 ## Validation Snapshot
 
@@ -94,12 +105,11 @@ Default bundled suite path:
 
 ## Next Phase
 
-Phase 2 focus:
+Phase 3 focus (Strength Scaling):
 
-- Iterative deepening alpha-beta search.
-- Quiescence search and baseline move ordering.
-- Transposition table and time management.
-- Minimal but practical UCI command support in `engine-uci`.
+- Search and heuristic tuning for stronger practical play.
+- Regression-position validation and repeatable strength checks.
+- Continued quality improvements while preserving Phase 1/2 correctness gates.
 
 ## Phase 2 Validation Aids
 
