@@ -19,6 +19,7 @@ public class Searcher {
     private static final int INF = 1_000_000;
     private static final int MATE_SCORE = 100_000;
     private static final int MAX_PLY = 128;
+    private static final int ASPIRATION_INITIAL_DELTA_CP = 50;
 
     private long nodesVisited;
     private long leafNodes;
@@ -28,6 +29,7 @@ public class Searcher {
     private int[] pvLength;
 
     private final boolean moveOrderingEnabled;
+    private final boolean aspirationWindowsEnabled;
     private final MoveOrderer moveOrderer = new MoveOrderer();
     private final Move[][] killerMoves = new Move[MAX_PLY][2];
     private final int[][] historyHeuristic = new int[7][64];
@@ -38,11 +40,16 @@ public class Searcher {
     private boolean aborted;
 
     public Searcher() {
-        this(true);
+        this(true, true);
     }
 
     public Searcher(boolean moveOrderingEnabled) {
+        this(moveOrderingEnabled, true);
+    }
+
+    Searcher(boolean moveOrderingEnabled, boolean aspirationWindowsEnabled) {
         this.moveOrderingEnabled = moveOrderingEnabled;
+        this.aspirationWindowsEnabled = aspirationWindowsEnabled;
     }
 
     public void setRootTtMoveHintForTesting(Move rootTtMoveHint) {
@@ -124,7 +131,12 @@ public class Searcher {
             pvTable = new Move[depth + 4][depth + 4];
             pvLength = new int[depth + 4];
 
-            RootResult iteration = searchRoot(board, depth, previousBestMove, shouldStopHard);
+            RootResult iteration;
+            if (aspirationWindowsEnabled && depth >= 2 && previousBestMove != null) {
+                iteration = searchRootWithAspiration(board, depth, previousBestMove, bestScore, shouldStopHard);
+            } else {
+                iteration = searchRoot(board, depth, previousBestMove, shouldStopHard, -INF, INF);
+            }
 
             totalNodes += nodesVisited;
             totalLeafNodes += leafNodes;
@@ -163,7 +175,51 @@ public class Searcher {
         );
     }
 
-    private RootResult searchRoot(Board board, int depth, Move preferredMove, BooleanSupplier shouldStopHard) {
+    private RootResult searchRootWithAspiration(
+            Board board,
+            int depth,
+            Move preferredMove,
+            int previousIterationScore,
+            BooleanSupplier shouldStopHard
+    ) {
+        int alpha = Math.max(-INF, previousIterationScore - ASPIRATION_INITIAL_DELTA_CP);
+        int beta = Math.min(INF, previousIterationScore + ASPIRATION_INITIAL_DELTA_CP);
+        int consecutiveFailures = 0;
+
+        while (true) {
+            RootResult iteration = searchRoot(board, depth, preferredMove, shouldStopHard, alpha, beta);
+            if (iteration.aborted || iteration.bestMove == null) {
+                return iteration;
+            }
+
+            boolean failLow = iteration.bestScore <= alpha;
+            boolean failHigh = iteration.bestScore >= beta;
+            if (!failLow && !failHigh) {
+                return iteration;
+            }
+
+            consecutiveFailures++;
+            if (consecutiveFailures >= 2) {
+                return searchRoot(board, depth, preferredMove, shouldStopHard, -INF, INF);
+            }
+
+            int widenBy = ASPIRATION_INITIAL_DELTA_CP << consecutiveFailures;
+            if (failLow) {
+                alpha = Math.max(-INF, previousIterationScore - widenBy);
+            } else {
+                beta = Math.min(INF, previousIterationScore + widenBy);
+            }
+        }
+    }
+
+    private RootResult searchRoot(
+            Board board,
+            int depth,
+            Move preferredMove,
+            BooleanSupplier shouldStopHard,
+            int rootAlpha,
+            int rootBeta
+    ) {
         MovesGenerator generator = new MovesGenerator(board);
         List<Move> moves = new ArrayList<>(generator.getActiveMoves(board.getActiveColor()));
         TranspositionTable.Entry rootEntry = transpositionTable.probe(board.getZobristHash());
@@ -183,8 +239,8 @@ public class Searcher {
 
         Move bestMove = null;
         int bestScore = -INF;
-        int alpha = -INF;
-        int beta = INF;
+        int alpha = rootAlpha;
+        int beta = rootBeta;
         pvLength[0] = 0;
 
         for (Move move : moves) {

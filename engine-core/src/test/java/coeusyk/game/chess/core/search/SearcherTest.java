@@ -110,6 +110,36 @@ class SearcherTest {
     }
 
     @Test
+    void aspirationWindowsPreserveBestMoveAgainstFullWindow() {
+        Board boardA = new Board("r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/2N5/PPPP1PPP/R1BQK1NR b KQkq - 2 3");
+        Board boardB = new Board("r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/2N5/PPPP1PPP/R1BQK1NR b KQkq - 2 3");
+
+        SearchResult withAspiration = new Searcher(true, true).searchDepth(boardA, 5);
+        SearchResult withoutAspiration = new Searcher(true, false).searchDepth(boardB, 5);
+
+        assertNotNull(withAspiration.bestMove());
+        assertNotNull(withoutAspiration.bestMove());
+        assertMoveEquals(withAspiration.bestMove(), withoutAspiration.bestMove());
+    }
+
+    @Test
+    void aspirationWindowsReduceRootSearchWorkOnTypicalPosition() {
+        Board boardWithAspiration = new Board("r2q1rk1/ppp2ppp/2n2n2/3bp3/3P4/2P1PN2/PP1N1PPP/R1BQ1RK1 w - - 0 9");
+        Board boardWithoutAspiration = new Board("r2q1rk1/ppp2ppp/2n2n2/3bp3/3P4/2P1PN2/PP1N1PPP/R1BQ1RK1 w - - 0 9");
+
+        SearchResult withAspiration = new Searcher(true, true).searchDepth(boardWithAspiration, 5);
+        SearchResult withoutAspiration = new Searcher(true, false).searchDepth(boardWithoutAspiration, 5);
+
+        long withAspirationNodes = withAspiration.nodesVisited() + withAspiration.leafNodes();
+        long withoutAspirationNodes = withoutAspiration.nodesVisited() + withoutAspiration.leafNodes();
+
+        assertTrue(
+                withAspirationNodes < withoutAspirationNodes,
+                "Expected aspiration windows to reduce searched nodes"
+        );
+    }
+
+    @Test
     void ttMoveHintIsTriedFirstAtRoot() {
         Board board = new Board();
         Searcher searcher = new Searcher(true);
