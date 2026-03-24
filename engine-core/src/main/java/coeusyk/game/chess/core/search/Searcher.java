@@ -21,6 +21,7 @@ public class Searcher {
     private static final int MAX_PLY = 128;
     private static final int ASPIRATION_INITIAL_DELTA_CP = 50;
     private static final int NULL_MOVE_DEPTH_THRESHOLD = 6;
+    private static final int MAX_LEGAL_MOVES = 256;
 
     private long nodesVisited;
     private long leafNodes;
@@ -32,31 +33,43 @@ public class Searcher {
     private final boolean moveOrderingEnabled;
     private final boolean aspirationWindowsEnabled;
     private final boolean nullMovePruningEnabled;
+    private final boolean lmrEnabled;
     private final MoveOrderer moveOrderer = new MoveOrderer();
     private final Move[][] killerMoves = new Move[MAX_PLY][2];
     private final int[][] historyHeuristic = new int[7][64];
     private final TranspositionTable transpositionTable = new TranspositionTable();
+    private final int[][] lmrReductions = precomputeLmrReductions();
 
     private Move rootTtMoveHint;
 
     private boolean aborted;
 
     public Searcher() {
-        this(true, true, true);
+        this(true, true, true, true);
     }
 
     public Searcher(boolean moveOrderingEnabled) {
-        this(moveOrderingEnabled, true, true);
+        this(moveOrderingEnabled, true, true, true);
     }
 
     Searcher(boolean moveOrderingEnabled, boolean aspirationWindowsEnabled) {
-        this(moveOrderingEnabled, aspirationWindowsEnabled, true);
+        this(moveOrderingEnabled, aspirationWindowsEnabled, true, true);
     }
 
     Searcher(boolean moveOrderingEnabled, boolean aspirationWindowsEnabled, boolean nullMovePruningEnabled) {
+        this(moveOrderingEnabled, aspirationWindowsEnabled, nullMovePruningEnabled, true);
+    }
+
+    Searcher(
+            boolean moveOrderingEnabled,
+            boolean aspirationWindowsEnabled,
+            boolean nullMovePruningEnabled,
+            boolean lmrEnabled
+    ) {
         this.moveOrderingEnabled = moveOrderingEnabled;
         this.aspirationWindowsEnabled = aspirationWindowsEnabled;
         this.nullMovePruningEnabled = nullMovePruningEnabled;
+        this.lmrEnabled = lmrEnabled;
     }
 
     public void setRootTtMoveHintForTesting(Move rootTtMoveHint) {
@@ -338,11 +351,13 @@ public class Searcher {
 
         MovesGenerator generator = new MovesGenerator(board);
         List<Move> moves = generator.getActiveMoves(board.getActiveColor());
+        Move ttMove = ttEntry != null ? ttEntry.bestMove() : null;
         if (moveOrderingEnabled) {
-            Move ttMove = ttEntry != null ? ttEntry.bestMove() : null;
             int orderPly = Math.min(ply, MAX_PLY - 1);
             moves = moveOrderer.orderMoves(board, moves, orderPly, ttMove, killerMoves, historyHeuristic);
         }
+
+        boolean sideToMoveInCheck = board.isActiveColorInCheck();
 
         if (moves.isEmpty()) {
             leafNodes++;
@@ -351,10 +366,30 @@ public class Searcher {
 
         int bestScore = -INF;
         Move bestMove = null;
+        int moveIndex = 0;
         for (Move move : moves) {
+            boolean isQuiet = isQuietMove(board, move);
+            boolean isKiller = isKillerMove(ply, move);
+            boolean isTtMove = ttMove != null && sameMove(ttMove, move);
+
             board.makeMove(move);
-            int score = -alphaBeta(board, depth - 1, ply + 1, -beta, -alpha, shouldStopHard, false);
+
+            boolean moveGivesCheck = board.isActiveColorInCheck();
+            int score;
+            if (canApplyLmr(depth, moveIndex, isQuiet, isKiller, isTtMove, sideToMoveInCheck, moveGivesCheck)) {
+                int reduction = lmrReductions[Math.min(depth, MAX_PLY - 1)][Math.min(moveIndex + 1, MAX_LEGAL_MOVES - 1)];
+                int reducedDepth = Math.max(1, depth - 1 - reduction);
+
+                score = -alphaBeta(board, reducedDepth, ply + 1, -beta, -alpha, shouldStopHard, false);
+                if (!aborted && score > alpha) {
+                    score = -alphaBeta(board, depth - 1, ply + 1, -beta, -alpha, shouldStopHard, false);
+                }
+            } else {
+                score = -alphaBeta(board, depth - 1, ply + 1, -beta, -alpha, shouldStopHard, false);
+            }
+
             board.unmakeMove();
+            moveIndex++;
 
             if (aborted) {
                 return bestScore == -INF ? alpha : bestScore;
@@ -422,6 +457,54 @@ public class Searcher {
             }
         }
         return false;
+    }
+
+    private boolean canApplyLmr(
+            int depth,
+            int moveIndex,
+            boolean isQuiet,
+            boolean isKiller,
+            boolean isTtMove,
+            boolean sideToMoveInCheck,
+            boolean moveGivesCheck
+    ) {
+        return lmrEnabled
+            && depth >= 6
+                && moveIndex >= 2
+                && isQuiet
+                && !isKiller
+                && !isTtMove
+                && !sideToMoveInCheck
+                && !moveGivesCheck;
+    }
+
+    private int[][] precomputeLmrReductions() {
+        int[][] reductions = new int[MAX_PLY][MAX_LEGAL_MOVES];
+        for (int depth = 1; depth < MAX_PLY; depth++) {
+            for (int moveIndex = 1; moveIndex < MAX_LEGAL_MOVES; moveIndex++) {
+                int reduction = Math.max(
+                        1,
+                        (int) (0.75 + (Math.log(depth) * Math.log(moveIndex)) / 2.25)
+                );
+                reductions[depth][moveIndex] = reduction;
+            }
+        }
+        return reductions;
+    }
+
+    private boolean isKillerMove(int ply, Move move) {
+        if (ply < 0 || ply >= MAX_PLY) {
+            return false;
+        }
+
+        return (killerMoves[ply][0] != null && sameMove(killerMoves[ply][0], move))
+                || (killerMoves[ply][1] != null && sameMove(killerMoves[ply][1], move));
+    }
+
+    int getLmrReductionForTesting(int depth, int moveIndexOneBased) {
+        int safeDepth = Math.max(0, Math.min(depth, MAX_PLY - 1));
+        int safeMoveIndex = Math.max(0, Math.min(moveIndexOneBased, MAX_LEGAL_MOVES - 1));
+        return lmrReductions[safeDepth][safeMoveIndex];
     }
 
     Integer applyTtBound(TranspositionTable.Entry entry, int depth, int alpha, int beta) {

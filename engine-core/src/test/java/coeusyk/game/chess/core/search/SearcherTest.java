@@ -167,6 +167,42 @@ class SearcherTest {
     }
 
     @Test
+    void lmrReductionTableIsPrecomputed() {
+        Searcher searcher = new Searcher();
+
+        assertEquals(1, searcher.getLmrReductionForTesting(3, 3));
+        assertTrue(searcher.getLmrReductionForTesting(8, 8) >= 1);
+        assertTrue(searcher.getLmrReductionForTesting(12, 24) >= searcher.getLmrReductionForTesting(4, 4));
+    }
+
+    @Test
+    void lmrReducesNodesOnQuietPosition() {
+        Board boardWithLmr = new Board("r2q1rk1/ppp2ppp/2n2n2/3bp3/3P4/2P1PN2/PP1N1PPP/R1BQ1RK1 w - - 0 9");
+        Board boardWithoutLmr = new Board("r2q1rk1/ppp2ppp/2n2n2/3bp3/3P4/2P1PN2/PP1N1PPP/R1BQ1RK1 w - - 0 9");
+
+        SearchResult withLmr = new Searcher(true, true, false, true).searchDepth(boardWithLmr, 7);
+        SearchResult withoutLmr = new Searcher(true, true, false, false).searchDepth(boardWithoutLmr, 7);
+
+        long withLmrNodes = withLmr.nodesVisited() + withLmr.leafNodes();
+        long withoutLmrNodes = withoutLmr.nodesVisited() + withoutLmr.leafNodes();
+
+        assertTrue(withLmrNodes < withoutLmrNodes, "Expected LMR to reduce searched nodes");
+    }
+
+    @Test
+    void lmrKeepsTacticalBestMoveStable() {
+        Board boardWithLmr = new Board("4k3/8/8/4q3/2N5/8/8/4K3 w - - 0 1");
+        Board boardWithoutLmr = new Board("4k3/8/8/4q3/2N5/8/8/4K3 w - - 0 1");
+
+        SearchResult withLmr = new Searcher(true, true, false, true).searchDepth(boardWithLmr, 5);
+        SearchResult withoutLmr = new Searcher(true, true, false, false).searchDepth(boardWithoutLmr, 5);
+
+        assertNotNull(withLmr.bestMove());
+        assertNotNull(withoutLmr.bestMove());
+        assertMoveEquals(withoutLmr.bestMove(), withLmr.bestMove());
+    }
+
+    @Test
     void ttMoveHintIsTriedFirstAtRoot() {
         Board board = new Board();
         Searcher searcher = new Searcher(true);
