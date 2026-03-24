@@ -20,6 +20,7 @@ public class Searcher {
     private static final int MATE_SCORE = 100_000;
     private static final int MAX_PLY = 128;
     private static final int ASPIRATION_INITIAL_DELTA_CP = 50;
+    private static final int NULL_MOVE_DEPTH_THRESHOLD = 6;
 
     private long nodesVisited;
     private long leafNodes;
@@ -30,6 +31,7 @@ public class Searcher {
 
     private final boolean moveOrderingEnabled;
     private final boolean aspirationWindowsEnabled;
+    private final boolean nullMovePruningEnabled;
     private final MoveOrderer moveOrderer = new MoveOrderer();
     private final Move[][] killerMoves = new Move[MAX_PLY][2];
     private final int[][] historyHeuristic = new int[7][64];
@@ -40,16 +42,21 @@ public class Searcher {
     private boolean aborted;
 
     public Searcher() {
-        this(true, true);
+        this(true, true, true);
     }
 
     public Searcher(boolean moveOrderingEnabled) {
-        this(moveOrderingEnabled, true);
+        this(moveOrderingEnabled, true, true);
     }
 
     Searcher(boolean moveOrderingEnabled, boolean aspirationWindowsEnabled) {
+        this(moveOrderingEnabled, aspirationWindowsEnabled, true);
+    }
+
+    Searcher(boolean moveOrderingEnabled, boolean aspirationWindowsEnabled, boolean nullMovePruningEnabled) {
         this.moveOrderingEnabled = moveOrderingEnabled;
         this.aspirationWindowsEnabled = aspirationWindowsEnabled;
+        this.nullMovePruningEnabled = nullMovePruningEnabled;
     }
 
     public void setRootTtMoveHintForTesting(Move rootTtMoveHint) {
@@ -249,7 +256,7 @@ public class Searcher {
             }
 
             board.makeMove(move);
-            int score = -alphaBeta(board, depth - 1, 1, -beta, -alpha, shouldStopHard);
+            int score = -alphaBeta(board, depth - 1, 1, -beta, -alpha, shouldStopHard, false);
             board.unmakeMove();
 
             if (aborted) {
@@ -282,7 +289,8 @@ public class Searcher {
             int ply,
             int alpha,
             int beta,
-            BooleanSupplier shouldStopHard
+            BooleanSupplier shouldStopHard,
+            boolean previousMoveWasNull
     ) {
         pvLength[ply] = 0;
 
@@ -301,6 +309,29 @@ public class Searcher {
         Integer ttScore = applyTtBound(ttEntry, depth, alpha, beta);
         if (ttScore != null) {
             return ttScore;
+        }
+
+        if (nullMovePruningEnabled && canApplyNullMove(board, depth, previousMoveWasNull, beta)) {
+            int nullReduction = depth >= NULL_MOVE_DEPTH_THRESHOLD ? 3 : 2;
+            Board.NullMoveState nullMoveState = board.makeNullMove();
+            int nullScore = -alphaBeta(
+                    board,
+                    depth - nullReduction - 1,
+                    ply + 1,
+                    -beta,
+                    -beta + 1,
+                    shouldStopHard,
+                    true
+            );
+            board.unmakeNullMove(nullMoveState);
+
+            if (aborted) {
+                return alpha;
+            }
+
+            if (nullScore >= beta) {
+                return beta;
+            }
         }
 
         nodesVisited++;
@@ -322,7 +353,7 @@ public class Searcher {
         Move bestMove = null;
         for (Move move : moves) {
             board.makeMove(move);
-            int score = -alphaBeta(board, depth - 1, ply + 1, -beta, -alpha, shouldStopHard);
+            int score = -alphaBeta(board, depth - 1, ply + 1, -beta, -alpha, shouldStopHard, false);
             board.unmakeMove();
 
             if (aborted) {
@@ -360,6 +391,37 @@ public class Searcher {
         }
 
         return bestScore;
+    }
+
+    private boolean canApplyNullMove(Board board, int depth, boolean previousMoveWasNull, int beta) {
+        int nullReduction = depth >= NULL_MOVE_DEPTH_THRESHOLD ? 3 : 2;
+        boolean enoughDepthForNullMove = depth >= NULL_MOVE_DEPTH_THRESHOLD;
+        boolean hasRemainingDepth = (depth - nullReduction - 1) > 0;
+        int staticEval = evaluate(board);
+        boolean isMateWindow = Math.abs(beta) >= (MATE_SCORE - MAX_PLY);
+
+        return enoughDepthForNullMove
+            && hasRemainingDepth
+                && !previousMoveWasNull
+                && !board.isActiveColorInCheck()
+                && !isMateWindow
+            && staticEval >= beta
+                && hasNonPawnMaterial(board, board.getActiveColor());
+    }
+
+    private boolean hasNonPawnMaterial(Board board, int color) {
+        int[] grid = board.getGrid();
+        for (int piece : grid) {
+            if (piece == Piece.None || !Piece.isColor(piece, color)) {
+                continue;
+            }
+
+            int pieceType = Piece.type(piece);
+            if (pieceType != Piece.Pawn && pieceType != Piece.King) {
+                return true;
+            }
+        }
+        return false;
     }
 
     Integer applyTtBound(TranspositionTable.Entry entry, int depth, int alpha, int beta) {

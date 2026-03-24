@@ -140,6 +140,33 @@ class SearcherTest {
     }
 
     @Test
+    void nullMovePruningReducesNodesOnQuietPosition() {
+        Board boardWithNullMove = new Board("r2q1rk1/ppp2ppp/2n2n2/3bp3/3P4/2P1PN2/PP1N1PPP/R1BQ1RK1 w - - 0 9");
+        Board boardWithoutNullMove = new Board("r2q1rk1/ppp2ppp/2n2n2/3bp3/3P4/2P1PN2/PP1N1PPP/R1BQ1RK1 w - - 0 9");
+
+        SearchResult withNullMove = new Searcher(true, true, true).searchDepth(boardWithNullMove, 7);
+        SearchResult withoutNullMove = new Searcher(true, true, false).searchDepth(boardWithoutNullMove, 7);
+
+        long withNullMoveNodes = withNullMove.nodesVisited() + withNullMove.leafNodes();
+        long withoutNullMoveNodes = withoutNullMove.nodesVisited() + withoutNullMove.leafNodes();
+
+        assertTrue(withNullMoveNodes < withoutNullMoveNodes, "Expected null-move pruning to reduce searched nodes");
+    }
+
+    @Test
+    void nullMovePruningIsSkippedWhenOnlyPawnsAndKingsRemain() {
+        Board boardWithNullMove = new Board("8/3k4/8/3p4/8/4P3/4K3/8 w - - 0 1");
+        Board boardWithoutNullMove = new Board("8/3k4/8/3p4/8/4P3/4K3/8 w - - 0 1");
+
+        SearchResult withNullMove = new Searcher(true, true, true).searchDepth(boardWithNullMove, 5);
+        SearchResult withoutNullMove = new Searcher(true, true, false).searchDepth(boardWithoutNullMove, 5);
+
+        assertNotNull(withNullMove.bestMove());
+        assertNotNull(withoutNullMove.bestMove());
+        assertMoveEquals(withNullMove.bestMove(), withoutNullMove.bestMove());
+    }
+
+    @Test
     void ttMoveHintIsTriedFirstAtRoot() {
         Board board = new Board();
         Searcher searcher = new Searcher(true);
