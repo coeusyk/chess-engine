@@ -14,7 +14,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class UciApplication {
-    private static final String ENGINE_NAME = "ChessEngine-UCI";
+    private static final String ENGINE_NAME = "Vex";
     private static final String ENGINE_AUTHOR = "coeusyk";
     private static final int MAX_SEARCH_DEPTH = 127;
 

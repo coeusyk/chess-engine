@@ -25,7 +25,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TacticalSuiteTest {
+    private static final int MATE_SCORE = 100_000;
     private static final Pattern BM_PATTERN = Pattern.compile("\\bbm\\s+([^;]+)");
+    private static final Pattern MATE_IN_PATTERN = Pattern.compile("#(\\d+)");
 
     @Test
     void solvesAtLeastConfiguredPercentageOfTacticalSuite() throws IOException {
@@ -72,17 +74,22 @@ class TacticalSuiteTest {
             }
 
             String bestMoveUci = toUci(result.bestMove());
-            boolean isSolved = bestMoveUci != null && position.bestMovesUci().contains(bestMoveUci);
+            boolean solvedByMove = bestMoveUci != null && position.bestMovesUci().contains(bestMoveUci);
+            boolean solvedByMateDistance = position.mateInMoves() != null
+                    && isMateScoreWithinMoves(result.scoreCp(), position.mateInMoves());
+            boolean isSolved = solvedByMove || solvedByMateDistance;
             if (isSolved) {
                 solved++;
             } else {
                 System.out.printf(
                         Locale.ROOT,
-                        "MISS #%d id=%s expected=%s got=%s%n",
+                        "MISS #%d id=%s expectedMoves=%s expectedMateIn=%s gotMove=%s gotScore=%d%n",
                         i + 1,
                         position.id(),
                         position.bestMovesUci(),
-                        bestMoveUci
+                        position.mateInMoves(),
+                        bestMoveUci,
+                        result.scoreCp()
                 );
             }
         }
@@ -144,14 +151,22 @@ class TacticalSuiteTest {
             }
 
             Set<String> bestMoves = new HashSet<>();
+            Integer mateInMoves = null;
             for (String move : bmMatcher.group(1).trim().split("\\s+")) {
-                String normalized = normalizeUci(move);
-                if (!normalized.isEmpty()) {
+                String token = move.trim();
+                Matcher mateInMatcher = MATE_IN_PATTERN.matcher(token);
+                if (mateInMatcher.matches()) {
+                    mateInMoves = Integer.parseInt(mateInMatcher.group(1));
+                    continue;
+                }
+
+                String normalized = normalizeUci(token);
+                if (isUciMove(normalized)) {
                     bestMoves.add(normalized);
                 }
             }
-            if (bestMoves.isEmpty()) {
-                throw new IllegalArgumentException("Empty bm move list at line " + (lineNumber + 1));
+            if (bestMoves.isEmpty() && mateInMoves == null) {
+                throw new IllegalArgumentException("bm does not contain UCI moves or mate marker at line " + (lineNumber + 1));
             }
 
             String id = "line-" + (lineNumber + 1);
@@ -160,7 +175,7 @@ class TacticalSuiteTest {
                 id = idMatcher.group(1);
             }
 
-            positions.add(new TacticalPosition(fen, Set.copyOf(bestMoves), id));
+            positions.add(new TacticalPosition(fen, Set.copyOf(bestMoves), mateInMoves, id));
         }
 
         return positions;
@@ -198,7 +213,17 @@ class TacticalSuiteTest {
         return normalized;
     }
 
-    private record TacticalPosition(String fen, Set<String> bestMovesUci, String id) {
+    private boolean isUciMove(String move) {
+        return move.matches("^[a-h][1-8][a-h][1-8][qrbn]?$");
+    }
+
+    private boolean isMateScoreWithinMoves(int scoreCp, int mateInMoves) {
+        int pliesToMate = (mateInMoves * 2) - 1;
+        int threshold = MATE_SCORE - pliesToMate;
+        return scoreCp >= threshold;
+    }
+
+    private record TacticalPosition(String fen, Set<String> bestMovesUci, Integer mateInMoves, String id) {
         TacticalPosition {
             Objects.requireNonNull(fen);
             Objects.requireNonNull(bestMovesUci);

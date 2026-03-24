@@ -73,16 +73,16 @@ Run perft harness gate only:
 Run tactical mate suite benchmark (>= 80% expected):
 
 ```powershell
-.\mvnw.cmd -pl engine-core -Dtest=TacticalSuiteTest test -Dtactical.enabled=true -Dtactical.suite.file="C:\path\to\mate_2_3_50.epd" -Dtactical.movetime.ms=2000 -Dtactical.min.pass.rate=0.80 -Dtactical.expected.positions=50
+.\mvnw.cmd --% -pl engine-core -Dtest=TacticalSuiteTest -Dtactical.enabled=true -Dtactical.movetime.ms=2000 -Dtactical.min.pass.rate=0.80 -Dtactical.expected.positions=50 test
 ```
 
 Alternative (depth-limited instead of movetime):
 
 ```powershell
-.\mvnw.cmd -pl engine-core -Dtest=TacticalSuiteTest test -Dtactical.enabled=true -Dtactical.suite.file="C:\path\to\mate_2_3_50.epd" -Dtactical.depth=8 -Dtactical.min.pass.rate=0.80 -Dtactical.expected.positions=50
+.\mvnw.cmd --% -pl engine-core -Dtest=TacticalSuiteTest -Dtactical.enabled=true -Dtactical.depth=5 -Dtactical.min.pass.rate=0.80 -Dtactical.expected.positions=50 test
 ```
 
-Default suite template path:
+Default bundled suite path:
 
 - `engine-core/src/test/resources/tactical/mate_2_3_50.epd`
 
@@ -100,3 +100,8 @@ Phase 2 focus:
 - Quiescence search and baseline move ordering.
 - Transposition table and time management.
 - Minimal but practical UCI command support in `engine-uci`.
+
+## Phase 2 Validation Aids
+
+- Issue #25 GUI closure checklist and evidence template:
+	- `docs/phase2-issue25-gui-validation.md`
