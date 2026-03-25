@@ -240,6 +240,50 @@ class SearcherTest {
     }
 
     @Test
+    void checkExtensionCapIsBoundedByInitialDepth() {
+        Searcher searcher = new Searcher();
+
+        assertEquals(0, searcher.getMaxCheckExtensionsForTesting(1));
+        assertEquals(1, searcher.getMaxCheckExtensionsForTesting(2));
+        assertEquals(3, searcher.getMaxCheckExtensionsForTesting(6));
+        assertEquals(16, searcher.getMaxCheckExtensionsForTesting(64));
+    }
+
+    @Test
+    void checkExtensionAppliesOnlyWhenEnabled() {
+        Board boardWithExtension = new Board("k3r3/8/8/8/8/8/8/4K3 w - - 0 1");
+        Board boardWithoutExtension = new Board("k3r3/8/8/8/8/8/8/4K3 w - - 0 1");
+
+        Searcher withExtension = new Searcher(true, true, false, true, false, true);
+        Searcher withoutExtension = new Searcher(true, true, false, true, false, false);
+
+        withExtension.searchDepth(boardWithExtension, 4);
+        withoutExtension.searchDepth(boardWithoutExtension, 4);
+
+        assertTrue(withExtension.getCheckExtensionsAppliedForTesting() > 0,
+            "Expected at least one extension in an in-check search path");
+        assertEquals(0, withoutExtension.getCheckExtensionsAppliedForTesting(),
+            "Expected extension count to stay zero when check extensions are disabled");
+    }
+
+    @Test
+    void lmrDoesNotReduceWhenSideToMoveIsInCheck() {
+        Board boardWithLmr = new Board("k3r3/8/8/8/8/8/8/4K3 w - - 0 1");
+        Board boardWithoutLmr = new Board("k3r3/8/8/8/8/8/8/4K3 w - - 0 1");
+
+        SearchResult withLmr = new Searcher(true, true, false, true, false, true)
+            .searchDepth(boardWithLmr, 5);
+        SearchResult withoutLmr = new Searcher(true, true, false, false, false, true)
+            .searchDepth(boardWithoutLmr, 5);
+
+        long withLmrNodes = withLmr.nodesVisited() + withLmr.leafNodes();
+        long withoutLmrNodes = withoutLmr.nodesVisited() + withoutLmr.leafNodes();
+
+        assertEquals(withoutLmrNodes, withLmrNodes,
+            "Expected LMR to be bypassed when side to move is in check");
+    }
+
+    @Test
     void ttMoveHintIsTriedFirstAtRoot() {
         Board board = new Board();
         Searcher searcher = new Searcher(true);
