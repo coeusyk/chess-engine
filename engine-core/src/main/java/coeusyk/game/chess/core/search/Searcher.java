@@ -602,16 +602,7 @@ public class Searcher {
     }
 
     private boolean canApplyRazoring(Board board, int depth, int alpha, int beta, boolean isPvNode) {
-        if (!futilityRazoringEnabled || depth != 1 || isPvNode || board.isActiveColorInCheck()) {
-            return false;
-        }
-
-        if (isMateWindow(alpha, beta)) {
-            return false;
-        }
-
-        int staticEval = evaluate(board);
-        return staticEval + RAZOR_MARGIN_DEPTH_1 < alpha;
+        return false;
     }
 
     private boolean canApplyFutilityPruning(
@@ -660,7 +651,6 @@ public class Searcher {
     private int getFutilityMarginForDepth(int depth) {
         return switch (depth) {
             case 1 -> FUTILITY_MARGIN_DEPTH_1;
-            case 2 -> FUTILITY_MARGIN_DEPTH_2;
             default -> 0;
         };
     }

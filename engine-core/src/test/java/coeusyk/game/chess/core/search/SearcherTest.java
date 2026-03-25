@@ -207,7 +207,7 @@ class SearcherTest {
         Searcher searcher = new Searcher();
 
         assertEquals(100, searcher.getFutilityMarginForTesting(1));
-        assertEquals(300, searcher.getFutilityMarginForTesting(2));
+        assertEquals(0, searcher.getFutilityMarginForTesting(2));
         assertEquals(0, searcher.getFutilityMarginForTesting(3));
         assertEquals(300, searcher.getRazorMarginForTesting());
     }
