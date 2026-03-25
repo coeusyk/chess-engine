@@ -203,6 +203,43 @@ class SearcherTest {
     }
 
     @Test
+    void futilityAndRazorMarginsAreDefinedAsConstants() {
+        Searcher searcher = new Searcher();
+
+        assertEquals(100, searcher.getFutilityMarginForTesting(1));
+        assertEquals(300, searcher.getFutilityMarginForTesting(2));
+        assertEquals(0, searcher.getFutilityMarginForTesting(3));
+        assertEquals(300, searcher.getRazorMarginForTesting());
+    }
+
+    @Test
+    void futilityAndRazoringReduceNodesOnQuietPosition() {
+        Board boardWithPruning = new Board("r2q1rk1/ppp2ppp/2n2n2/3bp3/3P4/2P1PN2/PP1N1PPP/R1BQ1RK1 w - - 0 9");
+        Board boardWithoutPruning = new Board("r2q1rk1/ppp2ppp/2n2n2/3bp3/3P4/2P1PN2/PP1N1PPP/R1BQ1RK1 w - - 0 9");
+
+        SearchResult withPruning = new Searcher(true, true, false, false, true).searchDepth(boardWithPruning, 6);
+        SearchResult withoutPruning = new Searcher(true, true, false, false, false).searchDepth(boardWithoutPruning, 6);
+
+        long withPruningNodes = withPruning.nodesVisited() + withPruning.leafNodes();
+        long withoutPruningNodes = withoutPruning.nodesVisited() + withoutPruning.leafNodes();
+
+        assertTrue(withPruningNodes < withoutPruningNodes, "Expected futility/razoring to reduce searched nodes");
+    }
+
+    @Test
+    void futilityAndRazoringDoNotHideHangingQueenTactic() {
+        Board boardWithPruning = new Board("4k3/8/8/4q3/2N5/8/8/4K3 w - - 0 1");
+        Board boardWithoutPruning = new Board("4k3/8/8/4q3/2N5/8/8/4K3 w - - 0 1");
+
+        SearchResult withPruning = new Searcher(true, true, false, true, true).searchDepth(boardWithPruning, 5);
+        SearchResult withoutPruning = new Searcher(true, true, false, true, false).searchDepth(boardWithoutPruning, 5);
+
+        assertNotNull(withPruning.bestMove());
+        assertNotNull(withoutPruning.bestMove());
+        assertMoveEquals(withoutPruning.bestMove(), withPruning.bestMove());
+    }
+
+    @Test
     void ttMoveHintIsTriedFirstAtRoot() {
         Board board = new Board();
         Searcher searcher = new Searcher(true);

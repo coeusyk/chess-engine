@@ -22,6 +22,9 @@ public class Searcher {
     private static final int ASPIRATION_INITIAL_DELTA_CP = 50;
     private static final int NULL_MOVE_DEPTH_THRESHOLD = 6;
     private static final int MAX_LEGAL_MOVES = 256;
+    private static final int FUTILITY_MARGIN_DEPTH_1 = 100;
+    private static final int FUTILITY_MARGIN_DEPTH_2 = 300;
+    private static final int RAZOR_MARGIN_DEPTH_1 = 300;
 
     private long nodesVisited;
     private long leafNodes;
@@ -34,6 +37,7 @@ public class Searcher {
     private final boolean aspirationWindowsEnabled;
     private final boolean nullMovePruningEnabled;
     private final boolean lmrEnabled;
+    private final boolean futilityRazoringEnabled;
     private final MoveOrderer moveOrderer = new MoveOrderer();
     private final Move[][] killerMoves = new Move[MAX_PLY][2];
     private final int[][] historyHeuristic = new int[7][64];
@@ -45,19 +49,19 @@ public class Searcher {
     private boolean aborted;
 
     public Searcher() {
-        this(true, true, true, true);
+        this(true, true, true, true, true);
     }
 
     public Searcher(boolean moveOrderingEnabled) {
-        this(moveOrderingEnabled, true, true, true);
+        this(moveOrderingEnabled, true, true, true, true);
     }
 
     Searcher(boolean moveOrderingEnabled, boolean aspirationWindowsEnabled) {
-        this(moveOrderingEnabled, aspirationWindowsEnabled, true, true);
+        this(moveOrderingEnabled, aspirationWindowsEnabled, true, true, true);
     }
 
     Searcher(boolean moveOrderingEnabled, boolean aspirationWindowsEnabled, boolean nullMovePruningEnabled) {
-        this(moveOrderingEnabled, aspirationWindowsEnabled, nullMovePruningEnabled, true);
+        this(moveOrderingEnabled, aspirationWindowsEnabled, nullMovePruningEnabled, true, true);
     }
 
     Searcher(
@@ -66,10 +70,21 @@ public class Searcher {
             boolean nullMovePruningEnabled,
             boolean lmrEnabled
     ) {
+        this(moveOrderingEnabled, aspirationWindowsEnabled, nullMovePruningEnabled, lmrEnabled, true);
+    }
+
+    Searcher(
+            boolean moveOrderingEnabled,
+            boolean aspirationWindowsEnabled,
+            boolean nullMovePruningEnabled,
+            boolean lmrEnabled,
+            boolean futilityRazoringEnabled
+    ) {
         this.moveOrderingEnabled = moveOrderingEnabled;
         this.aspirationWindowsEnabled = aspirationWindowsEnabled;
         this.nullMovePruningEnabled = nullMovePruningEnabled;
         this.lmrEnabled = lmrEnabled;
+        this.futilityRazoringEnabled = futilityRazoringEnabled;
     }
 
     public void setRootTtMoveHintForTesting(Move rootTtMoveHint) {
@@ -263,14 +278,17 @@ public class Searcher {
         int beta = rootBeta;
         pvLength[0] = 0;
 
+        int rootMoveIndex = 0;
         for (Move move : moves) {
             if (shouldStopHard.getAsBoolean()) {
                 return new RootResult(bestMove, bestScore, buildPrincipalVariation(), true);
             }
 
             board.makeMove(move);
-            int score = -alphaBeta(board, depth - 1, 1, -beta, -alpha, shouldStopHard, false);
+            boolean childIsPvNode = rootMoveIndex == 0;
+            int score = -alphaBeta(board, depth - 1, 1, -beta, -alpha, shouldStopHard, false, childIsPvNode);
             board.unmakeMove();
+            rootMoveIndex++;
 
             if (aborted) {
                 return new RootResult(bestMove, bestScore, buildPrincipalVariation(), true);
@@ -303,7 +321,8 @@ public class Searcher {
             int alpha,
             int beta,
             BooleanSupplier shouldStopHard,
-            boolean previousMoveWasNull
+            boolean previousMoveWasNull,
+            boolean isPvNode
     ) {
         pvLength[ply] = 0;
 
@@ -324,6 +343,17 @@ public class Searcher {
             return ttScore;
         }
 
+        if (canApplyRazoring(board, depth, alpha, beta, isPvNode)) {
+            int qScore = quiescence(board, alpha, alpha + 1, ply, shouldStopHard);
+            if (aborted) {
+                return alpha;
+            }
+
+            if (qScore <= alpha) {
+                return qScore;
+            }
+        }
+
         if (nullMovePruningEnabled && canApplyNullMove(board, depth, previousMoveWasNull, beta)) {
             int nullReduction = depth >= NULL_MOVE_DEPTH_THRESHOLD ? 3 : 2;
             Board.NullMoveState nullMoveState = board.makeNullMove();
@@ -334,7 +364,8 @@ public class Searcher {
                     -beta,
                     -beta + 1,
                     shouldStopHard,
-                    true
+                    true,
+                    false
             );
             board.unmakeNullMove(nullMoveState);
 
@@ -358,6 +389,7 @@ public class Searcher {
         }
 
         boolean sideToMoveInCheck = board.isActiveColorInCheck();
+        int staticEval = (depth <= 2) ? evaluate(board) : 0;
 
         if (moves.isEmpty()) {
             leafNodes++;
@@ -375,17 +407,61 @@ public class Searcher {
             board.makeMove(move);
 
             boolean moveGivesCheck = board.isActiveColorInCheck();
+            if (canApplyFutilityPruning(
+                    depth,
+                    alpha,
+                    beta,
+                    staticEval,
+                    isPvNode,
+                    sideToMoveInCheck,
+                    isQuiet,
+                    moveGivesCheck
+            )) {
+                board.unmakeMove();
+                moveIndex++;
+                continue;
+            }
+
             int score;
             if (canApplyLmr(depth, moveIndex, isQuiet, isKiller, isTtMove, sideToMoveInCheck, moveGivesCheck)) {
                 int reduction = lmrReductions[Math.min(depth, MAX_PLY - 1)][Math.min(moveIndex + 1, MAX_LEGAL_MOVES - 1)];
                 int reducedDepth = Math.max(1, depth - 1 - reduction);
 
-                score = -alphaBeta(board, reducedDepth, ply + 1, -beta, -alpha, shouldStopHard, false);
+                score = -alphaBeta(
+                        board,
+                        reducedDepth,
+                        ply + 1,
+                        -beta,
+                        -alpha,
+                        shouldStopHard,
+                        false,
+                        false
+                );
                 if (!aborted && score > alpha) {
-                    score = -alphaBeta(board, depth - 1, ply + 1, -beta, -alpha, shouldStopHard, false);
+                    boolean childIsPvNode = isPvNode && moveIndex == 0;
+                    score = -alphaBeta(
+                            board,
+                            depth - 1,
+                            ply + 1,
+                            -beta,
+                            -alpha,
+                            shouldStopHard,
+                            false,
+                            childIsPvNode
+                    );
                 }
             } else {
-                score = -alphaBeta(board, depth - 1, ply + 1, -beta, -alpha, shouldStopHard, false);
+                boolean childIsPvNode = isPvNode && moveIndex == 0;
+                score = -alphaBeta(
+                        board,
+                        depth - 1,
+                        ply + 1,
+                        -beta,
+                        -alpha,
+                        shouldStopHard,
+                        false,
+                        childIsPvNode
+                );
             }
 
             board.unmakeMove();
@@ -420,6 +496,10 @@ public class Searcher {
             }
         }
 
+        if (bestScore == -INF) {
+            return alpha;
+        }
+
         if (!aborted && bestScore != -INF) {
             TTBound bound = resolveBound(bestScore, alphaOrig, beta);
             transpositionTable.store(zobrist, bestMove, depth, bestScore, bound);
@@ -442,6 +522,53 @@ public class Searcher {
                 && !isMateWindow
             && staticEval >= beta
                 && hasNonPawnMaterial(board, board.getActiveColor());
+    }
+
+    private boolean canApplyRazoring(Board board, int depth, int alpha, int beta, boolean isPvNode) {
+        if (!futilityRazoringEnabled || depth != 1 || isPvNode || board.isActiveColorInCheck()) {
+            return false;
+        }
+
+        if (isMateWindow(alpha, beta)) {
+            return false;
+        }
+
+        int staticEval = evaluate(board);
+        return staticEval + RAZOR_MARGIN_DEPTH_1 < alpha;
+    }
+
+    private boolean canApplyFutilityPruning(
+            int depth,
+            int alpha,
+            int beta,
+            int staticEval,
+            boolean isPvNode,
+            boolean sideToMoveInCheck,
+            boolean isQuiet,
+            boolean moveGivesCheck
+    ) {
+        if (!futilityRazoringEnabled || isPvNode || sideToMoveInCheck || !isQuiet || moveGivesCheck) {
+            return false;
+        }
+
+        if (isMateWindow(alpha, beta)) {
+            return false;
+        }
+
+        int margin = getFutilityMarginForDepth(depth);
+        return margin > 0 && (staticEval + margin) <= alpha;
+    }
+
+    private boolean isMateWindow(int alpha, int beta) {
+        return Math.abs(alpha) >= (MATE_SCORE - MAX_PLY) || Math.abs(beta) >= (MATE_SCORE - MAX_PLY);
+    }
+
+    private int getFutilityMarginForDepth(int depth) {
+        return switch (depth) {
+            case 1 -> FUTILITY_MARGIN_DEPTH_1;
+            case 2 -> FUTILITY_MARGIN_DEPTH_2;
+            default -> 0;
+        };
     }
 
     private boolean hasNonPawnMaterial(Board board, int color) {
@@ -505,6 +632,14 @@ public class Searcher {
         int safeDepth = Math.max(0, Math.min(depth, MAX_PLY - 1));
         int safeMoveIndex = Math.max(0, Math.min(moveIndexOneBased, MAX_LEGAL_MOVES - 1));
         return lmrReductions[safeDepth][safeMoveIndex];
+    }
+
+    int getFutilityMarginForTesting(int depth) {
+        return getFutilityMarginForDepth(depth);
+    }
+
+    int getRazorMarginForTesting() {
+        return RAZOR_MARGIN_DEPTH_1;
     }
 
     Integer applyTtBound(TranspositionTable.Entry entry, int depth, int alpha, int beta) {
