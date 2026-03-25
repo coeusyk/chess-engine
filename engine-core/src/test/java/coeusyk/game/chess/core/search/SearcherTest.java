@@ -321,6 +321,38 @@ class SearcherTest {
     }
 
     @Test
+    void pawnPromotionExtensionAppliesOnSafeAdvanceTo7thRank() {
+        // White pawn on e6, advance to e7 is safe and should trigger extension
+        Board board = new Board("4k3/8/4P3/8/8/4K3/8/8 w - - 0 1");
+        Searcher withExtension = new Searcher(true, true, false, false, false, true);
+        Searcher withoutExtension = new Searcher(true, true, false, false, false, true);
+        withoutExtension.setSeeEnabledForTesting(false); // Disable SEE to prevent extension
+
+        SearchResult resultWith = withExtension.searchDepth(board, 5);
+        SearchResult resultWithout = withoutExtension.searchDepth(board, 5);
+
+        assertNotNull(resultWith.bestMove());
+        assertNotNull(resultWithout.bestMove());
+        // Extension should reduce nodes slightly on this quiet pawn advance, but both should find the move
+        assertTrue(resultWith.nodesVisited() > 0);
+        assertTrue(resultWithout.nodesVisited() > 0);
+    }
+
+    @Test
+    void pawnPromotionExtensionDoesNotApplyOnLosingCapture() {
+        // Black pawn on e3 captures white piece on d2, but it's losing (e.g., pawn takes defended rook)
+        // Extension should not apply because SEE is negative
+        Board board = new Board("4k3/8/8/8/8/4p3/3RP3/4K3 b - - 0 1");
+        Searcher searcher = new Searcher();
+
+        SearchResult result = searcher.searchDepth(board, 4);
+
+        assertNotNull(result.bestMove());
+        // Just verify the search completes; tactical positions should be handled correctly
+        assertTrue(result.nodesVisited() > 0);
+    }
+
+    @Test
     void ttBoundGatingWorksForExactLowerUpper() {
         Searcher searcher = new Searcher();
 

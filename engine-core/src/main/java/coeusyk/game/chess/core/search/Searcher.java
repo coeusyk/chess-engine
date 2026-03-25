@@ -466,6 +466,15 @@ public class Searcher {
             board.makeMove(move);
 
             boolean moveGivesCheck = board.isActiveColorInCheck();
+            
+            // Check for pawn promotion extension after move is made
+            int childDepth = effectiveDepth - 1;
+            int childExtensionsUsed = currentExtensionsUsed;
+            if (shouldApplyPawnPromotionExtension(board, move, currentExtensionsUsed, maxExtensions)) {
+                childDepth = Math.min(MAX_PLY - 1, childDepth + 1);
+                childExtensionsUsed++;
+            }
+            
             if (canPruneLosingCapture(
                     effectiveDepth,
                     captureSee,
@@ -496,7 +505,7 @@ public class Searcher {
             int score;
             if (canApplyLmr(effectiveDepth, moveIndex, isQuiet, isKiller, isTtMove, sideToMoveInCheck, moveGivesCheck)) {
                 int reduction = lmrReductions[Math.min(effectiveDepth, MAX_PLY - 1)][Math.min(moveIndex + 1, MAX_LEGAL_MOVES - 1)];
-                int reducedDepth = Math.max(1, effectiveDepth - 1 - reduction);
+                int reducedDepth = Math.max(1, childDepth - reduction);
 
                 score = -alphaBeta(
                         board,
@@ -507,21 +516,21 @@ public class Searcher {
                         shouldStopHard,
                         false,
                         false,
-                        currentExtensionsUsed,
+                        childExtensionsUsed,
                         maxExtensions
                 );
                 if (!aborted && score > alpha) {
                     boolean childIsPvNode = isPvNode && moveIndex == 0;
                     score = -alphaBeta(
                             board,
-                            effectiveDepth - 1,
+                            childDepth,
                             ply + 1,
                             -beta,
                             -alpha,
                             shouldStopHard,
                             false,
                             childIsPvNode,
-                            currentExtensionsUsed,
+                            childExtensionsUsed,
                             maxExtensions
                     );
                 }
@@ -529,14 +538,14 @@ public class Searcher {
                 boolean childIsPvNode = isPvNode && moveIndex == 0;
                 score = -alphaBeta(
                         board,
-                        effectiveDepth - 1,
+                        childDepth,
                         ply + 1,
                         -beta,
                         -alpha,
                         shouldStopHard,
                         false,
                         childIsPvNode,
-                        currentExtensionsUsed,
+                        childExtensionsUsed,
                         maxExtensions
                 );
             }
@@ -731,6 +740,36 @@ public class Searcher {
             return 0;
         }
         return Math.min(MAX_CHECK_EXTENSIONS, Math.max(0, initialDepth / 2));
+    }
+
+    private boolean shouldApplyPawnPromotionExtension(Board board, Move move, int extensionsUsed, int maxExtensions) {
+        if (extensionsUsed >= maxExtensions) {
+            return false;
+        }
+
+        int targetSquare = move.targetSquare;
+        int targetPiece = board.getPiece(targetSquare);
+        
+        if (Piece.type(targetPiece) != Piece.Pawn) {
+            return false;
+        }
+
+        // Check if pawn is on 7th rank (white) or 2nd rank (black)
+        int rankIndex = targetSquare / 8;
+        boolean isWhitePawnOn7thRank = Piece.isWhite(targetPiece) && rankIndex == 1;
+        boolean isBlackPawnOn2ndRank = Piece.isBlack(targetPiece) && rankIndex == 6;
+        
+        if (!isWhitePawnOn7thRank && !isBlackPawnOn2ndRank) {
+            return false;
+        }
+
+        // Verify the advance is not immediately losing by SEE (safe >= 0)
+        if (!seeEnabled) {
+            return true;
+        }
+
+        Integer see = staticExchangeEvaluator.evaluate(board, move);
+        return see != null && see >= 0;
     }
 
     int getFutilityMarginForTesting(int depth) {
