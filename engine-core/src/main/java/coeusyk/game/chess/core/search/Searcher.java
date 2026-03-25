@@ -41,7 +41,9 @@ public class Searcher {
     private final boolean lmrEnabled;
     private final boolean futilityRazoringEnabled;
     private final boolean checkExtensionsEnabled;
+    private boolean seeEnabled = true;
     private final MoveOrderer moveOrderer = new MoveOrderer();
+    private final StaticExchangeEvaluator staticExchangeEvaluator = new StaticExchangeEvaluator();
     private final Move[][] killerMoves = new Move[MAX_PLY][2];
     private final int[][] historyHeuristic = new int[7][64];
     private final TranspositionTable transpositionTable = new TranspositionTable();
@@ -104,6 +106,10 @@ public class Searcher {
 
     public void setRootTtMoveHintForTesting(Move rootTtMoveHint) {
         this.rootTtMoveHint = rootTtMoveHint;
+    }
+
+    void setSeeEnabledForTesting(boolean seeEnabled) {
+        this.seeEnabled = seeEnabled;
     }
 
     public void setTranspositionTableSizeMb(int sizeMb) {
@@ -449,12 +455,29 @@ public class Searcher {
         int moveIndex = 0;
         for (Move move : moves) {
             boolean isQuiet = isQuietMove(board, move);
+            boolean isCapture = moveOrderer.isCapture(board, move);
             boolean isKiller = isKillerMove(ply, move);
             boolean isTtMove = ttMove != null && sameMove(ttMove, move);
+            Integer captureSee = null;
+            if (isCapture && seeEnabled) {
+                captureSee = staticExchangeEvaluator.evaluate(board, move);
+            }
 
             board.makeMove(move);
 
             boolean moveGivesCheck = board.isActiveColorInCheck();
+            if (canPruneLosingCapture(
+                    effectiveDepth,
+                    captureSee,
+                    isPvNode,
+                    sideToMoveInCheck,
+                    moveGivesCheck
+            )) {
+                board.unmakeMove();
+                moveIndex++;
+                continue;
+            }
+
             if (canApplyFutilityPruning(
                     effectiveDepth,
                     alpha,
@@ -611,6 +634,23 @@ public class Searcher {
 
         int margin = getFutilityMarginForDepth(depth);
         return margin > 0 && (staticEval + margin) <= alpha;
+    }
+
+    private boolean canPruneLosingCapture(
+            int depth,
+            Integer captureSee,
+            boolean isPvNode,
+            boolean sideToMoveInCheck,
+            boolean moveGivesCheck
+    ) {
+        if (!seeEnabled || captureSee == null || captureSee >= 0) {
+            return false;
+        }
+
+        return depth <= 2
+                && !isPvNode
+                && !sideToMoveInCheck
+                && !moveGivesCheck;
     }
 
     private boolean isMateWindow(int alpha, int beta) {
@@ -848,11 +888,23 @@ public class Searcher {
     private List<Move> extractQuiescenceMoves(Board board, List<Move> legalMoves) {
         List<Move> qMoves = new ArrayList<>();
         for (Move move : legalMoves) {
-            if (isQuiescenceMove(board, move)) {
+            if (shouldIncludeInQuiescence(board, move)) {
                 qMoves.add(move);
             }
         }
         return qMoves;
+    }
+
+    boolean shouldIncludeInQuiescenceForTesting(Board board, Move move) {
+        return shouldIncludeInQuiescence(board, move);
+    }
+
+    private boolean shouldIncludeInQuiescence(Board board, Move move) {
+        if (!isQuiescenceMove(board, move)) {
+            return false;
+        }
+
+        return !seeEnabled || !moveOrderer.isCapture(board, move) || staticExchangeEvaluator.evaluate(board, move) >= 0;
     }
 
     private boolean isQuiescenceMove(Board board, Move move) {

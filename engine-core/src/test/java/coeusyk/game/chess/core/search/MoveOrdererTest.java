@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 class MoveOrdererTest {
@@ -36,6 +37,21 @@ class MoveOrdererTest {
 
         assertEquals(52, ordered.get(0).startSquare);
         assertEquals(36, ordered.get(0).targetSquare);
+    }
+
+    @Test
+    void negativeSeeCaptureIsScoredBelowQuietMove() {
+        Board board = new Board("4k3/5p2/4p3/8/5N2/8/8/4K3 w - - 0 1");
+        List<Move> legalMoves = new MovesGenerator(board).getActiveMoves(board.getActiveColor());
+
+        MoveOrderer orderer = new MoveOrderer();
+        Move losingCapture = findMove(legalMoves, 37, 20); // Nf4xe6
+        Move quietMove = findMove(legalMoves, 60, 59); // Ke1-d1
+
+        int captureScore = orderer.scoreMove(board, losingCapture, 0, null, new Move[128][2], new int[7][64]);
+        int quietScore = orderer.scoreMove(board, quietMove, 0, null, new Move[128][2], new int[7][64]);
+
+        assertTrue(captureScore < quietScore);
     }
 
     private Move findMove(List<Move> legalMoves, int startSquare, int targetSquare) {

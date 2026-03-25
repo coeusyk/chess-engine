@@ -284,6 +284,19 @@ class SearcherTest {
     }
 
     @Test
+    void quiescenceSkipsNegativeSeeCaptures() {
+        Board board = new Board("4k3/5p2/4p3/8/5N2/8/8/4K3 w - - 0 1");
+        Move losingCapture = findMove(board, 37, 20);
+
+        Searcher withSee = new Searcher(true, true, false, true, true, true);
+        Searcher withoutSee = new Searcher(true, true, false, true, true, true);
+        withoutSee.setSeeEnabledForTesting(false);
+
+        assertFalse(withSee.shouldIncludeInQuiescenceForTesting(board, losingCapture));
+        assertTrue(withoutSee.shouldIncludeInQuiescenceForTesting(board, losingCapture));
+    }
+
+    @Test
     void ttMoveHintIsTriedFirstAtRoot() {
         Board board = new Board();
         Searcher searcher = new Searcher(true);
