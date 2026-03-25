@@ -33,6 +33,17 @@ public class StaticExchangeEvaluator {
         return capturedValue + promotionDelta - lossByRecaptures;
     }
 
+    public int evaluateSquareOccupation(Board board, int targetSquare) {
+        int occupant = board.getPiece(targetSquare);
+        if (occupant == Piece.None) {
+            return 0;
+        }
+
+        int occupantValue = PIECE_VALUES[Piece.type(occupant)];
+        int lossByRecaptures = bestReplyGain(board, targetSquare, board.getActiveColor());
+        return occupantValue - lossByRecaptures;
+    }
+
     private int bestReplyGain(Board board, int targetSquare, int sideToMove) {
         Move recapture = findLeastValuableCapture(board, targetSquare, sideToMove);
         if (recapture == null) {

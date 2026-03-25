@@ -353,6 +353,28 @@ class SearcherTest {
     }
 
     @Test
+    void singularMarginScalesByDepth() {
+        Searcher searcher = new Searcher();
+
+        assertEquals(64, searcher.getSingularMarginForTesting(8));
+        assertEquals(80, searcher.getSingularMarginForTesting(10));
+    }
+
+    @Test
+    void singularityGuardRequiresDepthAndQualifiedTtEntry() {
+        Searcher searcher = new Searcher();
+        Move move = new Move(52, 36, "ep-target");
+        TranspositionTable.Entry qualified = new TranspositionTable.Entry(1L, move, 8, 50, TTBound.EXACT);
+        TranspositionTable.Entry shallow = new TranspositionTable.Entry(1L, move, 3, 50, TTBound.EXACT);
+
+        assertTrue(searcher.canAttemptSingularityForTesting(8, qualified, false, false));
+        assertFalse(searcher.canAttemptSingularityForTesting(7, qualified, false, false));
+        assertFalse(searcher.canAttemptSingularityForTesting(8, shallow, false, false));
+        assertFalse(searcher.canAttemptSingularityForTesting(8, qualified, true, false));
+        assertFalse(searcher.canAttemptSingularityForTesting(8, qualified, false, true));
+    }
+
+    @Test
     void ttBoundGatingWorksForExactLowerUpper() {
         Searcher searcher = new Searcher();
 

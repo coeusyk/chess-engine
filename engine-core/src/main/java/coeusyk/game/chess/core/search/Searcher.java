@@ -26,6 +26,8 @@ public class Searcher {
     private static final int FUTILITY_MARGIN_DEPTH_2 = 300;
     private static final int RAZOR_MARGIN_DEPTH_1 = 300;
     private static final int MAX_CHECK_EXTENSIONS = 16;
+    private static final int SINGULAR_DEPTH_THRESHOLD = 8;
+    private static final int SINGULAR_MARGIN_PER_PLY = 8;
 
     private long nodesVisited;
     private long leafNodes;
@@ -41,6 +43,7 @@ public class Searcher {
     private final boolean lmrEnabled;
     private final boolean futilityRazoringEnabled;
     private final boolean checkExtensionsEnabled;
+    private final boolean singularExtensionsEnabled = true;
     private boolean seeEnabled = true;
     private final MoveOrderer moveOrderer = new MoveOrderer();
     private final StaticExchangeEvaluator staticExchangeEvaluator = new StaticExchangeEvaluator();
@@ -326,7 +329,8 @@ public class Searcher {
                     false,
                     childIsPvNode,
                     rootExtensionsUsed,
-                    maxCheckExtensions
+                    maxCheckExtensions,
+                    false
                 );
             board.unmakeMove();
             rootMoveIndex++;
@@ -365,7 +369,8 @@ public class Searcher {
             boolean previousMoveWasNull,
             boolean isPvNode,
             int extensionsUsed,
-            int maxExtensions
+            int maxExtensions,
+            boolean inSingularitySearch
     ) {
         pvLength[ply] = 0;
 
@@ -420,7 +425,8 @@ public class Searcher {
                     true,
                 false,
                 currentExtensionsUsed,
-                maxExtensions
+                maxExtensions,
+                false
             );
             board.unmakeNullMove(nullMoveState);
 
@@ -450,6 +456,33 @@ public class Searcher {
             return evaluateTerminal(board, ply);
         }
 
+        Move singularMoveToExtend = null;
+        if (canAttemptSingularity(effectiveDepth, ttEntry, inSingularitySearch, sideToMoveInCheck, alpha, beta)) {
+            SingularityOutcome singularity = runSingularitySearch(
+                    board,
+                    moves,
+                    ttEntry.bestMove(),
+                    ttEntry.score(),
+                    effectiveDepth,
+                    ply,
+                    shouldStopHard,
+                    currentExtensionsUsed,
+                    maxExtensions
+            );
+
+            if (aborted) {
+                return alpha;
+            }
+
+            if (singularity.failHigh()) {
+                return beta;
+            }
+
+            if (singularity.failLow()) {
+                singularMoveToExtend = ttEntry.bestMove();
+            }
+        }
+
         int bestScore = -INF;
         Move bestMove = null;
         int moveIndex = 0;
@@ -470,7 +503,14 @@ public class Searcher {
             // Check for pawn promotion extension after move is made
             int childDepth = effectiveDepth - 1;
             int childExtensionsUsed = currentExtensionsUsed;
-            if (shouldApplyPawnPromotionExtension(board, move, currentExtensionsUsed, maxExtensions)) {
+            if (shouldApplyPawnPromotionExtension(board, move, moveGivesCheck, currentExtensionsUsed, maxExtensions)) {
+                childDepth = Math.min(MAX_PLY - 1, childDepth + 1);
+                childExtensionsUsed++;
+            }
+
+            if (singularMoveToExtend != null
+                    && sameMove(singularMoveToExtend, move)
+                    && childExtensionsUsed < maxExtensions) {
                 childDepth = Math.min(MAX_PLY - 1, childDepth + 1);
                 childExtensionsUsed++;
             }
@@ -517,7 +557,8 @@ public class Searcher {
                         false,
                         false,
                         childExtensionsUsed,
-                        maxExtensions
+                        maxExtensions,
+                        false
                 );
                 if (!aborted && score > alpha) {
                     boolean childIsPvNode = isPvNode && moveIndex == 0;
@@ -531,7 +572,8 @@ public class Searcher {
                             false,
                             childIsPvNode,
                             childExtensionsUsed,
-                            maxExtensions
+                            maxExtensions,
+                            false
                     );
                 }
             } else {
@@ -546,7 +588,8 @@ public class Searcher {
                         false,
                         childIsPvNode,
                         childExtensionsUsed,
-                        maxExtensions
+                        maxExtensions,
+                        false
                 );
             }
 
@@ -698,6 +741,83 @@ public class Searcher {
                 && !moveGivesCheck;
     }
 
+    private boolean canAttemptSingularity(
+            int depth,
+            TranspositionTable.Entry ttEntry,
+            boolean inSingularitySearch,
+            boolean sideToMoveInCheck,
+            int alpha,
+            int beta
+    ) {
+        if (!singularExtensionsEnabled || inSingularitySearch || sideToMoveInCheck || isMateWindow(alpha, beta)) {
+            return false;
+        }
+
+        if (depth < SINGULAR_DEPTH_THRESHOLD || ttEntry == null || ttEntry.bestMove() == null) {
+            return false;
+        }
+
+        if (ttEntry.depth() < (depth - 3)) {
+            return false;
+        }
+
+        return ttEntry.bound() == TTBound.EXACT || ttEntry.bound() == TTBound.LOWER_BOUND;
+    }
+
+    private SingularityOutcome runSingularitySearch(
+            Board board,
+            List<Move> moves,
+            Move ttMove,
+            int ttScore,
+            int depth,
+            int ply,
+            BooleanSupplier shouldStopHard,
+            int extensionsUsed,
+            int maxExtensions
+    ) {
+        if (ttMove == null) {
+            return new SingularityOutcome(false, false);
+        }
+
+        int singularAlpha = ttScore - getSingularMargin(depth);
+        int singularBeta = singularAlpha + 1;
+        int reducedDepth = Math.max(1, depth / 2);
+
+        boolean searchedAlternative = false;
+        for (Move move : moves) {
+            if (sameMove(move, ttMove)) {
+                continue;
+            }
+
+            searchedAlternative = true;
+            board.makeMove(move);
+            int score = -alphaBeta(
+                    board,
+                    Math.max(0, reducedDepth - 1),
+                    ply + 1,
+                    -singularBeta,
+                    -singularAlpha,
+                    shouldStopHard,
+                    false,
+                    false,
+                    extensionsUsed,
+                    maxExtensions,
+                    true
+            );
+            board.unmakeMove();
+
+            if (aborted) {
+                return new SingularityOutcome(false, false);
+            }
+
+            if (score >= singularBeta) {
+                return new SingularityOutcome(false, true);
+            }
+        }
+
+        return new SingularityOutcome(searchedAlternative, false);
+    }
+
     private int[][] precomputeLmrReductions() {
         int[][] reductions = new int[MAX_PLY][MAX_LEGAL_MOVES];
         for (int depth = 1; depth < MAX_PLY; depth++) {
@@ -727,6 +847,14 @@ public class Searcher {
         return lmrReductions[safeDepth][safeMoveIndex];
     }
 
+    int getSingularMarginForTesting(int depth) {
+        return getSingularMargin(depth);
+    }
+
+    boolean canAttemptSingularityForTesting(int depth, TranspositionTable.Entry entry, boolean inSingularitySearch, boolean sideToMoveInCheck) {
+        return canAttemptSingularity(depth, entry, inSingularitySearch, sideToMoveInCheck, -10_000, 10_000);
+    }
+
     long getCheckExtensionsAppliedForTesting() {
         return checkExtensionsApplied;
     }
@@ -742,8 +870,22 @@ public class Searcher {
         return Math.min(MAX_CHECK_EXTENSIONS, Math.max(0, initialDepth / 2));
     }
 
-    private boolean shouldApplyPawnPromotionExtension(Board board, Move move, int extensionsUsed, int maxExtensions) {
+    private int getSingularMargin(int depth) {
+        return depth * SINGULAR_MARGIN_PER_PLY;
+    }
+
+    private boolean shouldApplyPawnPromotionExtension(
+            Board board,
+            Move move,
+            boolean moveGivesCheck,
+            int extensionsUsed,
+            int maxExtensions
+    ) {
         if (extensionsUsed >= maxExtensions) {
+            return false;
+        }
+
+        if (moveGivesCheck) {
             return false;
         }
 
@@ -768,8 +910,7 @@ public class Searcher {
             return true;
         }
 
-        Integer see = staticExchangeEvaluator.evaluate(board, move);
-        return see != null && see >= 0;
+        return staticExchangeEvaluator.evaluateSquareOccupation(board, targetSquare) >= 0;
     }
 
     int getFutilityMarginForTesting(int depth) {
@@ -1010,5 +1151,8 @@ public class Searcher {
     }
 
     private record RootResult(Move bestMove, int bestScore, List<Move> principalVariation, boolean aborted) {
+    }
+
+    private record SingularityOutcome(boolean failLow, boolean failHigh) {
     }
 }
