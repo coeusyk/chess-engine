@@ -10,11 +10,15 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
@@ -158,5 +162,116 @@ public class AnalysisService {
         int file = square % 8;
         int rank = 8 - (square / 8);
         return "" + (char) ('a' + file) + rank;
+    }
+
+    // -------------------------------------------------------------------------
+    // Synchronous evaluate endpoint (POST /api/analysis/evaluate)
+    // -------------------------------------------------------------------------
+
+    private static final int EVALUATE_DEPTH_CAP = 15;
+    private static final long EVALUATE_TIMEOUT_SECONDS = 60;
+
+    /**
+     * Runs a fixed-depth search synchronously and returns a complete evaluation result.
+     *
+     * <p>Depth is silently clamped to {@value #EVALUATE_DEPTH_CAP}. If the search
+     * exceeds {@value #EVALUATE_TIMEOUT_SECONDS} seconds, {@link SearchTimeoutException} is thrown.
+     *
+     * <p>Any in-progress SSE analysis is cancelled before this search starts.
+     *
+     * @throws IllegalArgumentException on invalid FEN
+     * @throws SearchTimeoutException   when the 60-second server-side limit is exceeded
+     */
+    public EvaluateResponse evaluate(String fen, int rawDepth, int rawMultiPv) {
+        // Validate FEN synchronously — throws IllegalArgumentException on bad input.
+        Board board = new Board(fen);
+
+        int depth = Math.min(rawDepth < 1 ? EVALUATE_DEPTH_CAP : rawDepth, EVALUATE_DEPTH_CAP);
+        int multiPv = Math.max(1, rawMultiPv);
+
+        // Cancel any running SSE analysis to free the executor thread immediately.
+        AtomicBoolean previousFlag = activeCancellationFlag.get();
+        if (previousFlag != null) {
+            previousFlag.set(true);
+        }
+
+        AtomicBoolean cancelled = new AtomicBoolean(false);
+
+        // Collect iteration info events to populate MultiPV lines in the response.
+        List<IterationInfo> currentDepthBuffer = new ArrayList<>();
+        AtomicReference<List<IterationInfo>> lastCompleteInfos = new AtomicReference<>(List.of());
+        AtomicReference<IterationInfo> lastRank1Info = new AtomicReference<>();
+
+        Searcher searcher = new Searcher();
+        searcher.setMultiPV(multiPv);
+
+        Searcher.IterationListener listener = info -> {
+            if (info.multipv() == 1 && !currentDepthBuffer.isEmpty()) {
+                // A new depth iteration is starting — commit the previous one as complete.
+                lastCompleteInfos.set(new ArrayList<>(currentDepthBuffer));
+                currentDepthBuffer.clear();
+            }
+            currentDepthBuffer.add(info);
+            if (info.multipv() == 1) {
+                lastRank1Info.set(info);
+            }
+        };
+
+        CompletableFuture<SearchResult> future = CompletableFuture.supplyAsync(
+                () -> searcher.iterativeDeepening(board, depth, cancelled::get, cancelled::get, listener),
+                searchExecutor);
+
+        SearchResult result;
+        try {
+            result = future.get(EVALUATE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            cancelled.set(true);
+            throw new SearchTimeoutException("Analysis exceeded the " + EVALUATE_TIMEOUT_SECONDS + "-second time limit");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            cancelled.set(true);
+            throw new RuntimeException("Analysis interrupted", e);
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof IllegalArgumentException iae) throw iae;
+            throw new RuntimeException("Analysis failed: " + cause.getMessage(), cause);
+        }
+
+        // Commit any events still in the current-depth buffer as the final iteration.
+        if (!currentDepthBuffer.isEmpty()) {
+            lastCompleteInfos.set(new ArrayList<>(currentDepthBuffer));
+        }
+
+        // Build lines from the last completed iteration.
+        List<LineInfo> lines = lastCompleteInfos.get().stream()
+                .map(info -> new LineInfo(info.multipv(), buildScoreInfo(info.scoreCp()),
+                        info.pv().stream().map(this::toUci).collect(Collectors.toList())))
+                .collect(Collectors.toList());
+
+        IterationInfo r1 = lastRank1Info.get();
+        ScoreInfo rootScore = buildScoreInfo(r1 != null ? r1.scoreCp() : result.scoreCp());
+
+        long nodes = result.nodesVisited();
+        long timeMs = r1 != null ? r1.timeMs() : 1L;
+        long nps = timeMs > 0 ? (nodes * 1000L) / timeMs : 0;
+
+        List<String> pv = result.principalVariation().stream()
+                .map(this::toUci)
+                .collect(Collectors.toList());
+
+        String bestMoveUci = result.bestMove() != null ? toUci(result.bestMove()) : "0000";
+
+        return new EvaluateResponse(bestMoveUci, rootScore, result.depthReached(), nodes, nps, pv, lines);
+    }
+
+    private ScoreInfo buildScoreInfo(int scoreCp) {
+        boolean isMate = Math.abs(scoreCp) >= MATE_THRESHOLD;
+        if (isMate) {
+            int mateInMoves = scoreCp > 0
+                    ? (MATE_SCORE - scoreCp + 1) / 2
+                    : -((MATE_SCORE + scoreCp + 1) / 2);
+            return new ScoreInfo("mate", mateInMoves);
+        }
+        return new ScoreInfo("cp", scoreCp);
     }
 }
