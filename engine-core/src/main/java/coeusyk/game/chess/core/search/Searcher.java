@@ -23,7 +23,6 @@ public class Searcher {
     private static final int NULL_MOVE_DEPTH_THRESHOLD = 6;
     private static final int MAX_LEGAL_MOVES = 256;
     private static final int FUTILITY_MARGIN_DEPTH_1 = 100;
-    private static final int FUTILITY_MARGIN_DEPTH_2 = 300;
     private static final int RAZOR_MARGIN_DEPTH_1 = 300;
     private static final int MAX_CHECK_EXTENSIONS = 16;
     private static final int SINGULAR_DEPTH_THRESHOLD = 8;
