@@ -215,8 +215,9 @@ public class Searcher {
                 nodesVisited = 0;
                 leafNodes = 0;
                 quiescenceNodes = 0;
-                pvTable = new Move[depth + 4][depth + 4];
-                pvLength = new int[depth + 4];
+                int pvSize = depth + maxCheckExtensions + 4;
+                pvTable = new Move[pvSize][pvSize];
+                pvLength = new int[pvSize];
 
                 RootResult iteration;
                 if (pvIndex == 0 && aspirationWindowsEnabled && depth >= 2 && previousBestMove != null) {
