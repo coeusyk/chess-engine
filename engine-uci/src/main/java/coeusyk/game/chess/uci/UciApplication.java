@@ -23,6 +23,8 @@ public class UciApplication {
 
     private Board board = new Board();
     private int multiPV = 1;
+    private int hashSizeMb = 64;
+    private long moveOverheadMs = 30;
 
     private final AtomicBoolean stopRequested = new AtomicBoolean(false);
     private volatile boolean searchRunning = false;
@@ -46,7 +48,10 @@ public class UciApplication {
             if ("uci".equals(line)) {
                 System.out.println("id name " + ENGINE_NAME);
                 System.out.println("id author " + ENGINE_AUTHOR);
+                System.out.println("option name Hash type spin default 64 min 1 max 65536");
                 System.out.println("option name MultiPV type spin default 1 min 1 max 500");
+                System.out.println("option name MoveOverhead type spin default 30 min 0 max 5000");
+                System.out.println("option name Threads type spin default 1 min 1 max 1");
                 System.out.println("uciok");
             } else if ("isready".equals(line)) {
                 System.out.println("readyok");
@@ -115,19 +120,38 @@ public class UciApplication {
 
     private void handleSetOption(String command) {
         String lower = command.toLowerCase();
-        if (lower.contains("name multipv") && lower.contains("value")) {
-            String[] parts = command.split("\\s+");
-            for (int i = 0; i < parts.length - 1; i++) {
-                if ("value".equalsIgnoreCase(parts[i])) {
-                    try {
-                        int value = Integer.parseInt(parts[i + 1]);
-                        multiPV = Math.max(1, value);
-                    } catch (NumberFormatException ignored) {
-                    }
-                    break;
-                }
+        int valueIdx = lower.indexOf("value");
+        if (valueIdx < 0) {
+            return;
+        }
+
+        String valuePart = command.substring(valueIdx).split("\\s+").length > 1
+                ? command.substring(valueIdx).split("\\s+")[1]
+                : null;
+        if (valuePart == null) {
+            return;
+        }
+
+        if (lower.contains("name hash ")) {
+            try {
+                int value = Integer.parseInt(valuePart);
+                hashSizeMb = Math.max(1, Math.min(65536, value));
+            } catch (NumberFormatException ignored) {
+            }
+        } else if (lower.contains("name multipv ")) {
+            try {
+                int value = Integer.parseInt(valuePart);
+                multiPV = Math.max(1, Math.min(500, value));
+            } catch (NumberFormatException ignored) {
+            }
+        } else if (lower.contains("name moveoverhead ")) {
+            try {
+                long value = Long.parseLong(valuePart);
+                moveOverheadMs = Math.max(0, Math.min(5000, value));
+            } catch (NumberFormatException ignored) {
             }
         }
+        // "Threads" — accepted but silently ignored (single-threaded engine)
     }
 
     private void handleGo(String command) {
@@ -152,6 +176,7 @@ public class UciApplication {
         try {
             String[] parts = command.split("\\s+");
             Searcher searcher = new Searcher();
+            searcher.setTranspositionTableSizeMb(hashSizeMb);
             if (multiPV > 1) {
                 searcher.setMultiPV(multiPV);
             }
@@ -160,6 +185,7 @@ public class UciApplication {
             if (contains(parts, "movetime")) {
                 long movetime = parseLongArg(parts, "movetime", 1000L);
                 TimeManager manager = new TimeManager();
+                manager.setMoveOverheadMs(moveOverheadMs);
                 manager.configureMovetime(movetime);
                 result = searcher.searchWithTimeManager(
                         searchBoard,
@@ -175,6 +201,7 @@ public class UciApplication {
                 long binc = parseLongArg(parts, "binc", 0L);
 
                 TimeManager manager = new TimeManager();
+                manager.setMoveOverheadMs(moveOverheadMs);
                 manager.configureClock(searchBoard.getActiveColor(), wtime, btime, winc, binc);
                 result = searcher.searchWithTimeManager(
                         searchBoard,
