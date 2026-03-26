@@ -11,6 +11,7 @@ import coeusyk.game.chess.core.search.TimeManager;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -70,6 +71,8 @@ public class UciApplication {
                 if (!searchRunning) {
                     emitBestMove(latestIterativeBestMove);
                 }
+            } else if ("ponderhit".equals(line)) {
+                // Ponder stub: treat as no-op (full pondering not implemented)
             } else if ("quit".equals(line)) {
                 stopRequested.set(true);
                 break;
@@ -180,6 +183,12 @@ public class UciApplication {
             if (multiPV > 1) {
                 searcher.setMultiPV(multiPV);
             }
+
+            List<Move> searchMovesList = parseSearchMoves(parts, searchBoard);
+            if (!searchMovesList.isEmpty()) {
+                searcher.setSearchMoves(searchMovesList);
+            }
+
             SearchResult result;
 
             if (contains(parts, "movetime")) {
@@ -337,5 +346,35 @@ public class UciApplication {
         long rawDepth = parseLongArg(parts, key, fallback);
         long clampedDepth = Math.max(1L, Math.min((long) MAX_SEARCH_DEPTH, rawDepth));
         return (int) clampedDepth;
+    }
+
+    private List<Move> parseSearchMoves(String[] parts, Board searchBoard) {
+        List<Move> result = new ArrayList<>();
+        boolean inSearchMoves = false;
+        List<Move> legalMoves = new MovesGenerator(searchBoard).getActiveMoves(searchBoard.getActiveColor());
+
+        for (String part : parts) {
+            if ("searchmoves".equals(part)) {
+                inSearchMoves = true;
+                continue;
+            }
+            if (!inSearchMoves) {
+                continue;
+            }
+            // Stop collecting if we hit another known go sub-command
+            if ("wtime".equals(part) || "btime".equals(part) || "winc".equals(part)
+                    || "binc".equals(part) || "movestogo".equals(part) || "depth".equals(part)
+                    || "nodes".equals(part) || "mate".equals(part) || "movetime".equals(part)
+                    || "infinite".equals(part) || "ponder".equals(part)) {
+                break;
+            }
+            for (Move legal : legalMoves) {
+                if (moveToUci(legal).equals(part)) {
+                    result.add(legal);
+                    break;
+                }
+            }
+        }
+        return result;
     }
 }

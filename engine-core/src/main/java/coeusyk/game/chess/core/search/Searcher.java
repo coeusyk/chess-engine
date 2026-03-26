@@ -62,6 +62,7 @@ public class Searcher {
     private Move rootTtMoveHint;
 
     private int multiPV = 1;
+    private List<Move> searchMoves = List.of();
 
     private boolean aborted;
 
@@ -118,6 +119,10 @@ public class Searcher {
 
     public void setMultiPV(int multiPV) {
         this.multiPV = Math.max(1, multiPV);
+    }
+
+    public void setSearchMoves(List<Move> searchMoves) {
+        this.searchMoves = searchMoves != null ? searchMoves : List.of();
     }
 
     public void setRootTtMoveHintForTesting(Move rootTtMoveHint) {
@@ -337,6 +342,10 @@ public class Searcher {
         MovesGenerator generator = new MovesGenerator(board);
         List<Move> moves = new ArrayList<>(generator.getActiveMoves(board.getActiveColor()));
         TranspositionTable.Entry rootEntry = transpositionTable.probe(board.getZobristHash());
+
+        if (!searchMoves.isEmpty()) {
+            moves.removeIf(m -> !isExcludedMove(m, searchMoves));
+        }
 
         if (!excludedRootMoves.isEmpty()) {
             moves.removeIf(m -> isExcludedMove(m, excludedRootMoves));
