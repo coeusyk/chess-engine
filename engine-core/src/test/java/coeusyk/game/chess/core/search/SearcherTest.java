@@ -298,9 +298,11 @@ class SearcherTest {
 
     @Test
     void ttMoveHintIsTriedFirstAtRoot() {
-        Board board = new Board();
+        // Knight captures an undefended queen — definitively best at depth 1 regardless of eval tuning.
+        // Verifies that when set as the TT hint the move is tried first and returned as best.
+        Board board = new Board("5k2/8/5q2/8/4N3/8/8/4K3 w - - 0 1");
         Searcher searcher = new Searcher(true);
-        Move ttHint = findMove(board, 52, 36); // e2e4 (ep-target reaction)
+        Move ttHint = findMove(board, 36, 21); // Ne4xf6 — captures undefended queen
         searcher.setRootTtMoveHintForTesting(ttHint);
 
         SearchResult result = searcher.searchDepth(board, 1);
