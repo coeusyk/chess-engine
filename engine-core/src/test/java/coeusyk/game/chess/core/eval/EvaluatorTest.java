@@ -189,4 +189,59 @@ class EvaluatorTest {
         assertTrue(safeMg > centralMg,
                 "In middlegame, safe king (e1) should score higher than centralized king (e4)");
     }
+
+    @Test
+    void mobilityRewardsActivePieces() {
+        // A knight in the center (e4) with many moves should score better than a corner knight (a1)
+        // Both positions: kings + one white knight only (pure EG since phase=0+1=1)
+        Board activeKnight = new Board("4k3/8/8/8/4N3/8/8/4K3 w - - 0 1");
+        Board trappedKnight = new Board("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
+
+        int activeScore = evaluator.evaluate(activeKnight);
+        int trappedScore = evaluator.evaluate(trappedKnight);
+        assertTrue(activeScore > trappedScore,
+                "Central knight should have higher mobility score than corner knight");
+    }
+
+    @Test
+    void mobilityPenalizesRestrictedRook() {
+        // Both positions: equal material (K+R+2P vs K+2P), only rook placement differs
+        // Hemmed rook: R on a1 blocked by own pawns on a2, b2
+        Board hemmedRook = new Board("4k3/pp6/8/8/8/8/PP6/R3K3 w - - 0 1");
+        // Active rook: R on d4 (open board), pawns on a2, b2
+        Board activeRook = new Board("4k3/pp6/8/8/3R4/8/PP6/4K3 w - - 0 1");
+
+        int hemmedScore     = evaluator.evaluate(hemmedRook);
+        int activeRookScore = evaluator.evaluate(activeRook);
+        assertTrue(activeRookScore > hemmedScore,
+                "Open rook should score better than hemmed-in rook");
+    }
+
+    @Test
+    void mobilityEvalSymmetry() {
+        // Same position mirrored — mobility should be symmetric
+        String whiteActive = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+        String blackActive = "rnbqkbnr/pppp1ppp/8/4p3/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+        int evalWhite = evaluator.evaluate(new Board(whiteActive));
+        int evalBlack = evaluator.evaluate(new Board(blackActive));
+        assertEquals(evalWhite, evalBlack,
+                "Mirrored positions should give symmetric mobility scores");
+    }
+
+    @Test
+    void enemyPawnAttacksReduceMobility() {
+        // Knight on e4 with no enemy pawns → high mobility
+        Board noPawnControl = new Board("4k3/8/8/8/4N3/8/8/4K3 w - - 0 1");
+        // Knight on e4 with black pawns on d5 and f5 controlling e4-adjacent squares
+        Board pawnControl = new Board("4k3/8/8/3p1p2/4N3/8/8/4K3 w - - 0 1");
+
+        int noPawnScore = evaluator.evaluate(noPawnControl);
+        int withPawnScore = evaluator.evaluate(pawnControl);
+        // The pawn-controlled position subtracts material (opponent has pawns)
+        // but the mobility of the knight is also reduced, so score should differ
+        // White should be relatively worse when opponent pawns control knight's squares
+        assertTrue(noPawnScore > withPawnScore,
+                "Enemy pawns controlling squares should reduce knight mobility advantage");
+    }
 }

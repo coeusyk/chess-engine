@@ -11,6 +11,12 @@ public class Evaluator {
     private static final int[] MG_MATERIAL = new int[7];
     private static final int[] EG_MATERIAL = new int[7];
 
+    // Mobility bonus per safe square (centipawns)
+    private static final int[] MG_MOBILITY = new int[7];
+    private static final int[] EG_MOBILITY = new int[7];
+    // Baseline: subtract this many safe squares before applying bonus
+    private static final int[] MOBILITY_BASELINE = new int[7];
+
     static {
         PHASE_WEIGHTS[Piece.Knight] = 1;
         PHASE_WEIGHTS[Piece.Bishop] = 1;
@@ -30,6 +36,21 @@ public class Evaluator {
         EG_MATERIAL[Piece.Rook]   = 512;
         EG_MATERIAL[Piece.Queen]  = 936;
         EG_MATERIAL[Piece.King]   = 0;
+
+        MG_MOBILITY[Piece.Knight] = 4;
+        MG_MOBILITY[Piece.Bishop] = 3;
+        MG_MOBILITY[Piece.Rook]   = 2;
+        MG_MOBILITY[Piece.Queen]  = 1;
+
+        EG_MOBILITY[Piece.Knight] = 4;
+        EG_MOBILITY[Piece.Bishop] = 3;
+        EG_MOBILITY[Piece.Rook]   = 1;
+        EG_MOBILITY[Piece.Queen]  = 2;
+
+        MOBILITY_BASELINE[Piece.Knight] = 4;
+        MOBILITY_BASELINE[Piece.Bishop] = 7;
+        MOBILITY_BASELINE[Piece.Rook]   = 7;
+        MOBILITY_BASELINE[Piece.Queen]  = 14;
     }
 
     public int evaluate(Board board) {
@@ -39,10 +60,71 @@ public class Evaluator {
         mgScore += computeMaterialAndPst(board, true, true) - computeMaterialAndPst(board, false, true);
         egScore += computeMaterialAndPst(board, true, false) - computeMaterialAndPst(board, false, false);
 
+        long allOccupancy = board.getWhiteOccupancy() | board.getBlackOccupancy();
+        long whitePawnAtk = Attacks.whitePawnAttacks(board.getWhitePawns());
+        long blackPawnAtk = Attacks.blackPawnAttacks(board.getBlackPawns());
+
+        int[] whiteMobility = computeMobility(board, true, allOccupancy, blackPawnAtk);
+        int[] blackMobility = computeMobility(board, false, allOccupancy, whitePawnAtk);
+
+        mgScore += whiteMobility[0] - blackMobility[0];
+        egScore += whiteMobility[1] - blackMobility[1];
+
         int phase = computePhase(board);
         int score = (mgScore * phase + egScore * (TOTAL_PHASE - phase)) / TOTAL_PHASE;
 
         return Piece.isWhite(board.getActiveColor()) ? score : -score;
+    }
+
+    private int[] computeMobility(Board board, boolean white, long allOccupancy, long enemyPawnAttacks) {
+        long friendly = white ? board.getWhiteOccupancy() : board.getBlackOccupancy();
+        long safeMask = ~friendly & ~enemyPawnAttacks;
+
+        int mgMob = 0;
+        int egMob = 0;
+
+        mgMob += pieceMobility(white ? board.getWhiteKnights() : board.getBlackKnights(),
+                Piece.Knight, allOccupancy, safeMask, true);
+        egMob += pieceMobility(white ? board.getWhiteKnights() : board.getBlackKnights(),
+                Piece.Knight, allOccupancy, safeMask, false);
+
+        mgMob += pieceMobility(white ? board.getWhiteBishops() : board.getBlackBishops(),
+                Piece.Bishop, allOccupancy, safeMask, true);
+        egMob += pieceMobility(white ? board.getWhiteBishops() : board.getBlackBishops(),
+                Piece.Bishop, allOccupancy, safeMask, false);
+
+        mgMob += pieceMobility(white ? board.getWhiteRooks() : board.getBlackRooks(),
+                Piece.Rook, allOccupancy, safeMask, true);
+        egMob += pieceMobility(white ? board.getWhiteRooks() : board.getBlackRooks(),
+                Piece.Rook, allOccupancy, safeMask, false);
+
+        mgMob += pieceMobility(white ? board.getWhiteQueens() : board.getBlackQueens(),
+                Piece.Queen, allOccupancy, safeMask, true);
+        egMob += pieceMobility(white ? board.getWhiteQueens() : board.getBlackQueens(),
+                Piece.Queen, allOccupancy, safeMask, false);
+
+        return new int[]{ mgMob, egMob };
+    }
+
+    private int pieceMobility(long pieces, int pieceType, long allOccupancy, long safeMask, boolean mg) {
+        int bonus = mg ? MG_MOBILITY[pieceType] : EG_MOBILITY[pieceType];
+        int baseline = MOBILITY_BASELINE[pieceType];
+        int total = 0;
+        while (pieces != 0) {
+            int sq = Long.numberOfTrailingZeros(pieces);
+            long attacks;
+            switch (pieceType) {
+                case Piece.Knight: attacks = Attacks.knightAttacks(sq); break;
+                case Piece.Bishop: attacks = Attacks.bishopAttacks(sq, allOccupancy); break;
+                case Piece.Rook:   attacks = Attacks.rookAttacks(sq, allOccupancy); break;
+                case Piece.Queen:  attacks = Attacks.queenAttacks(sq, allOccupancy); break;
+                default: attacks = 0L;
+            }
+            int safeSquares = Long.bitCount(attacks & safeMask);
+            total += (safeSquares - baseline) * bonus;
+            pieces &= pieces - 1;
+        }
+        return total;
     }
 
     int computePhase(Board board) {
