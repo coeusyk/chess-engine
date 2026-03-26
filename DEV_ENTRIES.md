@@ -1976,3 +1976,37 @@
 **Next:**
 
 - Read and implement issue #66.
+
+### [2026-03-26] Phase 6 — Product Hardening: Issue #66 Synchronous Analysis REST Endpoint
+
+**Built:**
+
+- `POST /api/analysis/evaluate` — synchronous fixed-depth search endpoint returning complete JSON evaluation result.
+- `AnalysisService.evaluate()` — reuses all existing service logic: FEN validation, `toUci()`, `squareToUci()`, and moves the mate scoring into a shared `buildScoreInfo(int scoreCp)` helper used by both SSE and evaluate paths.
+- Depth silently clamped to `EVALUATE_DEPTH_CAP = 15` before calling the searcher.
+- 60-second server-side timeout via `CompletableFuture.get(60, TimeUnit.SECONDS)`; `TimeoutException` throws `SearchTimeoutException`, which `AnalysisController` maps to HTTP 504 with `{ "error": message }`.
+- Any in-progress SSE analysis is cancelled (via `activeCancellationFlag`) before the evaluate search starts.
+- `IterationListener` accumulates `IterationInfo` events per depth iteration; on each depth rollover (multipv == 1 + buffer non-empty), previous buffer is committed to `lastCompleteInfos`. After the future returns, remaining buffer is committed as the final iteration.
+- Response: `EvaluateResponse` record with `bestMove`, `score` (`ScoreInfo`), `depth` (`depthReached`), `nodes`, `nps`, `pv` (UCI strings), `lines` (`List<LineInfo>` with rank/score/pv per MultiPV line).
+- New DTOs: `EvaluateRequest`, `EvaluateResponse`, `ScoreInfo`, `LineInfo`, `SearchTimeoutException`.
+- `Phase6AnalysisEvaluateTests` — 7 integration tests: invalid FEN 400, null fen 400, depth=1 response shape, depth=6 startpos valid result, multiPv=3 three ranked lines, depth=30 clamped (tested on checkmate FEN), score.type is cp or mate.
+
+**Decisions Made:**
+
+- Depth-clamping test uses a checkmate FEN (zero legal moves) instead of starting position to avoid hitting the 60-second timeout at depth 15.
+- `buildScoreInfo()` extracted from inline `Map` logic in `sendInfoEvent()` to a shared private method — the only refactor needed to meet the "no code duplication" acceptance criterion.
+- Cancel SSE analysis before evaluate starts so the single-thread executor is never blocked waiting behind a running stream.
+
+**Broke / Fixed:**
+
+- Initial `depthAbove15IsSilentlyClamped` test used the starting position with depth=30 (clamped to 15) — depth 15 on starting position exceeds 60 seconds, triggering the timeout and returning 504. Fixed by switching to a checkmate FEN where depth-15 search completes in milliseconds.
+
+**Measurements:**
+
+- Perft depth 5 (startpos): not measured this cycle.
+- Nodes/sec: not measured this cycle.
+- Chess-engine-api tests: 27 run, 0 failures, 0 skipped.
+
+**Next:**
+
+- Start chess-engine-ui Phase 6 issues (#2-#8).
