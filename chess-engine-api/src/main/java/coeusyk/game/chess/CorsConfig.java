@@ -22,6 +22,10 @@ public class CorsConfig {
                            .allowedOrigins("http://localhost:3000")
                            .allowedMethods("GET", "POST", "PUT")
                            .allowCredentials(true);
+                   registry.addMapping("/api/analysis/**")
+                           .allowedOrigins("http://localhost:3000")
+                           .allowedMethods("GET", "POST", "PUT")
+                           .allowCredentials(true);
                }
            };
     }
