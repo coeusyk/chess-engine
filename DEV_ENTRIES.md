@@ -2010,3 +2010,45 @@
 **Next:**
 
 - Start chess-engine-ui Phase 6 issues (#2-#8).
+
+---
+
+### [2025-07-14] Phase 6 — chess-engine-ui Analysis UI (Issues #3–#8)
+
+**Built:**
+- `useAnalysis.js` hook: SSE EventSource connecting to `/api/analysis/stream`; parses `info` and `bestmove` events; exposes `{ score, depth, lines, nodes, nps, seldepth, hashfull }`; EventSource closed on bestmove, error, and useEffect cleanup.
+- `ScoreBar.js`: vertical evaluation bar using sigmoid fill formula `50 + 50*(2/(1+exp(-cp/400))-1)`, clamped [2,98]; mate positions pin at 98%/2%; score label rendered as `+1.4`/`-0.8` or `M3`; 200ms CSS ease transition.
+- `AnalysisLines.js`: renders up to 3 engine PV lines with rank number, score, and UCI move tokens; hover over a line highlights the first move arrow on the board; hover over a specific token highlights that move's arrow.
+- SVG arrow overlay in Board.js: positioned over the board grid using `fromSquare` and `toSquare` square-centre coordinates; re-renders on `pvHighlight` prop change.
+- `AnalysisPanel.js`: collapsible right-sidebar panel shell; header shows toggle button + score text; body contains ScoreBar + metadata row (Depth/Nodes/NPS/Hash) + AnalysisLines + PvWalkthrough; max-height CSS transition for open/close.
+- `boardUtils.js`: `fenToGrid`, `fenMoveInfo`, `uciToSquareIndex`, `parseUciMove`, `uciToSan`, `applyMove`; covers castling (rook relocation), en passant, promotion; SAN covers O-O/O-O-O, pawn captures, promotion suffix `=Q`.
+- `PvWalkthrough.js`: rank-1 PV displayed as numbered SAN; click any move to set pvStep; ← / → to navigate; ← at step 0 → exits walkthrough (pvStep null); ✕ to exit; move numbers derived from startFen via fenMoveInfo.
+- Board `readOnlyGrid` prop: when set, Board renders that grid instead of its own; all click/drag interaction suppressed; clicking in readOnly calls `onExitReadOnly` to exit walkthrough.
+- App.js pvStep state + pvData useMemo: walks currentGrid through pvMoves applying `uciToSan`/`applyMove`; pvGrid derived from pvData.grids[pvStep+1]; pvStep reset on currentFen change.
+- `MoveList.js`: full game history in SAN, two-column CSS grid (moveNum | white | black); last move highlighted with `.move-last`; auto-scrolls on each history update via listRef.scrollTop.
+- Board `onMoveHistory` callback: computes UCI from startSquare/targetSquare indices, calls `uciToSan` against pre-move grid, emits SAN after successful move response.
+- `isMovePendingRef` in Board.makeMove: returns early if a move request is already in flight; prevents duplicate backend calls from rapid clicks.
+- App.js DOM cleanup: removed 3 `addEventListener` / `removeEventListener` useEffects (loadRef, newGameRef, removeHighlights DOM class mutation); replaced with React `onClick` props on buttons; FEN input converted to controlled component; #main-content onClick increments `deselectSignal` for Board to clear selection via useEffect.
+- `deselectSignal` prop wired to Board: Board's useEffect clears selectedSquare/targetSquares on each increment — replaces prior broken DOM class manipulation.
+
+**Decisions Made:**
+- SSE EventSource uses absolute URL (`process.env.REACT_APP_CHESS_API_SERVER_HOST || 'http://localhost:8080'`) because EventSource does not follow axios base URL config.
+- FEN field added to `SetupContainer` and `ResponseContainer` (via `board.toFen()`) in chess-engine-api layer — engine-core has no Jackson dependency so no annotations were added there; explicit public field `fen` added to the Java containers.
+- `uciToSan` intentionally omits check/checkmate symbols and disambiguation — full move generation is not available client-side and is not required by the Phase 6 acceptance criteria.
+- PV step-through is rank-1 line only (best line); non-rank-1 lines are out of scope per issue #6.
+- `pvGrid` index: `grids[pvStep + 1]` because `grids[0]` = starting position before any PV moves.
+- MoveList clears naturally on new game / FEN load because `window.location.reload()` resets all React state.
+- `gameStartFen` captured on first non-null `currentFen` (set once) to give MoveList the correct starting move number even from non-standard starting FENs.
+
+**Broke / Fixed:**
+- `removeHighlights` useEffect in App.js was registering an anonymous arrow function but attempting to remove `removeHighlights` (different reference) in cleanup — listener was never removed. Fixed by deleting the entire useEffect; React state in Board.js already managed the classes.
+- Board `onPositionChange` originally passed only `fen`; changed to `(fen, grid)` so App.js can track `currentGrid` for pvData computation without re-parsing the FEN.
+- `isCapture` unused variable warning in boardUtils.js (from pawn-capture detection draft code): removed the assignment; diagonal pawn move is detected by `fromFile !== toFile` which is sufficient.
+
+**Measurements:**
+- Perft depth 5 (startpos): not measured this cycle.
+- Nodes/sec: not measured this cycle.
+- Elo vs. baseline: not measured this cycle.
+
+**Next:**
+- Phase 6 exit criteria review: confirm all issues #63-#66 (chess-engine) and #2-#8 (chess-engine-ui) are closed and committed; then create PR from phase/6-product-hardening to develop.
