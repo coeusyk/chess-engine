@@ -3,6 +3,7 @@ package coeusyk.game.chess.uci;
 import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Move;
 import coeusyk.game.chess.core.movegen.MovesGenerator;
+import coeusyk.game.chess.core.search.IterationInfo;
 import coeusyk.game.chess.core.search.SearchResult;
 import coeusyk.game.chess.core.search.Searcher;
 import coeusyk.game.chess.core.search.TimeManager;
@@ -16,6 +17,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class UciApplication {
     private static final String ENGINE_NAME = "Vex";
     private static final String ENGINE_AUTHOR = "coeusyk";
+    private static final int MATE_SCORE = 100_000;
+    private static final int MAX_PLY = 128;
     private static final int MAX_SEARCH_DEPTH = 127;
 
     private Board board = new Board();
@@ -178,9 +181,43 @@ public class UciApplication {
         }
     }
 
-    private void printInfoLine(int depth, int scoreCp, Move bestMove) {
-        latestIterativeBestMove = bestMove;
-        System.out.println("info depth " + depth + " score cp " + scoreCp);
+    private void printInfoLine(IterationInfo info) {
+        if (!info.pv().isEmpty()) {
+            latestIterativeBestMove = info.pv().get(0);
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("info depth ").append(info.depth());
+        sb.append(" seldepth ").append(info.seldepth());
+
+        int score = info.scoreCp();
+        if (Math.abs(score) >= MATE_SCORE - MAX_PLY) {
+            int mateInPly = MATE_SCORE - Math.abs(score);
+            int mateInMoves = (mateInPly + 1) / 2;
+            if (score < 0) {
+                mateInMoves = -mateInMoves;
+            }
+            sb.append(" score mate ").append(mateInMoves);
+        } else {
+            sb.append(" score cp ").append(score);
+        }
+
+        sb.append(" nodes ").append(info.nodes());
+
+        long timeMs = info.timeMs();
+        long nps = timeMs > 0 ? info.nodes() * 1000L / timeMs : 0;
+        sb.append(" nps ").append(nps);
+        sb.append(" time ").append(timeMs);
+        sb.append(" hashfull ").append(info.hashfull());
+
+        if (!info.pv().isEmpty()) {
+            sb.append(" pv");
+            for (Move move : info.pv()) {
+                sb.append(' ').append(moveToUci(move));
+            }
+        }
+
+        System.out.println(sb.toString());
     }
 
     private void emitBestMove(Move move) {

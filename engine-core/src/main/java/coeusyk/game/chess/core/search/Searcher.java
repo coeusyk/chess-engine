@@ -14,7 +14,7 @@ import java.util.function.BooleanSupplier;
 public class Searcher {
     @FunctionalInterface
     public interface IterationListener {
-        void onIteration(int depth, int scoreCp, Move bestMove);
+        void onIteration(IterationInfo info);
     }
 
     private static final int INF = 1_000_000;
@@ -34,6 +34,10 @@ public class Searcher {
     private long leafNodes;
     private long quiescenceNodes;
     private long checkExtensionsApplied;
+    private int seldepth;
+
+    private TimeManager timeManager;
+    private long searchStartNanos;
 
     private Move[][] pvTable;
     private int[] pvLength;
@@ -139,6 +143,7 @@ public class Searcher {
 
     public SearchResult searchWithTimeManager(Board board, int maxDepth, TimeManager timeManager) {
         timeManager.startNow();
+        this.timeManager = timeManager;
         return iterativeDeepening(board, maxDepth, timeManager::shouldStopSoft, timeManager::shouldStopHard, null);
     }
 
@@ -150,6 +155,7 @@ public class Searcher {
             IterationListener listener
     ) {
         timeManager.startNow();
+        this.timeManager = timeManager;
         BooleanSupplier softStop = () -> externalStop.getAsBoolean() || timeManager.shouldStopSoft();
         BooleanSupplier hardStop = () -> externalStop.getAsBoolean() || timeManager.shouldStopHard();
         return iterativeDeepening(board, maxDepth, softStop, hardStop, listener);
@@ -179,6 +185,7 @@ public class Searcher {
 
         aborted = false;
         checkExtensionsApplied = 0;
+        searchStartNanos = System.nanoTime();
         transpositionTable.resetStats();
 
         for (int depth = 1; depth <= effectiveMaxDepth; depth++) {
@@ -190,6 +197,7 @@ public class Searcher {
             nodesVisited = 0;
             leafNodes = 0;
             quiescenceNodes = 0;
+            seldepth = 0;
             pvTable = new Move[depth + 4][depth + 4];
             pvLength = new int[depth + 4];
 
@@ -216,7 +224,19 @@ public class Searcher {
             bestPrincipalVariation = iteration.principalVariation;
 
             if (listener != null && previousBestMove != null) {
-                listener.onIteration(depth, bestScore, previousBestMove);
+                long elapsedMs = timeManager != null
+                        ? timeManager.elapsedMs()
+                        : (System.nanoTime() - searchStartNanos) / 1_000_000L;
+                IterationInfo info = new IterationInfo(
+                        depth,
+                        seldepth,
+                        bestScore,
+                        totalNodes,
+                        elapsedMs,
+                        transpositionTable.hashfull(),
+                        bestPrincipalVariation
+                );
+                listener.onIteration(info);
             }
 
             if (iteration.aborted) {
@@ -375,6 +395,10 @@ public class Searcher {
             boolean inSingularitySearch
     ) {
         pvLength[ply] = 0;
+
+        if (ply > seldepth) {
+            seldepth = ply;
+        }
 
         if (shouldStopHard.getAsBoolean()) {
             aborted = true;
@@ -962,6 +986,10 @@ public class Searcher {
 
     private int quiescence(Board board, int alpha, int beta, int ply, BooleanSupplier shouldStopHard) {
         quiescenceNodes++;
+
+        if (ply > seldepth) {
+            seldepth = ply;
+        }
 
         if (shouldStopHard.getAsBoolean()) {
             aborted = true;
