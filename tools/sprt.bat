@@ -39,13 +39,12 @@ set OLD=%~2
 set RESULTS_DIR=%~dp0results
 if not exist "%RESULTS_DIR%" mkdir "%RESULTS_DIR%"
 
-for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /value ^| find "="') do set DATETIME=%%I
-set TIMESTAMP=%DATETIME:~0,8%_%DATETIME:~8,6%
+for /f %%I in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set "TIMESTAMP=%%I"
 set PGN_OUT=%RESULTS_DIR%\sprt_%TIMESTAMP%.pgn
 
 cutechess-cli ^
-  -engine name=Vex-new cmd="java -jar %NEW%" proto=uci ^
-  -engine name=Vex-old cmd="java -jar %OLD%" proto=uci ^
+  -engine name=Vex-new cmd="java -jar ^"%NEW%^"" proto=uci ^
+  -engine name=Vex-old cmd="java -jar ^"%OLD%^"" proto=uci ^
   -each "%TC%" ^
   -games %MAX_GAMES% ^
   -repeat ^

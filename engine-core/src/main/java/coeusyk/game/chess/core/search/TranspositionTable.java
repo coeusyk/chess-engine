@@ -86,6 +86,12 @@ public class TranspositionTable {
         return hits;
     }
 
+    public void clear() {
+        java.util.Arrays.fill(table, null);
+        occupiedCount = 0;
+        resetStats();
+    }
+
     public void resetStats() {
         probes = 0;
         hits = 0;

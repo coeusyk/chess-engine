@@ -159,32 +159,68 @@ public class UciApplication {
     }
 
     private void handleSetOption(String command) {
-        String lower = command.toLowerCase();
-        int valueIdx = lower.indexOf("value");
-        if (valueIdx < 0) {
+        String[] tokens = command.split("\\s+");
+        if (tokens.length == 0) {
             return;
         }
 
-        String valuePart = command.substring(valueIdx).split("\\s+").length > 1
-                ? command.substring(valueIdx).split("\\s+")[1]
-                : null;
+        int nameIndex = -1;
+        int valueIndex = -1;
+        for (int i = 0; i < tokens.length; i++) {
+            String t = tokens[i];
+            if (t.equalsIgnoreCase("name") && nameIndex < 0) {
+                nameIndex = i;
+            } else if (t.equalsIgnoreCase("value") && valueIndex < 0) {
+                valueIndex = i;
+            }
+        }
+
+        if (nameIndex < 0 || nameIndex + 1 >= tokens.length) {
+            return;
+        }
+
+        int nameEnd = (valueIndex > nameIndex) ? valueIndex : tokens.length;
+        StringBuilder nameBuilder = new StringBuilder();
+        for (int i = nameIndex + 1; i < nameEnd; i++) {
+            if (nameBuilder.length() > 0) {
+                nameBuilder.append(' ');
+            }
+            nameBuilder.append(tokens[i]);
+        }
+        String optionName = nameBuilder.toString().trim();
+        if (optionName.isEmpty()) {
+            return;
+        }
+        String optionNameLower = optionName.toLowerCase();
+
+        String valuePart = null;
+        if (valueIndex >= 0 && valueIndex + 1 < tokens.length) {
+            StringBuilder valueBuilder = new StringBuilder();
+            for (int i = valueIndex + 1; i < tokens.length; i++) {
+                if (valueBuilder.length() > 0) {
+                    valueBuilder.append(' ');
+                }
+                valueBuilder.append(tokens[i]);
+            }
+            valuePart = valueBuilder.toString();
+        }
         if (valuePart == null) {
             return;
         }
 
-        if (lower.contains("name hash ")) {
+        if ("hash".equals(optionNameLower)) {
             try {
                 int value = Integer.parseInt(valuePart);
                 hashSizeMb = Math.max(1, Math.min(65536, value));
             } catch (NumberFormatException ignored) {
             }
-        } else if (lower.contains("name multipv ")) {
+        } else if ("multipv".equals(optionNameLower)) {
             try {
                 int value = Integer.parseInt(valuePart);
                 multiPV = Math.max(1, Math.min(500, value));
             } catch (NumberFormatException ignored) {
             }
-        } else if (lower.contains("name moveoverhead ")) {
+        } else if ("moveoverhead".equals(optionNameLower)) {
             try {
                 long value = Long.parseLong(valuePart);
                 moveOverheadMs = Math.max(0, Math.min(5000, value));
@@ -284,7 +320,7 @@ public class UciApplication {
 
         for (String fen : BENCH_FENS) {
             Board benchBoard = new Board(fen);
-            searcher.setTranspositionTableSizeMb(BENCH_HASH_MB);
+            searcher.clearTranspositionTable();
             SearchResult result = searcher.iterativeDeepening(benchBoard, depth);
             totalNodes += result.nodesVisited();
         }

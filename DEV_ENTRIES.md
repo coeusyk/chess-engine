@@ -1260,6 +1260,25 @@
 
 - Updated UCI engine identity string emitted on `uci` command from `ChessEngine-UCI` to `Vex`.
 
+**Decisions Made:**
+
+- Treated `id name` as the canonical engine brand identifier and aligned runtime output and test expectations together.
+
+**Broke / Fixed:**
+
+- No regressions observed in behavior; rename is limited to identity output and corresponding test assertion.
+
+**Measurements:**
+
+- Validation run: pending immediate module test execution after rename.
+- Perft depth 5 (startpos): Not measured in this cycle.
+- Nodes/sec: Not measured in this cycle.
+- Elo vs. baseline: Not measured in this cycle.
+
+**Next:**
+
+- Re-run `engine-uci` tests to confirm handshake and command loop remain green with the new engine name.
+
 ### [2026-03-26] Phase 5 — Full UCI Protocol + Match Tooling (Issues #51–#57)
 
 **Built:**
@@ -1295,25 +1314,6 @@
 
 - Phase 5 exit criteria review and merge to develop.
 - Tightened UCI integration handshake test to assert exact line `id name Vex` instead of generic prefix matching.
-
-**Decisions Made:**
-
-- Treated `id name` as the canonical engine brand identifier and aligned runtime output and test expectations together.
-
-**Broke / Fixed:**
-
-- No regressions observed in behavior; rename is limited to identity output and corresponding test assertion.
-
-**Measurements:**
-
-- Validation run: pending immediate module test execution after rename.
-- Perft depth 5 (startpos): Not measured in this cycle.
-- Nodes/sec: Not measured in this cycle.
-- Elo vs. baseline: Not measured in this cycle.
-
-**Next:**
-
-- Re-run `engine-uci` tests to confirm handshake and command loop remain green with the new engine name.
 
 ### [2026-03-24] Phase 2 — Issue #25 GUI Evidence Report Populated
 
