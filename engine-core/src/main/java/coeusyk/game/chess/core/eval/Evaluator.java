@@ -70,6 +70,10 @@ public class Evaluator {
         mgScore += whiteMobility[0] - blackMobility[0];
         egScore += whiteMobility[1] - blackMobility[1];
 
+        int[] pawnStructure = PawnStructure.evaluate(board.getWhitePawns(), board.getBlackPawns());
+        mgScore += pawnStructure[0];
+        egScore += pawnStructure[1];
+
         int phase = computePhase(board);
         int score = (mgScore * phase + egScore * (TOTAL_PHASE - phase)) / TOTAL_PHASE;
 

@@ -244,4 +244,68 @@ class EvaluatorTest {
         assertTrue(noPawnScore > withPawnScore,
                 "Enemy pawns controlling squares should reduce knight mobility advantage");
     }
+
+    // --- Pawn structure tests ---
+
+    @Test
+    void passedPawnBonusScalesByRank() {
+        // e7 = sq 12 (row 1, rank 7): bonusIndex 6 → MG 100, EG 165
+        // e3 = sq 44 (row 5, rank 3): bonusIndex 2 → MG 10, EG 20
+        long e7 = 1L << 12;
+        long e3 = 1L << 44;
+        int[] scoreHigh = PawnStructure.evaluate(e7, 0L);
+        int[] scoreLow = PawnStructure.evaluate(e3, 0L);
+        assertTrue(scoreHigh[0] > scoreLow[0],
+                "Rank 7 passed pawn should have higher MG bonus than rank 3");
+        assertTrue(scoreHigh[1] > scoreLow[1],
+                "Rank 7 passed pawn should have higher EG bonus than rank 3");
+    }
+
+    @Test
+    void isolatedPawnPenaltyFires() {
+        // Both setups: 2 white pawns at same rank (row 4), no enemy pawns → both passed equally
+        // Isolated: pawns on a4 (sq 32) and h4 (sq 39) — no adjacent file neighbors
+        // Together: pawns on e4 (sq 36) and f4 (sq 37) — adjacent to each other
+        long isolated = (1L << 32) | (1L << 39);
+        long together = (1L << 36) | (1L << 37);
+
+        int[] scoreIso = PawnStructure.evaluate(isolated, 0L);
+        int[] scoreTog = PawnStructure.evaluate(together, 0L);
+
+        assertTrue(scoreTog[0] > scoreIso[0],
+                "Isolated pawns should have lower MG score");
+        assertTrue(scoreTog[1] > scoreIso[1],
+                "Isolated pawns should have lower EG score");
+    }
+
+    @Test
+    void doubledPawnPenaltyFires() {
+        // Doubled: e4 (sq 36) + e2 (sq 52) — same file
+        // Spread: e4 (sq 36) + c2 (sq 50) — different files
+        // Both have same passed bonuses (same ranks), both fully isolated
+        long doubled = (1L << 36) | (1L << 52);
+        long spread = (1L << 36) | (1L << 50);
+
+        int[] scoreDoubled = PawnStructure.evaluate(doubled, 0L);
+        int[] scoreSpread = PawnStructure.evaluate(spread, 0L);
+
+        assertTrue(scoreSpread[0] > scoreDoubled[0],
+                "Doubled pawns should score lower in MG");
+        assertTrue(scoreSpread[1] > scoreDoubled[1],
+                "Doubled pawns should score lower in EG");
+    }
+
+    @Test
+    void pawnStructureEvalSymmetry() {
+        // White pawn on e5, black to move — mirror: black pawn on e4, white to move
+        // Kings on e1/e8 in both (symmetric)
+        String whitePassedUp = "4k3/8/8/4P3/8/8/8/4K3 b - - 0 1";
+        String blackPassedUp = "4k3/8/8/8/4p3/8/8/4K3 w - - 0 1";
+
+        int evalWhite = evaluator.evaluate(new Board(whitePassedUp));
+        int evalBlack = evaluator.evaluate(new Board(blackPassedUp));
+
+        assertEquals(evalWhite, evalBlack,
+                "Mirrored pawn structure positions should produce symmetric eval");
+    }
 }
