@@ -4,6 +4,18 @@ Backend repository for a modular chess engine platform with REST and UCI adapter
 
 ## Current Status
 
+Phase 5 (Full UCI Protocol + Match Tooling) is complete.
+
+Completed Phase 5 scope includes:
+
+- Full UCI `info` line support (depth, seldepth, score cp/mate, nodes, nps, time, hashfull, pv).
+- MultiPV support (`setoption name MultiPV value N`) with independent PV lines and `multipv` reporting.
+- Extended `setoption` handling for `Hash`, `MultiPV`, `MoveOverhead`, and `Threads` (single-threaded stub).
+- `searchmoves` support and `ponderhit` no-op handling.
+- Deterministic bench mode via `bench [depth]` and `--bench [depth]`.
+- Match tooling scripts for Cute Chess (`tools/match.sh`, `tools/match.bat`) and reusable engine config (`tools/engines.json`).
+- SPRT automation scripts for patch validation (`tools/sprt.sh`, `tools/sprt.bat`).
+
 Phase 4 (Classical Evaluation) is complete.
 
 Completed Phase 4 scope includes:
@@ -115,6 +127,66 @@ Default bundled suite path:
 
 - `engine-core/src/test/resources/tactical/mate_2_3_50.epd`
 
+## Play Against The Engine
+
+You can play Vex either through a chess GUI (Cute Chess) using UCI, or through your web UI (`chess-engine-ui`) backed by the REST API.
+
+### Option A: Play In Cute Chess (UCI)
+
+1. Build the backend modules:
+
+```powershell
+.\mvnw.cmd clean install -DskipTests
+```
+
+2. Add the UCI engine in Cute Chess:
+- Open Cute Chess.
+- Go to engine management and add a new UCI engine.
+- Engine command:
+
+```text
+java -jar <absolute-path-to>\engine-uci\target\engine-uci-0.0.1-SNAPSHOT.jar
+```
+
+3. Start a game:
+- Create a new game with Vex as one side.
+- Set time control as desired (for example, `10+0.1`).
+
+4. Optional: run automated matches from repo root:
+
+```powershell
+tools\match.bat <new-engine.jar> <old-engine.jar> 100 "tc=10+0.1"
+```
+
+5. Optional: run SPRT patch validation:
+
+```powershell
+tools\sprt.bat <new-engine.jar> <old-engine.jar>
+```
+
+Generated PGNs are written under `tools/results/`.
+
+### Option B: Play In The Web UI (`chess-engine-ui`)
+
+1. Start backend API (`chess-engine-api`) from the backend repo root:
+
+```powershell
+.\mvnw.cmd -pl chess-engine-api spring-boot:run
+```
+
+2. In a separate terminal, start the UI from `chess-engine-ui`:
+
+```powershell
+npm install
+npm start
+```
+
+3. Open the local UI URL shown by React (typically `http://localhost:3000`).
+
+4. Ensure the UI API base URL points to your backend (commonly `http://localhost:8080`).
+
+If your UI supports side/orientation selection, choose your side and start playing.
+
 ## API Module Notes
 
 - Session-aware gameplay via optional `gameId` support.
@@ -123,13 +195,8 @@ Default bundled suite path:
 
 ## Next Phase
 
-Phase 5 focus:
+Phase 6 focus (planned):
 
-- Build the next search-strength layer on top of the completed classical evaluation stack.
-- Expand regression validation with repeatable strength and tactical checks.
-- Preserve Phase 1 correctness gates and Phase 4 evaluation baselines while improving playing strength.
-
-## Phase 2 Validation Aids
-
-- Issue #25 GUI closure checklist and evidence template:
-	- `docs/phase2-issue25-gui-validation.md`
+- Continue search-strength improvements on top of completed Phase 5 UCI and tooling foundations.
+- Increase tactical reliability and time-management quality under match conditions.
+- Maintain Phase 1 correctness gates and Phase 4/5 regression baselines while improving practical playing strength.

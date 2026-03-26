@@ -1859,3 +1859,39 @@
 **Next:**
 
 - Merge `phase/4-classical-evaluation` into `develop`. All exit criteria met.
+
+### [2026-03-26] Phase 5 — Full UCI Protocol + Match Tooling (#51–#57)
+
+**Built:**
+
+- **#51 UCI info completeness:** Added full `info` line output support with `depth`, `seldepth`, `score cp/mate`, `nodes`, `nps`, `time`, `hashfull`, and `pv`.
+- **#52 MultiPV:** Added `setoption name MultiPV value N`, root exclusion flow per PV line, and `multipv` token emission in UCI info output.
+- **#53 setoption expansion:** Implemented option handling for `Hash`, `MultiPV`, `MoveOverhead`, and `Threads` (accepted as a no-op for single-threaded engine).
+- **#54 searchmoves + ponder stub:** Added `searchmoves` filtering in root search and `ponderhit` no-op command handling.
+- **#55 bench mode:** Added fixed-position benchmark command via `bench [depth]` and CLI `--bench [depth]`; fixed bench hash to 16MB and clear TT between positions.
+- **#56 match tooling:** Added `tools/match.sh`, `tools/match.bat`, and `tools/engines.json` for repeatable Cute Chess matches with timestamped PGN output in `tools/results/`.
+- **#57 SPRT tooling:** Added `tools/sprt.sh` and `tools/sprt.bat` for automated patch validation with SPRT(elo0=0, elo1=50, alpha=0.05, beta=0.05).
+- Added user-facing replication guidance in `README.md` so users can play against the engine in Cute Chess or via the web UI.
+
+**Decisions Made:**
+
+- Kept MultiPV implementation inside one iterative deepening pass (excluded-root pattern) to preserve existing search behavior when `MultiPV=1`.
+- Fixed bench hash size at 16MB and reset TT per position for deterministic node fingerprints.
+- Kept bench depth default at 13 per issue spec while allowing override for slower environments.
+- Standardized match/SPRT scripts to write timestamped artifacts into `tools/results/` for reproducible result tracking.
+
+**Broke / Fixed:**
+
+- Found and fixed a PV table sizing bug surfaced by deeper bench runs: PV arrays were sized too tightly for extension-driven plies, causing out-of-bounds behavior at deeper depths.
+- No perft correctness regressions introduced by Phase 5 changes.
+
+**Measurements:**
+
+- Perft depth 5 (startpos): 4,865,609 (reference match maintained).
+- Bench determinism check (depth 5 sample): stable node count across repeated runs (`27845` nodes observed in consecutive runs).
+- Elo vs. baseline: Not measured in this cycle (tooling delivery phase).
+
+**Next:**
+
+- Use `tools/match.*` and `tools/sprt.*` to run ongoing regression and patch-validation campaigns.
+- Start next search-strength tranche with Phase 5 UCI/tooling baseline locked.
