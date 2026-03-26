@@ -35,9 +35,10 @@ class EvaluatorTest {
         Board board = new Board("rnb1kbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
         int score = evaluator.evaluate(board);
         assertTrue(score > 0, "White to move with extra queen should be positive");
-        // Score includes queen material + PST difference from missing black queen
-        assertTrue(score >= Evaluator.mgMaterialValue(5),
-                "Score should be at least one queen MG value");
+        // Tapered eval blends MG/EG — score won't reach pure MG queen value
+        // but should exceed the EG queen value (936)
+        assertTrue(score >= Evaluator.egMaterialValue(5),
+                "Score should be at least one queen EG value");
     }
 
     @Test
@@ -103,13 +104,15 @@ class EvaluatorTest {
 
     @Test
     void pstTableLookupCorrect() {
-        // Verify specific PST lookups directly (tables stored in display order: a8=0)
-        // MG knight at table index 28: row 3 col 4 = 37
-        assertEquals(37, PieceSquareTables.mg(2, 28));
-        // EG knight at table index 28: row 3 col 4 = 22
-        assertEquals(22, PieceSquareTables.eg(2, 28));
-        // MG pawn at table index 28 (row 3 col 4) = 23
-        assertEquals(23, PieceSquareTables.mg(1, 28));
+        // Tables stored in display order: a8=0, h1=63
+        // Board also uses a8=0, so white PST lookup is direct (no mirror).
+        // White knight on e4 → board sq 36 → table index 36
+        // MG_KNIGHT row 4 (32-39), index 4 = 28
+        assertEquals(28, PieceSquareTables.mg(2, 36));
+        // EG_KNIGHT row 4, index 4 = 16
+        assertEquals(16, PieceSquareTables.eg(2, 36));
+        // MG_PAWN row 4, index 4 = 17
+        assertEquals(17, PieceSquareTables.mg(1, 36));
     }
 
     @Test
@@ -125,5 +128,65 @@ class EvaluatorTest {
         assertEquals(297, Evaluator.egMaterialValue(3));  // Bishop
         assertEquals(512, Evaluator.egMaterialValue(4));  // Rook
         assertEquals(936, Evaluator.egMaterialValue(5));  // Queen
+    }
+
+    @Test
+    void phaseIsMaxAtStartPosition() {
+        Board board = new Board();
+        // 4 knights (4*1) + 4 bishops (4*1) + 4 rooks (4*2) + 2 queens (2*4) = 24
+        assertEquals(24, evaluator.computePhase(board));
+    }
+
+    @Test
+    void phaseIsZeroWithOnlyKingsAndPawns() {
+        Board board = new Board("4k3/pppppppp/8/8/8/8/PPPPPPPP/4K3 w - - 0 1");
+        assertEquals(0, evaluator.computePhase(board));
+    }
+
+    @Test
+    void phaseClampedToTwentyFour() {
+        // Starting position already has phase 24 (max) — no way to exceed with normal material
+        Board board = new Board();
+        assertTrue(evaluator.computePhase(board) <= 24);
+    }
+
+    @Test
+    void taperedEvalInterpolatesCorrectly() {
+        // Kings + pawns only: phase = 0 → pure endgame score
+        Board endgame = new Board("4k3/pppppppp/8/8/8/8/PPPPPPPP/4K3 w - - 0 1");
+        int endgameScore = evaluator.evaluate(endgame);
+        // Equal material, symmetric → should be 0
+        assertEquals(0, endgameScore);
+
+        // Starting position: phase = 24 → pure middlegame score
+        Board startPos = new Board();
+        int startScore = evaluator.evaluate(startPos);
+        assertEquals(0, startScore);
+    }
+
+    @Test
+    void kingPstBehaviorChangesWithPhase() {
+        // In the endgame, a centralized king should score higher than a corner king.
+        // In the middlegame, the king should prefer safety (corner/castled position).
+        // EG king PST: center squares have high values, corners low
+        // MG king PST: center squares have very low values, castled positions higher
+
+        // King-only + pawns endgame (phase = 0, pure EG)
+        Board centralKingEg = new Board("8/pppppppp/8/8/4K3/8/PPPPPPPP/8 w - - 0 1");
+        Board cornerKingEg  = new Board("8/pppppppp/8/8/8/8/PPPPPPPP/K7 w - - 0 1");
+
+        int centralEg = evaluator.evaluate(centralKingEg);
+        int cornerEg  = evaluator.evaluate(cornerKingEg);
+        assertTrue(centralEg > cornerEg,
+                "In endgame, centralized king (e4) should score higher than corner king (a1)");
+
+        // Full piece middlegame (phase = 24, pure MG)
+        Board centralKingMg = new Board("rnbqkbnr/pppppppp/8/8/4K3/8/PPPPPPPP/RNBQ1BNR w kq - 0 1");
+        Board safeKingMg    = new Board("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+
+        int centralMg = evaluator.evaluate(centralKingMg);
+        int safeMg    = evaluator.evaluate(safeKingMg);
+        assertTrue(safeMg > centralMg,
+                "In middlegame, safe king (e1) should score higher than centralized king (e4)");
     }
 }

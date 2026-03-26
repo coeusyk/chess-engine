@@ -5,10 +5,18 @@ import coeusyk.game.chess.core.models.Piece;
 
 public class Evaluator {
 
+    private static final int TOTAL_PHASE = 24;
+
+    private static final int[] PHASE_WEIGHTS = new int[7];
     private static final int[] MG_MATERIAL = new int[7];
     private static final int[] EG_MATERIAL = new int[7];
 
     static {
+        PHASE_WEIGHTS[Piece.Knight] = 1;
+        PHASE_WEIGHTS[Piece.Bishop] = 1;
+        PHASE_WEIGHTS[Piece.Rook]   = 2;
+        PHASE_WEIGHTS[Piece.Queen]  = 4;
+
         MG_MATERIAL[Piece.Pawn]   = 82;
         MG_MATERIAL[Piece.Knight] = 337;
         MG_MATERIAL[Piece.Bishop] = 365;
@@ -31,10 +39,19 @@ public class Evaluator {
         mgScore += computeMaterialAndPst(board, true, true) - computeMaterialAndPst(board, false, true);
         egScore += computeMaterialAndPst(board, true, false) - computeMaterialAndPst(board, false, false);
 
-        // Until tapered eval is wired in, return mgScore directly
-        int score = mgScore;
+        int phase = computePhase(board);
+        int score = (mgScore * phase + egScore * (TOTAL_PHASE - phase)) / TOTAL_PHASE;
 
         return Piece.isWhite(board.getActiveColor()) ? score : -score;
+    }
+
+    int computePhase(Board board) {
+        int phase = 0;
+        phase += Long.bitCount(board.getWhiteKnights() | board.getBlackKnights()) * PHASE_WEIGHTS[Piece.Knight];
+        phase += Long.bitCount(board.getWhiteBishops() | board.getBlackBishops()) * PHASE_WEIGHTS[Piece.Bishop];
+        phase += Long.bitCount(board.getWhiteRooks()   | board.getBlackRooks())   * PHASE_WEIGHTS[Piece.Rook];
+        phase += Long.bitCount(board.getWhiteQueens()   | board.getBlackQueens())  * PHASE_WEIGHTS[Piece.Queen];
+        return Math.min(phase, TOTAL_PHASE);
     }
 
     private int computeMaterialAndPst(Board board, boolean white, boolean mg) {
@@ -62,7 +79,7 @@ public class Evaluator {
         while (bitboard != 0) {
             int square = Long.numberOfTrailingZeros(bitboard);
             score += material[pieceType];
-            int pstSquare = white ? (square ^ 56) : square;
+            int pstSquare = white ? square : (square ^ 56);
             score += mg ? PieceSquareTables.mg(pieceType, pstSquare)
                         : PieceSquareTables.eg(pieceType, pstSquare);
             bitboard &= bitboard - 1; // clear LSB
