@@ -860,6 +860,26 @@ public class Board {
         return halfmoveClock >= 100;
     }
 
+    public boolean isInsufficientMaterial() {
+        if (whitePawns != 0 || whiteRooks != 0 || whiteQueens != 0) return false;
+        if (blackPawns != 0 || blackRooks != 0 || blackQueens != 0) return false;
+        int wMinors = Long.bitCount(whiteKnights) + Long.bitCount(whiteBishops);
+        int bMinors = Long.bitCount(blackKnights) + Long.bitCount(blackBishops);
+        if (wMinors == 0 && bMinors == 0) return true;
+        if (wMinors == 1 && bMinors == 0) return true;
+        if (wMinors == 0 && bMinors == 1) return true;
+        if (wMinors == 1 && bMinors == 1 && whiteKnights == 0 && blackKnights == 0) {
+            int wSq = Long.numberOfTrailingZeros(whiteBishops);
+            int bSq = Long.numberOfTrailingZeros(blackBishops);
+            return ((wSq / 8 + wSq % 8) % 2) == ((bSq / 8 + bSq % 8) % 2);
+        }
+        return false;
+    }
+
+    public String toFen() {
+        return getCurrentFEN();
+    }
+
     // Getters and setters:
     public int getPiece(int square) {
         if (square < 0 || square > 63) {
