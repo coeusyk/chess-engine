@@ -4,9 +4,23 @@ Backend repository for a modular chess engine platform with REST and UCI adapter
 
 ## Current Status
 
-Phase 2 (Search V1 + Transposition Table + UCI Stub) is complete.
+Phase 4 (Classical Evaluation) is complete.
 
-Completed Phase 2 scope includes:
+Completed Phase 4 scope includes:
+
+- Material baseline with MG/EG PeSTO values.
+- Piece-square tables for all 6 piece types.
+- Tapered evaluation with phase interpolation.
+- Mobility evaluation for knights, bishops, rooks, and queens.
+- Pawn structure evaluation for passed, isolated, and doubled pawns.
+- King safety evaluation with pawn shield, open-file pressure, and attacker weighting.
+- Endgame mop-up evaluation for technically won positions.
+- Symmetry validation for all evaluation terms.
+- SPRT confirmation versus the Phase 3 baseline: `+185.7 +/- 54.2 Elo`, H1 accepted.
+
+Phase 3 (Strength Scaling) is also complete.
+
+Completed Phase 3 scope includes:
 
 - Iterative deepening alpha-beta search.
 - Quiescence search.
@@ -15,7 +29,7 @@ Completed Phase 2 scope includes:
 - Time management for depth, movetime, and clock modes.
 - Minimal UCI interface with command-loop integration coverage.
 
-Phase 1 (Correctness Foundation) is also complete.
+Phase 1 (Correctness Foundation) remains the underlying gate and is complete.
 
 Completed Phase 1 scope includes:
 
@@ -45,7 +59,11 @@ Completed Phase 1 scope includes:
 	- legality tests,
 	- draw-rule tests,
 	- perft reference tests,
-	- make/unmake determinism and Zobrist restoration tests.
+	- make/unmake determinism and Zobrist restoration tests,
+	- evaluator regression and symmetry tests.
+- Phase 4 SPRT result versus Phase 3 baseline:
+	- `SPRT: llr 2.97 (101.0%), lbound -2.94, ubound 2.94 - H1 was accepted`
+	- `Elo difference: +185.7 +/- 54.2, LOS: 100.0%, DrawRatio: 28.6%`
 
 Perft references currently covered in tests:
 
@@ -105,11 +123,11 @@ Default bundled suite path:
 
 ## Next Phase
 
-Phase 3 focus (Strength Scaling):
+Phase 5 focus:
 
-- Search and heuristic tuning for stronger practical play.
-- Regression-position validation and repeatable strength checks.
-- Continued quality improvements while preserving Phase 1/2 correctness gates.
+- Build the next search-strength layer on top of the completed classical evaluation stack.
+- Expand regression validation with repeatable strength and tactical checks.
+- Preserve Phase 1 correctness gates and Phase 4 evaluation baselines while improving playing strength.
 
 ## Phase 2 Validation Aids
 
