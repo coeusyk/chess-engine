@@ -1,5 +1,6 @@
 package coeusyk.game.chess.core.search;
 
+import coeusyk.game.chess.core.eval.Evaluator;
 import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Move;
 import coeusyk.game.chess.core.models.Piece;
@@ -45,6 +46,7 @@ public class Searcher {
     private final boolean checkExtensionsEnabled;
     private final boolean singularExtensionsEnabled = true;
     private boolean seeEnabled = true;
+    private final Evaluator evaluator = new Evaluator();
     private final MoveOrderer moveOrderer = new MoveOrderer();
     private final StaticExchangeEvaluator staticExchangeEvaluator = new StaticExchangeEvaluator();
     private final Move[][] killerMoves = new Move[MAX_PLY][2];
@@ -1022,34 +1024,7 @@ public class Searcher {
     }
 
     private int evaluate(Board board) {
-        int whiteMaterial = 0;
-        int blackMaterial = 0;
-
-        int[] grid = board.getGrid();
-        for (int piece : grid) {
-            if (piece == Piece.None) {
-                continue;
-            }
-
-            int value = switch (Piece.type(piece)) {
-                case Piece.Pawn -> 100;
-                case Piece.Knight -> 320;
-                case Piece.Bishop -> 330;
-                case Piece.Rook -> 500;
-                case Piece.Queen -> 900;
-                case Piece.King -> 0;
-                default -> 0;
-            };
-
-            if (Piece.isWhite(piece)) {
-                whiteMaterial += value;
-            } else {
-                blackMaterial += value;
-            }
-        }
-
-        int materialScore = whiteMaterial - blackMaterial;
-        return Piece.isWhite(board.getActiveColor()) ? materialScore : -materialScore;
+        return evaluator.evaluate(board);
     }
 
     private void prioritizeMove(List<Move> moves, Move preferredMove) {
