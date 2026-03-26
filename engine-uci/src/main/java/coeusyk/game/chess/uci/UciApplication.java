@@ -22,6 +22,7 @@ public class UciApplication {
     private static final int MAX_SEARCH_DEPTH = 127;
 
     private Board board = new Board();
+    private int multiPV = 1;
 
     private final AtomicBoolean stopRequested = new AtomicBoolean(false);
     private volatile boolean searchRunning = false;
@@ -45,6 +46,7 @@ public class UciApplication {
             if ("uci".equals(line)) {
                 System.out.println("id name " + ENGINE_NAME);
                 System.out.println("id author " + ENGINE_AUTHOR);
+                System.out.println("option name MultiPV type spin default 1 min 1 max 500");
                 System.out.println("uciok");
             } else if ("isready".equals(line)) {
                 System.out.println("readyok");
@@ -55,7 +57,7 @@ public class UciApplication {
                 stopRequested.set(true);
                 handlePosition(line);
             } else if (line.startsWith("setoption")) {
-                // Phase 2 scope: ignored, wired later in Phase 5.
+                handleSetOption(line);
             } else if (line.startsWith("go")) {
                 handleGo(line);
             } else if ("stop".equals(line)) {
@@ -111,6 +113,23 @@ public class UciApplication {
         }
     }
 
+    private void handleSetOption(String command) {
+        String lower = command.toLowerCase();
+        if (lower.contains("name multipv") && lower.contains("value")) {
+            String[] parts = command.split("\\s+");
+            for (int i = 0; i < parts.length - 1; i++) {
+                if ("value".equalsIgnoreCase(parts[i])) {
+                    try {
+                        int value = Integer.parseInt(parts[i + 1]);
+                        multiPV = Math.max(1, value);
+                    } catch (NumberFormatException ignored) {
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
     private void handleGo(String command) {
         // Keep input processing responsive by running search on a worker thread.
         if (searchRunning) {
@@ -133,6 +152,9 @@ public class UciApplication {
         try {
             String[] parts = command.split("\\s+");
             Searcher searcher = new Searcher();
+            if (multiPV > 1) {
+                searcher.setMultiPV(multiPV);
+            }
             SearchResult result;
 
             if (contains(parts, "movetime")) {
@@ -182,13 +204,17 @@ public class UciApplication {
     }
 
     private void printInfoLine(IterationInfo info) {
-        if (!info.pv().isEmpty()) {
+        if (info.multipv() == 1 && !info.pv().isEmpty()) {
             latestIterativeBestMove = info.pv().get(0);
         }
 
         StringBuilder sb = new StringBuilder();
         sb.append("info depth ").append(info.depth());
         sb.append(" seldepth ").append(info.seldepth());
+
+        if (multiPV > 1) {
+            sb.append(" multipv ").append(info.multipv());
+        }
 
         int score = info.scoreCp();
         if (Math.abs(score) >= MATE_SCORE - MAX_PLY) {

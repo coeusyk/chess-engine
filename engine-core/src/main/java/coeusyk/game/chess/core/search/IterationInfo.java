@@ -11,6 +11,7 @@ public record IterationInfo(
         long nodes,
         long timeMs,
         int hashfull,
-        List<Move> pv
+        List<Move> pv,
+        int multipv
 ) {
 }
