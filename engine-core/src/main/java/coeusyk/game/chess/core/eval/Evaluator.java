@@ -74,6 +74,8 @@ public class Evaluator {
         mgScore += pawnStructure[0];
         egScore += pawnStructure[1];
 
+        mgScore += KingSafety.evaluate(board);
+
         int phase = computePhase(board);
         int score = (mgScore * phase + egScore * (TOTAL_PHASE - phase)) / TOTAL_PHASE;
 

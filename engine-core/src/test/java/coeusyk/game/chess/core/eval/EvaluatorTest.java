@@ -308,4 +308,60 @@ class EvaluatorTest {
         assertEquals(evalWhite, evalBlack,
                 "Mirrored pawn structure positions should produce symmetric eval");
     }
+
+    // --- King safety tests ---
+
+    @Test
+    void pawnShieldBonusFires() {
+        // White king g1 with shield pawns f2,g2,h2 vs no pawns at all
+        Board withShield = new Board("4k3/8/8/8/8/8/5PPP/6K1 w - - 0 1");
+        Board noShield = new Board("4k3/8/8/8/8/8/8/6K1 w - - 0 1");
+
+        int safetyWith = KingSafety.evaluate(withShield);
+        int safetyWithout = KingSafety.evaluate(noShield);
+
+        assertTrue(safetyWith > safetyWithout,
+                "King with pawn shield should have better safety score");
+    }
+
+    @Test
+    void openFilePenaltyNearKing() {
+        // Both kings castled g1/g8. White missing g-pawn (half-open), black full shield.
+        Board halfOpen = new Board("6k1/5ppp/8/8/8/8/5P1P/6K1 w - - 0 1");
+        Board closed = new Board("6k1/5ppp/8/8/8/8/5PPP/6K1 w - - 0 1");
+
+        int safetyHalfOpen = KingSafety.evaluate(halfOpen);
+        int safetyClosed = KingSafety.evaluate(closed);
+
+        assertTrue(safetyClosed > safetyHalfOpen,
+                "Open file near king should reduce safety");
+    }
+
+    @Test
+    void attackerWeightReducesSafety() {
+        // Black queen on f3 attacks white king zone on g1
+        Board queenAttacks = new Board("6k1/5ppp/8/8/8/5q2/5PPP/6K1 w - - 0 1");
+        // No queen — no attacker penalty
+        Board noAttacker = new Board("6k1/5ppp/8/8/8/8/5PPP/6K1 w - - 0 1");
+
+        int safetyAttacked = KingSafety.evaluate(queenAttacks);
+        int safetyClean = KingSafety.evaluate(noAttacker);
+
+        assertTrue(safetyClean > safetyAttacked,
+                "Enemy queen attacking king zone should reduce safety");
+    }
+
+    @Test
+    void kingSafetyEvalSymmetry() {
+        // White king g1 with shield, black queen attacks — black to move
+        String whiteDefending = "4k3/8/8/8/8/5q2/5PPP/6K1 b - - 0 1";
+        // Mirror: black king g8 with shield, white queen attacks — white to move
+        String blackDefending = "6k1/5ppp/5Q2/8/8/8/8/4K3 w - - 0 1";
+
+        int evalA = evaluator.evaluate(new Board(whiteDefending));
+        int evalB = evaluator.evaluate(new Board(blackDefending));
+
+        assertEquals(evalA, evalB,
+                "King safety should be symmetric for mirrored positions");
+    }
 }
