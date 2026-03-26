@@ -9,6 +9,7 @@ public class TranspositionTable {
 
     private Entry[] table;
     private int mask;
+    private int occupiedCount;
 
     private long probes;
     private long hits;
@@ -37,6 +38,7 @@ public class TranspositionTable {
 
         table = new Entry[entryCount];
         mask = entryCount - 1;
+        occupiedCount = 0;
         resetStats();
     }
 
@@ -54,8 +56,18 @@ public class TranspositionTable {
         int index = indexFor(key);
         Entry existing = table[index];
         if (existing == null || existing.key() != key || depth >= existing.depth()) {
+            if (existing == null) {
+                occupiedCount++;
+            }
             table[index] = new Entry(key, copyMove(bestMove), depth, score, bound);
         }
+    }
+
+    public int hashfull() {
+        if (table.length == 0) {
+            return 0;
+        }
+        return (int) ((long) occupiedCount * 1000L / table.length);
     }
 
     public int getEntryCount() {
@@ -72,6 +84,12 @@ public class TranspositionTable {
 
     public long getHits() {
         return hits;
+    }
+
+    public void clear() {
+        java.util.Arrays.fill(table, null);
+        occupiedCount = 0;
+        resetStats();
     }
 
     public void resetStats() {

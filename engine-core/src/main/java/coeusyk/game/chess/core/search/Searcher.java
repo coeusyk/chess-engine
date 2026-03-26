@@ -9,12 +9,13 @@ import coeusyk.game.chess.core.movegen.MovesGenerator;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.BooleanSupplier;
 
 public class Searcher {
     @FunctionalInterface
     public interface IterationListener {
-        void onIteration(int depth, int scoreCp, Move bestMove);
+        void onIteration(IterationInfo info);
     }
 
     private static final int INF = 1_000_000;
@@ -34,6 +35,10 @@ public class Searcher {
     private long leafNodes;
     private long quiescenceNodes;
     private long checkExtensionsApplied;
+    private int seldepth;
+
+    private TimeManager timeManager;
+    private long searchStartNanos;
 
     private Move[][] pvTable;
     private int[] pvLength;
@@ -55,6 +60,9 @@ public class Searcher {
     private final int[][] lmrReductions = precomputeLmrReductions();
 
     private Move rootTtMoveHint;
+
+    private int multiPV = 1;
+    private List<Move> searchMoves = List.of();
 
     private boolean aborted;
 
@@ -109,6 +117,14 @@ public class Searcher {
         this.checkExtensionsEnabled = checkExtensionsEnabled;
     }
 
+    public void setMultiPV(int multiPV) {
+        this.multiPV = Math.max(1, multiPV);
+    }
+
+    public void setSearchMoves(List<Move> searchMoves) {
+        this.searchMoves = searchMoves != null ? searchMoves : List.of();
+    }
+
     public void setRootTtMoveHintForTesting(Move rootTtMoveHint) {
         this.rootTtMoveHint = rootTtMoveHint;
     }
@@ -119,6 +135,10 @@ public class Searcher {
 
     public void setTranspositionTableSizeMb(int sizeMb) {
         transpositionTable.resize(sizeMb);
+    }
+
+    public void clearTranspositionTable() {
+        transpositionTable.clear();
     }
 
     public double getTranspositionTableHitRate() {
@@ -139,6 +159,7 @@ public class Searcher {
 
     public SearchResult searchWithTimeManager(Board board, int maxDepth, TimeManager timeManager) {
         timeManager.startNow();
+        this.timeManager = timeManager;
         return iterativeDeepening(board, maxDepth, timeManager::shouldStopSoft, timeManager::shouldStopHard, null);
     }
 
@@ -150,6 +171,7 @@ public class Searcher {
             IterationListener listener
     ) {
         timeManager.startNow();
+        this.timeManager = timeManager;
         BooleanSupplier softStop = () -> externalStop.getAsBoolean() || timeManager.shouldStopSoft();
         BooleanSupplier hardStop = () -> externalStop.getAsBoolean() || timeManager.shouldStopHard();
         return iterativeDeepening(board, maxDepth, softStop, hardStop, listener);
@@ -179,6 +201,7 @@ public class Searcher {
 
         aborted = false;
         checkExtensionsApplied = 0;
+        searchStartNanos = System.nanoTime();
         transpositionTable.resetStats();
 
         for (int depth = 1; depth <= effectiveMaxDepth; depth++) {
@@ -187,39 +210,73 @@ public class Searcher {
                 break;
             }
 
-            nodesVisited = 0;
-            leafNodes = 0;
-            quiescenceNodes = 0;
-            pvTable = new Move[depth + 4][depth + 4];
-            pvLength = new int[depth + 4];
-
-            RootResult iteration;
+            seldepth = 0;
             int maxCheckExtensions = getMaxCheckExtensionsForDepth(depth);
-            if (aspirationWindowsEnabled && depth >= 2 && previousBestMove != null) {
-                iteration = searchRootWithAspiration(board, depth, previousBestMove, bestScore, shouldStopHard, maxCheckExtensions);
-            } else {
-                iteration = searchRoot(board, depth, previousBestMove, shouldStopHard, -INF, INF, maxCheckExtensions);
+            List<Move> excludedMoves = new ArrayList<>();
+            boolean depthAborted = false;
+
+            for (int pvIndex = 0; pvIndex < multiPV; pvIndex++) {
+                nodesVisited = 0;
+                leafNodes = 0;
+                quiescenceNodes = 0;
+                int pvSize = depth + maxCheckExtensions + 4;
+                pvTable = new Move[pvSize][pvSize];
+                pvLength = new int[pvSize];
+
+                RootResult iteration;
+                if (pvIndex == 0 && aspirationWindowsEnabled && depth >= 2 && previousBestMove != null) {
+                    iteration = searchRootWithAspiration(board, depth, previousBestMove, bestScore, shouldStopHard, maxCheckExtensions, excludedMoves);
+                } else {
+                    Move preferred = pvIndex == 0 ? previousBestMove : null;
+                    iteration = searchRoot(board, depth, preferred, shouldStopHard, -INF, INF, maxCheckExtensions, excludedMoves);
+                }
+
+                totalNodes += nodesVisited;
+                totalLeafNodes += leafNodes;
+                totalQuiescenceNodes += quiescenceNodes;
+
+                if (iteration.bestMove == null) {
+                    if (pvIndex == 0) {
+                        depthAborted = true;
+                    }
+                    break;
+                }
+
+                if (pvIndex == 0) {
+                    previousBestMove = iteration.bestMove;
+                    bestScore = iteration.bestScore;
+                    depthReached = depth;
+                    bestPrincipalVariation = iteration.principalVariation;
+                }
+
+                excludedMoves.add(iteration.bestMove);
+
+                if (listener != null) {
+                    long elapsedMs = timeManager != null
+                            ? timeManager.elapsedMs()
+                            : (System.nanoTime() - searchStartNanos) / 1_000_000L;
+                    IterationInfo info = new IterationInfo(
+                            depth,
+                            seldepth,
+                            iteration.bestScore,
+                            totalNodes,
+                            elapsedMs,
+                            transpositionTable.hashfull(),
+                            iteration.principalVariation,
+                            pvIndex + 1
+                    );
+                    listener.onIteration(info);
+                }
+
+                if (iteration.aborted) {
+                    if (pvIndex == 0) {
+                        depthAborted = true;
+                    }
+                    break;
+                }
             }
 
-            totalNodes += nodesVisited;
-            totalLeafNodes += leafNodes;
-            totalQuiescenceNodes += quiescenceNodes;
-
-            if (iteration.bestMove == null) {
-                aborted = true;
-                break;
-            }
-
-            previousBestMove = iteration.bestMove;
-            bestScore = iteration.bestScore;
-            depthReached = depth;
-            bestPrincipalVariation = iteration.principalVariation;
-
-            if (listener != null && previousBestMove != null) {
-                listener.onIteration(depth, bestScore, previousBestMove);
-            }
-
-            if (iteration.aborted) {
+            if (depthAborted) {
                 aborted = true;
                 break;
             }
@@ -244,14 +301,15 @@ public class Searcher {
             Move preferredMove,
             int previousIterationScore,
             BooleanSupplier shouldStopHard,
-            int maxCheckExtensions
+            int maxCheckExtensions,
+            List<Move> excludedRootMoves
     ) {
         int alpha = Math.max(-INF, previousIterationScore - ASPIRATION_INITIAL_DELTA_CP);
         int beta = Math.min(INF, previousIterationScore + ASPIRATION_INITIAL_DELTA_CP);
         int consecutiveFailures = 0;
 
         while (true) {
-            RootResult iteration = searchRoot(board, depth, preferredMove, shouldStopHard, alpha, beta, maxCheckExtensions);
+            RootResult iteration = searchRoot(board, depth, preferredMove, shouldStopHard, alpha, beta, maxCheckExtensions, excludedRootMoves);
             if (iteration.aborted || iteration.bestMove == null) {
                 return iteration;
             }
@@ -264,7 +322,7 @@ public class Searcher {
 
             consecutiveFailures++;
             if (consecutiveFailures >= 2) {
-                return searchRoot(board, depth, preferredMove, shouldStopHard, -INF, INF, maxCheckExtensions);
+                return searchRoot(board, depth, preferredMove, shouldStopHard, -INF, INF, maxCheckExtensions, excludedRootMoves);
             }
 
             int widenBy = ASPIRATION_INITIAL_DELTA_CP << consecutiveFailures;
@@ -283,13 +341,25 @@ public class Searcher {
             BooleanSupplier shouldStopHard,
             int rootAlpha,
             int rootBeta,
-            int maxCheckExtensions
+            int maxCheckExtensions,
+            List<Move> excludedRootMoves
     ) {
         MovesGenerator generator = new MovesGenerator(board);
         List<Move> moves = new ArrayList<>(generator.getActiveMoves(board.getActiveColor()));
         TranspositionTable.Entry rootEntry = transpositionTable.probe(board.getZobristHash());
 
+        if (!searchMoves.isEmpty()) {
+            moves.removeIf(m -> !isExcludedMove(m, searchMoves));
+        }
+
+        if (!excludedRootMoves.isEmpty()) {
+            moves.removeIf(m -> isExcludedMove(m, excludedRootMoves));
+        }
+
         if (moves.isEmpty()) {
+            if (!excludedRootMoves.isEmpty()) {
+                return new RootResult(null, 0, List.of(), false);
+            }
             int terminalScore = evaluateTerminal(board, 0);
             return new RootResult(null, terminalScore, List.of(), false);
         }
@@ -375,6 +445,10 @@ public class Searcher {
             boolean inSingularitySearch
     ) {
         pvLength[ply] = 0;
+
+        if (ply > seldepth) {
+            seldepth = ply;
+        }
 
         if (shouldStopHard.getAsBoolean()) {
             aborted = true;
@@ -963,6 +1037,10 @@ public class Searcher {
     private int quiescence(Board board, int alpha, int beta, int ply, BooleanSupplier shouldStopHard) {
         quiescenceNodes++;
 
+        if (ply > seldepth) {
+            seldepth = ply;
+        }
+
         if (shouldStopHard.getAsBoolean()) {
             aborted = true;
             return alpha;
@@ -1138,6 +1216,17 @@ public class Searcher {
             line.add(pvTable[0][i]);
         }
         return List.copyOf(line);
+    }
+
+    private boolean isExcludedMove(Move move, List<Move> excluded) {
+        for (Move ex : excluded) {
+            if (move.startSquare == ex.startSquare
+                    && move.targetSquare == ex.targetSquare
+                    && Objects.equals(move.reaction, ex.reaction)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private record RootResult(Move bestMove, int bestScore, List<Move> principalVariation, boolean aborted) {
