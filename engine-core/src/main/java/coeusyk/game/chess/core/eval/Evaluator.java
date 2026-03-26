@@ -77,6 +77,7 @@ public class Evaluator {
         mgScore += KingSafety.evaluate(board);
 
         int phase = computePhase(board);
+        egScore += MopUp.evaluate(board, phase);
         int score = (mgScore * phase + egScore * (TOTAL_PHASE - phase)) / TOTAL_PHASE;
 
         return Piece.isWhite(board.getActiveColor()) ? score : -score;

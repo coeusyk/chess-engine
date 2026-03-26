@@ -364,4 +364,62 @@ class EvaluatorTest {
         assertEquals(evalA, evalB,
                 "King safety should be symmetric for mirrored positions");
     }
+
+    // --- Mop-up evaluation tests ---
+
+    @Test
+    void mopUpFiresInEndgameWithAdvantage() {
+        // KQ vs K: phase = 4, material diff >> 400
+        Board kqVsK = new Board("4k3/8/8/8/8/8/8/4KQ2 w - - 0 1");
+        int phase = evaluator.computePhase(kqVsK);
+        assertTrue(phase <= 8);
+        int mopUp = MopUp.evaluate(kqVsK, phase);
+        assertTrue(mopUp > 0, "Mop-up should give positive bonus for white queen advantage");
+    }
+
+    @Test
+    void mopUpDoesNotFireInMiddlegame() {
+        // White has extra queen but full piece complement (phase > 8)
+        Board noBlackQueen = new Board("rnb1kbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+        int phase = evaluator.computePhase(noBlackQueen);
+        assertTrue(phase > 8, "Phase should be middlegame");
+        int mopUp = MopUp.evaluate(noBlackQueen, phase);
+        assertEquals(0, mopUp, "Mop-up should not fire when phase > 8");
+    }
+
+    @Test
+    void mopUpRewardsEnemyKingOnEdge() {
+        // KQ vs K, black king on corner a1 vs center e5
+        Board cornerKing = new Board("8/8/8/8/8/8/8/k3KQ2 w - - 0 1");
+        Board centerKing = new Board("8/8/8/4k3/8/8/8/4KQ2 w - - 0 1");
+        int p1 = evaluator.computePhase(cornerKing);
+        int p2 = evaluator.computePhase(centerKing);
+        assertTrue(MopUp.evaluate(cornerKing, p1) > MopUp.evaluate(centerKing, p2),
+                "Enemy king on corner should give more mop-up bonus");
+    }
+
+    @Test
+    void mopUpRewardsKingProximity() {
+        // White king adjacent to black king vs far away
+        Board close = new Board("8/8/8/4k3/4K3/8/8/7Q w - - 0 1");
+        Board far = new Board("8/8/8/4k3/8/8/8/K6Q w - - 0 1");
+        int p1 = evaluator.computePhase(close);
+        int p2 = evaluator.computePhase(far);
+        assertTrue(MopUp.evaluate(close, p1) > MopUp.evaluate(far, p2),
+                "Winning king near enemy should give higher mop-up bonus");
+    }
+
+    @Test
+    void mopUpEvalSymmetry() {
+        // White has KQ, black has K — black to move
+        String whiteWins = "4k3/8/8/8/8/8/8/3QK3 b - - 0 1";
+        // Mirror: black has kq, white has K — white to move
+        String blackWins = "3qk3/8/8/8/8/8/8/4K3 w - - 0 1";
+
+        int evalA = evaluator.evaluate(new Board(whiteWins));
+        int evalB = evaluator.evaluate(new Board(blackWins));
+
+        assertEquals(evalA, evalB,
+                "Mop-up evaluation should be symmetric for mirrored positions");
+    }
 }
