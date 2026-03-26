@@ -1938,3 +1938,41 @@
 **Next:**
 
 - Read and implement issue #65 (SSE analysis streaming endpoint).
+
+### [2026-03-26] Phase 6 — Product Hardening: Issue #65 SSE Analysis Streaming Endpoint
+
+**Built:**
+
+- `GET /api/analysis/stream` (produces `text/event-stream`) — validates FEN synchronously, runs iterative-deepening search on a background thread, and streams SSE events to the client.
+- `AnalysisService` — Spring service holding a `newSingleThreadExecutor()` for serialized analysis; `AtomicReference<AtomicBoolean>` cancellation flag ensures only one search runs at a time; a new request cancels the previous search before starting.
+- FEN validation: `new Board(fen)` throws `IllegalArgumentException` synchronously before any SSE connection is opened. `@ExceptionHandler` in `AnalysisController` maps this to HTTP 400 `{ "error": message }`.
+- SSE `info` event fields: `type`, `depth`, `seldepth`, `multiPv`, `score` (`{type: "cp"/"mate", value}`), `nodes`, `nps` (nodes * 1000 / timeMs), `time`, `hashfull`, `pv` (list of UCI strings).
+- Mate score detection: `Math.abs(scoreCp) >= 99_872` (MATE_SCORE 100_000 minus MAX_PLY 128). Positive mate: `(100_000 - scoreCp + 1) / 2` moves; negative mate: `-((100_000 + scoreCp + 1) / 2)` moves.
+- SSE `bestmove` event: `{ type: "bestmove", move: "<uci>" }` sent after search completes; `"0000"` when no legal moves.
+- SSE `error` event: emitted if search throws unexpectedly; then `emitter.completeWithError()`.
+- `TimeManager.configureMovetime()` used when `movetime` param is present; otherwise `Searcher.iterativeDeepening()` with depth limit.
+- `Searcher.setMultiPV()` used for multi-PV requests; each iteration fires N ranked `info` events.
+- SseEmitter timeout set to 300,000 ms. `onCompletion`/`onTimeout`/`onError` all set the cancellation flag so the background search aborts at its next check.
+- `CorsConfig` extended with `/api/analysis/**` mapping.
+- `Phase6AnalysisStreamTests` — 5 integration tests: invalid FEN → HTTP 400, valid FEN depth=1 → stream opens with info+bestmove events, checkmate position → bestmove event, multiPv=3 → ≥3 ranked info events, all required SSE info fields present.
+
+**Decisions Made:**
+
+- FEN validation happens synchronously in `AnalysisService.startAnalysis()` before `SseEmitter` is created so Spring can still return a normal HTTP 400 response (not a partially-opened SSE stream).
+- Single global active-analysis state (one search at a time server-wide) is sufficient since the analysis endpoint has no session ID; there is no purpose to running concurrent analyses for the same position.
+- `toUci()` and `squareToUci()` duplicated locally in `AnalysisService` to avoid coupling to `ChessGameService` internals.
+
+**Broke / Fixed:**
+
+- `AnalysisService.java` was initially missing the `SearchResult` import; added before test run.
+- No regressions in existing lifecycle or Phase 0 tests.
+
+**Measurements:**
+
+- Perft depth 5 (startpos): not measured this cycle.
+- Nodes/sec: not measured this cycle.
+- Chess-engine-api tests: 20 run, 0 failures, 0 skipped (5 new + 12 lifecycle + 2 Phase0 + 1 smoke).
+
+**Next:**
+
+- Read and implement issue #66.
