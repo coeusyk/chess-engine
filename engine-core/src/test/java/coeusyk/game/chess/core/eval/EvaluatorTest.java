@@ -35,7 +35,9 @@ class EvaluatorTest {
         Board board = new Board("rnb1kbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
         int score = evaluator.evaluate(board);
         assertTrue(score > 0, "White to move with extra queen should be positive");
-        assertEquals(Evaluator.mgMaterialValue(5), score, "Score should equal one queen MG value");
+        // Score includes queen material + PST difference from missing black queen
+        assertTrue(score >= Evaluator.mgMaterialValue(5),
+                "Score should be at least one queen MG value");
     }
 
     @Test
@@ -82,6 +84,32 @@ class EvaluatorTest {
         assertEquals(evalA, evalB,
                 "eval(white knight down, white to move) == eval(black knight down, black to move)");
         assertTrue(evalA < 0, "Side to move missing a knight should see negative score");
+    }
+
+    @Test
+    void pstAffectsEvaluation() {
+        // Place a white knight on e4 (square 28) vs a1 (square 0).
+        // Central knight should score higher due to PST bonus.
+        // FEN: only kings + one white knight on e4
+        Board centralKnight = new Board("4k3/8/8/8/4N3/8/8/4K3 w - - 0 1");
+        // White knight on a1
+        Board rimKnight = new Board("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
+
+        int centralScore = evaluator.evaluate(centralKnight);
+        int rimScore = evaluator.evaluate(rimKnight);
+        assertTrue(centralScore > rimScore,
+                "Central knight (e4) should score higher than rim knight (a1) due to PST bonus");
+    }
+
+    @Test
+    void pstTableLookupCorrect() {
+        // Verify specific PST lookups directly (tables stored in display order: a8=0)
+        // MG knight at table index 28: row 3 col 4 = 37
+        assertEquals(37, PieceSquareTables.mg(2, 28));
+        // EG knight at table index 28: row 3 col 4 = 22
+        assertEquals(22, PieceSquareTables.eg(2, 28));
+        // MG pawn at table index 28 (row 3 col 4) = 23
+        assertEquals(23, PieceSquareTables.mg(1, 28));
     }
 
     @Test

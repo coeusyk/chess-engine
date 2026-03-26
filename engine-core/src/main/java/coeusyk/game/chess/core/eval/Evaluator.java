@@ -28,8 +28,8 @@ public class Evaluator {
         int mgScore = 0;
         int egScore = 0;
 
-        mgScore += computeMaterial(board, true) - computeMaterial(board, false);
-        egScore += computeMaterialEg(board, true) - computeMaterialEg(board, false);
+        mgScore += computeMaterialAndPst(board, true, true) - computeMaterialAndPst(board, false, true);
+        egScore += computeMaterialAndPst(board, true, false) - computeMaterialAndPst(board, false, false);
 
         // Until tapered eval is wired in, return mgScore directly
         int score = mgScore;
@@ -37,24 +37,37 @@ public class Evaluator {
         return Piece.isWhite(board.getActiveColor()) ? score : -score;
     }
 
-    private int computeMaterial(Board board, boolean white) {
-        int material = 0;
-        material += Long.bitCount(white ? board.getWhitePawns() : board.getBlackPawns()) * MG_MATERIAL[Piece.Pawn];
-        material += Long.bitCount(white ? board.getWhiteKnights() : board.getBlackKnights()) * MG_MATERIAL[Piece.Knight];
-        material += Long.bitCount(white ? board.getWhiteBishops() : board.getBlackBishops()) * MG_MATERIAL[Piece.Bishop];
-        material += Long.bitCount(white ? board.getWhiteRooks() : board.getBlackRooks()) * MG_MATERIAL[Piece.Rook];
-        material += Long.bitCount(white ? board.getWhiteQueens() : board.getBlackQueens()) * MG_MATERIAL[Piece.Queen];
-        return material;
+    private int computeMaterialAndPst(Board board, boolean white, boolean mg) {
+        int score = 0;
+        int[] material = mg ? MG_MATERIAL : EG_MATERIAL;
+
+        score += sumPiecePst(white ? board.getWhitePawns() : board.getBlackPawns(),
+                Piece.Pawn, white, mg, material);
+        score += sumPiecePst(white ? board.getWhiteKnights() : board.getBlackKnights(),
+                Piece.Knight, white, mg, material);
+        score += sumPiecePst(white ? board.getWhiteBishops() : board.getBlackBishops(),
+                Piece.Bishop, white, mg, material);
+        score += sumPiecePst(white ? board.getWhiteRooks() : board.getBlackRooks(),
+                Piece.Rook, white, mg, material);
+        score += sumPiecePst(white ? board.getWhiteQueens() : board.getBlackQueens(),
+                Piece.Queen, white, mg, material);
+        score += sumPiecePst(white ? board.getWhiteKing() : board.getBlackKing(),
+                Piece.King, white, mg, material);
+
+        return score;
     }
 
-    private int computeMaterialEg(Board board, boolean white) {
-        int material = 0;
-        material += Long.bitCount(white ? board.getWhitePawns() : board.getBlackPawns()) * EG_MATERIAL[Piece.Pawn];
-        material += Long.bitCount(white ? board.getWhiteKnights() : board.getBlackKnights()) * EG_MATERIAL[Piece.Knight];
-        material += Long.bitCount(white ? board.getWhiteBishops() : board.getBlackBishops()) * EG_MATERIAL[Piece.Bishop];
-        material += Long.bitCount(white ? board.getWhiteRooks() : board.getBlackRooks()) * EG_MATERIAL[Piece.Rook];
-        material += Long.bitCount(white ? board.getWhiteQueens() : board.getBlackQueens()) * EG_MATERIAL[Piece.Queen];
-        return material;
+    private int sumPiecePst(long bitboard, int pieceType, boolean white, boolean mg, int[] material) {
+        int score = 0;
+        while (bitboard != 0) {
+            int square = Long.numberOfTrailingZeros(bitboard);
+            score += material[pieceType];
+            int pstSquare = white ? (square ^ 56) : square;
+            score += mg ? PieceSquareTables.mg(pieceType, pstSquare)
+                        : PieceSquareTables.eg(pieceType, pstSquare);
+            bitboard &= bitboard - 1; // clear LSB
+        }
+        return score;
     }
 
     public static int mgMaterialValue(int pieceType) {
