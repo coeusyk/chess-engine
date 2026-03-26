@@ -34,8 +34,8 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 PGN_OUT="$RESULTS_DIR/sprt_${TIMESTAMP}.pgn"
 
 cutechess-cli \
-  -engine name=Vex-new cmd="java -jar $NEW" proto=uci \
-  -engine name=Vex-old cmd="java -jar $OLD" proto=uci \
+  -engine name=Vex-new cmd="java -jar \"$NEW\"" proto=uci \
+  -engine name=Vex-old cmd="java -jar \"$OLD\"" proto=uci \
   -each "$TC" \
   -games "$MAX_GAMES" \
   -repeat \

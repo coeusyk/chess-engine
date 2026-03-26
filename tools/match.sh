@@ -16,8 +16,8 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 PGN_OUT="$RESULTS_DIR/match_${TIMESTAMP}.pgn"
 
 cutechess-cli \
-  -engine name=Vex-new cmd="java -jar $ENGINE1" proto=uci \
-  -engine name=Vex-old cmd="java -jar $ENGINE2" proto=uci \
+  -engine name=Vex-new cmd="java -jar \"$ENGINE1\"" proto=uci \
+  -engine name=Vex-old cmd="java -jar \"$ENGINE2\"" proto=uci \
   -each "$TC" \
   -games "$GAMES" \
   -repeat \

@@ -137,6 +137,10 @@ public class Searcher {
         transpositionTable.resize(sizeMb);
     }
 
+    public void clearTranspositionTable() {
+        transpositionTable.clear();
+    }
+
     public double getTranspositionTableHitRate() {
         return transpositionTable.getHitRate();
     }
