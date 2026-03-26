@@ -8,6 +8,10 @@ import java.util.*;
 
 
 public class Board {
+    public record NullMoveState(int previousActiveColor, int previousEpTargetSquare, int previousHalfmoveClock,
+                                int previousFullMoves, long previousZobristHash) {
+    }
+
     // Inner class to store move undo information for efficient unmake without FEN parsing
     private static class UnmakeInfo {
         int capturedPiece;              // Piece captured on target square (Piece.None if none)
@@ -764,6 +768,40 @@ public class Board {
             case "promote-n" -> color | Piece.Knight;
             default -> pawnPiece;
         };
+    }
+
+    public NullMoveState makeNullMove() {
+        NullMoveState state = new NullMoveState(activeColor, epTargetSquare, halfmoveClock, fullMoves, zobristHash);
+
+        // Side to move always toggles in Zobrist on a null move.
+        zobristHash ^= ZobristHash.getKeyForBlackToMove();
+
+        // Remove old EP file from hash if it was materially reachable.
+        if (epTargetSquare >= 0 && isEnPassantCapturePossible(activeColor)) {
+            zobristHash ^= ZobristHash.getKeyForEnPassantFile(epTargetSquare % 8);
+        }
+
+        epTargetSquare = -1;
+
+        if (Piece.isWhite(activeColor)) {
+            activeColor = Piece.Black;
+        } else {
+            activeColor = Piece.White;
+            fullMoves++;
+        }
+
+        // Null move is neither a pawn move nor a capture.
+        halfmoveClock++;
+
+        return state;
+    }
+
+    public void unmakeNullMove(NullMoveState state) {
+        activeColor = state.previousActiveColor();
+        epTargetSquare = state.previousEpTargetSquare();
+        halfmoveClock = state.previousHalfmoveClock();
+        fullMoves = state.previousFullMoves();
+        zobristHash = state.previousZobristHash();
     }
 
     // Function for converting an index to a chess square notation (e5, d4, etc.):

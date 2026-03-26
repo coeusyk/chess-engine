@@ -10,6 +10,7 @@ import java.util.List;
 public class MoveOrderer {
     private static final int TT_MOVE_BONUS = 2_000_000;
     private static final int CAPTURE_BASE = 1_000_000;
+    private static final int LOSING_CAPTURE_BASE = -100_000;
     private static final int KILLER_1_BONUS = 900_000;
     private static final int KILLER_2_BONUS = 800_000;
 
@@ -22,6 +23,8 @@ public class MoveOrderer {
             900, // Queen
             10_000 // King
     };
+
+    private final StaticExchangeEvaluator staticExchangeEvaluator = new StaticExchangeEvaluator();
 
     public List<Move> orderMoves(
             Board board,
@@ -59,7 +62,11 @@ public class MoveOrderer {
         }
 
         if (isCapture(board, move)) {
-            return CAPTURE_BASE + mvvLvaScore(board, move);
+            int seeScore = staticExchangeEvaluator.evaluate(board, move);
+            if (seeScore < 0) {
+                return LOSING_CAPTURE_BASE + seeScore;
+            }
+            return CAPTURE_BASE + mvvLvaScore(board, move) + Math.min(seeScore, 10_000);
         }
 
         if (killerMoves[ply][0] != null && sameMove(move, killerMoves[ply][0])) {

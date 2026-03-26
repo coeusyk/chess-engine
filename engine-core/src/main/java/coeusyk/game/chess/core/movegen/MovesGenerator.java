@@ -88,7 +88,7 @@ public class MovesGenerator {
     }
 
     public ArrayList<Move> getAllMoves() {
-        return (ArrayList<Move>) possibleMoves.clone();
+        return new ArrayList<>(possibleMoves);
     }
 
     public ArrayList<Move> getActiveMoves(int activeColor) {

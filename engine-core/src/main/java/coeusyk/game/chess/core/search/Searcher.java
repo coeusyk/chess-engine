@@ -19,34 +19,100 @@ public class Searcher {
     private static final int INF = 1_000_000;
     private static final int MATE_SCORE = 100_000;
     private static final int MAX_PLY = 128;
+    private static final int ASPIRATION_INITIAL_DELTA_CP = 50;
+    private static final int NULL_MOVE_DEPTH_THRESHOLD = 6;
+    private static final int MAX_LEGAL_MOVES = 256;
+    private static final int FUTILITY_MARGIN_DEPTH_1 = 100;
+    private static final int RAZOR_MARGIN_DEPTH_1 = 300;
+    private static final int RAZOR_MARGIN_DEPTH_2 = 600;
+    private static final int MAX_CHECK_EXTENSIONS = 16;
+    private static final int SINGULAR_DEPTH_THRESHOLD = 8;
+    private static final int SINGULAR_MARGIN_PER_PLY = 8;
 
     private long nodesVisited;
     private long leafNodes;
     private long quiescenceNodes;
+    private long checkExtensionsApplied;
 
     private Move[][] pvTable;
     private int[] pvLength;
 
     private final boolean moveOrderingEnabled;
+    private final boolean aspirationWindowsEnabled;
+    private final boolean nullMovePruningEnabled;
+    private final boolean lmrEnabled;
+    private final boolean futilityRazoringEnabled;
+    private final boolean checkExtensionsEnabled;
+    private final boolean singularExtensionsEnabled = true;
+    private boolean seeEnabled = true;
     private final MoveOrderer moveOrderer = new MoveOrderer();
+    private final StaticExchangeEvaluator staticExchangeEvaluator = new StaticExchangeEvaluator();
     private final Move[][] killerMoves = new Move[MAX_PLY][2];
     private final int[][] historyHeuristic = new int[7][64];
     private final TranspositionTable transpositionTable = new TranspositionTable();
+    private final int[][] lmrReductions = precomputeLmrReductions();
 
     private Move rootTtMoveHint;
 
     private boolean aborted;
 
     public Searcher() {
-        this(true);
+        this(true, true, true, true, true, true);
     }
 
     public Searcher(boolean moveOrderingEnabled) {
+        this(moveOrderingEnabled, true, true, true, true, true);
+    }
+
+    Searcher(boolean moveOrderingEnabled, boolean aspirationWindowsEnabled) {
+        this(moveOrderingEnabled, aspirationWindowsEnabled, true, true, true, true);
+    }
+
+    Searcher(boolean moveOrderingEnabled, boolean aspirationWindowsEnabled, boolean nullMovePruningEnabled) {
+        this(moveOrderingEnabled, aspirationWindowsEnabled, nullMovePruningEnabled, true, true, true);
+    }
+
+    Searcher(
+            boolean moveOrderingEnabled,
+            boolean aspirationWindowsEnabled,
+            boolean nullMovePruningEnabled,
+            boolean lmrEnabled
+    ) {
+        this(moveOrderingEnabled, aspirationWindowsEnabled, nullMovePruningEnabled, lmrEnabled, true, true);
+    }
+
+    Searcher(
+            boolean moveOrderingEnabled,
+            boolean aspirationWindowsEnabled,
+            boolean nullMovePruningEnabled,
+            boolean lmrEnabled,
+            boolean futilityRazoringEnabled
+    ) {
+        this(moveOrderingEnabled, aspirationWindowsEnabled, nullMovePruningEnabled, lmrEnabled, futilityRazoringEnabled, true);
+    }
+
+    Searcher(
+            boolean moveOrderingEnabled,
+            boolean aspirationWindowsEnabled,
+            boolean nullMovePruningEnabled,
+            boolean lmrEnabled,
+            boolean futilityRazoringEnabled,
+            boolean checkExtensionsEnabled
+    ) {
         this.moveOrderingEnabled = moveOrderingEnabled;
+        this.aspirationWindowsEnabled = aspirationWindowsEnabled;
+        this.nullMovePruningEnabled = nullMovePruningEnabled;
+        this.lmrEnabled = lmrEnabled;
+        this.futilityRazoringEnabled = futilityRazoringEnabled;
+        this.checkExtensionsEnabled = checkExtensionsEnabled;
     }
 
     public void setRootTtMoveHintForTesting(Move rootTtMoveHint) {
         this.rootTtMoveHint = rootTtMoveHint;
+    }
+
+    void setSeeEnabledForTesting(boolean seeEnabled) {
+        this.seeEnabled = seeEnabled;
     }
 
     public void setTranspositionTableSizeMb(int sizeMb) {
@@ -110,6 +176,7 @@ public class Searcher {
         long totalQuiescenceNodes = 0;
 
         aborted = false;
+        checkExtensionsApplied = 0;
         transpositionTable.resetStats();
 
         for (int depth = 1; depth <= effectiveMaxDepth; depth++) {
@@ -124,7 +191,13 @@ public class Searcher {
             pvTable = new Move[depth + 4][depth + 4];
             pvLength = new int[depth + 4];
 
-            RootResult iteration = searchRoot(board, depth, previousBestMove, shouldStopHard);
+            RootResult iteration;
+            int maxCheckExtensions = getMaxCheckExtensionsForDepth(depth);
+            if (aspirationWindowsEnabled && depth >= 2 && previousBestMove != null) {
+                iteration = searchRootWithAspiration(board, depth, previousBestMove, bestScore, shouldStopHard, maxCheckExtensions);
+            } else {
+                iteration = searchRoot(board, depth, previousBestMove, shouldStopHard, -INF, INF, maxCheckExtensions);
+            }
 
             totalNodes += nodesVisited;
             totalLeafNodes += leafNodes;
@@ -163,7 +236,53 @@ public class Searcher {
         );
     }
 
-    private RootResult searchRoot(Board board, int depth, Move preferredMove, BooleanSupplier shouldStopHard) {
+    private RootResult searchRootWithAspiration(
+            Board board,
+            int depth,
+            Move preferredMove,
+            int previousIterationScore,
+            BooleanSupplier shouldStopHard,
+            int maxCheckExtensions
+    ) {
+        int alpha = Math.max(-INF, previousIterationScore - ASPIRATION_INITIAL_DELTA_CP);
+        int beta = Math.min(INF, previousIterationScore + ASPIRATION_INITIAL_DELTA_CP);
+        int consecutiveFailures = 0;
+
+        while (true) {
+            RootResult iteration = searchRoot(board, depth, preferredMove, shouldStopHard, alpha, beta, maxCheckExtensions);
+            if (iteration.aborted || iteration.bestMove == null) {
+                return iteration;
+            }
+
+            boolean failLow = iteration.bestScore <= alpha;
+            boolean failHigh = iteration.bestScore >= beta;
+            if (!failLow && !failHigh) {
+                return iteration;
+            }
+
+            consecutiveFailures++;
+            if (consecutiveFailures >= 2) {
+                return searchRoot(board, depth, preferredMove, shouldStopHard, -INF, INF, maxCheckExtensions);
+            }
+
+            int widenBy = ASPIRATION_INITIAL_DELTA_CP << consecutiveFailures;
+            if (failLow) {
+                alpha = Math.max(-INF, previousIterationScore - widenBy);
+            } else {
+                beta = Math.min(INF, previousIterationScore + widenBy);
+            }
+        }
+    }
+
+    private RootResult searchRoot(
+            Board board,
+            int depth,
+            Move preferredMove,
+            BooleanSupplier shouldStopHard,
+            int rootAlpha,
+            int rootBeta,
+            int maxCheckExtensions
+    ) {
         MovesGenerator generator = new MovesGenerator(board);
         List<Move> moves = new ArrayList<>(generator.getActiveMoves(board.getActiveColor()));
         TranspositionTable.Entry rootEntry = transpositionTable.probe(board.getZobristHash());
@@ -183,18 +302,38 @@ public class Searcher {
 
         Move bestMove = null;
         int bestScore = -INF;
-        int alpha = -INF;
-        int beta = INF;
+        int alpha = rootAlpha;
+        int beta = rootBeta;
         pvLength[0] = 0;
+        boolean rootInCheck = board.isActiveColorInCheck();
+        boolean rootExtensionApplied = checkExtensionsEnabled && rootInCheck && maxCheckExtensions > 0;
+        int rootExtensionsUsed = rootExtensionApplied ? 1 : 0;
+        int childDepth = rootExtensionApplied ? depth : depth - 1;
+        childDepth = Math.max(0, childDepth);
 
+        int rootMoveIndex = 0;
         for (Move move : moves) {
             if (shouldStopHard.getAsBoolean()) {
                 return new RootResult(bestMove, bestScore, buildPrincipalVariation(), true);
             }
 
             board.makeMove(move);
-            int score = -alphaBeta(board, depth - 1, 1, -beta, -alpha, shouldStopHard);
+            boolean childIsPvNode = rootMoveIndex == 0;
+                int score = -alphaBeta(
+                    board,
+                    childDepth,
+                    1,
+                    -beta,
+                    -alpha,
+                    shouldStopHard,
+                    false,
+                    childIsPvNode,
+                    rootExtensionsUsed,
+                    maxCheckExtensions,
+                    false
+                );
             board.unmakeMove();
+            rootMoveIndex++;
 
             if (aborted) {
                 return new RootResult(bestMove, bestScore, buildPrincipalVariation(), true);
@@ -226,7 +365,12 @@ public class Searcher {
             int ply,
             int alpha,
             int beta,
-            BooleanSupplier shouldStopHard
+            BooleanSupplier shouldStopHard,
+            boolean previousMoveWasNull,
+            boolean isPvNode,
+            int extensionsUsed,
+            int maxExtensions,
+            boolean inSingularitySearch
     ) {
         pvLength[ply] = 0;
 
@@ -235,39 +379,222 @@ public class Searcher {
             return alpha;
         }
 
-        if (depth == 0) {
+        int effectiveDepth = depth;
+        boolean sideToMoveInCheck = board.isActiveColorInCheck();
+        int currentExtensionsUsed = extensionsUsed;
+
+        if (checkExtensionsEnabled && sideToMoveInCheck && currentExtensionsUsed < maxExtensions) {
+            effectiveDepth = Math.min(MAX_PLY - 1, depth + 1);
+            currentExtensionsUsed++;
+            checkExtensionsApplied++;
+        }
+
+        if (effectiveDepth == 0) {
             return quiescence(board, alpha, beta, ply, shouldStopHard);
         }
 
         long zobrist = board.getZobristHash();
         int alphaOrig = alpha;
         TranspositionTable.Entry ttEntry = transpositionTable.probe(zobrist);
-        Integer ttScore = applyTtBound(ttEntry, depth, alpha, beta);
+        Integer ttScore = applyTtBound(ttEntry, effectiveDepth, alpha, beta);
         if (ttScore != null) {
             return ttScore;
+        }
+
+        if (canApplyRazoring(board, effectiveDepth, alpha, beta, isPvNode)) {
+            int qScore = quiescence(board, alpha, alpha + 1, ply, shouldStopHard);
+            if (aborted) {
+                return alpha;
+            }
+
+            if (qScore <= alpha) {
+                return qScore;
+            }
+        }
+
+        if (nullMovePruningEnabled && canApplyNullMove(board, effectiveDepth, previousMoveWasNull, beta)) {
+            int nullReduction = 3;
+            Board.NullMoveState nullMoveState = board.makeNullMove();
+            int nullScore = -alphaBeta(
+                    board,
+                effectiveDepth - nullReduction - 1,
+                    ply + 1,
+                    -beta,
+                    -beta + 1,
+                    shouldStopHard,
+                    true,
+                false,
+                currentExtensionsUsed,
+                maxExtensions,
+                false
+            );
+            board.unmakeNullMove(nullMoveState);
+
+            if (aborted) {
+                return alpha;
+            }
+
+            if (nullScore >= beta) {
+                return beta;
+            }
         }
 
         nodesVisited++;
 
         MovesGenerator generator = new MovesGenerator(board);
         List<Move> moves = generator.getActiveMoves(board.getActiveColor());
+        Move ttMove = ttEntry != null ? ttEntry.bestMove() : null;
         if (moveOrderingEnabled) {
-            Move ttMove = ttEntry != null ? ttEntry.bestMove() : null;
             int orderPly = Math.min(ply, MAX_PLY - 1);
             moves = moveOrderer.orderMoves(board, moves, orderPly, ttMove, killerMoves, historyHeuristic);
         }
+
+        int staticEval = (effectiveDepth <= 2) ? evaluate(board) : 0;
 
         if (moves.isEmpty()) {
             leafNodes++;
             return evaluateTerminal(board, ply);
         }
 
+        Move singularMoveToExtend = null;
+        if (canAttemptSingularity(effectiveDepth, ttEntry, inSingularitySearch, sideToMoveInCheck, alpha, beta)) {
+            SingularityOutcome singularity = runSingularitySearch(
+                    board,
+                    moves,
+                    ttEntry.bestMove(),
+                    ttEntry.score(),
+                    effectiveDepth,
+                    ply,
+                    shouldStopHard,
+                    currentExtensionsUsed,
+                    maxExtensions
+            );
+
+            if (aborted) {
+                return alpha;
+            }
+
+            if (singularity.failHigh()) {
+                return beta;
+            }
+
+            if (singularity.failLow()) {
+                singularMoveToExtend = ttEntry.bestMove();
+            }
+        }
+
         int bestScore = -INF;
         Move bestMove = null;
+        int moveIndex = 0;
         for (Move move : moves) {
+            boolean isQuiet = isQuietMove(board, move);
+            boolean isCapture = moveOrderer.isCapture(board, move);
+            boolean isKiller = isKillerMove(ply, move);
+            boolean isTtMove = ttMove != null && sameMove(ttMove, move);
+            Integer captureSee = null;
+            if (isCapture && seeEnabled) {
+                captureSee = staticExchangeEvaluator.evaluate(board, move);
+            }
+
             board.makeMove(move);
-            int score = -alphaBeta(board, depth - 1, ply + 1, -beta, -alpha, shouldStopHard);
+
+            boolean moveGivesCheck = board.isActiveColorInCheck();
+            
+            // Check for pawn promotion extension after move is made
+            int childDepth = effectiveDepth - 1;
+            int childExtensionsUsed = currentExtensionsUsed;
+            if (shouldApplyPawnPromotionExtension(board, move, moveGivesCheck, currentExtensionsUsed, maxExtensions)) {
+                childDepth = Math.min(MAX_PLY - 1, childDepth + 1);
+                childExtensionsUsed++;
+            }
+
+            if (singularMoveToExtend != null
+                    && sameMove(singularMoveToExtend, move)
+                    && childExtensionsUsed < maxExtensions) {
+                childDepth = Math.min(MAX_PLY - 1, childDepth + 1);
+                childExtensionsUsed++;
+            }
+            
+            if (canPruneLosingCapture(
+                    effectiveDepth,
+                    captureSee,
+                    isPvNode,
+                    sideToMoveInCheck,
+                    moveGivesCheck
+            )) {
+                board.unmakeMove();
+                moveIndex++;
+                continue;
+            }
+
+            if (canApplyFutilityPruning(
+                    effectiveDepth,
+                    alpha,
+                    beta,
+                    staticEval,
+                    isPvNode,
+                    sideToMoveInCheck,
+                    isQuiet,
+                    moveGivesCheck
+            )) {
+                board.unmakeMove();
+                moveIndex++;
+                continue;
+            }
+
+            int score;
+            if (canApplyLmr(effectiveDepth, moveIndex, isQuiet, isKiller, isTtMove, sideToMoveInCheck, moveGivesCheck)) {
+                int reduction = lmrReductions[Math.min(effectiveDepth, MAX_PLY - 1)][Math.min(moveIndex + 1, MAX_LEGAL_MOVES - 1)];
+                int reducedDepth = Math.max(1, childDepth - reduction);
+
+                score = -alphaBeta(
+                        board,
+                        reducedDepth,
+                        ply + 1,
+                        -beta,
+                        -alpha,
+                        shouldStopHard,
+                        false,
+                        false,
+                        childExtensionsUsed,
+                        maxExtensions,
+                        false
+                );
+                if (!aborted && score > alpha) {
+                    boolean childIsPvNode = isPvNode && moveIndex == 0;
+                    score = -alphaBeta(
+                            board,
+                            childDepth,
+                            ply + 1,
+                            -beta,
+                            -alpha,
+                            shouldStopHard,
+                            false,
+                            childIsPvNode,
+                            childExtensionsUsed,
+                            maxExtensions,
+                            false
+                    );
+                }
+            } else {
+                boolean childIsPvNode = isPvNode && moveIndex == 0;
+                score = -alphaBeta(
+                        board,
+                        childDepth,
+                        ply + 1,
+                        -beta,
+                        -alpha,
+                        shouldStopHard,
+                        false,
+                        childIsPvNode,
+                        childExtensionsUsed,
+                        maxExtensions,
+                        false
+                );
+            }
+
             board.unmakeMove();
+            moveIndex++;
 
             if (aborted) {
                 return bestScore == -INF ? alpha : bestScore;
@@ -298,12 +625,315 @@ public class Searcher {
             }
         }
 
+        if (bestScore == -INF) {
+            return alpha;
+        }
+
         if (!aborted && bestScore != -INF) {
             TTBound bound = resolveBound(bestScore, alphaOrig, beta);
-            transpositionTable.store(zobrist, bestMove, depth, bestScore, bound);
+            transpositionTable.store(zobrist, bestMove, effectiveDepth, bestScore, bound);
         }
 
         return bestScore;
+    }
+
+    private boolean canApplyNullMove(Board board, int depth, boolean previousMoveWasNull, int beta) {
+        boolean enoughDepthForNullMove = depth >= NULL_MOVE_DEPTH_THRESHOLD;
+        int nullReduction = 3;
+        boolean hasRemainingDepth = (depth - nullReduction - 1) > 0;
+        int staticEval = evaluate(board);
+        boolean isMateWindow = Math.abs(beta) >= (MATE_SCORE - MAX_PLY);
+
+        return enoughDepthForNullMove
+            && hasRemainingDepth
+                && !previousMoveWasNull
+                && !board.isActiveColorInCheck()
+                && !isMateWindow
+            && staticEval >= beta
+                && hasNonPawnMaterial(board, board.getActiveColor());
+    }
+
+    private boolean canApplyRazoring(Board board, int depth, int alpha, int beta, boolean isPvNode) {
+        if (!futilityRazoringEnabled || isPvNode) {
+            return false;
+        }
+
+        if (board.isActiveColorInCheck() || isMateWindow(alpha, beta)) {
+            return false;
+        }
+
+        if (depth <= 0 || depth > 2) {
+            return false;
+        }
+
+        int staticEval = evaluate(board);
+        int margin = (depth == 1) ? RAZOR_MARGIN_DEPTH_1 : RAZOR_MARGIN_DEPTH_2;
+
+        return (staticEval + margin) <= alpha;
+    }
+
+    private boolean canApplyFutilityPruning(
+            int depth,
+            int alpha,
+            int beta,
+            int staticEval,
+            boolean isPvNode,
+            boolean sideToMoveInCheck,
+            boolean isQuiet,
+            boolean moveGivesCheck
+    ) {
+        if (!futilityRazoringEnabled || isPvNode || sideToMoveInCheck || !isQuiet || moveGivesCheck) {
+            return false;
+        }
+
+        if (isMateWindow(alpha, beta)) {
+            return false;
+        }
+
+        int margin = getFutilityMarginForDepth(depth);
+        return margin > 0 && (staticEval + margin) <= alpha;
+    }
+
+    private boolean canPruneLosingCapture(
+            int depth,
+            Integer captureSee,
+            boolean isPvNode,
+            boolean sideToMoveInCheck,
+            boolean moveGivesCheck
+    ) {
+        if (!seeEnabled || captureSee == null || captureSee >= 0) {
+            return false;
+        }
+
+        return depth <= 2
+                && !isPvNode
+                && !sideToMoveInCheck
+                && !moveGivesCheck;
+    }
+
+    private boolean isMateWindow(int alpha, int beta) {
+        return Math.abs(alpha) >= (MATE_SCORE - MAX_PLY) || Math.abs(beta) >= (MATE_SCORE - MAX_PLY);
+    }
+
+    private int getFutilityMarginForDepth(int depth) {
+        return switch (depth) {
+            case 1 -> FUTILITY_MARGIN_DEPTH_1;
+            default -> 0;
+        };
+    }
+
+    private boolean hasNonPawnMaterial(Board board, int color) {
+        int[] grid = board.getGrid();
+        for (int piece : grid) {
+            if (piece == Piece.None || !Piece.isColor(piece, color)) {
+                continue;
+            }
+
+            int pieceType = Piece.type(piece);
+            if (pieceType != Piece.Pawn && pieceType != Piece.King) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean canApplyLmr(
+            int depth,
+            int moveIndex,
+            boolean isQuiet,
+            boolean isKiller,
+            boolean isTtMove,
+            boolean sideToMoveInCheck,
+            boolean moveGivesCheck
+    ) {
+        return lmrEnabled
+            && depth >= 6
+                && moveIndex >= 2
+                && isQuiet
+                && !isKiller
+                && !isTtMove
+                && !sideToMoveInCheck
+                && !moveGivesCheck;
+    }
+
+    private boolean canAttemptSingularity(
+            int depth,
+            TranspositionTable.Entry ttEntry,
+            boolean inSingularitySearch,
+            boolean sideToMoveInCheck,
+            int alpha,
+            int beta
+    ) {
+        if (!singularExtensionsEnabled || inSingularitySearch || sideToMoveInCheck || isMateWindow(alpha, beta)) {
+            return false;
+        }
+
+        if (depth < SINGULAR_DEPTH_THRESHOLD || ttEntry == null || ttEntry.bestMove() == null) {
+            return false;
+        }
+
+        if (ttEntry.depth() < (depth - 3)) {
+            return false;
+        }
+
+        return ttEntry.bound() == TTBound.EXACT || ttEntry.bound() == TTBound.LOWER_BOUND;
+    }
+
+    private SingularityOutcome runSingularitySearch(
+            Board board,
+            List<Move> moves,
+            Move ttMove,
+            int ttScore,
+            int depth,
+            int ply,
+            BooleanSupplier shouldStopHard,
+            int extensionsUsed,
+            int maxExtensions
+    ) {
+        if (ttMove == null) {
+            return new SingularityOutcome(false, false);
+        }
+
+        int singularAlpha = ttScore - getSingularMargin(depth);
+        int singularBeta = singularAlpha + 1;
+        int reducedDepth = Math.max(1, depth / 2);
+
+        boolean searchedAlternative = false;
+        for (Move move : moves) {
+            if (sameMove(move, ttMove)) {
+                continue;
+            }
+
+            searchedAlternative = true;
+            board.makeMove(move);
+            int score = -alphaBeta(
+                    board,
+                    Math.max(0, reducedDepth - 1),
+                    ply + 1,
+                    -singularBeta,
+                    -singularAlpha,
+                    shouldStopHard,
+                    false,
+                    false,
+                    extensionsUsed,
+                    maxExtensions,
+                    true
+            );
+            board.unmakeMove();
+
+            if (aborted) {
+                return new SingularityOutcome(false, false);
+            }
+
+            if (score >= singularBeta) {
+                return new SingularityOutcome(false, true);
+            }
+        }
+
+        return new SingularityOutcome(searchedAlternative, false);
+    }
+
+    private int[][] precomputeLmrReductions() {
+        int[][] reductions = new int[MAX_PLY][MAX_LEGAL_MOVES];
+        for (int depth = 1; depth < MAX_PLY; depth++) {
+            for (int moveIndex = 1; moveIndex < MAX_LEGAL_MOVES; moveIndex++) {
+                int reduction = Math.max(
+                        1,
+                        (int) (0.75 + (Math.log(depth) * Math.log(moveIndex)) / 2.25)
+                );
+                reductions[depth][moveIndex] = reduction;
+            }
+        }
+        return reductions;
+    }
+
+    private boolean isKillerMove(int ply, Move move) {
+        if (ply < 0 || ply >= MAX_PLY) {
+            return false;
+        }
+
+        return (killerMoves[ply][0] != null && sameMove(killerMoves[ply][0], move))
+                || (killerMoves[ply][1] != null && sameMove(killerMoves[ply][1], move));
+    }
+
+    int getLmrReductionForTesting(int depth, int moveIndexOneBased) {
+        int safeDepth = Math.max(0, Math.min(depth, MAX_PLY - 1));
+        int safeMoveIndex = Math.max(0, Math.min(moveIndexOneBased, MAX_LEGAL_MOVES - 1));
+        return lmrReductions[safeDepth][safeMoveIndex];
+    }
+
+    int getSingularMarginForTesting(int depth) {
+        return getSingularMargin(depth);
+    }
+
+    boolean canAttemptSingularityForTesting(int depth, TranspositionTable.Entry entry, boolean inSingularitySearch, boolean sideToMoveInCheck) {
+        return canAttemptSingularity(depth, entry, inSingularitySearch, sideToMoveInCheck, -10_000, 10_000);
+    }
+
+    long getCheckExtensionsAppliedForTesting() {
+        return checkExtensionsApplied;
+    }
+
+    int getMaxCheckExtensionsForTesting(int initialDepth) {
+        return getMaxCheckExtensionsForDepth(initialDepth);
+    }
+
+    private int getMaxCheckExtensionsForDepth(int initialDepth) {
+        if (initialDepth <= 1) {
+            return 0;
+        }
+        return Math.min(MAX_CHECK_EXTENSIONS, Math.max(0, initialDepth / 2));
+    }
+
+    private int getSingularMargin(int depth) {
+        return depth * SINGULAR_MARGIN_PER_PLY;
+    }
+
+    private boolean shouldApplyPawnPromotionExtension(
+            Board board,
+            Move move,
+            boolean moveGivesCheck,
+            int extensionsUsed,
+            int maxExtensions
+    ) {
+        if (extensionsUsed >= maxExtensions) {
+            return false;
+        }
+
+        if (moveGivesCheck) {
+            return false;
+        }
+
+        int targetSquare = move.targetSquare;
+        int targetPiece = board.getPiece(targetSquare);
+        
+        if (Piece.type(targetPiece) != Piece.Pawn) {
+            return false;
+        }
+
+        // Check if pawn is on 7th rank (white) or 2nd rank (black)
+        int rankIndex = targetSquare / 8;
+        boolean isWhitePawnOn7thRank = Piece.isWhite(targetPiece) && rankIndex == 1;
+        boolean isBlackPawnOn2ndRank = Piece.isBlack(targetPiece) && rankIndex == 6;
+        
+        if (!isWhitePawnOn7thRank && !isBlackPawnOn2ndRank) {
+            return false;
+        }
+
+        // Verify the advance is not immediately losing by SEE (safe >= 0)
+        if (!seeEnabled) {
+            return false;
+        }
+
+        return staticExchangeEvaluator.evaluateSquareOccupation(board, targetSquare) >= 0;
+    }
+
+    int getFutilityMarginForTesting(int depth) {
+        return getFutilityMarginForDepth(depth);
+    }
+
+    int getRazorMarginForTesting() {
+        return RAZOR_MARGIN_DEPTH_1;
     }
 
     Integer applyTtBound(TranspositionTable.Entry entry, int depth, int alpha, int beta) {
@@ -443,11 +1073,23 @@ public class Searcher {
     private List<Move> extractQuiescenceMoves(Board board, List<Move> legalMoves) {
         List<Move> qMoves = new ArrayList<>();
         for (Move move : legalMoves) {
-            if (isQuiescenceMove(board, move)) {
+            if (shouldIncludeInQuiescence(board, move)) {
                 qMoves.add(move);
             }
         }
         return qMoves;
+    }
+
+    boolean shouldIncludeInQuiescenceForTesting(Board board, Move move) {
+        return shouldIncludeInQuiescence(board, move);
+    }
+
+    private boolean shouldIncludeInQuiescence(Board board, Move move) {
+        if (!isQuiescenceMove(board, move)) {
+            return false;
+        }
+
+        return !seeEnabled || !moveOrderer.isCapture(board, move) || staticExchangeEvaluator.evaluate(board, move) >= 0;
     }
 
     private boolean isQuiescenceMove(Board board, Move move) {
@@ -524,5 +1166,8 @@ public class Searcher {
     }
 
     private record RootResult(Move bestMove, int bestScore, List<Move> principalVariation, boolean aborted) {
+    }
+
+    private record SingularityOutcome(boolean failLow, boolean failHigh) {
     }
 }
