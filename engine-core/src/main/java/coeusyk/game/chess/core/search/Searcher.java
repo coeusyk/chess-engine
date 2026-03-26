@@ -24,6 +24,7 @@ public class Searcher {
     private static final int MAX_LEGAL_MOVES = 256;
     private static final int FUTILITY_MARGIN_DEPTH_1 = 100;
     private static final int RAZOR_MARGIN_DEPTH_1 = 300;
+    private static final int RAZOR_MARGIN_DEPTH_2 = 600;
     private static final int MAX_CHECK_EXTENSIONS = 16;
     private static final int SINGULAR_DEPTH_THRESHOLD = 8;
     private static final int SINGULAR_MARGIN_PER_PLY = 8;
@@ -412,7 +413,7 @@ public class Searcher {
         }
 
         if (nullMovePruningEnabled && canApplyNullMove(board, effectiveDepth, previousMoveWasNull, beta)) {
-            int nullReduction = effectiveDepth >= NULL_MOVE_DEPTH_THRESHOLD ? 3 : 2;
+            int nullReduction = 3;
             Board.NullMoveState nullMoveState = board.makeNullMove();
             int nullScore = -alphaBeta(
                     board,
@@ -637,8 +638,8 @@ public class Searcher {
     }
 
     private boolean canApplyNullMove(Board board, int depth, boolean previousMoveWasNull, int beta) {
-        int nullReduction = depth >= NULL_MOVE_DEPTH_THRESHOLD ? 3 : 2;
         boolean enoughDepthForNullMove = depth >= NULL_MOVE_DEPTH_THRESHOLD;
+        int nullReduction = 3;
         boolean hasRemainingDepth = (depth - nullReduction - 1) > 0;
         int staticEval = evaluate(board);
         boolean isMateWindow = Math.abs(beta) >= (MATE_SCORE - MAX_PLY);
@@ -653,7 +654,22 @@ public class Searcher {
     }
 
     private boolean canApplyRazoring(Board board, int depth, int alpha, int beta, boolean isPvNode) {
-        return false;
+        if (!futilityRazoringEnabled || isPvNode) {
+            return false;
+        }
+
+        if (board.isActiveColorInCheck() || isMateWindow(alpha, beta)) {
+            return false;
+        }
+
+        if (depth <= 0 || depth > 2) {
+            return false;
+        }
+
+        int staticEval = evaluate(board);
+        int margin = (depth == 1) ? RAZOR_MARGIN_DEPTH_1 : RAZOR_MARGIN_DEPTH_2;
+
+        return (staticEval + margin) <= alpha;
     }
 
     private boolean canApplyFutilityPruning(
@@ -906,7 +922,7 @@ public class Searcher {
 
         // Verify the advance is not immediately losing by SEE (safe >= 0)
         if (!seeEnabled) {
-            return true;
+            return false;
         }
 
         return staticExchangeEvaluator.evaluateSquareOccupation(board, targetSquare) >= 0;

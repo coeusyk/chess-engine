@@ -50,12 +50,19 @@ public class StaticExchangeEvaluator {
             return 0;
         }
 
-        int capturedValue = PIECE_VALUES[Piece.type(board.getPiece(targetSquare))] + promotionDelta(recapture.reaction);
+        int capturedValue = capturedValueForRecapture(board, recapture, targetSquare) + promotionDelta(recapture.reaction);
         board.makeMove(recapture);
         int continuation = bestReplyGain(board, targetSquare, board.getActiveColor());
         board.unmakeMove();
 
         return Math.max(0, capturedValue - continuation);
+    }
+
+    private int capturedValueForRecapture(Board board, Move recapture, int targetSquare) {
+        if ("en-passant".equals(recapture.reaction)) {
+            return PIECE_VALUES[Piece.Pawn];
+        }
+        return PIECE_VALUES[Piece.type(board.getPiece(targetSquare))];
     }
 
     private Move findLeastValuableCapture(Board board, int targetSquare, int sideToMove) {

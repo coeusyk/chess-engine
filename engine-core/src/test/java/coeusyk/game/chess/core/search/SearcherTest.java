@@ -333,9 +333,11 @@ class SearcherTest {
 
         assertNotNull(resultWith.bestMove());
         assertNotNull(resultWithout.bestMove());
-        // Extension should reduce nodes slightly on this quiet pawn advance, but both should find the move
+        // Extension should increase the number of visited nodes at the same nominal depth
         assertTrue(resultWith.nodesVisited() > 0);
         assertTrue(resultWithout.nodesVisited() > 0);
+        assertTrue(resultWith.nodesVisited() > resultWithout.nodesVisited(),
+                "Expected pawn promotion extension to increase nodes visited");
     }
 
     @Test
