@@ -16,7 +16,7 @@ public class CorsConfig {
                public void addCorsMappings(@NonNull CorsRegistry registry) {
                    registry.addMapping("/engine/**")
                            .allowedOrigins("http://localhost:3000")
-                       .allowedMethods("GET", "POST", "PUT")
+                           .allowedMethods("GET", "POST", "PUT")
                            .allowCredentials(true);
                    registry.addMapping("/api/game/**")
                            .allowedOrigins("http://localhost:3000")

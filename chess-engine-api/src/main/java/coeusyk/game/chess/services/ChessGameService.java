@@ -109,31 +109,11 @@ public class ChessGameService {
                     move.startSquare,
                     move.targetSquare,
                     move.reaction,
-                    toUci(move),
+                    UciConverter.toUci(move),
                     sanConverter.toSan(move, board)
             ));
         }
         return result;
-    }
-
-    private String toUci(Move move) {
-        StringBuilder builder = new StringBuilder();
-        builder.append(squareToUci(move.startSquare));
-        builder.append(squareToUci(move.targetSquare));
-
-        if ("promote-q".equals(move.reaction)) builder.append('q');
-        if ("promote-r".equals(move.reaction)) builder.append('r');
-        if ("promote-b".equals(move.reaction)) builder.append('b');
-        if ("promote-n".equals(move.reaction)) builder.append('n');
-
-        return builder.toString();
-    }
-
-    private String squareToUci(int square) {
-        int file = square % 8;
-        int rank = 8 - (square / 8);
-        char fileChar = (char) ('a' + file);
-        return "" + fileChar + rank;
     }
 
     // ── Phase 6 lifecycle methods ─────────────────────────────────────────────
@@ -192,7 +172,7 @@ public class ChessGameService {
             Board board = session.getBoard();
             List<String> moveHistory = new ArrayList<>();
             for (Move m : board.movesPlayed) {
-                moveHistory.add(toUci(m));
+                moveHistory.add(UciConverter.toUci(m));
             }
             String activeColor = Piece.isWhite(board.getActiveColor()) ? "WHITE" : "BLACK";
             boolean canUndo = !board.movesPlayed.isEmpty();

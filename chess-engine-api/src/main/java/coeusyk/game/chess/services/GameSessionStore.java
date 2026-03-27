@@ -32,7 +32,7 @@ public class GameSessionStore {
         return session;
     }
 
-    public String normalize(String gameId) {
+    String normalize(String gameId) {
         if (gameId == null || gameId.isBlank()) {
             return DEFAULT_GAME_ID;
         }

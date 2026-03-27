@@ -1,11 +1,11 @@
 package coeusyk.game.chess.services;
 
 import coeusyk.game.chess.core.models.Board;
-import coeusyk.game.chess.core.models.Move;
 import coeusyk.game.chess.core.search.IterationInfo;
 import coeusyk.game.chess.core.search.SearchResult;
 import coeusyk.game.chess.core.search.Searcher;
 import coeusyk.game.chess.core.search.TimeManager;
+import coeusyk.game.chess.utils.UciConverter;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -82,8 +82,8 @@ public class AnalysisService {
                 }
 
                 if (!cancelled.get()) {
-                    Move best = result.bestMove();
-                    String bestmoveUci = best != null ? toUci(best) : "0000";
+                    var best = result.bestMove();
+                    String bestmoveUci = best != null ? UciConverter.toUci(best) : "0000";
                     emitter.send(SseEmitter.event()
                             .name("bestmove")
                             .data(Map.of("type", "bestmove", "move", bestmoveUci)));
@@ -125,7 +125,7 @@ public class AnalysisService {
             long nps = timeMs > 0 ? (info.nodes() * 1000L) / timeMs : 0;
 
             List<String> pvUci = info.pv().stream()
-                    .map(this::toUci)
+                    .map(UciConverter::toUci)
                     .collect(Collectors.toList());
 
             Map<String, Object> infoEvent = Map.of(
@@ -145,23 +145,6 @@ public class AnalysisService {
         } catch (IOException e) {
             cancelled.set(true);
         }
-    }
-
-    private String toUci(Move move) {
-        StringBuilder sb = new StringBuilder();
-        sb.append(squareToUci(move.startSquare));
-        sb.append(squareToUci(move.targetSquare));
-        if ("promote-q".equals(move.reaction)) sb.append('q');
-        else if ("promote-r".equals(move.reaction)) sb.append('r');
-        else if ("promote-b".equals(move.reaction)) sb.append('b');
-        else if ("promote-n".equals(move.reaction)) sb.append('n');
-        return sb.toString();
-    }
-
-    private String squareToUci(int square) {
-        int file = square % 8;
-        int rank = 8 - (square / 8);
-        return "" + (char) ('a' + file) + rank;
     }
 
     // -------------------------------------------------------------------------
@@ -196,6 +179,8 @@ public class AnalysisService {
         }
 
         AtomicBoolean cancelled = new AtomicBoolean(false);
+        // Register this evaluate search so a subsequent startAnalysis() can cancel it.
+        activeCancellationFlag.set(cancelled);
 
         // Collect iteration info events to populate MultiPV lines in the response.
         List<IterationInfo> currentDepthBuffer = new ArrayList<>();
@@ -245,7 +230,7 @@ public class AnalysisService {
         // Build lines from the last completed iteration.
         List<LineInfo> lines = lastCompleteInfos.get().stream()
                 .map(info -> new LineInfo(info.multipv(), buildScoreInfo(info.scoreCp()),
-                        info.pv().stream().map(this::toUci).collect(Collectors.toList())))
+                        info.pv().stream().map(UciConverter::toUci).collect(Collectors.toList())))
                 .collect(Collectors.toList());
 
         IterationInfo r1 = lastRank1Info.get();
@@ -256,10 +241,10 @@ public class AnalysisService {
         long nps = timeMs > 0 ? (nodes * 1000L) / timeMs : 0;
 
         List<String> pv = result.principalVariation().stream()
-                .map(this::toUci)
+                .map(UciConverter::toUci)
                 .collect(Collectors.toList());
 
-        String bestMoveUci = result.bestMove() != null ? toUci(result.bestMove()) : "0000";
+        String bestMoveUci = result.bestMove() != null ? UciConverter.toUci(result.bestMove()) : "0000";
 
         return new EvaluateResponse(bestMoveUci, rootScore, result.depthReached(), nodes, nps, pv, lines);
     }

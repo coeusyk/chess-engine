@@ -1,6 +1,7 @@
 package coeusyk.game.chess.controllers;
 
 import coeusyk.game.chess.services.ChessGameService;
+import coeusyk.game.chess.services.GameNotFoundException;
 import coeusyk.game.chess.services.GameStateResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -34,6 +35,9 @@ public class GameController {
             @PathVariable(name = "gameId") String gameId,
             @RequestBody Map<String, String> body) {
         String fen = body.get("fen");
+        if (fen == null || fen.isBlank()) {
+            throw new IllegalArgumentException("fen is required");
+        }
         gameService.loadFenForGame(gameId, fen);
         return ResponseEntity.ok().build();
     }
@@ -58,5 +62,10 @@ public class GameController {
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, String>> handleBadFen(IllegalArgumentException ex) {
         return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+    }
+
+    @ExceptionHandler(GameNotFoundException.class)
+    public ResponseEntity<Map<String, String>> handleNotFound(GameNotFoundException ex) {
+        return ResponseEntity.status(404).body(Map.of("error", ex.getMessage()));
     }
 }
