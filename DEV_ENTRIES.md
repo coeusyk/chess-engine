@@ -2052,3 +2052,33 @@
 
 **Next:**
 - Phase 6 exit criteria review: confirm all issues #63-#66 (chess-engine) and #2-#8 (chess-engine-ui) are closed and committed; then create PR from phase/6-product-hardening to develop.
+
+---
+
+### [2025-07-13] Phase 7 — Magic Bitboards for Sliding Piece Move Generation (#68)
+
+**Built:**
+- Created `MagicBitboards.java` in `engine-core/…/bitboard/` — precomputed magic bitboard attack tables for rooks and bishops.
+- Generated 64 rook magics (seed `0xDEADBEEF`) and 64 bishop magics (seed `0xCAFEBABE`) for the engine's a8=0 square convention. Published magic numbers assume a1=0 and are incompatible, so generation was done from scratch.
+- Attack tables (`ROOK_ATTACKS[64][]`, `BISHOP_ATTACKS[64][]`) are precomputed at class load via Carry-Rippler blocker enumeration plus slow ray-cast for each blocker configuration.
+- Public API: `getRookAttacks(sq, occupied)`, `getBishopAttacks(sq, occupied)`, `getQueenAttacks(sq, occupied)` — each is a single mask-multiply-shift-index O(1) lookup.
+- Replaced `generateSlidingMoves()` in `MovesGenerator.java` — removed direction-loop, replaced with magic lookup + bitboard extraction (LSB-clear loop).
+- Replaced sliding section of `isSquareAttacked()` in `MovesGenerator.java` — replaced 18-line direction-loop with 10-line magic bitboard intersection check.
+- Refactored `Attacks.java` — removed `DIRECTION_OFFSETS`, `SQUARES_TO_EDGE`, static initializer, and `slidingAttacks()` private method; `bishopAttacks`, `rookAttacks`, `queenAttacks` now delegate to `MagicBitboards`.
+
+**Decisions Made:**
+- Generated own magic numbers rather than using published ones because the engine uses a8=0 (bit 0 = a8) while all published magics assume a1=0 (bit 0 = a1). Bit positions differ, making published magics produce wrong attack masks.
+- Used seeded `java.util.Random` (not `SecureRandom`) for magic generation — deterministic, reproducible, and only needed offline. After generation, magics were hardcoded and the finder was removed.
+- Kept `DirectionOffsets` and `SquaresToEdges` arrays in `MovesGenerator` — still needed by non-sliding code (king check detection, pin computation).
+
+**Broke / Fixed:**
+- No regressions. All 5 Perft positions match reference counts. All 108 tests pass (1 pre-existing skip: TacticalSuiteTest).
+
+**Measurements:**
+- Perft depth 5 (startpos): 4,865,609 nodes — 17.02s (was 19.01s, −10.5%)
+- Bench depth 4: 213 nps (was 178 nps, +19.7%)
+- Bench depth 6+: still times out (>5 min) — search overhead dominates at higher depths
+- Full test suite: 108 pass, 0 fail, 1 skipped, 6:24 total
+
+**Next:**
+- Continue Phase 7: read and implement issue #69.

@@ -1,5 +1,6 @@
 package coeusyk.game.chess.core.movegen;
 
+import coeusyk.game.chess.core.bitboard.MagicBitboards;
 import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Move;
 import coeusyk.game.chess.core.models.Piece;
@@ -168,28 +169,28 @@ public class MovesGenerator {
         return pieceMoves;
     }
 
-    // For long range pieces - queen, rook, bishop:
+    // For long range pieces - queen, rook, bishop (magic bitboard lookup):
     private void generateSlidingMoves(int startSquare, int currentPiece) {
-        int startDirIndex;
-        int endDirIndex;
         int pieceType = Piece.type(currentPiece);
+        long occupied = board.getAllOccupancy();
+        long friendlyOccupancy = Piece.isWhite(currentPiece)
+                ? board.getWhiteOccupancy() : board.getBlackOccupancy();
 
-        startDirIndex = (pieceType == Piece.Bishop) ? 4 : 0;
-        endDirIndex = (pieceType == Piece.Rook) ? 3 : 7;
+        long attacks;
+        if (pieceType == Piece.Bishop) {
+            attacks = MagicBitboards.getBishopAttacks(startSquare, occupied);
+        } else if (pieceType == Piece.Rook) {
+            attacks = MagicBitboards.getRookAttacks(startSquare, occupied);
+        } else {
+            attacks = MagicBitboards.getQueenAttacks(startSquare, occupied);
+        }
 
-        for (int direction = startDirIndex; direction <= endDirIndex; direction++) {
-            for (int num = 0; num < SquaresToEdges[startSquare][direction]; num++) {
-                int targetSquare = startSquare + (DirectionOffsets[direction] * (num + 1));
-                int targetPiece = board.getPiece(targetSquare);
+        attacks &= ~friendlyOccupancy;
 
-                // Changing direction if path is blocked by a friendly piece:
-                if (Piece.isColor(currentPiece, targetPiece)) break;
-
-                possibleMoves.add(new Move(startSquare, targetSquare));
-
-                // Changing direction after capture of opposite color piece:
-                if (Piece.type(targetPiece) != Piece.None) break;
-            }
+        while (attacks != 0) {
+            int targetSquare = Long.numberOfTrailingZeros(attacks);
+            possibleMoves.add(new Move(startSquare, targetSquare));
+            attacks &= attacks - 1;
         }
     }
 
@@ -407,26 +408,18 @@ public class MovesGenerator {
             }
         }
 
-        // Sliding attacks (rook/queen orthogonal, bishop/queen diagonal)
-        for (int direction = 0; direction < DirectionOffsets.length; direction++) {
-            for (int distance = 0; distance < SquaresToEdges[square][direction]; distance++) {
-                int sourceSquare = square + DirectionOffsets[direction] * (distance + 1);
-                int piece = board.getPiece(sourceSquare);
-
-                if (piece == Piece.None) continue;
-                if (!Piece.isColor(piece, attackerColor)) break;
-
-                int type = Piece.type(piece);
-                boolean orthogonalDirection = direction <= 3;
-
-                if ((orthogonalDirection && (type == Piece.Rook || type == Piece.Queen))
-                        || (!orthogonalDirection && (type == Piece.Bishop || type == Piece.Queen))) {
-                    return true;
-                }
-
-                break;
-            }
+        // Sliding attacks (magic bitboard lookup)
+        long occupied = board.getAllOccupancy();
+        long rookQueenBB, bishopQueenBB;
+        if (Piece.isWhite(attackerColor)) {
+            rookQueenBB = board.getWhiteRooks() | board.getWhiteQueens();
+            bishopQueenBB = board.getWhiteBishops() | board.getWhiteQueens();
+        } else {
+            rookQueenBB = board.getBlackRooks() | board.getBlackQueens();
+            bishopQueenBB = board.getBlackBishops() | board.getBlackQueens();
         }
+        if ((MagicBitboards.getRookAttacks(square, occupied) & rookQueenBB) != 0) return true;
+        if ((MagicBitboards.getBishopAttacks(square, occupied) & bishopQueenBB) != 0) return true;
 
         // King attacks
         for (int direction = 0; direction < DirectionOffsets.length; direction++) {
