@@ -9,6 +9,7 @@ public class ResponseContainer {
     public boolean success;
     public Board board;
     public ArrayList<MoveNotation> possibleMoves;
+    public String fen;
 
     public ResponseContainer(boolean status) {
         this.success = status;
@@ -18,5 +19,6 @@ public class ResponseContainer {
         this.success = status;
         this.possibleMoves = possibleMoves;
         this.board = board;
+        this.fen = board.toFen();
     }
 }

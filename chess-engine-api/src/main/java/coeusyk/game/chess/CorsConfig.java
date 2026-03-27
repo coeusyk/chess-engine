@@ -14,10 +14,18 @@ public class CorsConfig {
            return new WebMvcConfigurer() {
                @Override
                public void addCorsMappings(@NonNull CorsRegistry registry) {
-                   registry.addMapping("/engine/**")  // Defining the path to allow CORS for
-                           .allowedOrigins("http://localhost:3000")  // Allowing requests from React app
-                       .allowedMethods("GET", "POST", "PUT")  // Specifying the allowed http methods
-                           .allowCredentials(true);  // Allowing cookies
+                   registry.addMapping("/engine/**")
+                           .allowedOrigins("http://localhost:3000")
+                           .allowedMethods("GET", "POST", "PUT")
+                           .allowCredentials(true);
+                   registry.addMapping("/api/game/**")
+                           .allowedOrigins("http://localhost:3000")
+                           .allowedMethods("GET", "POST", "PUT")
+                           .allowCredentials(true);
+                   registry.addMapping("/api/analysis/**")
+                           .allowedOrigins("http://localhost:3000")
+                           .allowedMethods("GET", "POST", "PUT")
+                           .allowCredentials(true);
                }
            };
     }
