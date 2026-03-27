@@ -13,6 +13,10 @@ public record SearchResult(
         long leafNodes,
         long quiescenceNodes,
         double ttHitRate,
+        long betaCutoffs,
+        long firstMoveCutoffs,
+        long ttHits,
+        double ebf,
         boolean aborted
 ) {
 }

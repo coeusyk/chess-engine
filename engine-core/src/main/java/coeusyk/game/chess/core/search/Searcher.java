@@ -42,6 +42,9 @@ public class Searcher {
     private long quiescenceNodes;
     private long checkExtensionsApplied;
     private int seldepth;
+    private long betaCutoffs;
+    private long firstMoveCutoffs;
+    private long ttHits;
 
     private TimeManager timeManager;
     private long searchStartNanos;
@@ -220,6 +223,10 @@ public class Searcher {
         long totalNodes = 0;
         long totalLeafNodes = 0;
         long totalQuiescenceNodes = 0;
+        long totalBetaCutoffs = 0;
+        long totalFirstMoveCutoffs = 0;
+        long totalTtHits = 0;
+        long[] nodesPerDepth = new long[effectiveMaxDepth + 1];
 
         aborted = false;
         checkExtensionsApplied = 0;
@@ -237,10 +244,14 @@ public class Searcher {
             List<Move> excludedMoves = new ArrayList<>();
             boolean depthAborted = false;
 
+            long nodesBeforeDepth = totalNodes;
             for (int pvIndex = 0; pvIndex < multiPV; pvIndex++) {
                 nodesVisited = 0;
                 leafNodes = 0;
                 quiescenceNodes = 0;
+                betaCutoffs = 0;
+                firstMoveCutoffs = 0;
+                ttHits = 0;
                 int pvSize = depth + maxCheckExtensions + 4;
                 pvTable = new Move[pvSize][pvSize];
                 pvLength = new int[pvSize];
@@ -256,6 +267,9 @@ public class Searcher {
                 totalNodes += nodesVisited;
                 totalLeafNodes += leafNodes;
                 totalQuiescenceNodes += quiescenceNodes;
+                totalBetaCutoffs += betaCutoffs;
+                totalFirstMoveCutoffs += firstMoveCutoffs;
+                totalTtHits += ttHits;
 
                 if (iteration.bestMove == null) {
                     if (pvIndex == 0) {
@@ -302,6 +316,24 @@ public class Searcher {
                 aborted = true;
                 break;
             }
+
+            nodesPerDepth[depth] = totalNodes - nodesBeforeDepth;
+            long elapsedMs = timeManager != null
+                    ? timeManager.elapsedMs()
+                    : (System.nanoTime() - searchStartNanos) / 1_000_000L;
+            long nps = elapsedMs > 0 ? totalNodes * 1000L / elapsedMs : totalNodes;
+            double fmcPct = totalBetaCutoffs > 0
+                    ? 100.0 * totalFirstMoveCutoffs / totalBetaCutoffs : 0.0;
+            double ebfNow = (depth >= 3 && nodesPerDepth[depth - 2] > 0)
+                    ? Math.sqrt((double) nodesPerDepth[depth] / nodesPerDepth[depth - 2]) : 0.0;
+            System.err.printf("[BENCH] depth=%d nodes=%d qnodes=%d nps=%d cutoffs=%d firstMoveCutoff%%=%.1f tt_hits=%d ebf=%.2f time=%dms%n",
+                    depth, totalNodes, totalQuiescenceNodes, nps,
+                    totalBetaCutoffs, fmcPct, totalTtHits, ebfNow, elapsedMs);
+        }
+
+        double ebf = 0.0;
+        if (depthReached >= 3 && nodesPerDepth[depthReached - 2] > 0) {
+            ebf = Math.sqrt((double) nodesPerDepth[depthReached] / nodesPerDepth[depthReached - 2]);
         }
 
         return new SearchResult(
@@ -313,6 +345,10 @@ public class Searcher {
             totalLeafNodes,
             totalQuiescenceNodes,
             transpositionTable.getHitRate(),
+            totalBetaCutoffs,
+            totalFirstMoveCutoffs,
+            totalTtHits,
+            ebf,
             aborted
         );
     }
@@ -510,6 +546,7 @@ public class Searcher {
         TranspositionTable.Entry ttEntry = transpositionTable.probe(zobrist);
         Integer ttScore = applyTtBound(ttEntry, effectiveDepth, alpha, beta);
         if (ttScore != null) {
+            ttHits++;
             return ttScore;
         }
 
@@ -740,6 +777,8 @@ public class Searcher {
             }
 
             if (alpha >= beta) {
+                betaCutoffs++;
+                if (moveIndex == 1) firstMoveCutoffs++;
                 if (moveOrderingEnabled && isQuietMove(board, move)) {
                     storeKillerMove(ply, move);
                     updateHistory(move, board, depth);

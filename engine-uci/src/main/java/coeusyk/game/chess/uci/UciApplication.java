@@ -340,18 +340,34 @@ public class UciApplication {
         Searcher searcher = new Searcher();
         searcher.setTranspositionTableSizeMb(BENCH_HASH_MB);
         long totalNodes = 0;
+        long totalQNodes = 0;
         long startMs = System.currentTimeMillis();
 
-        for (String fen : BENCH_FENS) {
-            Board benchBoard = new Board(fen);
+        System.out.printf("Bench depth %d | hash %dMB | %d positions%n", depth, BENCH_HASH_MB, BENCH_FENS.length);
+        for (int i = 0; i < BENCH_FENS.length; i++) {
+            Board benchBoard = new Board(BENCH_FENS[i]);
             searcher.clearTranspositionTable();
+            long posStart = System.currentTimeMillis();
             SearchResult result = searcher.iterativeDeepening(benchBoard, depth);
+            long posMs = Math.max(1, System.currentTimeMillis() - posStart);
+            long posNps = result.nodesVisited() * 1000L / posMs;
+            double qRatio = result.nodesVisited() > 0
+                    ? (double) result.quiescenceNodes() / result.nodesVisited() : 0.0;
+            double fmcPct = result.betaCutoffs() > 0
+                    ? 100.0 * result.firstMoveCutoffs() / result.betaCutoffs() : 0.0;
+            System.out.printf("Position %d: nodes=%d qnodes=%d ms=%d nps=%d tt_hit=%.1f%% q_ratio=%.1fx cutoffs=%d fmc%%=%.1f tt_hits=%d ebf=%.2f%n",
+                    i + 1, result.nodesVisited(), result.quiescenceNodes(), posMs, posNps,
+                    result.ttHitRate() * 100.0, qRatio,
+                    result.betaCutoffs(), fmcPct, result.ttHits(), result.ebf());
             totalNodes += result.nodesVisited();
+            totalQNodes += result.quiescenceNodes();
         }
 
         long elapsedMs = Math.max(1, System.currentTimeMillis() - startMs);
         long nps = totalNodes * 1000L / elapsedMs;
-        System.out.println("Bench: " + totalNodes + " nodes " + elapsedMs + " ms " + nps + " nps");
+        double totalQRatio = totalNodes > 0 ? (double) totalQNodes / totalNodes : 0.0;
+        System.out.printf("Bench: %d nodes %dms %d nps | q_ratio=%.1fx%n",
+                totalNodes, elapsedMs, nps, totalQRatio);
         System.out.flush();
     }
 

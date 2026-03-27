@@ -2151,3 +2151,43 @@
 
 **Next:**
 - Continue Phase 7: read and implement issue #71.
+
+---
+
+### [2026-03-27] Phase 7 — Issue #78: Search Instrumentation and Bench Baseline
+
+**Built:**
+- Added 3 new private counters to `Searcher`: `betaCutoffs`, `firstMoveCutoffs`, `ttHits` — reset per pvIndex iteration, accumulated into per-search totals.
+- `ttHits++` in `alphaBeta()` at the point where `applyTtBound()` returns a non-null usable TT score (actual TT cut, not just a probe).
+- `betaCutoffs++` and `firstMoveCutoffs++` (when `moveIndex == 1`, i.e., first move triggered the cutoff) in `alphaBeta()` at the `if (alpha >= beta)` break.
+- `nodesPerDepth[]` array tracked in `iterativeDeepening` to record main nodes at each completed depth; used to compute EBF as `sqrt(nodesAtD / nodesAtD-2)` when D ≥ 3.
+- Per-depth diagnostic line printed to `System.err` after every completed depth: `[BENCH] depth=N nodes=X qnodes=Y nps=Z cutoffs=A firstMoveCutoff%=B tt_hits=C ebf=D time=Ems`.
+- Extended `SearchResult` record with 4 new fields: `betaCutoffs`, `firstMoveCutoffs`, `ttHits`, `ebf`.
+- Updated `UciApplication.runBench()` to print `cutoffs`, `fmc%`, `tt_hits`, and `ebf` per position.
+
+**Decisions Made:**
+- Counters reset per pvIndex (matching `nodesVisited` reset pattern) so multi-PV searches accumulate correctly across all PV lines.
+- `firstMoveCutoffs` check is `moveIndex == 1` at the cutoff point because `moveIndex` is post-incremented before the `if (alpha >= beta)` check — move 0 (first tried) corresponds to `moveIndex == 1` there.
+- EBF uses D vs D-2 node counts (not D vs D-1) to smooth variance from odd/even depth effects.
+- Diagnostics go to `System.err` to stay out of the UCI stdout protocol stream.
+
+**Broke / Fixed:**
+- No regressions; SearchResult is only constructed in one place (`Searcher.iterativeDeepening`). All callers only read fields by name (accessor methods on record), so adding fields is backward compatible for callers that don't use the new ones.
+
+**Measurements (bench depth 6, partial — 3 of 6 positions completed before timeout):**
+
+| Pos | Position | nps | ebf | fmc% | q_ratio | t (ms) |
+|-----|----------|-----|-----|------|---------|--------|
+| 1 | startpos | 1,269 | 4.14 | 97.6% | 2.0x | 8,311 |
+| 2 | Kiwipete | 240 | 3.28 | 99.2% | 4.4x | 165,030 |
+| 3 | CPW pos3 | 3,090 | 3.30 | 96.6% | 2.1x | 1,952 |
+
+**Key findings from baseline:**
+- Engine is catastrophically slow: 240–3,090 nps vs. target of >1M nps (target improvement: ~1,000×).
+- EBF is 3.28–4.14: far above the goal of ≤ 3.5. Position 2 depth 4 showed EBF=7.35 (aspiration window widening likely distorting early depths).
+- First-move cutoff rate 97–99%: move ordering is working well — the first move tried causes the beta cutoff almost always. This is a positive sign.
+- Position 2 (Kiwipete) q_ratio=4.4x: the q-search is doing 4.4× more work than the main search. Every node triggers expensive full move generation (all legal moves via `MovesGenerator`). This is the root bottleneck — `MovesGenerator` creates a new instance and validates legality by making/unmaking each pseudo-legal move.
+- TT hit rate 31–39%: decent but lower than expected, likely because the TT is being filled with entries that don't survive to the next depth (no aging/replacement strategy tuned for shallow bench depth).
+
+**Next:**
+- Issue #79: Replace move generation with pseudo-legal generation + legality check at make time to eliminate the per-node O(n) legal validation overhead.
