@@ -26,3 +26,6 @@ jobs:
 
       - name: Build and test modules
         run: mvn -B clean test
+
+      - name: Run search regression suite
+        run: mvn -B -pl engine-core -Dgroups=regression test

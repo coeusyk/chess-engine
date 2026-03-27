@@ -2117,3 +2117,37 @@
 
 **Next:**
 - Continue Phase 7: read and implement issue #70.
+
+---
+
+### [2026-03-27] Phase 7 — Issue #70: Search Regression Test Suite
+
+**Built:**
+- Created `SearchRegressionTest.java` in `engine-core/…/core/search/` — 30 curated positions across 3 categories:
+  - **Tactical (T1–T10):** mate-in-1, free capture, and forced tactic positions (all ≤ 10 pieces). Includes back-rank mates (T1, T2, T4), pawn promotion (T5), free piece captures (T6–T10), and king outpost + forced mate setup (T3).
+  - **Positional (P1–P10):** K+P vs K and K+PP vs K endgame plans where the engine's choice reflects correct evaluation (passed pawn push, centralization, escort strategy).
+  - **Endgame (E1–E10):** theoretical endings — KQ vs K, KR vs K, KRP vs K, K+NN vs K+B, rook vs pawn race, and Philidor position (Black to move).
+- `@Tag("regression")` applied to the class and `bestMoveIsStable` — enables `mvn -pl engine-core -Dgroups=regression test`.
+- `discoverBestMoves()` helper test run at depth 8 during authoring to capture the engine's actual bestmove for all 30 positions before pinning them.
+- Inline `toUci(Move)` helper — converts engine internal squares (a8=0) to UCI long algebraic, handles promotion suffixes.
+- Added "Run search regression suite" step to `ci.yml` — runs after the main test gate on every push to `develop` and `master`:
+  `mvn -B -pl engine-core -Dgroups=regression test`
+
+**Decisions Made:**
+- All 30 positions use ≤ 10 pieces so depth 8 completes in ≤ 10s per position (full suite: ~43s). Full middlegame positions at depth 8 would take hours.
+- 8 initial candidate positions were **illegal chess positions** (inactive king already in check, or adjacent kings) which caused "could not find king on board" crashes during search. Root cause: engine can legally "capture" the illegally-in-check king during the search tree, then subsequent `getKingSquare()` calls crash on the king-less board. All 8 were replaced with verified legal positions.
+- 2 initial positional pairs (P4=E4, P10=E9) had identical FENs; P4 and P10 were replaced with distinct positions.
+- T3 comment corrected: Rh8 is NOT checkmate (BK can capture the rook). Engine correctly plays Kf6 (g6f6), which forces Rh8# on the next move after cutting off all escape squares.
+- Regression suite pins engine behavior at depth 8 as-is. When a future change fires a regression: investigate whether the new bestmove is objectively better (update expected) or something broke (revert). Never silently update.
+
+**Broke / Fixed:**
+- No production code changes. All existing tests unaffected.
+- 8 illegal positions diagnosed and replaced; 2 duplicates resolved; 1 comment corrected.
+
+**Measurements:**
+- All 30 positions pass at depth 8: 0 failures, 0 errors.
+- Full regression suite runtime: ~43 seconds.
+- Perft / full test suite: not re-run this cycle (no production code changed).
+
+**Next:**
+- Continue Phase 7: read and implement issue #71.
