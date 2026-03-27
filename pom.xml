@@ -27,6 +27,23 @@
 
     <dependencyManagement>
         <dependencies>
+            <!-- Explicit Tomcat override: 10.1.33 → 10.1.52 to fix 18 CVEs (highest: CVE-2026-24734) -->
+            <!-- Must appear before spring-boot-dependencies BOM import so it takes precedence -->
+            <dependency>
+                <groupId>org.apache.tomcat.embed</groupId>
+                <artifactId>tomcat-embed-core</artifactId>
+                <version>10.1.52</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.tomcat.embed</groupId>
+                <artifactId>tomcat-embed-el</artifactId>
+                <version>10.1.52</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.tomcat.embed</groupId>
+                <artifactId>tomcat-embed-websocket</artifactId>
+                <version>10.1.52</version>
+            </dependency>
             <dependency>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-dependencies</artifactId>
