@@ -7,6 +7,7 @@ import coeusyk.game.chess.core.search.IterationInfo;
 import coeusyk.game.chess.core.search.SearchResult;
 import coeusyk.game.chess.core.search.Searcher;
 import coeusyk.game.chess.core.search.TimeManager;
+import coeusyk.game.chess.uci.syzygy.OnlineSyzygyProber;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -26,6 +27,9 @@ public class UciApplication {
     private int multiPV = 1;
     private int hashSizeMb = 64;
     private long moveOverheadMs = 30;
+    private String syzygyPath = "";
+    private int syzygyProbeDepth = 1;
+    private boolean syzygy50MoveRule = true;
 
     private final AtomicBoolean stopRequested = new AtomicBoolean(false);
     private volatile boolean searchRunning = false;
@@ -79,6 +83,9 @@ public class UciApplication {
                 System.out.println("option name MultiPV type spin default 1 min 1 max 500");
                 System.out.println("option name MoveOverhead type spin default 30 min 0 max 5000");
                 System.out.println("option name Threads type spin default 1 min 1 max 1");
+                System.out.println("option name SyzygyPath type string default <empty>");
+                System.out.println("option name SyzygyProbeDepth type spin default 1 min 0 max 100");
+                System.out.println("option name Syzygy50MoveRule type check default true");
                 System.out.println("uciok");
             } else if ("isready".equals(line)) {
                 System.out.println("readyok");
@@ -226,6 +233,16 @@ public class UciApplication {
                 moveOverheadMs = Math.max(0, Math.min(5000, value));
             } catch (NumberFormatException ignored) {
             }
+        } else if ("syzygypath".equals(optionNameLower)) {
+            syzygyPath = valuePart.trim();
+        } else if ("syzygyprobedepth".equals(optionNameLower)) {
+            try {
+                int value = Integer.parseInt(valuePart);
+                syzygyProbeDepth = Math.max(0, Math.min(100, value));
+            } catch (NumberFormatException ignored) {
+            }
+        } else if ("syzygy50moverule".equals(optionNameLower)) {
+            syzygy50MoveRule = "true".equalsIgnoreCase(valuePart);
         }
         // "Threads" — accepted but silently ignored (single-threaded engine)
     }
@@ -255,6 +272,13 @@ public class UciApplication {
             searcher.setTranspositionTableSizeMb(hashSizeMb);
             if (multiPV > 1) {
                 searcher.setMultiPV(multiPV);
+            }
+
+            // Configure Syzygy probing
+            if (!syzygyPath.isEmpty() && !"<empty>".equals(syzygyPath)) {
+                searcher.setSyzygyProber(new OnlineSyzygyProber(syzygy50MoveRule));
+                searcher.setSyzygyProbeDepth(syzygyProbeDepth);
+                searcher.setSyzygy50MoveRule(syzygy50MoveRule);
             }
 
             List<Move> searchMovesList = parseSearchMoves(parts, searchBoard);

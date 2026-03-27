@@ -5,6 +5,10 @@ import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Move;
 import coeusyk.game.chess.core.models.Piece;
 import coeusyk.game.chess.core.movegen.MovesGenerator;
+import coeusyk.game.chess.core.syzygy.DTZResult;
+import coeusyk.game.chess.core.syzygy.NoOpSyzygyProber;
+import coeusyk.game.chess.core.syzygy.SyzygyProber;
+import coeusyk.game.chess.core.syzygy.WDLResult;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -30,6 +34,8 @@ public class Searcher {
     private static final int MAX_CHECK_EXTENSIONS = 16;
     private static final int SINGULAR_DEPTH_THRESHOLD = 8;
     private static final int SINGULAR_MARGIN_PER_PLY = 8;
+    private static final int TB_WIN_SCORE = MATE_SCORE - 2 * MAX_PLY;
+    private static final int TB_LOSS_SCORE = -(MATE_SCORE - 2 * MAX_PLY);
 
     private long nodesVisited;
     private long leafNodes;
@@ -63,6 +69,10 @@ public class Searcher {
 
     private int multiPV = 1;
     private List<Move> searchMoves = List.of();
+
+    private SyzygyProber syzygyProber = new NoOpSyzygyProber();
+    private int syzygyProbeDepth = 1;
+    private boolean syzygy50MoveRule = true;
 
     private boolean aborted;
 
@@ -143,6 +153,18 @@ public class Searcher {
 
     public double getTranspositionTableHitRate() {
         return transpositionTable.getHitRate();
+    }
+
+    public void setSyzygyProber(SyzygyProber prober) {
+        this.syzygyProber = prober != null ? prober : new NoOpSyzygyProber();
+    }
+
+    public void setSyzygyProbeDepth(int depth) {
+        this.syzygyProbeDepth = Math.max(0, depth);
+    }
+
+    public void setSyzygy50MoveRule(boolean respect) {
+        this.syzygy50MoveRule = respect;
     }
 
     public SearchResult searchDepth(Board board, int depth) {
@@ -356,6 +378,20 @@ public class Searcher {
             moves.removeIf(m -> isExcludedMove(m, excludedRootMoves));
         }
 
+        // Syzygy DTZ probe at root: if few pieces remain, ask the tablebase for the best move
+        if (syzygyProber.isAvailable()
+                && excludedRootMoves.isEmpty()
+                && Long.bitCount(board.getAllOccupancy()) <= syzygyProber.getPieceLimit()) {
+            DTZResult dtzResult = syzygyProber.probeDTZ(board);
+            if (dtzResult.valid() && dtzResult.bestMoveUci() != null) {
+                Move tbMove = findMoveByUci(moves, dtzResult.bestMoveUci());
+                if (tbMove != null) {
+                    int tbScore = wdlToScore(dtzResult.wdl());
+                    return new RootResult(tbMove, tbScore, List.of(tbMove), false);
+                }
+            }
+        }
+
         if (moves.isEmpty()) {
             if (!excludedRootMoves.isEmpty()) {
                 return new RootResult(null, 0, List.of(), false);
@@ -475,6 +511,17 @@ public class Searcher {
         Integer ttScore = applyTtBound(ttEntry, effectiveDepth, alpha, beta);
         if (ttScore != null) {
             return ttScore;
+        }
+
+        // Syzygy WDL probe in search: return tablebase score for positions with few pieces
+        if (syzygyProber.isAvailable()
+                && effectiveDepth >= syzygyProbeDepth
+                && Long.bitCount(board.getAllOccupancy()) <= syzygyProber.getPieceLimit()) {
+            WDLResult wdlResult = syzygyProber.probeWDL(board);
+            if (wdlResult.valid()) {
+                int tbScore = wdlToScore(wdlResult.wdl());
+                return tbScore;
+            }
         }
 
         if (canApplyRazoring(board, effectiveDepth, alpha, beta, isPvNode)) {
@@ -1103,6 +1150,50 @@ public class Searcher {
 
     private int evaluate(Board board) {
         return evaluator.evaluate(board);
+    }
+
+    private int wdlToScore(WDLResult.WDL wdl) {
+        if (wdl == null) {
+            return 0;
+        }
+        return switch (wdl) {
+            case WIN -> TB_WIN_SCORE;
+            case LOSS -> TB_LOSS_SCORE;
+            case DRAW -> 0;
+        };
+    }
+
+    private Move findMoveByUci(List<Move> moves, String uci) {
+        if (uci == null || uci.length() < 4) {
+            return null;
+        }
+        int fromFile = uci.charAt(0) - 'a';
+        int fromRank = uci.charAt(1) - '1';
+        int toFile = uci.charAt(2) - 'a';
+        int toRank = uci.charAt(3) - '1';
+        // Convert a1=0 algebraic to a8=0 internal convention
+        int fromSquare = (7 - fromRank) * 8 + fromFile;
+        int toSquare = (7 - toRank) * 8 + toFile;
+
+        String promoReaction = null;
+        if (uci.length() > 4) {
+            promoReaction = switch (uci.charAt(4)) {
+                case 'q' -> "promote-q";
+                case 'r' -> "promote-r";
+                case 'b' -> "promote-b";
+                case 'n' -> "promote-n";
+                default -> null;
+            };
+        }
+
+        for (Move move : moves) {
+            if (move.startSquare == fromSquare && move.targetSquare == toSquare) {
+                if (promoReaction == null || promoReaction.equals(move.reaction)) {
+                    return move;
+                }
+            }
+        }
+        return null;
     }
 
     private void prioritizeMove(List<Move> moves, Move preferredMove) {

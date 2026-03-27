@@ -2082,3 +2082,38 @@
 
 **Next:**
 - Continue Phase 7: read and implement issue #69.
+
+---
+
+### [2026-03-27] Phase 7 — Issue #69: Syzygy Tablebase Probing (Online API)
+
+**Built:**
+- Created `SyzygyProber.java` interface in `engine-core/…/core/syzygy/` — defines `probeWDL(Board)`, `probeDTZ(Board)`, `isAvailable()`, `getPieceLimit()` (default 5).
+- Created `WDLResult.java` record — `WDL` enum (WIN/DRAW/LOSS), validity flag, static factories `win()`, `draw()`, `loss()`, `INVALID` sentinel.
+- Created `DTZResult.java` record — `bestMoveUci`, `dtz`, `wdl`, validity flag, `INVALID` sentinel.
+- Created `NoOpSyzygyProber.java` in engine-core — default implementation returning `INVALID` for all probes, `isAvailable()=false`. Used when SyzygyPath is not configured.
+- Created `OnlineSyzygyProber.java` in `engine-uci/…/uci/syzygy/` — queries `http://tablebase.lichess.ovh/standard?fen=FEN` via JDK `java.net.http.HttpClient`. Caches WDL+DTZ results in `ConcurrentHashMap<String, CachedProbe>` keyed on first 4 FEN fields (position, side, castling, EP). Manual JSON string parsing (no external JSON lib). HTTP timeout 5s. Handles lichess category mappings: `win`/`syzygy-win`→WIN, `loss`/`syzygy-loss`→LOSS, `draw`→DRAW, `cursed-win`/`blessed-loss`→DRAW (when `syzygy50MoveRule=true`) or WIN/LOSS (when false).
+- Integrated DTZ probe in `Searcher.searchRoot()` — after move generation/filtering, before search loop. Probes when `syzygyProber.isAvailable()`, no excluded root moves, and `Long.bitCount(occupancy) <= getPieceLimit()`. If valid DTZ result with `bestMoveUci`, immediately returns matching Move with TB score.
+- Integrated WDL probe in `Searcher.alphaBeta()` — after TT probe, before razoring. Probes when `effectiveDepth >= syzygyProbeDepth`. Returns `wdlToScore()` on valid result.
+- Added `TB_WIN_SCORE` (99744) and `TB_LOSS_SCORE` (−99744) constants in Searcher, set far above any eval but below mate scores.
+- Added `findMoveByUci()` helper — converts UCI algebraic (a1=0 convention) to engine internal (a8=0) via `(7 - rank) * 8 + file`, handles promotion suffixes (q/r/b/n).
+- Added 3 UCI options in `UciApplication.java`: `SyzygyPath` (string), `SyzygyProbeDepth` (spin 0–100, default 1), `Syzygy50MoveRule` (check, default true). `setoption` handlers and prober injection in `runSearch()` using DI pattern.
+
+**Decisions Made:**
+- No pure-Java Syzygy file reader library exists on GitHub (searched repos + code). Only option found was VedantJoshi1409/Syzygy-Java-Library which is 91% C / JNI wrapper. Bagatur engine uses JNI bridge or online API.
+- Chose lichess online API over JNI — avoids native compilation, platform-specific .dll/.so, and complex Fathom C porting. Trades latency for simplicity. Acceptable for root DTZ probes; in-search WDL mitigated by caching + depth guard.
+- `SyzygyProber` interface in engine-core, `OnlineSyzygyProber` in engine-uci — preserves engine-core zero-network-dependency rule. Searcher accepts prober via setter injection.
+- Used JDK built-in `java.net.http.HttpClient` — zero external dependencies added to engine-uci.
+- Manual JSON parsing with `indexOf`/`substring` instead of adding a JSON library — lichess API response is structured enough for targeted field extraction.
+- `SyzygyPath` value `<empty>` (default) disables probing; any non-empty value enables the online prober. Local file path support deferred (requires Fathom port or JNI).
+
+**Broke / Fixed:**
+- No regressions. Syzygy probing is disabled by default (NoOpSyzygyProber). All existing tests pass without touching the online API.
+
+**Measurements:**
+- Perft depth 5 (startpos): 4,865,609 nodes — unchanged (probing only in search, not movegen)
+- Full test suite: 108 pass, 0 fail, 1 skipped — no regression
+- Search nps: not measured this cycle (Syzygy disabled by default, no impact on bench)
+
+**Next:**
+- Continue Phase 7: read and implement issue #70.
