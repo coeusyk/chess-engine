@@ -2259,7 +2259,8 @@
 - Guarded previousBestMove update in iterativeDeepening() with !iteration.aborted so only complete iterations update the final result
 
 **Decisions Made:**
-- Hard limit formula capped at emaining / 4 to prevent time scrambles on low clock; the old softLimit * 2 was unbounded
+- Hard limit formula capped at 
+emaining / 4 to prevent time scrambles on low clock; the old softLimit * 2 was unbounded
 - Increment contribution raised from /2 to *3/4 (75%) to better exploit increment time on longer games
 - The soft-limit abort check at the top of the depth loop was already correct; only the previousBestMove guard was missing
 
@@ -2273,3 +2274,62 @@
 
 **Next:**
 - Phase 7 complete; run bench and capture NPS baseline, then close parent issue #77
+
+---
+
+### [2026-03-28] Phase 7 — Profiling Guide and Bench Baseline (#71)
+
+**Built:**
+- Created `tools/README.md` documenting: async-profiler setup (Linux/macOS), JMC setup (Windows JFR), flamegraph interpretation guidelines, SPRT running instructions, release tagging workflow, performance budget targets table, and bench baseline table for all 4 available positions (depth 8, 2026-03-28).
+- Created `tools/profiles/` directory (tracked via `.gitkeep`) as the output location for flamegraphs and JFR recordings.
+- Recorded bench baseline at depth 8 on `engine-uci-0.2.0-SNAPSHOT.jar`:
+
+| Pos | nodes | qnodes | ms | nps | q_ratio | tt_hit% | fmc% | ebf |
+|-----|-------|--------|----|-----|---------|---------|------|-----|
+| startpos | 16,612 | 35,854 | 2,755 | 6,029 | 2.2× | 32.6% | 96.0% | 2.37 |
+| Kiwipete | 67,340 | 1,050,002 | 121,136 | 555 | **15.6× ⚠️** | 34.6% | 97.9% | 2.78 |
+| CPW pos3 | 10,278 | 22,869 | 596 | 17,244 | 2.2× | 37.5% | 94.7% | 1.91 |
+| CPW pos4 | 30,428 | 487,601 | 41,474 | 733 | **16.0× ⚠️** | 27.4% | 96.6% | 2.67 |
+
+**Decisions Made:**
+- async-profiler flamegraph "before magic bitboards" is not possible retroactively — magic bitboards landed in #68 before this profiling issue was created. The README documents the workflow for future before/after comparisons instead.
+- Bench timed out before completing positions 5 and 6 at depth 8; the 4 captured positions are sufficient for the baseline table. Positions 5/6 can be added in a follow-up bench run under #87.
+- `tools/engines.json` updated from `engine-uci-0.0.1-SNAPSHOT.jar` → `engine-uci-0.2.0-SNAPSHOT.jar` to match the bumped pom version.
+
+**Broke / Fixed:**
+- Nothing broken. Q-search ratio on Kiwipete (15.6×) and CPW pos4 (16.0×) exceed the 10× budget — mandatory follow-up issue #87 filed per AC.
+
+**Measurements:**
+- Perft depth 5 (startpos): 4,865,609 ✓ (139 tests pass)
+- Nodes/sec: 6,029 nps (startpos d8) — well below the 5M nps target; deep profiling pending
+- Elo vs. baseline: not measured this cycle
+
+**Next:**
+- Issue #87: implement delta pruning in Q-search to bring q_ratio < 10× on all bench positions
+
+---
+
+### [2026-03-28] Phase 7 — Nightly SPRT CI Workflow (#72)
+
+**Built:**
+- Created `.github/workflows/nightly-sprt.yml`: triggers on `schedule` (cron `0 0 * * *`) and `workflow_dispatch`.
+- Workflow steps: checkout develop → setup JDK 21 Temurin → build dev JAR → download latest GitHub release JAR as baseline → install `cutechess-cli` → run SPRT match → post verdict summary to `$GITHUB_STEP_SUMMARY` → fail with `exit 1` if H0 (no regression) is accepted.
+- SPRT configuration: Vex-dev vs. Vex-base, tc=5+0.05, 1000 games, elo0=0 elo1=50 α=β=0.05, -concurrency 2, resign/draw adjudication enabled.
+- Graceful skip (warning only, no failure) when no release tag exists yet.
+
+**Decisions Made:**
+- `cutechess-cli` installed via Ubuntu apt (`sudo apt-get install -y cutechess`); available in Ubuntu 20.04+ repos, compatible with `ubuntu-latest` runner.
+- Baseline JAR downloaded from the latest GitHub release via `gh release download` — avoids hardcoding a tag, always tests against the most recent published version.
+- Workflow succeeds (no `exit 1`) when H1 is accepted or when no baseline exists. Only H0-acceptance (confirmed regression) triggers failure.
+- Release tagging workflow documented in `tools/README.md` (satisfies #72 AC for tagging instructions).
+
+**Broke / Fixed:**
+- Nothing broken. Workflow will not actually run until the first `vX.Y.Z` release tag is pushed to GitHub Releases.
+
+**Measurements:**
+- Perft depth 5 (startpos): not measured this cycle
+- Nodes/sec: not measured this cycle
+- Elo vs. baseline: not measured this cycle (no release tag exists yet)
+
+**Next:**
+- Phase 7 remaining: issue #87 (Q-search delta pruning) before #77 exit criteria can be met

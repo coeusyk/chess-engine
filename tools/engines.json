@@ -3,7 +3,7 @@
     {
       "name": "Vex-new",
       "command": "java",
-      "arguments": ["-jar", "engine-uci/target/engine-uci-0.0.1-SNAPSHOT.jar"],
+      "arguments": ["-jar", "engine-uci/target/engine-uci-0.2.0-SNAPSHOT.jar"],
       "protocol": "uci",
       "workingDirectory": "."
     },
