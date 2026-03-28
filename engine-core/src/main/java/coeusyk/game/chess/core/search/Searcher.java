@@ -79,6 +79,7 @@ public class Searcher {
 
     private SyzygyProber syzygyProber = new NoOpSyzygyProber();
     private int syzygyProbeDepth = 1;
+    @SuppressWarnings("unused") // setter is public API; read when Syzygy probing is wired up
     private boolean syzygy50MoveRule = true;
 
     private boolean aborted;

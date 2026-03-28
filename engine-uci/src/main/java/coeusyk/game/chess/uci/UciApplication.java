@@ -34,6 +34,7 @@ public class UciApplication {
     private final AtomicBoolean stopRequested = new AtomicBoolean(false);
     private volatile boolean searchRunning = false;
     private volatile Move latestIterativeBestMove;
+    @SuppressWarnings("unused") // assigned for future stop-command interrupt support
     private volatile Thread searchThread;
 
     private static final String[] BENCH_FENS = {

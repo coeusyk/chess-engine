@@ -70,8 +70,4 @@ public class TimeManager {
         return (System.nanoTime() - startNanos) / 1_000_000L;
     }
 
-    private long clamp(long value, long min, long max) {
-        if (value < min) return min;
-        return Math.min(value, max);
-    }
 }
