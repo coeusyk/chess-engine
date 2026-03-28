@@ -21,6 +21,7 @@ import java.util.Objects;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -116,6 +117,50 @@ class UciApplicationIntegrationTest {
         );
     }
 
+    /**
+     * AC8 for #73: no deadlocks or race conditions under extended search play.
+     * Runs 1000 successive movetime searches with Threads=2 to detect any hang or
+     * race condition in the Lazy SMP implementation. The loop reuses one engine
+     * process (shared TT, Threads=2) and verifies every search responds within 2s.
+     */
+    @Test
+    void lazySmpNoDeadlockOver1000Searches() throws Exception {
+        harness = UciHarness.start();
+        harness.send("setoption name Threads value 2");
+
+        // Use a short movetime so 1000 iterations run quickly (~10s total).
+        final int SEARCHES = 1000;
+        final Duration PER_SEARCH_TIMEOUT = Duration.ofSeconds(2);
+        AtomicInteger failures = new AtomicInteger(0);
+
+        // Alternate between startpos and a middlegame position to vary TT interaction.
+        String[] positions = new String[]{
+                "position startpos",
+                "position fen r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"
+        };
+
+        for (int i = 0; i < SEARCHES; i++) {
+            harness.send(positions[i % positions.length]);
+            harness.send("go movetime 5");
+
+            String bestMoveLine = harness.awaitLine(
+                    line -> line.startsWith("bestmove "), PER_SEARCH_TIMEOUT);
+            if (bestMoveLine == null) {
+                // Timeout: send "stop" and drain any pending bestmove before
+                // the next iteration. This prevents stale bestmoves from a
+                // late-completing search from being consumed by a future iteration,
+                // which would cause a cascade of further failures.
+                failures.incrementAndGet();
+                harness.send("stop");
+                harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(3));
+            }
+        }
+
+        assertTrue(failures.get() == 0,
+                "Deadlock or non-response detected in " + failures.get()
+                        + "/" + SEARCHES + " searches with Threads=2");
+    }
+
     private void applyUciMove(Board board, String uci) {
         Move move = findLegalMoveByUci(board, uci);
         Objects.requireNonNull(move, "Expected legal move for test setup: " + uci);
@@ -176,7 +221,13 @@ class UciApplicationIntegrationTest {
                     classpath,
                     "coeusyk.game.chess.uci.UciApplication"
             );
-            builder.redirectErrorStream(true);
+            // Redirect stderr to INHERIT (Maven console) so that [BENCH] depth-stats
+            // written to System.err by iterativeDeepening do NOT pollute the stdout
+            // pipe that this harness reads bestmove lines from.  Merging the streams
+            // via redirectErrorStream(true) could fill the 64 KB OS pipe buffer when
+            // many depths are searched in rapid succession, blocking the engine's
+            // emitBestMove write and causing the awaitLine timeout to fire.
+            builder.redirectError(ProcessBuilder.Redirect.INHERIT);
             Process process = builder.start();
 
             BufferedWriter in = new BufferedWriter(new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8));

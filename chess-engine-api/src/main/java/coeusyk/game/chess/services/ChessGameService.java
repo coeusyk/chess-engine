@@ -14,7 +14,6 @@ import java.util.List;
 @Service
 public class ChessGameService {
     private final GameSessionStore sessionStore;
-    private final SanConverter sanConverter = new SanConverter();
 
     public ChessGameService(GameSessionStore sessionStore) {
         this.sessionStore = sessionStore;
@@ -110,7 +109,7 @@ public class ChessGameService {
                     move.targetSquare,
                     move.reaction,
                     UciConverter.toUci(move),
-                    sanConverter.toSan(move, board)
+                    SanConverter.toSan(move, board)
             ));
         }
         return result;
@@ -170,9 +169,14 @@ public class ChessGameService {
         GameSession session = sessionStore.get(gameId);
         synchronized (session.getLock()) {
             Board board = session.getBoard();
-            List<String> moveHistory = new ArrayList<>();
+            String initialFen = board.boardStates.get(0);
+            Board replayBoard = new Board(initialFen);
+            List<MoveDto> moveHistory = new ArrayList<>();
             for (Move m : board.movesPlayed) {
-                moveHistory.add(UciConverter.toUci(m));
+                String san = SanConverter.toSan(m, replayBoard);
+                String uci = UciConverter.toUci(m);
+                moveHistory.add(new MoveDto(uci, san != null ? san : uci));
+                replayBoard.makeMove(m);
             }
             String activeColor = Piece.isWhite(board.getActiveColor()) ? "WHITE" : "BLACK";
             boolean canUndo = !board.movesPlayed.isEmpty();

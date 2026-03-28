@@ -11,7 +11,7 @@ import java.util.Locale;
 
 public class SanConverter {
 
-    public String toSan(Move move, Board board) {
+    public static String toSan(Move move, Board board) {
         if (move == null || board == null) {
             return null;
         }
@@ -50,7 +50,7 @@ public class SanConverter {
         return san.toString();
     }
 
-    public Move fromSan(String san, Board board) {
+    public static Move fromSan(String san, Board board) {
         if (san == null || board == null) {
             return null;
         }
@@ -71,11 +71,11 @@ public class SanConverter {
         return null;
     }
 
-    private boolean isCapture(Board board, Move move) {
+    private static boolean isCapture(Board board, Move move) {
         return "en-passant".equals(move.reaction) || board.getPiece(move.targetSquare) != Piece.None;
     }
 
-    private String buildDisambiguation(Move move, Board board, int pieceType) {
+    private static String buildDisambiguation(Move move, Board board, int pieceType) {
         List<Move> candidates = new ArrayList<>();
         ArrayList<Move> legalMoves = new MovesGenerator(board).getActiveMoves(board.getActiveColor());
 
@@ -127,7 +127,7 @@ public class SanConverter {
         return "" + fileChar(move.startSquare) + rankChar(move.startSquare);
     }
 
-    private void appendPromotionSuffix(StringBuilder san, String reaction) {
+    private static void appendPromotionSuffix(StringBuilder san, String reaction) {
         if (reaction == null) {
             return;
         }
@@ -142,20 +142,17 @@ public class SanConverter {
         }
     }
 
-    private void appendCheckOrMateSuffix(StringBuilder san, Board board, Move move) {
-        board.makeMove(move);
-        try {
-            if (board.isCheckmate()) {
-                san.append('#');
-            } else if (board.isActiveColorInCheck()) {
-                san.append('+');
-            }
-        } finally {
-            board.unmakeMove();
+    private static void appendCheckOrMateSuffix(StringBuilder san, Board board, Move move) {
+        Board copy = new Board(board.toFen());
+        copy.makeMove(move);
+        if (copy.isCheckmate()) {
+            san.append('#');
+        } else if (copy.isActiveColorInCheck()) {
+            san.append('+');
         }
     }
 
-    private char pieceLetter(int pieceType) {
+    private static char pieceLetter(int pieceType) {
         return switch (pieceType) {
             case Piece.Knight -> 'N';
             case Piece.Bishop -> 'B';
@@ -166,19 +163,19 @@ public class SanConverter {
         };
     }
 
-    private String squareToAlgebraic(int square) {
+    private static String squareToAlgebraic(int square) {
         return "" + fileChar(square) + rankChar(square);
     }
 
-    private char fileChar(int square) {
+    private static char fileChar(int square) {
         return (char) ('a' + (square % 8));
     }
 
-    private char rankChar(int square) {
+    private static char rankChar(int square) {
         return (char) ('8' - (square / 8));
     }
 
-    private String normalizeSan(String san) {
+    private static String normalizeSan(String san) {
         String normalized = san.trim();
         if (normalized.isEmpty()) {
             return "";

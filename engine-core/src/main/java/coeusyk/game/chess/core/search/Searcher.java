@@ -243,12 +243,29 @@ public class Searcher {
             BooleanSupplier shouldStopHard,
             IterationListener listener
     ) {
+        return iterativeDeepening(board, maxDepth, 1, shouldStopSoft, shouldStopHard, listener);
+    }
+
+    /**
+     * Iterative deepening with a configurable start depth.
+     * Used by Lazy SMP helper threads to stagger entry depths and reduce
+     * redundant shallow-depth work between threads.
+     */
+    public SearchResult iterativeDeepening(
+            Board board,
+            int maxDepth,
+            int startDepth,
+            BooleanSupplier shouldStopSoft,
+            BooleanSupplier shouldStopHard,
+            IterationListener listener
+    ) {
 
         if (maxDepth < 1) {
             throw new IllegalArgumentException("depth must be >= 1");
         }
 
         int effectiveMaxDepth = Math.min(maxDepth, MAX_PLY - 1);
+        int effectiveStartDepth = Math.max(1, Math.min(startDepth, effectiveMaxDepth));
 
         Move previousBestMove = null;
         int bestScore = 0;
@@ -271,7 +288,7 @@ public class Searcher {
         searchStartNanos = System.nanoTime();
         transpositionTable.resetStats();
 
-        for (int depth = 1; depth <= effectiveMaxDepth; depth++) {
+        for (int depth = effectiveStartDepth; depth <= effectiveMaxDepth; depth++) {
             if (shouldStopSoft.getAsBoolean()) {
                 aborted = true;
                 break;

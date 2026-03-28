@@ -39,12 +39,21 @@ public class UciApplication {
     // cleared on ucinewgame, and injected into every Searcher (main + helpers).
     private final TranspositionTable sharedTT = new TranspositionTable(64);
 
+    // Number of physical (logical) processors available to this JVM.
+    // Helpers are only spawned when there is at least one spare core beyond what
+    // the main search thread needs (i.e. availableCores > 1).  On single-core
+    // machines or heavily loaded environments this avoids halving the main
+    // search's NPS due to CPU time-sharing.
+    private static final int AVAILABLE_CORES = Runtime.getRuntime().availableProcessors();
+
     // Cached thread pool for Lazy SMP helper threads.
-    // All threads are daemon threads so the JVM exits cleanly when the main thread
-    // finishes, even if helpers are mid-search.
+    // Helpers run at BELOW_NORMAL priority so they never starve the main search
+    // thread.  On machines with spare cores they run at near-full speed; on
+    // saturated cores they yield to the main thread automatically.
     private final ExecutorService smpExecutor = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "smp-helper");
         t.setDaemon(true);
+        t.setPriority(Thread.MIN_PRIORITY);
         return t;
     });
 
@@ -274,10 +283,24 @@ public class UciApplication {
     }
 
     private void handleGo(String command) {
-        // Keep input processing responsive by running search on a worker thread.
+        // If a search is already running, signal it to stop and wait for the worker
+        // thread to finish (up to 2 s). This prevents the silent-drop race where
+        // the worker's finally block hasn't cleared searchRunning yet by the time
+        // the next "go" arrives, which would cause no bestmove to ever be emitted.
         if (searchRunning) {
             stopRequested.set(true);
-            return;
+            Thread current = searchThread;
+            if (current != null) {
+                try {
+                    current.join(2000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            // If the search is somehow still running after 2 s, bail out.
+            if (searchRunning) {
+                return;
+            }
         }
 
         stopRequested.set(false);
@@ -296,16 +319,31 @@ public class UciApplication {
         // Separate from the global stopRequested so setting it to true at the end
         // of this search does not bleed into the next search cycle.
         AtomicBoolean helperAbort = new AtomicBoolean(false);
+        // Declared outside try so the finally block can emit it after clearing
+        // searchRunning. This is critical: emitting bestmove BEFORE setting
+        // searchRunning=false causes a race where the GUI sends the next "go"
+        // before handleGo sees searchRunning=false, silently dropping the command.
+        Move bestMoveToEmit = null;
         try {
             // --- Lazy SMP: launch N-1 helper threads before the main search ---
             // Each helper runs an independent iterative-deepening loop on its own
             // Board copy, all sharing the same TranspositionTable.  Helpers stop
             // when helperAbort or stopRequested becomes true.
-            if (threads > 1) {
+            // Only spawn helpers when there are spare cores (AVAILABLE_CORES > 1)
+            // to prevent helpers from stealing CPU from the main search thread
+            // on single-core or heavily-loaded machines.
+            int effectiveHelpers = Math.min(threads - 1, AVAILABLE_CORES - 1);
+            if (effectiveHelpers > 0) {
                 // Snapshot the current position string from the board so each
                 // helper can create an independent Board without sharing state.
                 String positionFen = searchBoard.boardStates.get(searchBoard.boardStates.size() - 1);
-                for (int i = 1; i < threads; i++) {
+                for (int i = 1; i <= effectiveHelpers; i++) {
+                    // Stagger start depths per spec:
+                    //   odd-indexed helpers (1, 3, 5,...) start at depth (i/2)+2
+                    //   even-indexed helpers (2, 4, 6,...) start at depth 1
+                    // This reduces redundant shallow-depth work and helps threads
+                    // diverge earlier, improving TT utilisation.
+                    final int startDepth = (i % 2 == 1) ? (i / 2) + 2 : 1;
                     smpExecutor.submit(() -> {
                         try {
                             Searcher helper = new Searcher();
@@ -314,6 +352,7 @@ public class UciApplication {
                             helper.iterativeDeepening(
                                     helperBoard,
                                     MAX_SEARCH_DEPTH,
+                                    startDepth,
                                     () -> helperAbort.get() || stopRequested.get(),
                                     () -> helperAbort.get() || stopRequested.get(),
                                     null
@@ -386,12 +425,18 @@ public class UciApplication {
                 );
             }
 
-            Move bestMove = result.bestMove() != null ? result.bestMove() : latestIterativeBestMove;
-            emitBestMove(bestMove);
+            bestMoveToEmit = result.bestMove() != null ? result.bestMove() : latestIterativeBestMove;
         } finally {
-            helperAbort.set(true); // signal all SMP helpers to stop
+            // Signal helpers to stop BEFORE clearing searchRunning.
+            helperAbort.set(true);
+            // Clear searchRunning BEFORE emitting bestmove so handleGo never
+            // sees a go command while searchRunning is still true due to the
+            // output latency between emitBestMove and the flag flip.
             searchRunning = false;
             searchThread = null;
+            // Emit bestmove only after the flag is cleared.
+            Move toEmit = bestMoveToEmit != null ? bestMoveToEmit : latestIterativeBestMove;
+            emitBestMove(toEmit);
             System.out.flush();
         }
     }

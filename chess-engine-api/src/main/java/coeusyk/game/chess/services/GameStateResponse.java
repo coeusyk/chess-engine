@@ -4,7 +4,7 @@ import java.util.List;
 
 public record GameStateResponse(
         String fen,
-        List<String> moveHistory,
+        List<MoveDto> moveHistory,
         String status,
         String activeColor,
         boolean canUndo,

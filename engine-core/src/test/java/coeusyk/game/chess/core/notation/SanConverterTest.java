@@ -12,7 +12,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.fail;
 
 class SanConverterTest {
-    private final SanConverter sanConverter = new SanConverter();
 
     @Test
     void toSanSupportsPawnAndPieceMoves() {
@@ -21,23 +20,23 @@ class SanConverterTest {
         Move pawnMove = findMove(board, 52, 36); // e2e4
         Move knightMove = findMove(board, 62, 45); // g1f3
 
-        assertEquals("e4", sanConverter.toSan(pawnMove, board));
-        assertEquals("Nf3", sanConverter.toSan(knightMove, board));
+        assertEquals("e4", SanConverter.toSan(pawnMove, board));
+        assertEquals("Nf3", SanConverter.toSan(knightMove, board));
     }
 
     @Test
     void toSanSupportsCastlingPromotionAndCheckSuffix() {
         Board castleBoard = new Board("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1");
         Move kingSideCastle = findMove(castleBoard, 60, 62);
-        assertEquals("O-O", sanConverter.toSan(kingSideCastle, castleBoard));
+        assertEquals("O-O", SanConverter.toSan(kingSideCastle, castleBoard));
 
         Board promotionBoard = new Board("k7/4P3/8/8/8/8/8/4K3 w - - 0 1");
         Move promoteToQueen = findMove(promotionBoard, 12, 4); // e7e8=Q
-        assertEquals("e8=Q+", sanConverter.toSan(promoteToQueen, promotionBoard));
+        assertEquals("e8=Q+", SanConverter.toSan(promoteToQueen, promotionBoard));
 
         Board checkBoard = new Board("7k/8/8/8/8/8/4R3/4K3 w - - 0 1");
         Move checkingMove = findMove(checkBoard, 52, 4); // Re8+
-        assertEquals("Re8+", sanConverter.toSan(checkingMove, checkBoard));
+        assertEquals("Re8+", SanConverter.toSan(checkingMove, checkBoard));
     }
 
     @Test
@@ -45,7 +44,7 @@ class SanConverterTest {
         Board board = new Board("4k3/8/8/8/8/5N2/8/1N2K3 w - - 0 1");
 
         Move knightFromBFile = findMove(board, 57, 51); // b1d2
-        String san = sanConverter.toSan(knightFromBFile, board);
+        String san = SanConverter.toSan(knightFromBFile, board);
 
         assertEquals("Nbd2", san);
     }
@@ -54,7 +53,7 @@ class SanConverterTest {
     void fromSanReturnsMatchingLegalMove() {
         Board board = new Board();
 
-        Move parsed = sanConverter.fromSan("Nf3", board);
+        Move parsed = SanConverter.fromSan("Nf3", board);
 
         assertNotNull(parsed);
         assertEquals(62, parsed.startSquare);
@@ -64,13 +63,13 @@ class SanConverterTest {
     @Test
     void fromSanParsesCapturesAndCastling() {
         Board captureBoard = new Board("4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1");
-        Move capture = sanConverter.fromSan("exd5", captureBoard);
+        Move capture = SanConverter.fromSan("exd5", captureBoard);
         assertNotNull(capture);
         assertEquals(36, capture.startSquare);
         assertEquals(27, capture.targetSquare);
 
         Board castleBoard = new Board("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1");
-        Move castleMove = sanConverter.fromSan("O-O", castleBoard);
+        Move castleMove = SanConverter.fromSan("O-O", castleBoard);
         assertNotNull(castleMove);
         assertEquals(60, castleMove.startSquare);
         assertEquals(62, castleMove.targetSquare);

@@ -1,6 +1,8 @@
 package coeusyk.game.chess.services;
 
 import coeusyk.game.chess.core.models.Board;
+import coeusyk.game.chess.core.models.Move;
+import coeusyk.game.chess.core.notation.SanConverter;
 import coeusyk.game.chess.core.search.IterationInfo;
 import coeusyk.game.chess.core.search.SearchResult;
 import coeusyk.game.chess.core.search.Searcher;
@@ -70,7 +72,7 @@ public class AnalysisService {
                 Searcher searcher = new Searcher();
                 searcher.setMultiPV(Math.max(1, multiPv));
 
-                Searcher.IterationListener listener = info -> sendInfoEvent(emitter, info, cancelled);
+                Searcher.IterationListener listener = info -> sendInfoEvent(emitter, info, cancelled, fen);
 
                 SearchResult result;
                 if (movetime != null && movetime > 0) {
@@ -83,10 +85,11 @@ public class AnalysisService {
 
                 if (!cancelled.get()) {
                     var best = result.bestMove();
-                    String bestmoveUci = best != null ? UciConverter.toUci(best) : "0000";
+                    String bestUci = best != null ? UciConverter.toUci(best) : "0000";
+                    String bestSan = best != null ? SanConverter.toSan(best, new Board(fen)) : null;
                     emitter.send(SseEmitter.event()
                             .name("bestmove")
-                            .data(Map.of("type", "bestmove", "move", bestmoveUci)));
+                            .data(Map.of("type", "bestmove", "move", bestUci, "san", bestSan != null ? bestSan : bestUci)));
                     emitter.complete();
                 }
             } catch (IOException ignored) {
@@ -105,7 +108,7 @@ public class AnalysisService {
         return emitter;
     }
 
-    private void sendInfoEvent(SseEmitter emitter, IterationInfo info, AtomicBoolean cancelled) {
+    private void sendInfoEvent(SseEmitter emitter, IterationInfo info, AtomicBoolean cancelled, String fen) {
         if (cancelled.get()) return;
         try {
             int scoreCp = info.scoreCp();
@@ -124,9 +127,7 @@ public class AnalysisService {
             long timeMs = info.timeMs();
             long nps = timeMs > 0 ? (info.nodes() * 1000L) / timeMs : 0;
 
-            List<String> pvUci = info.pv().stream()
-                    .map(UciConverter::toUci)
-                    .collect(Collectors.toList());
+            List<MoveDto> pvDtos = pvToMoveDtos(info.pv(), fen);
 
             Map<String, Object> infoEvent = Map.of(
                     "type", "info",
@@ -138,13 +139,25 @@ public class AnalysisService {
                     "nps", nps,
                     "time", timeMs,
                     "hashfull", info.hashfull(),
-                    "pv", pvUci
+                    "pv", pvDtos
             );
 
             emitter.send(SseEmitter.event().name("info").data(infoEvent));
         } catch (IOException e) {
             cancelled.set(true);
         }
+    }
+
+    private static List<MoveDto> pvToMoveDtos(List<Move> pv, String fen) {
+        Board pvBoard = new Board(fen);
+        List<MoveDto> result = new ArrayList<>();
+        for (Move move : pv) {
+            String uci = UciConverter.toUci(move);
+            String san = SanConverter.toSan(move, pvBoard);
+            result.add(new MoveDto(uci, san != null ? san : uci));
+            pvBoard.makeMove(move);
+        }
+        return result;
     }
 
     // -------------------------------------------------------------------------
@@ -230,7 +243,7 @@ public class AnalysisService {
         // Build lines from the last completed iteration.
         List<LineInfo> lines = lastCompleteInfos.get().stream()
                 .map(info -> new LineInfo(info.multipv(), buildScoreInfo(info.scoreCp()),
-                        info.pv().stream().map(UciConverter::toUci).collect(Collectors.toList())))
+                        pvToMoveDtos(info.pv(), fen)))
                 .collect(Collectors.toList());
 
         IterationInfo r1 = lastRank1Info.get();
@@ -240,13 +253,14 @@ public class AnalysisService {
         long timeMs = r1 != null ? r1.timeMs() : 1L;
         long nps = timeMs > 0 ? (nodes * 1000L) / timeMs : 0;
 
-        List<String> pv = result.principalVariation().stream()
-                .map(UciConverter::toUci)
-                .collect(Collectors.toList());
+        List<MoveDto> pvDtos = pvToMoveDtos(result.principalVariation(), fen);
 
-        String bestMoveUci = result.bestMove() != null ? UciConverter.toUci(result.bestMove()) : "0000";
+        var best = result.bestMove();
+        String bestUci = best != null ? UciConverter.toUci(best) : "0000";
+        String bestSan = best != null ? SanConverter.toSan(best, new Board(fen)) : null;
+        MoveDto bestMoveDto = new MoveDto(bestUci, bestSan != null ? bestSan : bestUci);
 
-        return new EvaluateResponse(bestMoveUci, rootScore, result.depthReached(), nodes, nps, pv, lines);
+        return new EvaluateResponse(bestMoveDto, rootScore, result.depthReached(), nodes, nps, pvDtos, lines);
     }
 
     private ScoreInfo buildScoreInfo(int scoreCp) {

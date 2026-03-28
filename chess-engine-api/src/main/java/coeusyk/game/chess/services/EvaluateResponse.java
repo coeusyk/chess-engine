@@ -3,11 +3,11 @@ package coeusyk.game.chess.services;
 import java.util.List;
 
 public record EvaluateResponse(
-        String bestMove,
+        MoveDto bestMove,
         ScoreInfo score,
         int depth,
         long nodes,
         long nps,
-        List<String> pv,
+        List<MoveDto> pv,
         List<LineInfo> lines
 ) {}

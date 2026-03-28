@@ -2429,3 +2429,36 @@ emaining / 4 to prevent time scrambles on low clock; the old softLimit * 2 was u
 - SPRT match: Threads=2 vs. Threads=1 at fast time control to confirm Elo gain.
 - #77 single-thread speed target still unmet. Investigate move list reuse to hit 200ms startpos d7.
 - Close #73 on GitHub via commit.
+
+---
+
+### [2026-03-28] Phase 7 — SAN Display Throughout Stack (engine-core + API + frontend)
+
+**Built:**
+- **`SanConverter` refactored to fully static API**: All methods (`toSan`, `fromSan`, and all private helpers) made `static`. No public API surface change — same parameters, same return types. The class is now a pure utility class with no instance state.
+- **`appendCheckOrMateSuffix` board mutation bug fixed**: Previously called `board.makeMove(move)` directly on the caller's board (then `unmakeMove()` in `finally`), which was fragile and mutated the caller's state mid-call. Fixed to construct `new Board(board.toFen())` — a fresh independent copy — make the move on the copy, and check check/checkmate without touching the caller's board.
+- **`MoveDto` record created** (`chess-engine-api/services/MoveDto.java`): `record MoveDto(String uci, String san)`. Single source of truth for a move with both representations.
+- **`EvaluateResponse`**: `bestMove: String` → `MoveDto`; `pv: List<String>` → `List<MoveDto>`.
+- **`LineInfo`**: `pv: List<String>` → `List<MoveDto>`.
+- **`GameStateResponse`**: `moveHistory: List<String>` → `List<MoveDto>`.
+- **`ChessGameService`**: Removed instance `SanConverter sanConverter` field; all calls switched to `SanConverter.toSan(move, board)` (static). `getState()` now replays move history from `board.boardStates.get(0)` (the initial FEN) through each move in `board.movesPlayed`, computing SAN for each before `makeMove()` is called on the replay board.
+- **`AnalysisService`**: Added `pvToMoveDtos(List<Move> pv, String fen)` static helper that walks the PV, computes SAN for each move on a replay board (`new Board(fen)`), then advances the board. `sendInfoEvent` now accepts `fen` and sends `List<MoveDto>` for PV. `evaluate()` builds `MoveDto bestMove` (SAN via a fresh board copy) and `List<MoveDto> pv` and all `LineInfo` PVs using the same helper.
+- **`SanConverterTest`**: Updated to use static call style (`SanConverter.toSan(...)`, `SanConverter.fromSan(...)`). All 5 tests pass unchanged.
+- **`Phase6AnalysisEvaluateTests`**: Updated `$.bestMove.isString()` assertions to `$.bestMove.uci.isString()` and `$.bestMove.san.isString()` to match the new `MoveDto` JSON shape.
+
+**Decisions Made:**
+- Static `SanConverter`: The class has no state and was only ever used as a utility. Making methods static eliminates boilerplate injection and prevents callers from accidentally holding stale instances.
+- Board copy in `appendCheckOrMateSuffix` via `new Board(board.toFen())`: FEN round-trip is the simplest correct approach — it captures full position state (pieces, active color, castling rights, EP square, clocks). The check suffix is computed rarely (once per move during SAN conversion, not in search) so the overhead is negligible.
+- SAN for `GameStateResponse` computed via replay from `boardStates.get(0)`: the board only stores `movesPlayed`, not pre-move positions per move. Replaying from the initial FEN is the only way to reconstruct the board state before each move (required by `SanConverter.toSan`).
+
+**Broke / Fixed:**
+- Nothing broken. All 172 tests pass (139 engine-core, 6 engine-uci, 27 chess-engine-api). Perft counts intact.
+
+**Measurements:**
+- Perft depth 5 (startpos): not re-measured this cycle (no board logic changed)
+- Nodes/sec: not measured this cycle
+- Elo vs. baseline: not measured this cycle
+
+**Next:**
+- Update DEV_ENTRIES.md with Phase 6 UI work (analysis panel, move list) done on chess-engine-ui.
+- Commit backend SAN changes and push.
