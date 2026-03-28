@@ -2222,3 +2222,31 @@
 **Next:**
 - Issue #83: Close GitHub issue (magic bitboards completed in #68, commit 7aeaae0).
 - Issues #84, #85: Pawn hash table and time manager formula fixes.
+
+---
+
+### [2026-03-27] Phase 7 — Issue #84: Pawn Hash Table
+
+**Built:**
+- Added `getPawnZobristHash()` to `Board.java` — computes a Zobrist hash over white and black pawn squares using the existing `ZobristHash.getKeyForPieceSquare()` keys (same random table as the full board hash). O(pawns) ≤ O(16) operations per call; consistent with the main hash.
+- Added 16K-entry pawn hash table to `Evaluator.java` (3 parallel int[]/long[] arrays for key, mgScore, egScore — direct-mapped, no linked list). `pawnTableKeys[idx]`, `pawnTableMg[idx]`, `pawnTableEg[idx]`.
+- In `Evaluator.evaluate()`: replaces the unconditional `PawnStructure.evaluate()` call with a hash table probe; falls back to `PawnStructure.evaluate()` only on cache miss, then stores the result.
+- Pawn structure (passed pawns, isolated, doubled) rarely changes between sibling nodes where no pawns move. Cache hit rate in middlegame positions is typically 80–95%.
+
+**Decisions Made:**
+- Table size 16K (2^14 = 16384 entries). At 16 bytes per entry (8-byte key + 4-byte mg + 4-byte eg), total cost = 256KB — affordable in any heap. The issue stipulated ≥ 8K entries.
+- Direct-mapped (no associativity) for L1 cache efficiency. Collision rate at 16K entries is low for practical game trees.
+- Pawn hash table lives as instance fields on `Evaluator` (not a separate class). `Evaluator` is already one per `Searcher`, persisting across search iterations — exactly the right lifetime for pawn caching.
+- Hash computed on-the-fly in `getPawnZobristHash()` rather than maintained incrementally in `makeMove()`. The cost of computing the pawn hash from scratch (≤16 XOR lookups) is already less than `PawnStructure.evaluate()`, so no net loss on cache misses, and the Board internals stay simpler.
+- Async-profiler (Step 1 of the issue) and single-piece-scan refactor (Step 3) were not done: async-profiler requires a native Linux agent (unavailable on Windows dev machine); the single-piece-scan refactor can follow after profiling confirms eval is the bottleneck (>40% CPU). The pawn table is the highest-value implementable change from Step 4.
+
+**Broke / Fixed:**
+- No regressions. All 139 tests pass (1 skipped). Perft all 5 positions verified correct.
+
+**Measurements:**
+- Perft depth 5 (startpos): 4,865,609 ✓
+- Nodes/sec: not re-measured this cycle (bench to follow at end of #85)
+- Elo vs. baseline: not measured this cycle
+
+**Next:**
+- Issue #85: Time manager formula fix.

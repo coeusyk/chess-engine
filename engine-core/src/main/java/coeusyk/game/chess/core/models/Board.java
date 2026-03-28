@@ -975,6 +975,27 @@ public class Board {
         return zobristHash;
     }
 
+    /**
+     * Compute a Zobrist hash for the pawn structure only (white and black pawns by square).
+     * Used to key the pawn hash table in the evaluator. O(pawns) ≤ O(16) operations.
+     */
+    public long getPawnZobristHash() {
+        long hash = 0L;
+        int whitePawnPiece = Piece.White | Piece.Pawn;
+        long wp = whitePawns;
+        while (wp != 0) {
+            hash ^= ZobristHash.getKeyForPieceSquare(whitePawnPiece, Long.numberOfTrailingZeros(wp));
+            wp &= wp - 1;
+        }
+        int blackPawnPiece = Piece.Black | Piece.Pawn;
+        long bp = blackPawns;
+        while (bp != 0) {
+            hash ^= ZobristHash.getKeyForPieceSquare(blackPawnPiece, Long.numberOfTrailingZeros(bp));
+            bp &= bp - 1;
+        }
+        return hash;
+    }
+
     public BitboardPosition toBitboardPosition() {
         BitboardPosition position = new BitboardPosition();
         position.whitePawns = this.whitePawns;

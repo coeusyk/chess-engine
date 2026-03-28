@@ -7,6 +7,14 @@ public class Evaluator {
 
     private static final int TOTAL_PHASE = 24;
 
+    // Pawn hash table: caches PawnStructure.evaluate() results keyed by pawn Zobrist hash.
+    // 16K entries at 2 ints each = ~128KB. Pawn structure rarely changes between sibling nodes.
+    private static final int PAWN_TABLE_SIZE = 1 << 14; // 16384 entries
+    private static final int PAWN_TABLE_MASK = PAWN_TABLE_SIZE - 1;
+    private final long[] pawnTableKeys   = new long[PAWN_TABLE_SIZE];
+    private final int[]  pawnTableMg     = new int[PAWN_TABLE_SIZE];
+    private final int[]  pawnTableEg     = new int[PAWN_TABLE_SIZE];
+
     private static final int[] PHASE_WEIGHTS = new int[7];
     private static final int[] MG_MATERIAL = new int[7];
     private static final int[] EG_MATERIAL = new int[7];
@@ -70,9 +78,22 @@ public class Evaluator {
         mgScore += whiteMobility[0] - blackMobility[0];
         egScore += whiteMobility[1] - blackMobility[1];
 
-        int[] pawnStructure = PawnStructure.evaluate(board.getWhitePawns(), board.getBlackPawns());
-        mgScore += pawnStructure[0];
-        egScore += pawnStructure[1];
+        int pawnMg, pawnEg;
+        long pawnKey = board.getPawnZobristHash();
+        int pawnIdx = (int) (pawnKey & PAWN_TABLE_MASK);
+        if (pawnTableKeys[pawnIdx] == pawnKey) {
+            pawnMg = pawnTableMg[pawnIdx];
+            pawnEg = pawnTableEg[pawnIdx];
+        } else {
+            int[] pawnStructure = PawnStructure.evaluate(board.getWhitePawns(), board.getBlackPawns());
+            pawnMg = pawnStructure[0];
+            pawnEg = pawnStructure[1];
+            pawnTableKeys[pawnIdx] = pawnKey;
+            pawnTableMg[pawnIdx]   = pawnMg;
+            pawnTableEg[pawnIdx]   = pawnEg;
+        }
+        mgScore += pawnMg;
+        egScore += pawnEg;
 
         mgScore += KingSafety.evaluate(board);
 
