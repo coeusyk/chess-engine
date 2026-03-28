@@ -1131,13 +1131,42 @@ public class Searcher {
             return alpha;
         }
 
-        MovesGenerator generator = new MovesGenerator(board);
-        List<Move> legalMoves = generator.getActiveMoves(board.getActiveColor());
-        if (legalMoves.isEmpty()) {
-            leafNodes++;
-            return evaluateTerminal(board, ply);
+        boolean inCheck = board.isActiveColorInCheck(); // O(1) — no move generation
+
+        if (inCheck) {
+            // Must search all legal evasions; no stand-pat (king in check = must evade or be mated)
+            MovesGenerator generator = new MovesGenerator(board);
+            List<Move> legalMoves = generator.getActiveMoves(board.getActiveColor());
+            if (legalMoves.isEmpty()) {
+                leafNodes++;
+                return evaluateTerminal(board, ply); // checkmate
+            }
+
+            int bestScore = -MATE_SCORE;
+            for (Move move : legalMoves) {
+                board.makeMove(move);
+                int score = -quiescence(board, -beta, -alpha, ply + 1, shouldStopHard);
+                board.unmakeMove();
+
+                if (aborted) {
+                    return bestScore;
+                }
+                if (score > bestScore) {
+                    bestScore = score;
+                }
+                if (score > alpha) {
+                    alpha = score;
+                }
+                if (alpha >= beta) {
+                    break;
+                }
+            }
+            return bestScore;
         }
 
+        // Not in check: stand-pat, then captures only.
+        // Terminal detection skipped — not in check means not checkmate;
+        // stalemate is handled by the alpha-beta search above us.
         int standPat = evaluate(board);
         if (standPat >= beta) {
             leafNodes++;
@@ -1147,6 +1176,8 @@ public class Searcher {
             alpha = standPat;
         }
 
+        MovesGenerator generator = new MovesGenerator(board);
+        List<Move> legalMoves = generator.getActiveMoves(board.getActiveColor());
         List<Move> qMoves = extractQuiescenceMoves(board, legalMoves);
         if (qMoves.isEmpty()) {
             leafNodes++;
@@ -1162,15 +1193,12 @@ public class Searcher {
             if (aborted) {
                 return bestScore;
             }
-
             if (score > bestScore) {
                 bestScore = score;
             }
-
             if (score > alpha) {
                 alpha = score;
             }
-
             if (alpha >= beta) {
                 break;
             }

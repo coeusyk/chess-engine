@@ -110,21 +110,12 @@ public class MovesGenerator {
 
         for (Move move : colorSpecificMoves) {
             board.makeMove(move);
-            generateMoves();  // To update the possible moves after a move was made
-
-            // Obtaining the king square here so that if the move made was a king move, then the updated square is taken into account:
-            int kingSquare = board.getKingSquare(activeColor);
-
-            boolean[] kingCheck = isKingInCheck(kingSquare, activeColor);
-            boolean inCheck = kingCheck[0], doubleCheck = kingCheck[1];
-
-            if (inCheck || doubleCheck) {
+            // Fast legality check using O(1) attack detection — no inner move generation needed
+            if (board.isColorKingInCheck(activeColor)) {
                 initialPossibleMoves.remove(move);
             }
-
             board.unmakeMove();
-
-            // Reverting the possible moves back to the initial state (before the move was made):
+            // Revert possible moves back to the initial state (before the move was made)
             possibleMoves.clear();
             possibleMoves.addAll(initialPossibleMoves);
         }

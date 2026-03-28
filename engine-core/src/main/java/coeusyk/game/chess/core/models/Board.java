@@ -1,6 +1,8 @@
 package coeusyk.game.chess.core.models;
 
+import coeusyk.game.chess.core.bitboard.AttackTables;
 import coeusyk.game.chess.core.bitboard.BitboardPosition;
+import coeusyk.game.chess.core.bitboard.MagicBitboards;
 import coeusyk.game.chess.core.bitboard.ZobristHash;
 import coeusyk.game.chess.core.movegen.MovesGenerator;
 
@@ -43,6 +45,9 @@ public class Board {
 
     static final String STARTING_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 //    static final String STARTING_FEN = "8/8/5k2/8/p7/P1B5/4K3/8 b - - 0 1";
+
+    private static final long FILE_A = 0x0101010101010101L;
+    private static final long FILE_H = 0x8080808080808080L;
 
     // Board Attributes:
     private int activeColor = Piece.White;  // The color to move
@@ -828,8 +833,40 @@ public class Board {
     }
 
     public boolean isActiveColorInCheck() {
-        MovesGenerator movesGenerator = new MovesGenerator(this);
-        return movesGenerator.isKingInCheck(getKingSquare(activeColor), activeColor)[0];
+        int opponent = (activeColor == Piece.White) ? Piece.Black : Piece.White;
+        return isSquareAttackedBy(getKingSquare(activeColor), opponent);
+    }
+
+    /** Returns true if the given color's king is attacked by any opponent piece. O(1) via bitboard lookups. */
+    public boolean isColorKingInCheck(int color) {
+        int opponent = (color == Piece.White) ? Piece.Black : Piece.White;
+        return isSquareAttackedBy(getKingSquare(color), opponent);
+    }
+
+    /**
+     * Returns true if square {@code sq} is attacked by any piece of {@code byColor}.
+     * Uses magic bitboards for sliding pieces and precomputed tables for knights/kings.
+     * O(1) — no move generation involved.
+     */
+    public boolean isSquareAttackedBy(int sq, int byColor) {
+        long occ = allOccupancy;
+        if (byColor == Piece.White) {
+            if ((MagicBitboards.getRookAttacks(sq, occ)   & (whiteRooks | whiteQueens))   != 0) return true;
+            if ((MagicBitboards.getBishopAttacks(sq, occ) & (whiteBishops | whiteQueens)) != 0) return true;
+            if ((AttackTables.KNIGHT_ATTACKS[sq]          & whiteKnights)                 != 0) return true;
+            if ((AttackTables.KING_ATTACKS[sq]            & whiteKing)                    != 0) return true;
+            // White pawns attack diagonally upward (toward smaller indices)
+            long pawnAttacks = ((whitePawns & ~FILE_A) >> 9) | ((whitePawns & ~FILE_H) >> 7);
+            return (pawnAttacks & (1L << sq)) != 0;
+        } else {
+            if ((MagicBitboards.getRookAttacks(sq, occ)   & (blackRooks | blackQueens))   != 0) return true;
+            if ((MagicBitboards.getBishopAttacks(sq, occ) & (blackBishops | blackQueens)) != 0) return true;
+            if ((AttackTables.KNIGHT_ATTACKS[sq]          & blackKnights)                 != 0) return true;
+            if ((AttackTables.KING_ATTACKS[sq]            & blackKing)                    != 0) return true;
+            // Black pawns attack diagonally downward (toward larger indices)
+            long pawnAttacks = ((blackPawns & ~FILE_A) << 7) | ((blackPawns & ~FILE_H) << 9);
+            return (pawnAttacks & (1L << sq)) != 0;
+        }
     }
 
     public boolean isCheckmate() {

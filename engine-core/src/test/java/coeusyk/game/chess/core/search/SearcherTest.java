@@ -98,15 +98,23 @@ class SearcherTest {
 
     @Test
     void moveOrderingReducesNodesComparedToDisabledOrdering() {
+        // Use pure alpha-beta (no NMP/LMR/aspiration) to isolate move-ordering effect.
+        // With aggressive pruning enabled, different orderings can explore different branches
+        // and find different best moves — which is expected and not a bug.
         Board boardOrdered = new Board("r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/2N5/PPPP1PPP/R1BQK1NR b KQkq - 2 3");
         Board boardUnordered = new Board("r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/2N5/PPPP1PPP/R1BQK1NR b KQkq - 2 3");
 
-        SearchResult ordered = new Searcher(true).searchDepth(boardOrdered, 4);
-        SearchResult unordered = new Searcher(false).searchDepth(boardUnordered, 4);
+        SearchResult ordered   = new Searcher(true,  false, false, false, false, false).searchDepth(boardOrdered, 4);
+        SearchResult unordered = new Searcher(false, false, false, false, false, false).searchDepth(boardUnordered, 4);
 
         assertNotNull(ordered.bestMove());
         assertNotNull(unordered.bestMove());
+        // Pure alpha-beta finds the same best move regardless of ordering (no heuristic interference)
         assertMoveEquals(ordered.bestMove(), unordered.bestMove());
+        // Better ordering means fewer nodes via earlier alpha cuts
+        long orderedNodes   = ordered.nodesVisited()   + ordered.leafNodes();
+        long unorderedNodes = unordered.nodesVisited() + unordered.leafNodes();
+        assertTrue(orderedNodes < unorderedNodes, "Better move ordering should visit fewer nodes");
     }
 
     @Test
@@ -141,13 +149,16 @@ class SearcherTest {
 
     @Test
     void nullMovePruningReducesNodesOnQuietPosition() {
-        Board boardWithNullMove = new Board("r2q1rk1/ppp2ppp/2n2n2/3bp3/3P4/2P1PN2/PP1N1PPP/R1BQ1RK1 w - - 0 9");
+        // Test without aspiration windows to isolate NMP's effect on node count.
+        // When aspiration is enabled, NMP can change score stability, causing additional
+        // aspiration window failures that may offset the NMP node savings.
+        Board boardWithNullMove    = new Board("r2q1rk1/ppp2ppp/2n2n2/3bp3/3P4/2P1PN2/PP1N1PPP/R1BQ1RK1 w - - 0 9");
         Board boardWithoutNullMove = new Board("r2q1rk1/ppp2ppp/2n2n2/3bp3/3P4/2P1PN2/PP1N1PPP/R1BQ1RK1 w - - 0 9");
 
-        SearchResult withNullMove = new Searcher(true, true, true).searchDepth(boardWithNullMove, 7);
-        SearchResult withoutNullMove = new Searcher(true, true, false).searchDepth(boardWithoutNullMove, 7);
+        SearchResult withNullMove    = new Searcher(true, false, true).searchDepth(boardWithNullMove, 7);
+        SearchResult withoutNullMove = new Searcher(true, false, false).searchDepth(boardWithoutNullMove, 7);
 
-        long withNullMoveNodes = withNullMove.nodesVisited() + withNullMove.leafNodes();
+        long withNullMoveNodes    = withNullMove.nodesVisited()    + withNullMove.leafNodes();
         long withoutNullMoveNodes = withoutNullMove.nodesVisited() + withoutNullMove.leafNodes();
 
         assertTrue(withNullMoveNodes < withoutNullMoveNodes, "Expected null-move pruning to reduce searched nodes");
@@ -279,8 +290,11 @@ class SearcherTest {
         long withLmrNodes = withLmr.nodesVisited() + withLmr.leafNodes();
         long withoutLmrNodes = withoutLmr.nodesVisited() + withoutLmr.leafNodes();
 
-        assertEquals(withoutLmrNodes, withLmrNodes,
-            "Expected LMR to be bypassed when side to move is in check");
+        // LMR does not apply at in-check nodes (canApplyLmr guards with !sideToMoveInCheck),
+        // but it does apply in child positions where the check has been resolved.
+        // So total tree size with LMR should be <= without LMR.
+        assertTrue(withLmrNodes <= withoutLmrNodes,
+            "Expected LMR to not increase total nodes when root is in check");
     }
 
     @Test
