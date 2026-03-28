@@ -96,6 +96,26 @@ class UciApplicationIntegrationTest {
         assertNotNull(harness.awaitLine("readyok", Duration.ofSeconds(2)));
     }
 
+    @Test
+    void lazySmpThreads2ReturnsLegalMove() throws Exception {
+        harness = UciHarness.start();
+
+        harness.send("setoption name Threads value 2");
+        harness.send("position startpos");
+        harness.send("go depth 4");
+
+        String bestMoveLine = harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(15));
+        assertNotNull(bestMoveLine, "Engine did not emit bestmove with Threads=2");
+
+        String bestMove = bestMoveLine.substring("bestmove ".length()).trim().toLowerCase(Locale.ROOT);
+        Board board = new Board();
+        List<Move> legalMoves = new MovesGenerator(board).getActiveMoves(board.getActiveColor());
+        assertTrue(
+                legalMoves.stream().map(this::toUci).anyMatch(bestMove::startsWith),
+                "Engine emitted illegal move with Threads=2: " + bestMove
+        );
+    }
+
     private void applyUciMove(Board board, String uci) {
         Move move = findLegalMoveByUci(board, uci);
         Objects.requireNonNull(move, "Expected legal move for test setup: " + uci);

@@ -2,17 +2,39 @@ package coeusyk.game.chess.core.search;
 
 import coeusyk.game.chess.core.models.Move;
 
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReferenceArray;
+
+/**
+ * Transposition table backed by an {@link AtomicReferenceArray} for lock-free
+ * concurrent access.  Each slot holds a single immutable {@link Entry} record.
+ * Reference writes and reads via {@code AtomicReferenceArray} are guaranteed
+ * atomic in Java (JLS §17.6), so concurrent Lazy-SMP threads can freely read
+ * and write without synchronization.
+ *
+ * <p>Race conditions on multi-word state are tolerated: the {@code key} field
+ * inside each entry is checked after every probe, so a stale or partially
+ * overwritten entry is treated as a miss rather than silently corrupting search.
+ *
+ * <p>The replacement policy is depth-preferred with always-replace on key match:
+ * a new entry replaces an existing one only when the new depth ≥ old depth or
+ * the slot belongs to a different position (key mismatch / empty).
+ */
 public class TranspositionTable {
     private static final int DEFAULT_SIZE_MB = 64;
     private static final int APPROX_ENTRY_BYTES = 32;
     private static final int MAX_ENTRY_COUNT = 1 << 23;
 
-    private Entry[] table;
+    // AtomicReferenceArray gives one atomic read/write per slot.
+    // Each Entry is an immutable record — fields are safely visible after construction.
+    private AtomicReferenceArray<Entry> table;
     private int mask;
-    private int occupiedCount;
 
-    private long probes;
-    private long hits;
+    // AtomicInteger/AtomicLong keep counts consistent across concurrent threads.
+    private final AtomicInteger occupiedCount = new AtomicInteger(0);
+    private final AtomicLong probes = new AtomicLong(0);
+    private final AtomicLong hits   = new AtomicLong(0);
 
     public TranspositionTable() {
         this(DEFAULT_SIZE_MB);
@@ -36,65 +58,83 @@ public class TranspositionTable {
             entryCount <<= 1;
         }
 
-        table = new Entry[entryCount];
+        table = new AtomicReferenceArray<>(entryCount);
         mask = entryCount - 1;
-        occupiedCount = 0;
+        occupiedCount.set(0);
         resetStats();
     }
 
     public Entry probe(long key) {
-        probes++;
-        Entry entry = table[indexFor(key)];
+        probes.incrementAndGet();
+        Entry entry = table.get(indexFor(key));
         if (entry != null && entry.key() == key) {
-            hits++;
+            hits.incrementAndGet();
             return entry;
         }
         return null;
     }
 
+    /**
+     * Stores an entry using a depth-preferred replacement scheme.
+     * A slot is overwritten when:
+     * <ul>
+     *   <li>the slot is empty, or</li>
+     *   <li>it belongs to a different position (key mismatch), or</li>
+     *   <li>the new depth is ≥ the stored depth (prefer deeper analysis).</li>
+     * </ul>
+     */
     public void store(long key, Move bestMove, int depth, int score, TTBound bound) {
         int index = indexFor(key);
-        Entry existing = table[index];
+        Entry existing = table.get(index);
         if (existing == null || existing.key() != key || depth >= existing.depth()) {
             if (existing == null) {
-                occupiedCount++;
+                occupiedCount.incrementAndGet();
             }
-            table[index] = new Entry(key, copyMove(bestMove), depth, score, bound);
+            table.set(index, new Entry(key, copyMove(bestMove), depth, score, bound));
         }
     }
 
     public int hashfull() {
-        if (table.length == 0) {
+        int len = table.length();
+        if (len == 0) {
             return 0;
         }
-        return (int) ((long) occupiedCount * 1000L / table.length);
+        return (int) ((long) occupiedCount.get() * 1000L / len);
     }
 
     public int getEntryCount() {
-        return table.length;
+        return table.length();
     }
 
     public double getHitRate() {
-        return probes == 0 ? 0.0 : (double) hits / (double) probes;
+        long p = probes.get();
+        return p == 0 ? 0.0 : (double) hits.get() / p;
     }
 
     public long getProbes() {
-        return probes;
+        return probes.get();
     }
 
     public long getHits() {
-        return hits;
+        return hits.get();
     }
 
+    /**
+     * Clears all entries.  Iterates every slot; O(N) but only called on
+     * {@code ucinewgame} or explicit resize.
+     */
     public void clear() {
-        java.util.Arrays.fill(table, null);
-        occupiedCount = 0;
+        int len = table.length();
+        for (int i = 0; i < len; i++) {
+            table.set(i, null);
+        }
+        occupiedCount.set(0);
         resetStats();
     }
 
     public void resetStats() {
-        probes = 0;
-        hits = 0;
+        probes.set(0);
+        hits.set(0);
     }
 
     private int indexFor(long key) {

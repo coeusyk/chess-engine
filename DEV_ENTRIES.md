@@ -2400,3 +2400,32 @@ emaining / 4 to prevent time scrambles on low clock; the old softLimit * 2 was u
 - #77 depth/time criteria still unmet: startpos d7 at 1,183ms vs. 200ms target. Remaining bottleneck is object allocation per node (`new ArrayList`, `new MovesGenerator`). Investigate move list reuse / stack-allocated move arrays.
 - Push branch to close #87 on GitHub (auto-close via commit message). Manually close #68, #70.
 - SPRT match vs. previous version to verify no regression.
+
+### [2026-03-28] Phase 7 — Lazy SMP Multi-Threaded Search (#73)
+
+**Built:**
+- **`TranspositionTable` thread-safe rewrite**: Replaced `Entry[] table` with `AtomicReferenceArray<Entry>` for lock-free per-slot atomic reads/writes. `int occupiedCount` → `AtomicInteger`, `long probes/hits` → `AtomicLong`. `probe()`, `store()`, `hashfull()`, `clear()`, and `resetStats()` all updated to use atomic operations. Class-level Javadoc explains the thread-safety model: races on entries are tolerated because the key-verification step in `probe()` discards stale reads.
+- **`Searcher.setSharedTranspositionTable(TranspositionTable)`**: Removed `final` from the TT field and added an injection method so the shared TT can be installed before a search begins. Each Searcher (main and helpers) still owns its own `killerMoves`, `historyHeuristic`, PV tables, and Evaluator — per-thread state is never shared.
+- **`UciApplication` Lazy SMP infrastructure**: Added `int threads = 1`, `TranspositionTable sharedTT` (sized from Hash setoption, cleared on `ucinewgame`), and `ExecutorService smpExecutor` (cached daemon-thread pool). Updated UCI option declaration: `Threads type spin default 1 min 1 max 512`. Hash setoption now calls `sharedTT.resize(hashSizeMb)` instead of passing the value to per-search Searcher instances.
+- **`runSearch` Lazy SMP dispatch**: Added per-search `AtomicBoolean helperAbort` to avoid global `stopRequested` contamination across searches. When `threads > 1`, N-1 helper Searchers are submitted to `smpExecutor` before the main search starts; each runs `iterativeDeepening` to `MAX_SEARCH_DEPTH` on its own Board copy with the shared TT. The `finally` block sets `helperAbort.set(true)` to stop helpers regardless of how the main search ended.
+- **`lazySmpThreads2ReturnsLegalMove` integration test**: Added to `UciApplicationIntegrationTest`. Sets Threads=2, searches depth 4 from startpos, asserts `bestmove` is emitted within 15s and is a legal move. Verifies no crash, no deadlock, correct output.
+
+**Decisions Made:**
+- `AtomicReferenceArray<Entry>` chosen over `synchronized` or `ReentrantLock` per slot: chess engines tolerate TT races because the hash key stored in the `Entry` is always verified on read. A stale or partially-written entry produces a miss (not a corruption) and search continues correctly. Lock-free atomic ops scale linearly with thread count; `synchronized` does not.
+- Per-search `helperAbort` flag (not reusing `stopRequested`): `stopRequested` is reset to `false` in `handleGo` before each search. If helpers consulted `stopRequested` alone, a racing `stopRequested.set(true)` from the next `go` command could re-trigger them. Separate `helperAbort` prevents cross-search contamination.
+- Helper threads created from a `newCachedThreadPool` with daemon threads: the pool reuses idle threads across searches (no JVM thread creation overhead for each `go`), and daemon status ensures the JVM exits cleanly when the main thread finishes.
+- `sharedTT.clear()` on `ucinewgame`: clears stale TT entries from the previous game. Without this, entries from a prior game's positions could be probed in a new game after hash collisions.
+- Each helper creates `new Board(positionFen)` from a snapshot taken before the main search starts: Board is stateful and not thread-safe; sharing a Board across threads would be a data race.
+
+**Broke / Fixed:**
+- Nothing broken. 144/144 tests pass (139 engine-core + 5 engine-uci integration tests, 1 skipped). Perft counts intact.
+
+**Measurements:**
+- Perft depth 5 (startpos): 4,865,609 ✅
+- NPS at Threads=1: not re-measured (single-thread path unchanged)
+- Threads=2 Elo vs. Threads=1: not measured this cycle (SPRT pending)
+
+**Next:**
+- SPRT match: Threads=2 vs. Threads=1 at fast time control to confirm Elo gain.
+- #77 single-thread speed target still unmet. Investigate move list reuse to hit 200ms startpos d7.
+- Close #73 on GitHub via commit.

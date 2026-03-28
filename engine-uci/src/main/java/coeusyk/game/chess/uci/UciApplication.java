@@ -7,6 +7,7 @@ import coeusyk.game.chess.core.search.IterationInfo;
 import coeusyk.game.chess.core.search.SearchResult;
 import coeusyk.game.chess.core.search.Searcher;
 import coeusyk.game.chess.core.search.TimeManager;
+import coeusyk.game.chess.core.search.TranspositionTable;
 import coeusyk.game.chess.uci.syzygy.OnlineSyzygyProber;
 
 import java.io.BufferedReader;
@@ -14,6 +15,8 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class UciApplication {
@@ -26,10 +29,24 @@ public class UciApplication {
     private Board board = new Board();
     private int multiPV = 1;
     private int hashSizeMb = 64;
+    private int threads = 1;
     private long moveOverheadMs = 30;
     private String syzygyPath = "";
     private int syzygyProbeDepth = 1;
     private boolean syzygy50MoveRule = true;
+
+    // Shared transposition table — a single instance sized by Hash setoption,
+    // cleared on ucinewgame, and injected into every Searcher (main + helpers).
+    private final TranspositionTable sharedTT = new TranspositionTable(64);
+
+    // Cached thread pool for Lazy SMP helper threads.
+    // All threads are daemon threads so the JVM exits cleanly when the main thread
+    // finishes, even if helpers are mid-search.
+    private final ExecutorService smpExecutor = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "smp-helper");
+        t.setDaemon(true);
+        return t;
+    });
 
     private final AtomicBoolean stopRequested = new AtomicBoolean(false);
     private volatile boolean searchRunning = false;
@@ -83,7 +100,7 @@ public class UciApplication {
                 System.out.println("option name Hash type spin default 64 min 1 max 65536");
                 System.out.println("option name MultiPV type spin default 1 min 1 max 500");
                 System.out.println("option name MoveOverhead type spin default 30 min 0 max 5000");
-                System.out.println("option name Threads type spin default 1 min 1 max 1");
+                System.out.println("option name Threads type spin default 1 min 1 max 512");
                 System.out.println("option name SyzygyPath type string default <empty>");
                 System.out.println("option name SyzygyProbeDepth type spin default 1 min 0 max 100");
                 System.out.println("option name Syzygy50MoveRule type check default true");
@@ -93,6 +110,7 @@ public class UciApplication {
             } else if ("ucinewgame".equals(line)) {
                 stopRequested.set(true);
                 board = new Board();
+                sharedTT.clear();
             } else if (line.startsWith("position")) {
                 stopRequested.set(true);
                 handlePosition(line);
@@ -220,6 +238,7 @@ public class UciApplication {
             try {
                 int value = Integer.parseInt(valuePart);
                 hashSizeMb = Math.max(1, Math.min(65536, value));
+                sharedTT.resize(hashSizeMb); // apply immediately to the shared TT
             } catch (NumberFormatException ignored) {
             }
         } else if ("multipv".equals(optionNameLower)) {
@@ -244,8 +263,14 @@ public class UciApplication {
             }
         } else if ("syzygy50moverule".equals(optionNameLower)) {
             syzygy50MoveRule = "true".equalsIgnoreCase(valuePart);
+        } else if ("threads".equals(optionNameLower)) {
+            try {
+                int value = Integer.parseInt(valuePart);
+                threads = Math.max(1, Math.min(512, value));
+            } catch (NumberFormatException ignored) {
+            }
         }
-        // "Threads" — accepted but silently ignored (single-threaded engine)
+        // Unknown options are silently ignored per UCI spec.
     }
 
     private void handleGo(String command) {
@@ -267,10 +292,43 @@ public class UciApplication {
     }
 
     private void runSearch(String command, Board searchBoard) {
+        // Per-search abort flag for Lazy SMP helper threads.
+        // Separate from the global stopRequested so setting it to true at the end
+        // of this search does not bleed into the next search cycle.
+        AtomicBoolean helperAbort = new AtomicBoolean(false);
         try {
+            // --- Lazy SMP: launch N-1 helper threads before the main search ---
+            // Each helper runs an independent iterative-deepening loop on its own
+            // Board copy, all sharing the same TranspositionTable.  Helpers stop
+            // when helperAbort or stopRequested becomes true.
+            if (threads > 1) {
+                // Snapshot the current position string from the board so each
+                // helper can create an independent Board without sharing state.
+                String positionFen = searchBoard.boardStates.get(searchBoard.boardStates.size() - 1);
+                for (int i = 1; i < threads; i++) {
+                    smpExecutor.submit(() -> {
+                        try {
+                            Searcher helper = new Searcher();
+                            helper.setSharedTranspositionTable(sharedTT);
+                            Board helperBoard = new Board(positionFen);
+                            helper.iterativeDeepening(
+                                    helperBoard,
+                                    MAX_SEARCH_DEPTH,
+                                    () -> helperAbort.get() || stopRequested.get(),
+                                    () -> helperAbort.get() || stopRequested.get(),
+                                    null
+                            );
+                        } catch (Exception ignored) {
+                            // Helper failures are swallowed; only the main thread result matters.
+                        }
+                    });
+                }
+            }
+
+            // --- Main search ---
             String[] parts = command.split("\\s+");
             Searcher searcher = new Searcher();
-            searcher.setTranspositionTableSizeMb(hashSizeMb);
+            searcher.setSharedTranspositionTable(sharedTT);
             if (multiPV > 1) {
                 searcher.setMultiPV(multiPV);
             }
@@ -331,6 +389,7 @@ public class UciApplication {
             Move bestMove = result.bestMove() != null ? result.bestMove() : latestIterativeBestMove;
             emitBestMove(bestMove);
         } finally {
+            helperAbort.set(true); // signal all SMP helpers to stop
             searchRunning = false;
             searchThread = null;
             System.out.flush();

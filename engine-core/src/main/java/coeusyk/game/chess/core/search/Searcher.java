@@ -80,7 +80,8 @@ public class Searcher {
     private final StaticExchangeEvaluator staticExchangeEvaluator = new StaticExchangeEvaluator();
     private final Move[][] killerMoves = new Move[MAX_PLY][2];
     private final int[][] historyHeuristic = new int[7][64];
-    private final TranspositionTable transpositionTable = new TranspositionTable();
+    // Not final: can be replaced with a shared instance for Lazy SMP multi-threaded search.
+    private TranspositionTable transpositionTable = new TranspositionTable();
     private final int[][] lmrReductions = precomputeLmrReductions();
 
     private Move rootTtMoveHint;
@@ -164,6 +165,23 @@ public class Searcher {
 
     public void setTranspositionTableSizeMb(int sizeMb) {
         transpositionTable.resize(sizeMb);
+    }
+
+    /**
+     * Replaces this searcher's private transposition table with the supplied shared
+     * instance.  Used by Lazy SMP: all helper threads share one TT so each thread's
+     * discoveries are immediately visible to the others.
+     *
+     * <p>The shared TT must already be sized appropriately before injection; calling
+     * {@link #setTranspositionTableSizeMb} after this call would resize the shared
+     * table for all threads simultaneously.
+     *
+     * @param tt shared {@link TranspositionTable} to inject; ignored if {@code null}
+     */
+    public void setSharedTranspositionTable(TranspositionTable tt) {
+        if (tt != null) {
+            this.transpositionTable = tt;
+        }
     }
 
     public void clearTranspositionTable() {
