@@ -2191,3 +2191,34 @@
 
 **Next:**
 - Issue #79: Replace move generation with pseudo-legal generation + legality check at make time to eliminate the per-node O(n) legal validation overhead.
+
+---
+
+### [2026-03-27] Phase 7 — Issue #82: Pruning Counters + Futility Depth-2
+
+**Built:**
+- Added 3 new private counters to `Searcher`: `nullMoveCutoffs`, `lmrApplications`, `futilitySkips` — reset per pvIndex iteration alongside existing counters, accumulated into per-search totals.
+- `nullMoveCutoffs++` incremented in `alphaBeta()` immediately before `return beta` when null-move score ≥ beta.
+- `lmrApplications++` incremented at the start of the `canApplyLmr` branch (before computing reducedDepth), counting each LMR application regardless of whether the re-search overturns it.
+- `futilitySkips++` incremented when `canApplyFutilityPruning()` returns true and a move is skipped.
+- Added `FUTILITY_MARGIN_DEPTH_2 = 300` constant and extended `getFutilityMarginForDepth()` to return 300 for depth 2 (was 0, only depth 1 = 100 previously).
+- Extended `SearchResult` record with 3 new fields: `nullMoveCutoffs`, `lmrApplications`, `futilitySkips`.
+- Extended `[BENCH]` stderr diagnostic line: `nmp_cuts=N lmr_apps=N fut_skips=N` appended to each depth line.
+
+**Decisions Made:**
+- Futility margin for depth 2 set to 300cp (3× the depth-1 margin of 100cp). This is a standard chess engine heuristic: at depth 2, a 3-pawn swing within 2 ply is unlikely to reverse a bad static evaluation, so the position can be pruned safely for non-PV, non-check nodes.
+- `lmrApplications` counts applications (not successful reductions), since knowing how often LMR fires is more useful for tuning than knowing how often the re-search was needed.
+- All 3 counters follow the same reset/accumulate pattern as `betaCutoffs`/`firstMoveCutoffs`/`ttHits`.
+
+**Broke / Fixed:**
+- Futility depth-2 pruning changed best move for E5 (KRP vs K endgame: `8/4k3/8/4P3/8/8/R7/4K3 w - - 0 1`) from `a2a6` → `a2e2`. Both are strong rook centralisation moves; depth-2 futility pruned branches that previously led the engine to prefer a6 flank cut. Updated regression expected value.
+- All 139 tests pass (1 skipped). Perft: all 5 positions correct.
+
+**Measurements:**
+- Perft depth 5 (startpos): 4,865,609 ✓
+- Nodes/sec: not re-measured this cycle (bench to follow at end of #83–#85)
+- Elo vs. baseline: not measured this cycle
+
+**Next:**
+- Issue #83: Close GitHub issue (magic bitboards completed in #68, commit 7aeaae0).
+- Issues #84, #85: Pawn hash table and time manager formula fixes.

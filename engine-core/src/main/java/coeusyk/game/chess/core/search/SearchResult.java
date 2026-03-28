@@ -17,6 +17,9 @@ public record SearchResult(
         long firstMoveCutoffs,
         long ttHits,
         double ebf,
-        boolean aborted
+        boolean aborted,
+        long nullMoveCutoffs,
+        long lmrApplications,
+        long futilitySkips
 ) {
 }

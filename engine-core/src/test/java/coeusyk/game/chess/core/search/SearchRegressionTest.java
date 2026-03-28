@@ -167,7 +167,7 @@ class SearchRegressionTest {
             Arguments.of("E2",  E2_FEN,  "e1e2"),
             Arguments.of("E3",  E3_FEN,  "f4f5"),
             Arguments.of("E4",  E4_FEN,  "e4f4"),
-            Arguments.of("E5",  E5_FEN,  "a2a6"),
+            Arguments.of("E5",  E5_FEN,  "a2e2"),
             Arguments.of("E6",  E6_FEN,  "c4c5"),
             Arguments.of("E7",  E7_FEN,  "b2c3"),
             Arguments.of("E8",  E8_FEN,  "g1a1"),

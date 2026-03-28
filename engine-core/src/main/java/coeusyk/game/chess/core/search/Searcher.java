@@ -29,6 +29,7 @@ public class Searcher {
     private static final int NULL_MOVE_DEPTH_THRESHOLD = 3;
     private static final int MAX_LEGAL_MOVES = 256;
     private static final int FUTILITY_MARGIN_DEPTH_1 = 100;
+    private static final int FUTILITY_MARGIN_DEPTH_2 = 300;
     private static final int RAZOR_MARGIN_DEPTH_1 = 300;
     private static final int RAZOR_MARGIN_DEPTH_2 = 600;
     private static final int MAX_CHECK_EXTENSIONS = 16;
@@ -45,6 +46,9 @@ public class Searcher {
     private long betaCutoffs;
     private long firstMoveCutoffs;
     private long ttHits;
+    private long nullMoveCutoffs;
+    private long lmrApplications;
+    private long futilitySkips;
 
     private TimeManager timeManager;
     private long searchStartNanos;
@@ -226,6 +230,9 @@ public class Searcher {
         long totalBetaCutoffs = 0;
         long totalFirstMoveCutoffs = 0;
         long totalTtHits = 0;
+        long totalNullMoveCutoffs = 0;
+        long totalLmrApplications = 0;
+        long totalFutilitySkips = 0;
         long[] nodesPerDepth = new long[effectiveMaxDepth + 1];
 
         aborted = false;
@@ -252,6 +259,9 @@ public class Searcher {
                 betaCutoffs = 0;
                 firstMoveCutoffs = 0;
                 ttHits = 0;
+                nullMoveCutoffs = 0;
+                lmrApplications = 0;
+                futilitySkips = 0;
                 int pvSize = depth + maxCheckExtensions + 4;
                 pvTable = new Move[pvSize][pvSize];
                 pvLength = new int[pvSize];
@@ -270,6 +280,9 @@ public class Searcher {
                 totalBetaCutoffs += betaCutoffs;
                 totalFirstMoveCutoffs += firstMoveCutoffs;
                 totalTtHits += ttHits;
+                totalNullMoveCutoffs += nullMoveCutoffs;
+                totalLmrApplications += lmrApplications;
+                totalFutilitySkips += futilitySkips;
 
                 if (iteration.bestMove == null) {
                     if (pvIndex == 0) {
@@ -326,9 +339,10 @@ public class Searcher {
                     ? 100.0 * totalFirstMoveCutoffs / totalBetaCutoffs : 0.0;
             double ebfNow = (depth >= 3 && nodesPerDepth[depth - 2] > 0)
                     ? Math.sqrt((double) nodesPerDepth[depth] / nodesPerDepth[depth - 2]) : 0.0;
-            System.err.printf("[BENCH] depth=%d nodes=%d qnodes=%d nps=%d cutoffs=%d firstMoveCutoff%%=%.1f tt_hits=%d ebf=%.2f time=%dms%n",
+            System.err.printf("[BENCH] depth=%d nodes=%d qnodes=%d nps=%d cutoffs=%d firstMoveCutoff%%=%.1f tt_hits=%d ebf=%.2f nmp_cuts=%d lmr_apps=%d fut_skips=%d time=%dms%n",
                     depth, totalNodes, totalQuiescenceNodes, nps,
-                    totalBetaCutoffs, fmcPct, totalTtHits, ebfNow, elapsedMs);
+                    totalBetaCutoffs, fmcPct, totalTtHits, ebfNow,
+                    totalNullMoveCutoffs, totalLmrApplications, totalFutilitySkips, elapsedMs);
         }
 
         double ebf = 0.0;
@@ -349,7 +363,10 @@ public class Searcher {
             totalFirstMoveCutoffs,
             totalTtHits,
             ebf,
-            aborted
+            aborted,
+            totalNullMoveCutoffs,
+            totalLmrApplications,
+            totalFutilitySkips
         );
     }
 
@@ -595,6 +612,7 @@ public class Searcher {
             }
 
             if (nullScore >= beta) {
+                nullMoveCutoffs++;
                 return beta;
             }
         }
@@ -697,6 +715,7 @@ public class Searcher {
                     isQuiet,
                     moveGivesCheck
             )) {
+                futilitySkips++;
                 board.unmakeMove();
                 moveIndex++;
                 continue;
@@ -704,6 +723,7 @@ public class Searcher {
 
             int score;
             if (canApplyLmr(effectiveDepth, moveIndex, isQuiet, isKiller, isTtMove, sideToMoveInCheck, moveGivesCheck)) {
+                lmrApplications++;
                 int reduction = lmrReductions[Math.min(effectiveDepth, MAX_PLY - 1)][Math.min(moveIndex + 1, MAX_LEGAL_MOVES - 1)];
                 int reducedDepth = Math.max(1, childDepth - reduction);
 
@@ -879,6 +899,7 @@ public class Searcher {
     private int getFutilityMarginForDepth(int depth) {
         return switch (depth) {
             case 1 -> FUTILITY_MARGIN_DEPTH_1;
+            case 2 -> FUTILITY_MARGIN_DEPTH_2;
             default -> 0;
         };
     }
