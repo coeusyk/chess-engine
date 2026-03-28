@@ -291,7 +291,7 @@ public class Searcher {
                     break;
                 }
 
-                if (pvIndex == 0) {
+                if (pvIndex == 0 && !iteration.aborted) {
                     previousBestMove = iteration.bestMove;
                     bestScore = iteration.bestScore;
                     depthReached = depth;

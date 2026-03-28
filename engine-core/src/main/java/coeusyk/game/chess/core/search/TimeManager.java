@@ -32,13 +32,15 @@ public class TimeManager {
     public void configureClock(int activeColor, long wtimeMs, long btimeMs, long wincMs, long bincMs) {
         long remaining = Piece.isWhite(activeColor) ? wtimeMs : btimeMs;
         long increment = Piece.isWhite(activeColor) ? wincMs : bincMs;
+        long overhead = moveOverheadMs;
 
-        long usable = Math.max(1, remaining - moveOverheadMs);
-        long target = (usable / 20) + (increment / 2);
+        long soft = (remaining / 20) + (increment * 3 / 4) - overhead;
+        long hard = Math.min(remaining / 4, soft * 4) - overhead;
 
-        softLimitMs = clamp(target, 1, usable);
-        long hard = Math.max(softLimitMs, softLimitMs * 2);
-        hardLimitMs = clamp(hard, softLimitMs, usable);
+        softLimitMs = Math.max(soft, 50);
+        hardLimitMs = Math.max(hard, softLimitMs + 50);
+
+        System.err.printf("[TIME] allocated soft=%dms hard=%dms%n", softLimitMs, hardLimitMs);
     }
 
     public void startNow() {
