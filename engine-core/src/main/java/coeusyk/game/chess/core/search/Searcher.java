@@ -26,7 +26,7 @@ public class Searcher {
     private static final int MATE_SCORE = 100_000;
     private static final int MAX_PLY = 128;
     private static final int ASPIRATION_INITIAL_DELTA_CP = 50;
-    private static final int NULL_MOVE_DEPTH_THRESHOLD = 6;
+    private static final int NULL_MOVE_DEPTH_THRESHOLD = 3;
     private static final int MAX_LEGAL_MOVES = 256;
     private static final int FUTILITY_MARGIN_DEPTH_1 = 100;
     private static final int RAZOR_MARGIN_DEPTH_1 = 300;
@@ -573,7 +573,7 @@ public class Searcher {
         }
 
         if (nullMovePruningEnabled && canApplyNullMove(board, effectiveDepth, previousMoveWasNull, beta)) {
-            int nullReduction = 3;
+            int nullReduction = effectiveDepth >= 6 ? 3 : 2;
             Board.NullMoveState nullMoveState = board.makeNullMove();
             int nullScore = -alphaBeta(
                     board,
@@ -711,7 +711,7 @@ public class Searcher {
                         board,
                         reducedDepth,
                         ply + 1,
-                        -beta,
+                        -(alpha + 1),
                         -alpha,
                         shouldStopHard,
                         false,
@@ -801,8 +801,7 @@ public class Searcher {
 
     private boolean canApplyNullMove(Board board, int depth, boolean previousMoveWasNull, int beta) {
         boolean enoughDepthForNullMove = depth >= NULL_MOVE_DEPTH_THRESHOLD;
-        int nullReduction = 3;
-        boolean hasRemainingDepth = (depth - nullReduction - 1) > 0;
+        boolean hasRemainingDepth = (depth - 2 - 1) > 0; // use minimum R=2 for depth gate
         int staticEval = evaluate(board);
         boolean isMateWindow = Math.abs(beta) >= (MATE_SCORE - MAX_PLY);
 
@@ -909,7 +908,7 @@ public class Searcher {
             boolean moveGivesCheck
     ) {
         return lmrEnabled
-            && depth >= 6
+            && depth >= 3
                 && moveIndex >= 2
                 && isQuiet
                 && !isKiller
