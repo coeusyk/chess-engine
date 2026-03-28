@@ -2250,3 +2250,26 @@
 
 **Next:**
 - Issue #85: Time manager formula fix.
+
+### [2026-03-28] Phase 7 — Time Manager Formula Fix and Abort Guard (#85)
+
+**Built:**
+- Corrected TimeManager.configureClock() formula: soft = (remaining/20) + (inc*3/4) - overhead; hard = min(remaining/4, soft*4) - overhead; both floored at 50ms / softLimitMs+50ms
+- Added [TIME] allocated soft=Xms hard=Yms stderr logging on every clock-based go command
+- Guarded previousBestMove update in iterativeDeepening() with !iteration.aborted so only complete iterations update the final result
+
+**Decisions Made:**
+- Hard limit formula capped at emaining / 4 to prevent time scrambles on low clock; the old softLimit * 2 was unbounded
+- Increment contribution raised from /2 to *3/4 (75%) to better exploit increment time on longer games
+- The soft-limit abort check at the top of the depth loop was already correct; only the previousBestMove guard was missing
+
+**Broke / Fixed:**
+- No regressions: all 139 tests pass (1 skipped). TimeManagerTest loose-bounds assertion still satisfied under new formula
+
+**Measurements:**
+- Perft depth 5 (startpos): not measured this cycle
+- Nodes/sec: not measured this cycle
+- Elo vs. baseline: not measured this cycle
+
+**Next:**
+- Phase 7 complete; run bench and capture NPS baseline, then close parent issue #77
