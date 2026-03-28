@@ -44,6 +44,9 @@ public class Searcher {
     private static final int[] DELTA_PIECE_VALUES = { 0, 100, 320, 330, 500, 900, 0 };
     // Minimum occupancy below which delta pruning is disabled (endgame safety).
     private static final int DELTA_MIN_PIECE_COUNT = 6;
+    // Maximum extra plies the Q-search is allowed to recurse beyond the main-search horizon.
+    // Prevents Q-search explosion on tactical positions with many long capture chains.
+    private static final int MAX_Q_DEPTH = 6;
 
     private long nodesVisited;
     private long leafNodes;
@@ -568,7 +571,7 @@ public class Searcher {
         }
 
         if (effectiveDepth == 0) {
-            return quiescence(board, alpha, beta, ply, shouldStopHard);
+            return quiescence(board, alpha, beta, ply, 0, shouldStopHard);
         }
 
         long zobrist = board.getZobristHash();
@@ -592,7 +595,7 @@ public class Searcher {
         }
 
         if (canApplyRazoring(board, effectiveDepth, alpha, beta, isPvNode)) {
-            int qScore = quiescence(board, alpha, alpha + 1, ply, shouldStopHard);
+            int qScore = quiescence(board, alpha, alpha + 1, ply, 0, shouldStopHard);
             if (aborted) {
                 return alpha;
             }
@@ -1153,7 +1156,7 @@ public class Searcher {
         return TTBound.EXACT;
     }
 
-    private int quiescence(Board board, int alpha, int beta, int ply, BooleanSupplier shouldStopHard) {
+    private int quiescence(Board board, int alpha, int beta, int ply, int qPly, BooleanSupplier shouldStopHard) {
         quiescenceNodes++;
 
         if (ply > seldepth) {
@@ -1163,6 +1166,13 @@ public class Searcher {
         if (shouldStopHard.getAsBoolean()) {
             aborted = true;
             return alpha;
+        }
+
+        // Q-search ply limit: once we've gone MAX_Q_DEPTH extra plies past the main
+        // search frontier, return a static eval. Prevents explosion on tactical positions
+        // with many long capture/check chains (e.g., CPW pos4).
+        if (qPly >= MAX_Q_DEPTH) {
+            return evaluate(board);
         }
 
         boolean inCheck = board.isActiveColorInCheck(); // O(1) — no move generation
@@ -1179,7 +1189,7 @@ public class Searcher {
             int bestScore = -MATE_SCORE;
             for (Move move : legalMoves) {
                 board.makeMove(move);
-                int score = -quiescence(board, -beta, -alpha, ply + 1, shouldStopHard);
+                int score = -quiescence(board, -beta, -alpha, ply + 1, qPly + 1, shouldStopHard);
                 board.unmakeMove();
 
                 if (aborted) {
@@ -1245,7 +1255,7 @@ public class Searcher {
             }
 
             board.makeMove(move);
-            int score = -quiescence(board, -beta, -alpha, ply + 1, shouldStopHard);
+            int score = -quiescence(board, -beta, -alpha, ply + 1, qPly + 1, shouldStopHard);
             board.unmakeMove();
 
             if (aborted) {

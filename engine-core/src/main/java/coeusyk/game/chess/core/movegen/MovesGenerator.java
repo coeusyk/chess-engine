@@ -11,6 +11,10 @@ import java.util.*;
 public class MovesGenerator {
     public static final int[] DirectionOffsets = { -8, 1, 8, -1, -9, -7, 9, 7 };
     public static int[][] SquaresToEdges = new int[64][8];  // Holds the number of squares to each edge from each square (for easier computation)
+
+    static {
+        ComputeMoveData();
+    }
     
     // Knight move offsets and corresponding expected rank-distance for wrap-around validation.
     private static final int[] KNIGHT_OFFSETS      = { -10, -17, -15, -6, 10, 17, 15,  6 };
@@ -22,7 +26,6 @@ public class MovesGenerator {
 
     public MovesGenerator(Board board) {
         this.board = board;
-        ComputeMoveData();
         generateMoves();
         makeMovesLegal(board.getActiveColor());
     }
@@ -105,20 +108,125 @@ public class MovesGenerator {
     }
 
     private void makeMovesLegal(int activeColor) {
-        ArrayList<Move> initialPossibleMoves = getAllMoves();
+        int kingSq = board.getKingSquare(activeColor);
+        boolean inCheck = board.isColorKingInCheck(activeColor);
+
+        // When not in check, compute pinned pieces once using bitboard X-ray attacks.
+        // A pinned piece is one that sits alone on the ray between the king and an enemy
+        // sliding attacker. Moving a pinned piece (except along its pin ray) exposes the
+        // king to check. For non-pinned, non-king, non-special moves the pseudo-legal
+        // move is always legal — no make/unmake needed (fast path).
+        long pinnedBB = (!inCheck) ? computePinnedPiecesBB(activeColor) : 0L;
+
+        ArrayList<Move> legalMoves = getAllMoves();
         ArrayList<Move> colorSpecificMoves = getActiveMoves(activeColor);
 
         for (Move move : colorSpecificMoves) {
+            boolean isKingMove  = (move.startSquare == kingSq);
+            boolean isSpecial   = "en-passant".equals(move.reaction)
+                    || (move.reaction != null && move.reaction.startsWith("castle"));
+            boolean isPinned    = (pinnedBB & (1L << move.startSquare)) != 0L;
+
+            // Fast path: not-in-check, not a king/special move, piece not pinned.
+            // Pseudo-legal move cannot expose the king → always legal.
+            if (!inCheck && !isKingMove && !isSpecial && !isPinned) {
+                continue;
+            }
+
+            // Slow path: verify via make/unmake.
             board.makeMove(move);
-            // Fast legality check using O(1) attack detection — no inner move generation needed
             if (board.isColorKingInCheck(activeColor)) {
-                initialPossibleMoves.remove(move);
+                legalMoves.remove(move);
             }
             board.unmakeMove();
-            // Revert possible moves back to the initial state (before the move was made)
-            possibleMoves.clear();
-            possibleMoves.addAll(initialPossibleMoves);
         }
+        possibleMoves.clear();
+        possibleMoves.addAll(legalMoves);
+    }
+
+    /**
+     * Returns a bitboard of all friendly pieces that are absolutely pinned to the king.
+     * Uses magic-bitboard X-ray attacks to detect enemy sliding pieces (rooks, bishops,
+     * queens) that have exactly one friendly blocker between them and the king.
+     *
+     * @param activeColor the side whose pieces to test for pin
+     * @return bitboard where each set bit is a pinned friendly piece
+     */
+    private long computePinnedPiecesBB(int activeColor) {
+        int kingSq = board.getKingSquare(activeColor);
+        long friendlyBB, enemyRooks, enemyBishops, enemyQueens, enemyOccupied;
+
+        if (Piece.isWhite(activeColor)) {
+            friendlyBB   = board.getWhiteOccupancy();
+            enemyRooks   = board.getBlackRooks();
+            enemyBishops = board.getBlackBishops();
+            enemyQueens  = board.getBlackQueens();
+            enemyOccupied = board.getBlackOccupancy();
+        } else {
+            friendlyBB   = board.getBlackOccupancy();
+            enemyRooks   = board.getWhiteRooks();
+            enemyBishops = board.getWhiteBishops();
+            enemyQueens  = board.getWhiteQueens();
+            enemyOccupied = board.getWhiteOccupancy();
+        }
+
+        long pinnedBB = 0L;
+
+        // Rook-type pins (same rank or file).
+        // X-ray from king through friendly pieces: treat enemy-only board so sliders
+        // won't stop at friendly blockers, reaching potential enemy pinners beyond them.
+        long rookSliders = enemyRooks | enemyQueens;
+        if (rookSliders != 0L) {
+            long potentialPinners = MagicBitboards.getRookAttacks(kingSq, enemyOccupied) & rookSliders;
+            while (potentialPinners != 0L) {
+                int pinnerSq = Long.numberOfTrailingZeros(potentialPinners);
+                // Squares strictly between king and pinner
+                long between = getBetween(kingSq, pinnerSq);
+                long friendlyInBetween = between & friendlyBB;
+                if (Long.bitCount(friendlyInBetween) == 1) {
+                    pinnedBB |= friendlyInBetween;
+                }
+                potentialPinners &= potentialPinners - 1L;
+            }
+        }
+
+        // Bishop-type pins (same diagonal or anti-diagonal).
+        long bishopSliders = enemyBishops | enemyQueens;
+        if (bishopSliders != 0L) {
+            long potentialPinners = MagicBitboards.getBishopAttacks(kingSq, enemyOccupied) & bishopSliders;
+            while (potentialPinners != 0L) {
+                int pinnerSq = Long.numberOfTrailingZeros(potentialPinners);
+                long between = getBetween(kingSq, pinnerSq);
+                long friendlyInBetween = between & friendlyBB;
+                if (Long.bitCount(friendlyInBetween) == 1) {
+                    pinnedBB |= friendlyInBetween;
+                }
+                potentialPinners &= potentialPinners - 1L;
+            }
+        }
+
+        return pinnedBB;
+    }
+
+    /**
+     * Returns a bitboard of squares strictly between sq1 and sq2 on the same ray
+     * (rank, file, diagonal, or anti-diagonal). Returns 0 if they are not collinear.
+     * Uses the intersection of the two truncated magic-bitboard attack rays.
+     */
+    private static long getBetween(int sq1, int sq2) {
+        // Rook ray: both squares on same rank or file?
+        long r1 = MagicBitboards.getRookAttacks(sq1, 1L << sq2);
+        if ((r1 & (1L << sq2)) != 0L) {
+            long r2 = MagicBitboards.getRookAttacks(sq2, 1L << sq1);
+            return r1 & r2; // squares strictly between sq1 and sq2 on the rank/file
+        }
+        // Bishop ray: both squares on same diagonal or anti-diagonal?
+        long b1 = MagicBitboards.getBishopAttacks(sq1, 1L << sq2);
+        if ((b1 & (1L << sq2)) != 0L) {
+            long b2 = MagicBitboards.getBishopAttacks(sq2, 1L << sq1);
+            return b1 & b2; // squares strictly between sq1 and sq2 on the diagonal
+        }
+        return 0L; // not collinear
     }
 
     /**

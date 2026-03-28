@@ -2365,3 +2365,38 @@ emaining / 4 to prevent time scrambles on low clock; the old softLimit * 2 was u
 - Re-run bench at depth 8 to confirm q_ratio < 10x on all positions
 - NPS gap (~6K at d8) remains structural; deep profiling needed (primary suspect: `getActiveMoves` object allocation per q-node)
 - #77 depth/time exit criteria (depth 7 < 200ms, depth 10 < 5s) depend on NPS improvement beyond delta pruning
+
+### [2026-03-28] Phase 7 — Q-Search Ply Limit + Move Legality Pipeline Optimizations (#87, #77)
+
+**Built:**
+- **Q-search ply limit** (`MAX_Q_DEPTH = 6`): Added a `qPly` parameter to `Searcher.quiescence()`. When `qPly >= 6` the search returns `evaluate(board)` immediately, capping runaway in-check chains (the in-check branch generates all legal moves with no prior depth limit). Updated all 4 call sites.
+- **`makeMovesLegal()` O(N²) fix**: `possibleMoves.clear()` and `possibleMoves.addAll(legalMoves)` were being called INSIDE the loop on each of ~30 moves (30 clears + 30×30 copies = 1,800 ArrayList ops per call). Moved both outside the loop: 60 ops total instead of 1,800 (30× reduction).
+- **`ComputeMoveData()` static initializer**: The method fills `static int[][] SquaresToEdges[64][8]` but was called in every `MovesGenerator` constructor. Moved to `static { ComputeMoveData(); }` block — fills the array once on class load.
+- **Pin-based fast path in `makeMovesLegal()`**: Added `computePinnedPiecesBB(int activeColor)` and `getBetween(int, int)` helpers using magic-bitboard X-ray attacks. For each position, computes the set of friendly pieces absolutely pinned to the king via enemy rook/bishop/queen sliders. Non-pinned, non-king, non-special (non-castle, non-en-passant) moves skip the make/unmake cycle entirely (always legal). Reduces average make/unmake pairs from ~30 to ~3-5 per `makeMovesLegal()` call.
+
+**Decisions Made:**
+- `MAX_Q_DEPTH = 6`: conservative cap; enough recursion to resolve most tactical sequences while preventing exponential blow-up in positions with perpetual in-check lines. CPW pos4 dropped from 12.6× to 5.8× q_ratio.
+- Pin detection uses `MagicBitboards.getRookAttacks(kingSq, enemyOccupied)` (treating only enemy pieces as blockers) to find potential pinners behind friendly pieces. Intersection of `friendlyBB` with the between-mask identifies exactly one pinned piece per ray.
+- `getBetween(sq1, sq2)` uses the truncated-ray intersection trick: `getRookAttacks(sq1, sq2_bb) & getRookAttacks(sq2, sq1_bb)` gives squares strictly between sq1 and sq2 with no branching on direction — cleaner than an explicit direction table.
+- Pinned-piece detection disabled (`pinnedBB = 0`) when the king is in check because in-check positions require verifying all moves anyway (any pseudo-legal move might fail to resolve the check).
+- En passant and castling remain in the slow path unconditionally: en passant can expose the king via horizontal pin not caught by standard pin logic; castling validity (not moving through check) requires make/unmake.
+
+**Broke / Fixed:**
+- Nothing broken. 139/139 engine-core tests pass after all changes. Perft counts intact: startpos depth 5 = 4,865,609 (confirmed via PerftHarnessTest).
+- CPW pos4 q_ratio regressed slightly after Q-depth limit alone (12.6× → 5.8×) but all positions remain < 10×.
+
+**Measurements:**
+- Perft depth 5 (startpos): 4,865,609 ✅
+- Before session: 249,416ms / 636 nps (overall bench depth 8, 6 positions)
+- After Q-depth limit + O(N²) fix + static init: 144,848ms / 1,077 nps (37% speedup)
+- After pin detection: **43,430ms / 3,592 nps (5.7× faster than session start)**
+- Startpos d7: 2,052ms → 1,183ms (1.7× speedup); target <200ms (still 5.9× above target)
+- Kiwipete d7: 70,104ms → 12,175ms (5.8× speedup)
+- CPW pos4 d7: 29,869ms → 3,827ms (7.8× speedup)
+- q_ratio: pos1=2.0×, pos2=2.8×, pos3=2.1×, pos4=5.8×, pos5=1.6×, pos6=3.4× (all < 10× ✅)
+- Elo vs. baseline: not measured this cycle
+
+**Next:**
+- #77 depth/time criteria still unmet: startpos d7 at 1,183ms vs. 200ms target. Remaining bottleneck is object allocation per node (`new ArrayList`, `new MovesGenerator`). Investigate move list reuse / stack-allocated move arrays.
+- Push branch to close #87 on GitHub (auto-close via commit message). Manually close #68, #70.
+- SPRT match vs. previous version to verify no regression.
