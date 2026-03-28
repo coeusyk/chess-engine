@@ -19,6 +19,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest
 @AutoConfigureMockMvc
+@SuppressWarnings("null")
 class Phase0StabilizationTests {
 
     private static final String FEN_GAME_A = "8/8/8/8/8/8/8/K6k w - - 0 1";

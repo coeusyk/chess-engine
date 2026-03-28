@@ -22,13 +22,13 @@ public class BoardController {
     }
 
     @GetMapping("/get-piece-moves")
-    public PieceMovesContainer getPieceMoves(@RequestParam(name = "pieceSquare") @NonNull int pieceSquare,
+    public PieceMovesContainer getPieceMoves(@RequestParam(name = "pieceSquare") int pieceSquare,
                                              @RequestParam(name = "gameId", required = false) String gameId) {
         return chessGameService.getPieceMoves(pieceSquare, gameId);
     }
 
     @GetMapping("/get-king-in-check")
-    public KingInCheckContainer getKingSquare(@RequestParam(name = "activeColor") @NonNull int activeColor,
+    public KingInCheckContainer getKingSquare(@RequestParam(name = "activeColor") int activeColor,
                                               @RequestParam(name = "gameId", required = false) String gameId) {
         return chessGameService.getKingInCheck(activeColor, gameId);
     }

@@ -44,6 +44,7 @@ public class AnalysisService {
      *
      * @return an {@code SseEmitter} that will produce {@code info} and {@code bestmove} events.
      */
+    @SuppressWarnings("null")
     public SseEmitter startAnalysis(String fen, int depth, Integer movetime, int multiPv) {
         // Validate FEN synchronously — throws IllegalArgumentException on bad input.
         Board board = new Board(fen);
@@ -108,6 +109,7 @@ public class AnalysisService {
         return emitter;
     }
 
+    @SuppressWarnings("null")
     private void sendInfoEvent(SseEmitter emitter, IterationInfo info, AtomicBoolean cancelled, String fen) {
         if (cancelled.get()) return;
         try {
