@@ -2333,3 +2333,35 @@ emaining / 4 to prevent time scrambles on low clock; the old softLimit * 2 was u
 
 **Next:**
 - Phase 7 remaining: issue #87 (Q-search delta pruning) before #77 exit criteria can be met
+---
+
+### [2026-03-28] Phase 7 — Q-Search Delta Pruning (#87)
+
+**Built:**
+- Implemented two-level delta pruning in `Searcher.quiescence()` (not-in-check branch):
+  - Node-level big-delta check: if `standPat + queenValue(900) + DELTA_MARGIN(200) < alpha`, skip move generation entirely and return stand-pat. Eliminates the most expensive case where even the best possible capture cannot recover.
+  - Per-move delta check: for each non-promotion capture, if `standPat + capturedPieceValue + DELTA_MARGIN <= alpha`, skip that capture with `continue`.
+  - Both levels disabled in mate windows (`|alpha/beta| >= MATE_SCORE - MAX_PLY`) and when total piece count <= 6 (endgame safety — prevents horizon blindness in KBvKN / KBNK transitions).
+- Added `capturedPieceValueForDelta(Board, Move)` private helper using `DELTA_PIECE_VALUES[]` (P=100, N=320, B=330, R=500, Q=900, mirroring SEE table) for O(1) gain estimation.
+- Added `deltaPruningSkips` counter: reset per depth-iteration, accumulated into `totalDeltaPruningSkips`, output in `[BENCH]` printf as `delta_prune=%d`.
+- Added `deltaPruningSkips` field to `SearchResult` record.
+
+**Decisions Made:**
+- DELTA_MARGIN=200 matches CPW recommendation; enough headroom for PST swings without defeating pruning.
+- `DELTA_PIECE_VALUES` mirrors `StaticExchangeEvaluator.PIECE_VALUES` — single source of truth for material values in the q-search layer.
+- Big-delta uses strict `<` (not `<=`); per-move uses `<=` — conservative boundary on the node-level check avoids horizon error at the exact cutoff.
+- DELTA_MIN_PIECE_COUNT=6: conservative endgame guard enabling pruning in most middlegame/early-endgame positions.
+
+**Broke / Fixed:**
+- Nothing broken. All 87 engine-core unit tests pass, perft counts intact (4,865,609 at depth 5 startpos).
+- Expected q_ratio improvement from ~15-16x toward <=10x target on Kiwipete and CPW pos4 (re-bench pending).
+
+**Measurements:**
+- Perft depth 5 (startpos): 4,865,609 check (tests pass)
+- Nodes/sec: re-bench pending; BENCH printf now reports `delta_prune=N` per depth.
+- Elo vs. baseline: not measured this cycle (no SPRT release tag yet)
+
+**Next:**
+- Re-run bench at depth 8 to confirm q_ratio < 10x on all positions
+- NPS gap (~6K at d8) remains structural; deep profiling needed (primary suspect: `getActiveMoves` object allocation per q-node)
+- #77 depth/time exit criteria (depth 7 < 200ms, depth 10 < 5s) depend on NPS improvement beyond delta pruning

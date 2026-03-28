@@ -38,6 +38,13 @@ public class Searcher {
     private static final int TB_WIN_SCORE = MATE_SCORE - 2 * MAX_PLY;
     private static final int TB_LOSS_SCORE = -(MATE_SCORE - 2 * MAX_PLY);
 
+    // Delta pruning thresholds used in quiescence search.
+    // Values mirror the SEE piece table to keep material reasoning consistent.
+    private static final int DELTA_MARGIN = 200;
+    private static final int[] DELTA_PIECE_VALUES = { 0, 100, 320, 330, 500, 900, 0 };
+    // Minimum occupancy below which delta pruning is disabled (endgame safety).
+    private static final int DELTA_MIN_PIECE_COUNT = 6;
+
     private long nodesVisited;
     private long leafNodes;
     private long quiescenceNodes;
@@ -49,6 +56,7 @@ public class Searcher {
     private long nullMoveCutoffs;
     private long lmrApplications;
     private long futilitySkips;
+    private long deltaPruningSkips;
 
     private TimeManager timeManager;
     private long searchStartNanos;
@@ -234,6 +242,7 @@ public class Searcher {
         long totalNullMoveCutoffs = 0;
         long totalLmrApplications = 0;
         long totalFutilitySkips = 0;
+        long totalDeltaPruningSkips = 0;
         long[] nodesPerDepth = new long[effectiveMaxDepth + 1];
 
         aborted = false;
@@ -263,6 +272,7 @@ public class Searcher {
                 nullMoveCutoffs = 0;
                 lmrApplications = 0;
                 futilitySkips = 0;
+                deltaPruningSkips = 0;
                 int pvSize = depth + maxCheckExtensions + 4;
                 pvTable = new Move[pvSize][pvSize];
                 pvLength = new int[pvSize];
@@ -284,6 +294,7 @@ public class Searcher {
                 totalNullMoveCutoffs += nullMoveCutoffs;
                 totalLmrApplications += lmrApplications;
                 totalFutilitySkips += futilitySkips;
+                totalDeltaPruningSkips += deltaPruningSkips;
 
                 if (iteration.bestMove == null) {
                     if (pvIndex == 0) {
@@ -340,10 +351,10 @@ public class Searcher {
                     ? 100.0 * totalFirstMoveCutoffs / totalBetaCutoffs : 0.0;
             double ebfNow = (depth >= 3 && nodesPerDepth[depth - 2] > 0)
                     ? Math.sqrt((double) nodesPerDepth[depth] / nodesPerDepth[depth - 2]) : 0.0;
-            System.err.printf("[BENCH] depth=%d nodes=%d qnodes=%d nps=%d cutoffs=%d firstMoveCutoff%%=%.1f tt_hits=%d ebf=%.2f nmp_cuts=%d lmr_apps=%d fut_skips=%d time=%dms%n",
+            System.err.printf("[BENCH] depth=%d nodes=%d qnodes=%d nps=%d cutoffs=%d firstMoveCutoff%%=%.1f tt_hits=%d ebf=%.2f nmp_cuts=%d lmr_apps=%d fut_skips=%d delta_prune=%d time=%dms%n",
                     depth, totalNodes, totalQuiescenceNodes, nps,
                     totalBetaCutoffs, fmcPct, totalTtHits, ebfNow,
-                    totalNullMoveCutoffs, totalLmrApplications, totalFutilitySkips, elapsedMs);
+                    totalNullMoveCutoffs, totalLmrApplications, totalFutilitySkips, totalDeltaPruningSkips, elapsedMs);
         }
 
         double ebf = 0.0;
@@ -367,7 +378,8 @@ public class Searcher {
             aborted,
             totalNullMoveCutoffs,
             totalLmrApplications,
-            totalFutilitySkips
+            totalFutilitySkips,
+            totalDeltaPruningSkips
         );
     }
 
@@ -1198,6 +1210,20 @@ public class Searcher {
             alpha = standPat;
         }
 
+        // Delta pruning: enabled when not in a mate window and enough pieces remain
+        // to avoid endgame horizon errors (e.g. KBvKN or KBNK insufficient-material cases).
+        boolean deltaPruningAllowed = !isMateWindow(alpha, beta)
+                && Long.bitCount(board.getAllOccupancy()) > DELTA_MIN_PIECE_COUNT;
+
+        // Node-level big-delta check: if even capturing the most valuable piece
+        // plus the safety margin cannot raise alpha, skip move generation entirely.
+        if (deltaPruningAllowed) {
+            int bigDelta = DELTA_PIECE_VALUES[Piece.Queen] + DELTA_MARGIN;
+            if (standPat + bigDelta < alpha) {
+                return standPat;
+            }
+        }
+
         MovesGenerator generator = new MovesGenerator(board);
         List<Move> legalMoves = generator.getActiveMoves(board.getActiveColor());
         List<Move> qMoves = extractQuiescenceMoves(board, legalMoves);
@@ -1208,6 +1234,16 @@ public class Searcher {
 
         int bestScore = standPat;
         for (Move move : qMoves) {
+            // Per-move delta pruning: skip non-promotion captures whose material gain
+            // plus the safety margin still cannot raise alpha.
+            if (deltaPruningAllowed && !isPromotion(move.reaction)) {
+                int captureGain = capturedPieceValueForDelta(board, move);
+                if (standPat + captureGain + DELTA_MARGIN <= alpha) {
+                    deltaPruningSkips++;
+                    continue;
+                }
+            }
+
             board.makeMove(move);
             int score = -quiescence(board, -beta, -alpha, ply + 1, shouldStopHard);
             board.unmakeMove();
@@ -1227,6 +1263,17 @@ public class Searcher {
         }
 
         return bestScore;
+    }
+
+    private int capturedPieceValueForDelta(Board board, Move move) {
+        if ("en-passant".equals(move.reaction)) {
+            return DELTA_PIECE_VALUES[Piece.Pawn];
+        }
+        int captured = board.getPiece(move.targetSquare);
+        if (captured == Piece.None) {
+            return 0;
+        }
+        return DELTA_PIECE_VALUES[Piece.type(captured)];
     }
 
     private int evaluateTerminal(Board board, int ply) {

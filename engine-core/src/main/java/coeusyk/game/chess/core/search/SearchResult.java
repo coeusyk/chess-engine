@@ -20,6 +20,7 @@ public record SearchResult(
         boolean aborted,
         long nullMoveCutoffs,
         long lmrApplications,
-        long futilitySkips
+        long futilitySkips,
+        long deltaPruningSkips
 ) {
 }
