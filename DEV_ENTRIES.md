@@ -2785,3 +2785,60 @@ Per `alphaBeta` node: `new MovesGenerator(board)` internally allocated one `Arra
 - After regularization + clamping, re-run tuner on 100k positions and validate:
   all EG mobility ≥ 0, pawn MG 80–120, material deltas ≤ 20% from prior values.
 - Re-run SPRT after validating constants. Target H1 acceptance for 0.4.0 bump.
+
+### [2026-03-29] Phase 8 — Texel Tuning Run 4: H1 Accepted, Version 0.4.0
+
+**Built:**
+- Applied Texel-tuned constants from run 4 (100k positions, material FIXED at PeSTO
+  defaults, K=1.507223, 94 iterations, startMSE=0.06245061 → finalMSE=0.05919047,
+  5.22% reduction) to 4 engine-core eval files:
+  - PieceSquareTables.java: all 12 MG/EG PST arrays replaced with tuned values
+  - KingSafety.java: shield (15→11, 10→5), open-file (25→31), half-open (10→7),
+    attacker weights N/B/R/Q: 2/2/3/5→4/5/6/6
+  - PawnStructure.java: PASSED_MG/EG reduced, ISOLATED/DOUBLED updated
+  - Evaluator.java: mobility MG N/B/R/Q=5/4/5/0; EG N/B/R/Q=0/2/4/8
+- Synced EvalParams.java extractFromCurrentEval() in engine-tuner with new live constants.
+- Updated SearchRegressionTest: 9 bestmove baselines updated with analysis comments;
+  all are equivalent or improved moves under the new eval. 31/31 pass at depth 8.
+- Built engine-uci-0.2.0-SNAPSHOT-shaded.jar; ran SPRT: TC=5+0.05, elo0=0, elo1=50,
+  α=β=0.05, concurrency=2. **H1 accepted at game 16: LLR=3.11 (105.6%).**
+  Score: 15-0-1 [0.969], Elo diff: +596.5 (overestimate at 16 games), LOS: 100.0%.
+- Bumped version to 0.4.0-SNAPSHOT in all 5 pom.xml files.
+
+**Decisions Made:**
+- Fixing material at PeSTO defaults (PARAM_MIN==PARAM_MAX for indices 0..11) was the
+  key change that broke the H0 streak. Runs 1-3 all allowed material to drift, causing
+  incorrect pawn sacrifice behaviour at 5+0.05 TC. Run 4 with frozen material produces
+  clean PST/mobility/structure improvements the SPRT can detect immediately.
+- 5.22% MSE reduction with fixed material achieves better generalization than 5.46%
+  with drifted material (run 3), because the optimizer doesn't waste capacity on
+  fitting material ratios that hurt game performance.
+- The +596 Elo SPRT estimate is noisy (16 games, near-perfect score, ±large CI).
+  The actual improvement is unlikely to be >200 Elo; H1 acceptance is valid
+  statistically (LLR threshold crossed), but the Elo magnitude is unreliable.
+- 9 regression baselines updated: all new bestmoves are validated as equivalent or
+  better via position analysis (symmetric opposition moves, textbook KR vs K, etc.).
+  Per-baseline comments explain each change. No silent updates.
+
+**Broke / Fixed:**
+- Runs 1-3 SPRT failures were caused by unconstrained material optimization.
+  Run 4 resolution: freeze material at PeSTO defaults (PARAM_MIN==PARAM_MAX).
+- EG_PAWN rank-7 row reduced substantially (e.g., d7: 134→62 in EG). This caused
+  the engine to prefer d1d2 over d7d8q in P7 (endgame horizon effect). The new
+  baseline reflects this (both moves win — promotion occurs within search horizon).
+- All eval changes are committed on phase/8-texel-tuning; SearchRegressionTest 31/31.
+
+**Measurements:**
+- Tuner (run 4, 100k positions, material fixed): K=1.507223, startMSE=0.06245061,
+  finalMSE=0.05919047 (5.22% reduction, 94 iterations).
+- SPRT H1 accepted: LLR=3.11 at game 16; score 15W-0L-1D [0.969] vs baseline-0.3.x.jar.
+- Elo diff: +596.5 (noisy, small sample). LOS: 100.0%. DrawRatio: 6.3%.
+- SearchRegressionTest: 31/31 pass at depth 8 (9 baselines updated with comments).
+- Perft depth 5 (startpos): not measured this cycle (eval change only, no move-gen change).
+- Nodes/sec: not measured this cycle (eval constant change only).
+
+**Next:**
+- Merge phase/8-texel-tuning into develop once exit criteria confirmed.
+- Consider running a longer SPRT (500+ games) to get a tighter Elo estimate.
+- Phase 9: Self-generated opening book exploration, or additional tuning runs with
+  more positions (500k+) to improve eval precision.
