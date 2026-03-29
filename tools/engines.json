@@ -10,7 +10,7 @@
     {
       "name": "Vex-old",
       "command": "java",
-      "arguments": ["-jar", "path/to/old/engine.jar"],
+      "arguments": ["-jar", "engine-uci/target/engine-uci-0.0.1-SNAPSHOT.jar"],
       "protocol": "uci",
       "workingDirectory": "."
     }
