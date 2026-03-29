@@ -2709,3 +2709,79 @@ Per `alphaBeta` node: `new MovesGenerator(board)` internally allocated one `Arra
 - Re-tune with the larger dataset; validate that all EG mobility values remain
   positive (negative mobility is always a sign of overfitting on endgame-poor data).
 - Re-run SPRT after applying new constants. Only bump to 0.4.0 after H1 is accepted.
+
+---
+
+### [2026-03-29] Phase 8 — Texel Tuning: Second Tuning Run on 100k Positions — SPRT H0 Accepted (#90)
+
+**Built:**
+- Re-ran full Texel tuning pipeline on `tools/quiet-labeled.epd` (first 100 000 positions
+  out of 725k from the KierenP/ChessTrainingSets quiet-labeled corpus).
+  K calibration: K = 1.507223. Starting MSE: 0.06245061. Final MSE: 0.05904127
+  after 83 iterations. MSE reduction: **5.46%** (meets the ≥5% exit criterion).
+- `tuned_params.txt` updated with the 100k-run constants (812 parameters).
+- Applied all 812 constants to 4 engine-core eval files: `PieceSquareTables.java`,
+  `Evaluator.java`, `PawnStructure.java`, `KingSafety.java`.
+- Updated `EvalParams.java` in engine-tuner to match the applied constants (keeps
+  tuner in sync for future runs starting from the same base).
+- Cross-checked 8 changed `SearchRegressionTest` baselines against Stockfish 17 at
+  depth 22. Updated all 8 with explanatory comments (6 of 8 old baselines were also
+  wrong vs SF; E6 b4b5 matched SF exactly).
+- Built engine-uci shaded JAR; ran SPRT: TC=5+0.05, elo0=0, elo1=50, α=β=0.05,
+  concurrency=2, up to 20 000 games. **SPRT terminated at game ~70: LLR = -2.97,
+  H0 accepted.** Score: 14-22-15 at ~51 games, then continued trending negative.
+- Reverted all 6 modified files (4 eval files + EvalParams.java + SearchRegressionTest)
+  to HEAD (baseline `10a2f83`). SearchRegressionTest 31/31 confirmed after revert.
+
+**Decisions Made:**
+- Fixed the root cause of the first failure (negative EG mobility on small dataset)
+  by training on 100k real positions. EG mobility values were all non-negative in this
+  run (EG_QUEEN_MOBILITY=8, EG_ROOK_MOBILITY=4, EG_BISHOP_MOBILITY=3, EG_KNIGHT_MOBILITY=0).
+  Despite the fix, the SPRT still rejected the tuned eval.
+- Did NOT bump version to 0.4.0 — SPRT H0 acceptance blocks the minor version bump.
+  Version remains 0.2.0-SNAPSHOT.
+- Committed all tuner artifacts (logs, tuned_params.txt, SPRT PGN) for record but
+  kept engine-core eval and SearchRegressionTest at baseline.
+- Used Stockfish 17 (depth 22) to cross-check regression baselines rather than
+  assuming the new engine's moves were wrong — this methodology surfaces genuine engine
+  improvements (E6: b4b5 matches SF d22) vs tuning artifacts (P7: horizon effect on d1/d2).
+
+**Broke / Fixed:**
+- **Root cause of second SPRT failure — likely combination of factors:**
+  1. **Reduced pawn MG value (100 → 74):** Tuner reduced pawn value 26% below the
+     standard 100cp anchor. Engine may willingly sacrifice pawns for positional
+     compensation it overvalues via PST bonuses. At 5+0.05 TC the engine doesn't
+     have enough depth to recover from pawn-minus endings.
+  2. **King EG PST: d1/d2 heavily over-weighted (+29 on d2):** P7 horizon effect
+     (king preferring d2 over immediate d7d8q promotion) is a symptom of a broader
+     systematic bias — king wants to be on d1/d2 in all endgames. In middlegames this
+     could cause king walks at inappropriate moments.
+  3. **Bishop/Rook MG material reduction (B: 350→378, R: 500→491):** The engine now
+     prefers rooks over bishops by a smaller margin; combined with PST changes this
+     may mishandle piece exchanges in middle-game positions.
+  4. **No parameter bounds/regularization in TunerEvaluator:** L2 regularization
+     (λ‖params‖²) would penalize extreme deviations from standard material values.
+     Without it, the optimizer finds local minima that fit the training MSE but
+     overfit positional features that don't generalize.
+- All 4 eval files reverted to baseline. SearchRegressionTest reverted to original
+  baselines. `tuned_params.txt` preserved as a diagnostic artifact.
+
+**Measurements:**
+- Tuner (100k positions): K = 1.507223, startMSE = 0.06245061, finalMSE = 0.05904127
+  (5.46% reduction, 83 iterations to convergence).
+- SPRT H0 accepted: LLR = -2.97 at ~70 games; score at 51 games = 14W-22L-15D [0.422].
+- SearchRegressionTest: 31/31 pass after revert.
+- Perft depth 5 (startpos): not measured this cycle (eval revert, no move-gen change).
+- Nodes/sec: not measured this cycle.
+- Elo vs. baseline: SPRT H0 accepted (tuned eval is weaker, ~-50 elo estimated from 0.422 score).
+
+**Next:**
+- Add L2 regularization (λ=0.001) to `TunerEvaluator.java`'s coordinate descent so
+  the optimizer penalizes extreme parameter deviations. Start with λ=0.001 and sweep
+  to find a good value via a mini-SPRT grid search.
+- Clamp material values to ±20% of standard values during parameter updates, so the
+  optimizer cannot reduce pawn below 80cp or rook below 400cp. Implement via
+  `TunerEvaluator.clampParams()` called after each coordinate descent step.
+- After regularization + clamping, re-run tuner on 100k positions and validate:
+  all EG mobility ≥ 0, pawn MG 80–120, material deltas ≤ 20% from prior values.
+- Re-run SPRT after validating constants. Target H1 acceptance for 0.4.0 bump.

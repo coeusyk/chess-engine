@@ -1,0 +1,94 @@
+[TunerMain] Dataset:       C:\Users\yashk\WorkDir\Projects\ChessEngine\chess-engine\tools\quiet-labeled.epd
+[TunerMain] Max positions: 100000
+[TunerMain] Max iters:     300
+[TunerMain] Loaded 100,000 positions
+[TunerMain] Finding optimal K...
+[KFinder] K = 1.507223  (MSE = 0.06245061)
+[TunerMain] Running coordinate descent (K=1.507223, maxIters=300)...
+[Tuner] start  MSE=0.06245061  params=812  positions=100000
+[Tuner] iter   1  MSE=0.06179652  improved=true  time=4915ms
+[Tuner] iter   2  MSE=0.06131556  improved=true  time=4941ms
+[Tuner] iter   3  MSE=0.06097480  improved=true  time=4765ms
+[Tuner] iter   4  MSE=0.06071175  improved=true  time=5124ms
+[Tuner] iter   5  MSE=0.06049967  improved=true  time=5213ms
+[Tuner] iter   6  MSE=0.06031711  improved=true  time=5427ms
+[Tuner] iter   7  MSE=0.06017328  improved=true  time=5727ms
+[Tuner] iter   8  MSE=0.06004566  improved=true  time=8012ms
+[Tuner] iter   9  MSE=0.05993778  improved=true  time=6019ms
+[Tuner] iter  10  MSE=0.05984355  improved=true  time=5786ms
+[Tuner] iter  11  MSE=0.05976120  improved=true  time=5131ms
+[Tuner] iter  12  MSE=0.05968504  improved=true  time=5403ms
+[Tuner] iter  13  MSE=0.05963813  improved=true  time=6001ms
+[Tuner] iter  14  MSE=0.05958450  improved=true  time=5899ms
+[Tuner] iter  15  MSE=0.05954603  improved=true  time=5845ms
+[Tuner] iter  16  MSE=0.05950696  improved=true  time=5529ms
+[Tuner] iter  17  MSE=0.05947301  improved=true  time=5392ms
+[Tuner] iter  18  MSE=0.05943865  improved=true  time=5801ms
+[Tuner] iter  19  MSE=0.05941023  improved=true  time=6000ms
+[Tuner] iter  20  MSE=0.05938438  improved=true  time=5813ms
+[Tuner] iter  21  MSE=0.05935850  improved=true  time=5741ms
+[Tuner] iter  22  MSE=0.05933692  improved=true  time=5847ms
+[Tuner] iter  23  MSE=0.05931760  improved=true  time=5672ms
+[Tuner] iter  24  MSE=0.05930087  improved=true  time=5733ms
+[Tuner] iter  25  MSE=0.05928150  improved=true  time=6029ms
+[Tuner] iter  26  MSE=0.05926376  improved=true  time=5831ms
+[Tuner] iter  27  MSE=0.05924796  improved=true  time=5733ms
+[Tuner] iter  28  MSE=0.05923245  improved=true  time=5838ms
+[Tuner] iter  29  MSE=0.05921801  improved=true  time=5752ms
+[Tuner] iter  30  MSE=0.05920436  improved=true  time=5971ms
+[Tuner] iter  31  MSE=0.05919160  improved=true  time=5655ms
+[Tuner] iter  32  MSE=0.05917890  improved=true  time=5865ms
+[Tuner] iter  33  MSE=0.05916676  improved=true  time=5891ms
+[Tuner] iter  34  MSE=0.05915507  improved=true  time=7040ms
+[Tuner] iter  35  MSE=0.05914501  improved=true  time=6280ms
+[Tuner] iter  36  MSE=0.05913591  improved=true  time=6067ms
+[Tuner] iter  37  MSE=0.05912715  improved=true  time=5969ms
+[Tuner] iter  38  MSE=0.05911940  improved=true  time=6290ms
+[Tuner] iter  39  MSE=0.05911191  improved=true  time=9226ms
+[Tuner] iter  40  MSE=0.05910436  improved=true  time=8216ms
+[Tuner] iter  41  MSE=0.05909684  improved=true  time=6462ms
+[Tuner] iter  42  MSE=0.05909092  improved=true  time=6464ms
+[Tuner] iter  43  MSE=0.05908496  improved=true  time=6309ms
+[Tuner] iter  44  MSE=0.05907986  improved=true  time=6929ms
+[Tuner] iter  45  MSE=0.05907452  improved=true  time=6078ms
+[Tuner] iter  46  MSE=0.05907129  improved=true  time=5993ms
+[Tuner] iter  47  MSE=0.05906558  improved=true  time=6130ms
+[Tuner] iter  48  MSE=0.05906319  improved=true  time=5961ms
+[Tuner] iter  49  MSE=0.05906096  improved=true  time=5874ms
+[Tuner] iter  50  MSE=0.05905708  improved=true  time=5602ms
+[Tuner] iter  51  MSE=0.05905510  improved=true  time=5612ms
+[Tuner] iter  52  MSE=0.05905380  improved=true  time=5762ms
+[Tuner] iter  53  MSE=0.05905236  improved=true  time=5814ms
+[Tuner] iter  54  MSE=0.05905033  improved=true  time=5747ms
+[Tuner] iter  55  MSE=0.05904978  improved=true  time=5697ms
+[Tuner] iter  56  MSE=0.05904858  improved=true  time=5846ms
+[Tuner] iter  57  MSE=0.05904751  improved=true  time=5816ms
+[Tuner] iter  58  MSE=0.05904710  improved=true  time=6138ms
+[Tuner] iter  59  MSE=0.05904665  improved=true  time=5872ms
+[Tuner] iter  60  MSE=0.05904580  improved=true  time=5803ms
+[Tuner] iter  61  MSE=0.05904515  improved=true  time=6096ms
+[Tuner] iter  62  MSE=0.05904484  improved=true  time=7050ms
+[Tuner] iter  63  MSE=0.05904429  improved=true  time=6045ms
+[Tuner] iter  64  MSE=0.05904384  improved=true  time=7065ms
+[Tuner] iter  65  MSE=0.05904354  improved=true  time=9658ms
+[Tuner] iter  66  MSE=0.05904317  improved=true  time=6851ms
+[Tuner] iter  67  MSE=0.05904280  improved=true  time=6050ms
+[Tuner] iter  68  MSE=0.05904269  improved=true  time=9706ms
+[Tuner] iter  69  MSE=0.05904266  improved=true  time=7374ms
+[Tuner] iter  70  MSE=0.05904263  improved=true  time=6713ms
+[Tuner] iter  71  MSE=0.05904259  improved=true  time=6190ms
+[Tuner] iter  72  MSE=0.05904257  improved=true  time=5906ms
+[Tuner] iter  73  MSE=0.05904242  improved=true  time=5754ms
+[Tuner] iter  74  MSE=0.05904220  improved=true  time=5850ms
+[Tuner] iter  75  MSE=0.05904218  improved=true  time=6170ms
+[Tuner] iter  76  MSE=0.05904181  improved=true  time=5689ms
+[Tuner] iter  77  MSE=0.05904164  improved=true  time=5900ms
+[Tuner] iter  78  MSE=0.05904136  improved=true  time=7604ms
+[Tuner] iter  79  MSE=0.05904130  improved=true  time=7182ms
+[Tuner] iter  80  MSE=0.05904129  improved=true  time=6928ms
+[Tuner] iter  81  MSE=0.05904129  improved=true  time=7353ms
+[Tuner] iter  82  MSE=0.05904127  improved=true  time=7219ms
+[Tuner] iter  83  MSE=0.05904127  improved=false  time=6612ms
+[Tuner] converged after 83 iterations
+[TunerMain] Tuned parameters written to: C:\Users\yashk\WorkDir\Projects\ChessEngine\chess-engine\tuned_params.txt
+[TunerMain] Copy values manually from tuned_params.txt into engine-core source files.
