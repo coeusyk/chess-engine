@@ -84,6 +84,21 @@ public class Searcher {
     private TranspositionTable transpositionTable = new TranspositionTable();
     private final int[][] lmrReductions = precomputeLmrReductions();
 
+    // Per-thread pre-allocated move lists — one slot per ply level (MAX_PLY) plus
+    // headroom for Q-search plies (MAX_Q_DEPTH) and a safety margin.
+    // The DFS property guarantees at most one live frame per ply, so slots are never
+    // aliased. Each helper-thread Searcher has its own pool (never shared).
+    private static final int MOVE_LIST_POOL_SIZE = MAX_PLY + MAX_Q_DEPTH + 14; // 148
+
+    private final ArrayList<Move>[] moveListPool = initMoveListPool();
+
+    @SuppressWarnings("unchecked")
+    private static ArrayList<Move>[] initMoveListPool() {
+        ArrayList<Move>[] pool = new ArrayList[MOVE_LIST_POOL_SIZE];
+        for (int i = 0; i < MOVE_LIST_POOL_SIZE; i++) pool[i] = new ArrayList<>(64);
+        return pool;
+    }
+
     private Move rootTtMoveHint;
 
     private int multiPV = 1;
@@ -470,8 +485,8 @@ public class Searcher {
             int maxCheckExtensions,
             List<Move> excludedRootMoves
     ) {
-        MovesGenerator generator = new MovesGenerator(board);
-        List<Move> moves = new ArrayList<>(generator.getActiveMoves(board.getActiveColor()));
+        ArrayList<Move> moves = moveListPool[0];
+        new MovesGenerator(board, moves);
         TranspositionTable.Entry rootEntry = transpositionTable.probe(board.getZobristHash());
 
         if (!searchMoves.isEmpty()) {
@@ -509,7 +524,7 @@ public class Searcher {
             Move ttMove = (rootTtMoveHint != null)
                     ? rootTtMoveHint
                     : (rootEntry != null ? rootEntry.bestMove() : preferredMove);
-            moves = moveOrderer.orderMoves(board, moves, 0, ttMove, killerMoves, historyHeuristic);
+            moveOrderer.orderMoves(board, moves, 0, ttMove, killerMoves, historyHeuristic);
         }
 
         Move bestMove = null;
@@ -670,12 +685,12 @@ public class Searcher {
 
         nodesVisited++;
 
-        MovesGenerator generator = new MovesGenerator(board);
-        List<Move> moves = generator.getActiveMoves(board.getActiveColor());
+        ArrayList<Move> moves = moveListPool[Math.min(ply, MOVE_LIST_POOL_SIZE - 1)];
+        new MovesGenerator(board, moves);
         Move ttMove = ttEntry != null ? ttEntry.bestMove() : null;
         if (moveOrderingEnabled) {
             int orderPly = Math.min(ply, MAX_PLY - 1);
-            moves = moveOrderer.orderMoves(board, moves, orderPly, ttMove, killerMoves, historyHeuristic);
+            moveOrderer.orderMoves(board, moves, orderPly, ttMove, killerMoves, historyHeuristic);
         }
 
         int staticEval = (effectiveDepth <= 2) ? evaluate(board) : 0;
@@ -956,18 +971,11 @@ public class Searcher {
     }
 
     private boolean hasNonPawnMaterial(Board board, int color) {
-        int[] grid = board.getGrid();
-        for (int piece : grid) {
-            if (piece == Piece.None || !Piece.isColor(piece, color)) {
-                continue;
-            }
-
-            int pieceType = Piece.type(piece);
-            if (pieceType != Piece.Pawn && pieceType != Piece.King) {
-                return true;
-            }
+        if (Piece.isWhite(color)) {
+            return (board.getWhiteRooks() | board.getWhiteKnights() | board.getWhiteBishops() | board.getWhiteQueens()) != 0L;
+        } else {
+            return (board.getBlackRooks() | board.getBlackKnights() | board.getBlackBishops() | board.getBlackQueens()) != 0L;
         }
-        return false;
     }
 
     private boolean canApplyLmr(
@@ -1214,8 +1222,8 @@ public class Searcher {
 
         if (inCheck) {
             // Must search all legal evasions; no stand-pat (king in check = must evade or be mated)
-            MovesGenerator generator = new MovesGenerator(board);
-            List<Move> legalMoves = generator.getActiveMoves(board.getActiveColor());
+            ArrayList<Move> legalMoves = moveListPool[Math.min(ply, MOVE_LIST_POOL_SIZE - 1)];
+            new MovesGenerator(board, legalMoves);
             if (legalMoves.isEmpty()) {
                 leafNodes++;
                 return evaluateTerminal(board, ply); // checkmate
@@ -1269,9 +1277,9 @@ public class Searcher {
             }
         }
 
-        MovesGenerator generator = new MovesGenerator(board);
-        List<Move> legalMoves = generator.getActiveMoves(board.getActiveColor());
-        List<Move> qMoves = extractQuiescenceMoves(board, legalMoves);
+        ArrayList<Move> qMoves = moveListPool[Math.min(ply, MOVE_LIST_POOL_SIZE - 1)];
+        new MovesGenerator(board, qMoves);
+        qMoves.removeIf(move -> !shouldIncludeInQuiescence(board, move));
         if (qMoves.isEmpty()) {
             leafNodes++;
             return standPat;

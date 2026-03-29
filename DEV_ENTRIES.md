@@ -2462,3 +2462,45 @@ emaining / 4 to prevent time scrambles on low clock; the old softLimit * 2 was u
 **Next:**
 - Update DEV_ENTRIES.md with Phase 6 UI work (analysis panel, move list) done on chess-engine-ui.
 - Commit backend SAN changes and push.
+
+---
+
+### [2026-03-29] Phase 7 — #77 Zero-Allocation Move Lists + In-Place Move Ordering
+
+**Issues:** #77 (depth-7 < 200ms, depth-10 < 5s targets)
+
+**Root Cause Identified:**
+Per `alphaBeta` node: `new MovesGenerator(board)` internally allocated one `ArrayList`; `makeMovesLegal()` produced 2 more intermediate ArrayList copies (clear+addAll inside the loop at N×N cost); `getActiveMoves()` returned yet another copy; `orderMoves()` created 2 more ArrayLists plus N `ScoredMove` record objects. Total: ~7 ArrayLists + ~30 objects per node. At ~22,000 nodes per startpos d7, this generated ~150,000 ArrayList + ~660,000 ScoredMove allocations per search, causing GC pauses to dominate runtime.
+
+**Built:**
+- **`MovesGenerator` pool constructor** `MovesGenerator(Board board, ArrayList<Move> dest)`: clears caller-owned pre-allocated list, generates moves, runs legality filtering — no internal ArrayList allocation.
+- **`generateMoves()` active-color-only guard**: Added `if (piece == None || !isColor(piece, activeColor)) continue` — skips all 32 inactive-side squares, halving loop body work.
+- **`isKingInCheck()` bitboard**: Replaced 15-line `getActiveMoves(inactiveColor)` + filter loop with single `board.isSquareAttackedBy(kingSquare, inactiveColor)` O(1) magic-bitboard call. Returns `{inCheck, false}` — double-check flag removed; all callers used `[0]` alone or `[0] || [1]`.
+- **`makeMovesLegal()` in-place via `Iterator.remove()`**: Replaced `getAllMoves()` copy + `getActiveMoves()` copy + `clear() + addAll()` with `Iterator<Move>.remove()` directly on `possibleMoves`. Eliminates 3 ArrayList operations per node.
+- **`MoveOrderer.scoringBuffer`**: Added `private final int[] scoringBuffer = new int[256]` per-instance field. `orderMoves()` fills scores into the buffer and runs an insertion sort in-place on the original `moves` list, returning the same reference. Eliminated: `new ArrayList<>(n)` for scored moves, `new ScoredMove(m, s)` × N, second `new ArrayList<>(n)`, and `List.sort()`. Removed dead `ScoredMove` record.
+- **`Searcher.moveListPool`**: Pre-allocated `ArrayList<Move>[148]` (MAX_PLY=128 + MAX_Q_DEPTH=6 + 14 safety buffer), each slot at capacity 64. `searchRoot` uses slot 0; `alphaBeta` at ply P uses slot P; `quiescence` at ply Q uses slot Q. DFS guarantees at most one live call frame per ply, so no aliasing occurs.
+- **All 4 hot-path generator call sites updated**: `searchRoot`, `alphaBeta`, `quiescence` in-check, and `quiescence` not-in-check all use `new MovesGenerator(board, pool[ply])`. `orderMoves` call no longer needs assignment (sorts in-place). `extractQuiescenceMoves` replaced with `qMoves.removeIf(m -> !shouldIncludeInQuiescence(board, m))`.
+- **`hasNonPawnMaterial()` bitboard**: Replaced O(64) `grid[]` scan with single bitboard OR: `(getWhiteRooks() | getWhiteKnights() | getWhiteBishops() | getWhiteQueens()) != 0L`.
+
+**Decisions Made:**
+- Pool indexed by ply (not a stack): DFS property ensures non-aliasing. `runSingularitySearch` iterates pool[P] (reads only) and recurses with ply+1 → uses pool[P+1]. Null-move pruning similarly recurses with ply+1. All call sites verified.
+- Insertion sort chosen over `List.sort()`: typical move count is 20–40; insertion sort outperforms TimSort for N < ~50 and requires no comparator allocation.
+- `scoringBuffer` per-instance (not static): each Searcher (main thread + each Lazy SMP helper) owns its own MoveOrderer; no cross-thread sharing needed.
+- `isKingInCheck` double-check `[1]` always returns `false`: all callers used `[0]` alone or `[0] || [1]`. Losing the exact attacker count is acceptable — king evasion logic uses `board.isColorKingInCheck()` which is the O(1) bitboard path.
+
+**Broke / Fixed:**
+- During Searcher edits, a `replace_string_in_file` accidentally deleted the `TranspositionTable.Entry rootEntry` line and broke the `if (moveOrderingEnabled)` block structure in `searchRoot`. Detected by reading the resulting file state; restored with a precise targeted replacement.
+- Nothing else broken. 139/139 engine-core tests pass (0 failures, 1 skipped). All Perft counts intact.
+
+**Measurements:**
+- Perft depth 5 (startpos): 4,865,609 ✅ (unchanged)
+- startpos d7 **cold** JVM: 421ms (was 1,183ms; 2.8× cold speedup)
+- startpos d7 **warm** JVM: **115ms at 45,035 NPS** ✅ (target < 200ms; **10.3× total speedup**)
+- startpos d10 **warm** JVM: **2,683ms at 32,000 NPS** ✅ (target < 5,000ms)
+- NPS improvement: ~3,592 NPS → ~45,000 NPS (~12.5× single-thread improvement)
+- All #77 exit criteria met.
+
+**Next:**
+- Commit and close #77 on GitHub.
+- Re-run SPRT for #73 (Lazy SMP Threads=2 vs. Threads=1) — higher NPS makes SMP gains more visible.
+- Implement Syzygy WDL probing for #67 (`SyzygyProber` interface exists; `NoOpSyzygyProber` is the placeholder).

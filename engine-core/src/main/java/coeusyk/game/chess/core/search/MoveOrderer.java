@@ -4,7 +4,6 @@ import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Move;
 import coeusyk.game.chess.core.models.Piece;
 
-import java.util.ArrayList;
 import java.util.List;
 
 public class MoveOrderer {
@@ -26,6 +25,10 @@ public class MoveOrderer {
 
     private final StaticExchangeEvaluator staticExchangeEvaluator = new StaticExchangeEvaluator();
 
+    // Per-instance scoring buffer avoids allocating ScoredMove objects per orderMoves call.
+    // Each Searcher owns exactly one MoveOrderer and never shares it across threads.
+    private final int[] scoringBuffer = new int[256];
+
     public List<Move> orderMoves(
             Board board,
             List<Move> moves,
@@ -34,19 +37,30 @@ public class MoveOrderer {
             Move[][] killerMoves,
             int[][] historyHeuristic
     ) {
-        List<ScoredMove> scoredMoves = new ArrayList<>(moves.size());
-        for (Move move : moves) {
-            int score = scoreMove(board, move, ply, ttMove, killerMoves, historyHeuristic);
-            scoredMoves.add(new ScoredMove(move, score));
+        int n = moves.size();
+        if (n <= 1) return moves;
+
+        // Score all moves into the pre-allocated buffer.
+        for (int i = 0; i < n; i++) {
+            scoringBuffer[i] = scoreMove(board, moves.get(i), ply, ttMove, killerMoves, historyHeuristic);
         }
 
-        scoredMoves.sort((a, b) -> Integer.compare(b.score(), a.score()));
-
-        List<Move> ordered = new ArrayList<>(moves.size());
-        for (ScoredMove scoredMove : scoredMoves) {
-            ordered.add(scoredMove.move());
+        // Insertion sort descending by score, applied in-place on the moves list.
+        // Insertion sort outperforms Arrays.sort for the typical N<40 move counts.
+        for (int i = 1; i < n; i++) {
+            int score = scoringBuffer[i];
+            Move move  = moves.get(i);
+            int j = i - 1;
+            while (j >= 0 && scoringBuffer[j] < score) {
+                scoringBuffer[j + 1] = scoringBuffer[j];
+                moves.set(j + 1, moves.get(j));
+                j--;
+            }
+            scoringBuffer[j + 1] = score;
+            moves.set(j + 1, move);
         }
-        return ordered;
+
+        return moves; // same reference, now sorted descending
     }
 
     int scoreMove(
@@ -115,8 +129,5 @@ public class MoveOrderer {
         }
 
         return a.reaction.equals(b.reaction);
-    }
-
-    private record ScoredMove(Move move, int score) {
     }
 }

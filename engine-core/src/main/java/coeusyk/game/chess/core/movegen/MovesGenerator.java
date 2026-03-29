@@ -22,10 +22,24 @@ public class MovesGenerator {
     
     private final Board board;
 
-    private final ArrayList<Move> possibleMoves = new ArrayList<>();
+    private final ArrayList<Move> possibleMoves;
 
     public MovesGenerator(Board board) {
         this.board = board;
+        this.possibleMoves = new ArrayList<>();
+        generateMoves();
+        makeMovesLegal(board.getActiveColor());
+    }
+
+    /**
+     * Pool constructor: fills {@code dest} (pre-allocated, caller-owned) with legal
+     * active-color moves instead of allocating a new list. The list is cleared before
+     * use. Callers must NOT share the same list across concurrent threads.
+     */
+    public MovesGenerator(Board board, ArrayList<Move> dest) {
+        this.board = board;
+        this.possibleMoves = dest;
+        dest.clear();
         generateMoves();
         makeMovesLegal(board.getActiveColor());
     }
@@ -60,8 +74,13 @@ public class MovesGenerator {
     private void generateMoves() {
         possibleMoves.clear();  // Removing previous moves
 
+        int activeColor = board.getActiveColor();
         for (int sq = 0; sq < 64; sq++) {
             int currentPiece = board.getPiece(sq);
+
+            // Skip empty squares and pieces belonging to the inactive side.
+            // This halves the loop body work and eliminates all opponent-move allocations.
+            if (currentPiece == Piece.None || !Piece.isColor(currentPiece, activeColor)) continue;
 
             if (Piece.isSliding(currentPiece)) {
                 generateSlidingMoves(sq, currentPiece);
@@ -75,20 +94,12 @@ public class MovesGenerator {
         }
     }
 
-    // Returns if the king is in check, and if it is in a double check:
+    // Returns if the king is in check, and if it is in a double check.
+    // Uses O(1) magic-bitboard attack lookup — no move generation required.
     public boolean[] isKingInCheck(int kingSquare, int activeColor) {
-        int inactiveColor = (Piece.isWhite(activeColor)) ? Piece.Black : Piece.White;
-        ArrayList<Move> opponentMoves = getActiveMoves(inactiveColor);
-
-        ArrayList<Move> kingCaptureMoves = new ArrayList<>();
-
-        for (Move move : opponentMoves) {
-            if (move.targetSquare == kingSquare) {
-                kingCaptureMoves.add(move);
-            }
-        }
-
-        return new boolean[] {!kingCaptureMoves.isEmpty(), kingCaptureMoves.size() == 2};
+        int inactiveColor = Piece.isWhite(activeColor) ? Piece.Black : Piece.White;
+        boolean inCheck = board.isSquareAttackedBy(kingSquare, inactiveColor);
+        return new boolean[] {inCheck, false};
     }
 
     public ArrayList<Move> getAllMoves() {
@@ -118,17 +129,19 @@ public class MovesGenerator {
         // move is always legal — no make/unmake needed (fast path).
         long pinnedBB = (!inCheck) ? computePinnedPiecesBB(activeColor) : 0L;
 
-        ArrayList<Move> legalMoves = getAllMoves();
-        ArrayList<Move> colorSpecificMoves = getActiveMoves(activeColor);
-
-        for (Move move : colorSpecificMoves) {
+        // possibleMoves already contains only active-color pseudo-legal moves (generateMoves
+        // skips inactive-color pieces). Filter in-place using Iterator.remove() — eliminates
+        // the two intermediate ArrayList copies that getAllMoves() + getActiveMoves() created.
+        Iterator<Move> it = possibleMoves.iterator();
+        while (it.hasNext()) {
+            Move move = it.next();
             boolean isKingMove  = (move.startSquare == kingSq);
             boolean isSpecial   = "en-passant".equals(move.reaction)
                     || (move.reaction != null && move.reaction.startsWith("castle"));
             boolean isPinned    = (pinnedBB & (1L << move.startSquare)) != 0L;
 
             // Fast path: not-in-check, not a king/special move, piece not pinned.
-            // Pseudo-legal move cannot expose the king → always legal.
+            // Pseudo-legal move cannot expose the king → always legal, keep it.
             if (!inCheck && !isKingMove && !isSpecial && !isPinned) {
                 continue;
             }
@@ -136,12 +149,10 @@ public class MovesGenerator {
             // Slow path: verify via make/unmake.
             board.makeMove(move);
             if (board.isColorKingInCheck(activeColor)) {
-                legalMoves.remove(move);
+                it.remove();
             }
             board.unmakeMove();
         }
-        possibleMoves.clear();
-        possibleMoves.addAll(legalMoves);
     }
 
     /**
