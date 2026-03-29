@@ -45,6 +45,10 @@ public final class CoordinateDescent {
                                 double k,
                                 int maxIters) {
         double[] params = initialParams.clone();
+        // Clamp initial params to legal bounds before the first MSE computation
+        for (int i = 0; i < params.length; i++) {
+            params[i] = EvalParams.clampOne(i, params[i]);
+        }
         double currentMse = TunerEvaluator.computeMse(positions, params, k);
 
         System.out.printf("[Tuner] start  MSE=%.8f  params=%d  positions=%d%n",
@@ -55,26 +59,32 @@ public final class CoordinateDescent {
             boolean improved = false;
 
             for (int i = 0; i < params.length; i++) {
-                // Try +1
-                params[i] += 1.0;
-                double msePlus = TunerEvaluator.computeMse(positions, params, k);
-                if (msePlus < currentMse) {
-                    currentMse = msePlus;
-                    improved = true;
-                    continue;
+                double lo = EvalParams.PARAM_MIN[i];
+                double hi = EvalParams.PARAM_MAX[i];
+
+                // Try +1 (only if within upper bound)
+                if (params[i] < hi) {
+                    params[i] += 1.0;
+                    double msePlus = TunerEvaluator.computeMse(positions, params, k);
+                    if (msePlus < currentMse) {
+                        currentMse = msePlus;
+                        improved = true;
+                        continue;
+                    }
+                    params[i] -= 1.0;
                 }
 
-                // Try -1 (reset first, then subtract)
-                params[i] -= 2.0;
-                double mseMinus = TunerEvaluator.computeMse(positions, params, k);
-                if (mseMinus < currentMse) {
-                    currentMse = mseMinus;
-                    improved = true;
-                    continue;
+                // Try -1 (only if within lower bound)
+                if (params[i] > lo) {
+                    params[i] -= 1.0;
+                    double mseMinus = TunerEvaluator.computeMse(positions, params, k);
+                    if (mseMinus < currentMse) {
+                        currentMse = mseMinus;
+                        improved = true;
+                        continue;
+                    }
+                    params[i] += 1.0;
                 }
-
-                // Neither improved — revert
-                params[i] += 1.0;
             }
 
             long ms = Duration.between(iterStart, Instant.now()).toMillis();

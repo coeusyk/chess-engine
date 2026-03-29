@@ -4,6 +4,7 @@ import java.io.BufferedWriter;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.Arrays;
 
 /**
  * Bridge between the tuner parameter array and the live evaluator constants.
@@ -75,6 +76,51 @@ public final class EvalParams {
     public static final int IDX_ATK_QUEEN       = 803;
     public static final int IDX_MOB_MG_START    = 804;
     public static final int IDX_MOB_EG_START    = 808;
+
+    /**
+     * Per-parameter lower bounds enforced during coordinate descent.
+     * Prevents the optimizer from drifting to pathological values (e.g., pawn < 65).
+     */
+    public static final double[] PARAM_MIN = buildMin();
+
+    /**
+     * Per-parameter upper bounds enforced during coordinate descent.
+     */
+    public static final double[] PARAM_MAX = buildMax();
+
+    private static double[] buildMin() {
+        double[] lo = new double[TOTAL_PARAMS];
+        // Material: ±20% of PeSTO defaults (pawn=82/94, knight=337/281, bishop=365/297,
+        //           rook=477/512, queen=1025/936, king=0/0)
+        double[] matLo = { 65, 75, 270, 225, 292, 238, 382, 410, 820, 749, -50, -50 };
+        System.arraycopy(matLo, 0, lo, 0, 12);
+        Arrays.fill(lo, IDX_PST_START, IDX_PASSED_MG_START, -200);  // PST: no extreme positional skew
+        Arrays.fill(lo, IDX_PASSED_MG_START, IDX_ISOLATED_MG,  0);  // Passed pawn bonuses >= 0
+        Arrays.fill(lo, IDX_ISOLATED_MG, IDX_SHIELD_RANK2,     0);  // Pawn penalties >= 0
+        Arrays.fill(lo, IDX_SHIELD_RANK2, IDX_MOB_MG_START,    0);  // King safety >= 0
+        Arrays.fill(lo, IDX_MOB_MG_START, IDX_MOB_EG_START,   -5);  // Mobility MG may be slightly negative
+        Arrays.fill(lo, IDX_MOB_EG_START, TOTAL_PARAMS,         0);  // Mobility EG must be >= 0
+        return lo;
+    }
+
+    private static double[] buildMax() {
+        double[] hi = new double[TOTAL_PARAMS];
+        double[] matHi = { 100, 115, 405, 337, 440, 357, 572, 615, 1230, 1123, 50, 50 };
+        System.arraycopy(matHi, 0, hi, 0, 12);
+        Arrays.fill(hi, IDX_PST_START, IDX_PASSED_MG_START, 200);   // PST
+        Arrays.fill(hi, IDX_PASSED_MG_START, IDX_PASSED_EG_START, 150); // Passed pawn MG
+        Arrays.fill(hi, IDX_PASSED_EG_START, IDX_ISOLATED_MG,  200);    // Passed pawn EG
+        Arrays.fill(hi, IDX_ISOLATED_MG, IDX_SHIELD_RANK2,      60);    // Pawn penalties
+        Arrays.fill(hi, IDX_SHIELD_RANK2, IDX_MOB_MG_START,     80);    // King safety
+        Arrays.fill(hi, IDX_MOB_MG_START, IDX_MOB_EG_START,     15);    // Mobility MG
+        Arrays.fill(hi, IDX_MOB_EG_START, TOTAL_PARAMS,          15);    // Mobility EG
+        return hi;
+    }
+
+    /** Clamps a single parameter value to its legal range. */
+    public static double clampOne(int i, double value) {
+        return Math.max(PARAM_MIN[i], Math.min(PARAM_MAX[i], value));
+    }
 
     private EvalParams() {}
 
