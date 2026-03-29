@@ -2608,3 +2608,43 @@ Per `alphaBeta` node: `new MovesGenerator(board)` internally allocated one `Arra
 **Next:**
 - Issue #89: acquire Zurichess quiet-labeled.epd, write a 1000-line sample to test/resources, add DatasetLoadingTest, write engine-tuner/README.md.
 - Issue #90: run full tuning pass, copy constants back, Perft verify, SPRT.
+
+### [2026-03-29] Phase 8 — Texel Tuning: EPD Dataset Infrastructure (#89)
+
+**Built:**
+- `engine-tuner/src/test/resources/quiet-labeled-sample.epd` — 1 020-line EPD sample file
+  (Format 1: `FEN [outcome]`). Zurichess original URL returned HTTP 404; sample generated
+  synthetically from 37 diverse seed positions (startpos, Kiwipete, CPW perft positions,
+  search regression FENs, endgame positions, common opening tabiya) with cycling outcomes
+  (1.0 / 0.5 / 0.0) and incrementing halfmove counters to create mild variation.
+- `engine-tuner/src/test/java/…/DatasetLoadingTest.java` — two tests:
+  1. `sampleFileLoadsWithNoErrors` (always-on): loads the bundled 1 020-line sample via
+     classpath resource, asserts ≥ 1 000 positions, 0 parse errors, all boards non-null,
+     all outcomes in {0.0, 0.5, 1.0}.
+  2. `fullDatasetLoadsAtLeast100kPositionsAndLogsMse` (gated on `TUNER_DATASET` env var):
+     loads the full dataset, asserts ≥ 100 000 positions, finds K on a 10 000-position
+     subset, and logs starting MSE — disabled in CI by default.
+- `engine-tuner/README.md` — full usage guide covering build, CLI invocation, dataset
+  format documentation, step-by-step param copy-back procedure, parameter index table.
+
+**Decisions Made:**
+- Synthetic sample chosen over fetching a live URL: the test exercises the loading
+  machinery, not data quality. A real EPD fetch would be fragile in CI and the dead
+  Zurichess URL confirms this risk.
+- Sample file has 1 020 lines (> 1 000 for margin) using Format 1 only; Format 2
+  integration is already covered by `PositionLoaderTest`.
+- Full-dataset test gated on `TUNER_DATASET` env var (JUnit 5 `@EnabledIfEnvironmentVariable`)
+  so normal CI stays fast.
+
+**Broke / Fixed:**
+- Nothing broke. 37 engine-tuner tests (0 failures, 1 skipped for env gate).
+
+**Measurements:**
+- Perft depth 5 (startpos): not measured this cycle
+- Nodes/sec: not measured this cycle
+- Elo vs. baseline: not measured this cycle
+
+**Next:**
+- Issue #90: build shaded JAR, run tuner on sample/full dataset, apply tuned constants
+  to PieceSquareTables.java / Evaluator.java / PawnStructure.java / KingSafety.java,
+  Perft depth 5 verification, SPRT H1 acceptance, version → 0.4.0.
