@@ -4,14 +4,14 @@ public final class PawnStructure {
 
     private PawnStructure() {}
 
-    private static final int[] PASSED_MG = {0, 5, 10, 20, 35, 60, 100, 0};
-    private static final int[] PASSED_EG = {0, 10, 20, 40, 65, 105, 165, 0};
+    private static final int[] PASSED_MG = {0, 0, 2, 6, 23, 43, 43, 0};
+    private static final int[] PASSED_EG = {0, 0, 6, 26, 53, 83, 108, 0};
 
-    private static final int ISOLATED_MG = 15;
-    private static final int ISOLATED_EG = 20;
+    private static final int ISOLATED_MG = 9;
+    private static final int ISOLATED_EG = 12;
 
-    private static final int DOUBLED_MG = 10;
-    private static final int DOUBLED_EG = 20;
+    private static final int DOUBLED_MG = 1;
+    private static final int DOUBLED_EG = 19;
 
     private static final long NOT_A_FILE = ~0x0101010101010101L;
     private static final long NOT_H_FILE = ~0x8080808080808080L;

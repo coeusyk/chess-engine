@@ -45,15 +45,15 @@ public class Evaluator {
         EG_MATERIAL[Piece.Queen]  = 936;
         EG_MATERIAL[Piece.King]   = 0;
 
-        MG_MOBILITY[Piece.Knight] = 4;
-        MG_MOBILITY[Piece.Bishop] = 3;
-        MG_MOBILITY[Piece.Rook]   = 2;
-        MG_MOBILITY[Piece.Queen]  = 1;
+        MG_MOBILITY[Piece.Knight] = 5;
+        MG_MOBILITY[Piece.Bishop] = 4;
+        MG_MOBILITY[Piece.Rook]   = 5;
+        MG_MOBILITY[Piece.Queen]  = 0;
 
-        EG_MOBILITY[Piece.Knight] = 4;
-        EG_MOBILITY[Piece.Bishop] = 3;
-        EG_MOBILITY[Piece.Rook]   = 1;
-        EG_MOBILITY[Piece.Queen]  = 2;
+        EG_MOBILITY[Piece.Knight] = 0;
+        EG_MOBILITY[Piece.Bishop] = 2;
+        EG_MOBILITY[Piece.Rook]   = 4;
+        EG_MOBILITY[Piece.Queen]  = 8;
 
         MOBILITY_BASELINE[Piece.Knight] = 4;
         MOBILITY_BASELINE[Piece.Bishop] = 7;

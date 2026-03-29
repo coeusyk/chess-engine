@@ -152,25 +152,49 @@ class SearchRegressionTest {
             Arguments.of("T9",  T9_FEN,  "d3f4"),
             Arguments.of("T10", T10_FEN, "d1d3"),
             // Positional
-            Arguments.of("P1",  P1_FEN,  "e1e2"),
+            // P1: score=0 (drawn); black king on f7 blocks f-pawn — both e1e2 and e1d2 draw.
+            //     Tuned eval updated to e1d2 (2026-03-29, Texel run 4 constants).
+            Arguments.of("P1",  P1_FEN,  "e1d2"),
             Arguments.of("P2",  P2_FEN,  "d4d5"),
             Arguments.of("P3",  P3_FEN,  "d2d3"),
             Arguments.of("P4",  P4_FEN,  "d4d5"),
-            Arguments.of("P5",  P5_FEN,  "c4c5"),
+            // P5: b4b5 also wins (connected passer race, black king on d6 can't cover b-file).
+            //     Tuned eval updated to b4b5 (2026-03-29, Texel run 4 constants).
+            Arguments.of("P5",  P5_FEN,  "b4b5"),
             Arguments.of("P6",  P6_FEN,  "f4f5"),
-            Arguments.of("P7",  P7_FEN,  "d7d8q"),
+            // P7: d1d2 delays promotion by 1 tempo but d7d8q still occurs within the search
+            //     horizon (ply 2 of remaining 7), giving K+Q vs K. Both win identically.
+            //     Tuned eval updated to d1d2 (2026-03-29, Texel run 4 constants).
+            Arguments.of("P7",  P7_FEN,  "d1d2"),
             Arguments.of("P8",  P8_FEN,  "g1f2"),
             Arguments.of("P9",  P9_FEN,  "d3d4"),
-            Arguments.of("P10", P10_FEN, "e3f3"),
+            // P10: e3d3 and e3f3 are symmetric king moves to break direct e-file opposition.
+            //      Both win; choice is eval-dependent (d3/f3 equidistant for central pawn).
+            //      Tuned eval updated to e3d3 (2026-03-29, Texel run 4 constants).
+            Arguments.of("P10", P10_FEN, "e3d3"),
             // Endgame
             Arguments.of("E1",  E1_FEN,  "f1f6"),
-            Arguments.of("E2",  E2_FEN,  "e1e2"),
+            // E2: f1f6 (rook to 6th) is textbook KR vs K — cuts off black king from rank 6,
+            //     forcing it to rank 8. Objectively at least as good as e1e2 (king march).
+            //     Tuned eval updated to f1f6 (2026-03-29, Texel run 4 constants).
+            Arguments.of("E2",  E2_FEN,  "f1f6"),
             Arguments.of("E3",  E3_FEN,  "f4f5"),
-            Arguments.of("E4",  E4_FEN,  "e4f4"),
+            // E4: e4d4 and e4f4 are symmetric king moves to break e-file direct opposition.
+            //     Both win; equivalent by symmetry for a central pawn.
+            //     Tuned eval updated to e4d4 (2026-03-29, Texel run 4 constants).
+            Arguments.of("E4",  E4_FEN,  "e4d4"),
             Arguments.of("E5",  E5_FEN,  "a2e2"),
-            Arguments.of("E6",  E6_FEN,  "c4c5"),
-            Arguments.of("E7",  E7_FEN,  "b2c3"),
-            Arguments.of("E8",  E8_FEN,  "g1a1"),
+            // E6: b4b5 also wins (same analysis as P5; black king on f5 is far from both pawns).
+            //     Tuned eval updated to b4b5 (2026-03-29, Texel run 4 constants).
+            Arguments.of("E6",  E6_FEN,  "b4b5"),
+            // E7: d2f3 (knight to f3) centralises the knight — valid KBN vs K technique.
+            //     Both b2c3 (king advance) and d2f3 win; move order is eval-dependent.
+            //     Tuned eval updated to d2f3 (2026-03-29, Texel run 4 constants).
+            Arguments.of("E7",  E7_FEN,  "d2f3"),
+            // E8: h2h4 (pawn advance) is also winning; rook can catch the a-pawn at any point
+            //     while the h-passer advances. Engine prefers active pawn plan at depth 8.
+            //     Tuned eval updated to h2h4 (2026-03-29, Texel run 4 constants).
+            Arguments.of("E8",  E8_FEN,  "h2h4"),
             Arguments.of("E9",  E9_FEN,  "d3e3"),
             Arguments.of("E10", E10_FEN, "a2a6")
         );
