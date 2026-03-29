@@ -2546,3 +2546,40 @@ Per `alphaBeta` node: `new MovesGenerator(board)` internally allocated one `Arra
 - Close #67 on GitHub (all exit criteria now met: NPS verified, Syzygy verified, regression suite passing, SPRT evidence on record).
 - Keep #73 open (stretch goal; SPRT H0 accepted twice; deeper investigation of time management needed for SMP to show Elo gain at fast TC).
 - Consider TC=10+0.1 re-SPRT for #73 at a later date once time management is improved.
+
+---
+
+### [2026-03-29] Phase 7 — engine-tuner: Texel Tuning Pipeline
+
+**Built:**
+- `engine-tuner` Maven module added to parent pom (4th module; zero Spring/network deps).
+- `LabelledPosition` record: `(Board board, double outcome)` — outcome 1.0/0.5/0.0 from White's perspective.
+- `PositionLoader`: loads EPD/annotated-FEN datasets in two formats — `FEN [result]` (bracketed float) and `FEN c9 "1-0";` (EPD semicolon). Handles 4-field EPD by appending `" 0 1"` for the Board constructor. Uses try-catch around `new Board(fen)` (Board has no `valid()` method).
+- `EvalParams`: 812 parameter flat array layout — material (12), PST (768), passed pawns (12), isolated/doubled (4), king safety (8), mobility (8). `extractFromCurrentEval()` initialises from hardcoded PeSTO defaults. `writeToFile()` outputs labeled human-readable file for manual copy-back to engine-core source.
+- `TunerEvaluator`: static evaluator mirroring `Evaluator.java` but reading from `double[] params` instead of static constants. Always returns score from White's perspective (never side-to-move). Precomputes `WHITE/BLACK_PASSED_MASKS` and `WHITE/BLACK_KING_ZONE` tables in a static initialiser (same logic as `PawnStructure` / `KingSafety`). Uses `Attacks.*` for attack generation. `computeMse()` runs via `parallelStream` for throughput. No MopUp (no tunable params there; mop-up positions are rare in standard datasets).
+- `KFinder`: ternary search over K ∈ [0.5, 3.0] (tolerance 1e-4, ~35 iterations) to find the sigmoid scaling constant that minimises MSE with fixed starting params.
+- `CoordinateDescent`: per-parameter +1/-1 integer coordinate descent. Full pass repeats until no improvement or iteration cap. Logs iteration, MSE, and wall-clock time per pass. Returns cloned tuned array without modifying input.
+- `TunerMain`: entry point — `java -jar engine-tuner.jar <dataset> [maxPositions] [maxIters]`. Sequence: load → KFinder → CoordinateDescent → `EvalParams.writeToFile()` → done.
+
+**Decisions Made:**
+- PST values hardcoded in `EvalParams.extractFromCurrentEval()` rather than reading via reflection or adding public accessors to `PieceSquareTables`. `PieceSquareTables` fields are package-private; adding public accessors would break the encapsulation of `engine-core.eval`. The tuner is deliberately self-contained per architecture rules — "no runtime injection."
+- Integer coordinate descent steps (not float): all eval constants are centipawn integers; tuned doubles must be cast back to int when copied to source anyway — fractional values carry zero signal.
+- MobUp excluded from `TunerEvaluator`: it has no tunable parameters and activates only in lopsided endgames rare in standard Lichess/Stockfish EPD datasets.
+- `MOBILITY_BASELINE` hardcoded in `TunerEvaluator` (not parameterised): it is a structural decision about what "safe mobility" means, not a scalar bonus. Tuning it would require a different parameterisation (per-piece quadratic term). Out of scope.
+
+**Broke / Fixed:**
+- Nothing broken in existing modules. engine-tuner added as a new independent module.
+- Build verification: `mvnw clean compile -pl engine-tuner --also-make` — no errors.
+- Full suite: 139 engine-core (1 skipped tactical), 13 engine-uci (7 skipped Syzygy), 27 chess-engine-api — all pass. BUILD SUCCESS.
+
+**Measurements:**
+- Perft depth 5 (startpos): not re-measured (no board logic changed)
+- Nodes/sec: not measured this cycle
+- Elo vs. baseline: not measured this cycle
+
+**Next:**
+- Obtain a Texel-format EPD dataset (e.g., Lichess quiet positions or Stockfish self-play EPD).
+- Run `java -jar engine-tuner.jar dataset.epd` and record starting MSE and final MSE.
+- Copy tuned values from `tuned_params.txt` back into `PieceSquareTables`, `Evaluator`, `PawnStructure`, and `KingSafety` source files.
+- Run SPRT to confirm Elo improvement from tuned constants.
+- Tag 0.4.0 upon SPRT-confirmed improvement from first tuned eval.
