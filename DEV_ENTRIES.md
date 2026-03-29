@@ -2648,3 +2648,64 @@ Per `alphaBeta` node: `new MovesGenerator(board)` internally allocated one `Arra
 - Issue #90: build shaded JAR, run tuner on sample/full dataset, apply tuned constants
   to PieceSquareTables.java / Evaluator.java / PawnStructure.java / KingSafety.java,
   Perft depth 5 verification, SPRT H1 acceptance, version → 0.4.0.
+
+---
+
+### [2026-03-29] Phase 8 — Texel Tuning: First Tuning Run & SPRT Attempt (#90)
+
+**Built:**
+- Ran full Texel tuning pipeline on `quiet-labeled-sample.epd` (1,020 positions).
+  K calibration: K = 0.500050. Starting MSE: 0.19615485. Final MSE: 0.17061538
+  after 99 iterations (converged early out of 500 max). MSE reduction: **13.02%**
+  (exceeds the ≥5% exit criterion).
+- `tuned_params.txt` — 812-parameter output file written to repo root. Contains all
+  tuned constants ordered by the parameter index defined in `TunerEvaluator.java`.
+- Applied all 812 tuned constants to 4 engine-core eval files:
+  `Evaluator.java` (material + mobility), `PieceSquareTables.java` (all 12 PSTs),
+  `PawnStructure.java` (passed pawn arrays, isolated/doubled penalties),
+  `KingSafety.java` (shield bonuses, open file penalties, attacker weights).
+- Ran Perft suite: all 5 reference positions passed (move generation unaffected).
+- Ran SPRT (elo0=0, elo1=50, alpha=0.05, beta=0.05, TC=5+0.05, 10 sample games):
+  new engine scored **0W-5L-4D** as white, clearly favouring the baseline.
+
+**Decisions Made:**
+- All 4 eval files were reverted to baseline (HEAD `1454fe5`) after SPRT failure
+  was confirmed. The tuned_params.txt is preserved as a historical record.
+- SearchRegressionTest was temporarily updated (8 bestmove changes with explanatory
+  comments) but reverted alongside the eval files since the eval was rolled back.
+- The SPRT was run with cutechess-cli 1.4.0 via wrapper bat files
+  (`tools/run-new.bat`, `tools/run-old.bat`) to handle JVM path spaces cleanly.
+
+**Broke / Fixed:**
+- **Root cause of SPRT failure — overfitting on 1,020-position synthetic dataset:**
+  The Least-Squares optimizer found a MSE minimum that is pathological in play:
+  - `EG_QUEEN_MOBILITY = -40` (was +2): Queens penalised 40 cp per legal move in
+    endgames — engine actively restricts its own queen. Catastrophic in practice.
+  - `EG_ROOK_MOBILITY = -44` (was +1): Same problem for rooks.
+  - `EG_BISHOP_MOBILITY = -15` (was +3): Same for bishops.
+  - `EG_KING` PST rank 1: g1 = +53, c1 = -115 (wildly asymmetric). King gravitates
+    to g1 corner in all endgames, breaking opposition and pawn escort technique.
+  - These values are numerically valid for the 1,020-position training set because
+    the synthetic sample is too small and not diverse enough in endgame positions.
+    The tuner exploits noise rather than learning true evaluation patterns.
+- Verified by examining preliminary SPRT games: new engine repeatedly mated as white,
+  consistent with queen avoidance / passive piece syndrome from negative EG mobility.
+
+**Measurements:**
+- Tuner: K = 0.500050, start MSE = 0.19615485, final MSE = 0.17061538
+  (13.02% reduction, 99 iterations to convergence).
+- Perft depth 5 (startpos): 4,865,609 (verified with tuned constants applied — no
+  move generation regression).
+- Nodes/sec: not measured this cycle.
+- Elo vs. baseline: SPRT H0 effectively accepted (0W-5L-4D in 10 sample games).
+  New engine is weaker than baseline. Eval reverted.
+
+**Next:**
+- Expand training dataset to ≥50,000 positions from real engine self-play or a
+  downloaded quiet-labeled corpus (Zurichess quiet-labeled.epd or Lichess eval db).
+- Use `selfplay-proper.pgn` (currently at 8 games from earlier cutechess runs) as a
+  starting point for self-play data generation. Target: 50k–100k diverse EPD lines
+  covering endgames, pawn structures, and piece activity across all game phases.
+- Re-tune with the larger dataset; validate that all EG mobility values remain
+  positive (negative mobility is always a sign of overfitting on endgame-poor data).
+- Re-run SPRT after applying new constants. Only bump to 0.4.0 after H1 is accepted.
