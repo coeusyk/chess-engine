@@ -526,7 +526,9 @@ public class Searcher {
         if (moveOrderingEnabled) {
             Move ttMove = (rootTtMoveHint != null)
                     ? rootTtMoveHint
-                    : (rootEntry != null ? rootEntry.bestMove() : preferredMove);
+                    : (rootEntry != null && rootEntry.bestMove() != Move.NONE
+                        ? new Move(Move.from(rootEntry.bestMove()), Move.to(rootEntry.bestMove()), Move.reactionOf(rootEntry.bestMove()))
+                        : preferredMove);
             moveOrderer.orderMoves(board, moves, 0, ttMove, killerMoves, historyHeuristic);
         }
 
@@ -691,7 +693,7 @@ public class Searcher {
         int poolIdx = Math.min(ply, MOVE_LIST_POOL_SIZE - 1);
         int[] moves = moveListPool[poolIdx];
         int moveCount = MovesGenerator.generate(board, moves);
-        int ttMoveInt = (ttEntry != null && ttEntry.bestMove() != null) ? ttEntry.bestMove().pack() : Move.NONE;
+        int ttMoveInt = ttEntry != null ? ttEntry.bestMove() : Move.NONE;
         if (moveOrderingEnabled) {
             int orderPly = Math.min(ply, MAX_PLY - 1);
             moveOrderer.orderMoves(board, moves, moveCount, orderPly, ttMoveInt, killerMoves, historyHeuristic);
@@ -728,7 +730,7 @@ public class Searcher {
             }
 
             if (singularity.failLow()) {
-                singularMoveToExtend = ttEntry.bestMove().pack();
+                singularMoveToExtend = ttEntry.bestMove();
             }
         }
 
@@ -885,10 +887,7 @@ public class Searcher {
 
         if (!aborted && bestScore != -INF) {
             TTBound bound = resolveBound(bestScore, alphaOrig, beta);
-            Move bestMoveForTT = (bestMove != Move.NONE)
-                    ? new Move(Move.from(bestMove), Move.to(bestMove), Move.reactionOf(bestMove))
-                    : null;
-            transpositionTable.store(zobrist, bestMoveForTT, effectiveDepth, scoreToTT(bestScore, ply), bound);
+            transpositionTable.store(zobrist, bestMove, effectiveDepth, scoreToTT(bestScore, ply), bound);
         }
 
         return bestScore;
@@ -1018,7 +1017,7 @@ public class Searcher {
             return false;
         }
 
-        if (depth < SINGULAR_DEPTH_THRESHOLD || ttEntry == null || ttEntry.bestMove() == null) {
+        if (depth < SINGULAR_DEPTH_THRESHOLD || ttEntry == null || ttEntry.bestMove() == Move.NONE) {
             return false;
         }
 
@@ -1033,7 +1032,7 @@ public class Searcher {
             Board board,
             int[] moves,
             int moveCount,
-            Move ttMove,
+            int ttMoveInt,
             int ttScore,
             int depth,
             int ply,
@@ -1041,14 +1040,13 @@ public class Searcher {
             int extensionsUsed,
             int maxExtensions
     ) {
-        if (ttMove == null) {
+        if (ttMoveInt == Move.NONE) {
             return new SingularityOutcome(false, false);
         }
 
         int singularAlpha = ttScore - getSingularMargin(depth);
         int singularBeta = singularAlpha + 1;
         int reducedDepth = Math.max(1, depth / 2);
-        int ttMoveInt = ttMove.pack();
 
         boolean searchedAlternative = false;
         for (int i = 0; i < moveCount; i++) {

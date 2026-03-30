@@ -381,7 +381,7 @@ class SearcherTest {
     @Test
     void singularityGuardRequiresDepthAndQualifiedTtEntry() {
         Searcher searcher = new Searcher();
-        Move move = new Move(52, 36, "ep-target");
+        int move = Move.of(52, 36, Move.FLAG_EP_TARGET);
         TranspositionTable.Entry qualified = new TranspositionTable.Entry(1L, move, 8, 50, TTBound.EXACT);
         TranspositionTable.Entry shallow = new TranspositionTable.Entry(1L, move, 3, 50, TTBound.EXACT);
 
@@ -396,9 +396,9 @@ class SearcherTest {
     void ttBoundGatingWorksForExactLowerUpper() {
         Searcher searcher = new Searcher();
 
-        TranspositionTable.Entry exact = new TranspositionTable.Entry(1L, null, 4, 50, TTBound.EXACT);
-        TranspositionTable.Entry lower = new TranspositionTable.Entry(1L, null, 4, 120, TTBound.LOWER_BOUND);
-        TranspositionTable.Entry upper = new TranspositionTable.Entry(1L, null, 4, -80, TTBound.UPPER_BOUND);
+        TranspositionTable.Entry exact = new TranspositionTable.Entry(1L, Move.NONE, 4, 50, TTBound.EXACT);
+        TranspositionTable.Entry lower = new TranspositionTable.Entry(1L, Move.NONE, 4, 120, TTBound.LOWER_BOUND);
+        TranspositionTable.Entry upper = new TranspositionTable.Entry(1L, Move.NONE, 4, -80, TTBound.UPPER_BOUND);
 
         assertEquals(50, searcher.applyTtBound(exact, 3, -100, 100, 0));
         assertEquals(120, searcher.applyTtBound(lower, 3, -100, 100, 0));

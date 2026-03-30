@@ -3020,3 +3020,46 @@ Per `alphaBeta` node: `new MovesGenerator(board)` internally allocated one `Arra
 - Profile hot path to identify remaining NPS bottleneck (still ~10× short of 1M target)
 - Candidates: `MovesGenerator` constructor per `alphaBeta`/`quiescence` call (via `generate` static), `UnmakeInfo` pool size check, JVM JIT warmup
 - Consider running bench at depth 13 for more realistic NPS measurement
+
+---
+
+### [2026-03-30] Phase 7 — TT Packed-Int: Zero-Allocation Transposition Table Store
+
+**Built:**
+- Changed `TranspositionTable.Entry.bestMove` from `Move` (object) to `int` (packed int)
+- Changed `TranspositionTable.store()` signature from `(long, Move, int, int, TTBound)` to `(long, int, int, int, TTBound)`
+- Deleted `copyMove()` — no longer needed; packed int is directly stored in the record
+- Updated `Searcher.java` at 6 call sites: TT read (`ttEntry.bestMove()` was unpacked via `.pack()`), TT write (removed intermediary `new Move(from, to, reaction)` allocation), `canAttemptSingularity` null → `Move.NONE` sentinel check, `singularMoveToExtend` assignment, `runSingularitySearch` param type
+- `searchRoot` still converts `int→Move` once for the `List<Move>` ordering path — called ~10×/game, acceptable
+- Updated `TranspositionTableTest` and `SearcherTest` to use `Move.of()`/`Move.NONE` in place of `new Move()`/`null`
+
+**Decisions Made:**
+- Sentinel value `Move.NONE = -1` replaces `null` for "no TT move" — all existing null checks became `== Move.NONE`
+- `Entry` record now holds only primitive `int` for bestMove; remaining fields (`long key`, `int depth`, `int score`, `TTBound bound`) were already primitives/enums. The record itself still allocates as an object on the heap (required for `AtomicReferenceArray`), but the embedded `Move` reference + `copyMove()` clone allocation are eliminated per TT write.
+- `searchRoot` ordering path left with int→Move conversion intentionally: it is called once per root search iteration (~10 times per game), so the trivial `new Move(from, to, reaction)` there does not appear in any profile.
+
+**Broke / Fixed:**
+- `SearcherTest.singularityGuardRequiresDepthAndQualifiedTtEntry` and `ttBoundGatingWorksForExactLowerUpper` directly constructed `TranspositionTable.Entry(key, Move, ...)` — updated to `Entry(key, int, ...)` using `Move.of()` and `Move.NONE` respectively. Both tests pass.
+
+**Measurements:**
+- Bench depth 8, 6 positions, after TT packed-int (0.4.3-SNAPSHOT):
+
+  | Position   | Nodes   | Q-nodes   | ms    | NPS     | Q-ratio | TT-hit% | FMC%  | EBF  |
+  |------------|---------|-----------|-------|---------|---------|---------|-------|------|
+  | startpos   | 14,293  | 29,924    | 233   | 61,343  | 2.1×    | 34.7%   | 95.9  | 2.02 |
+  | Kiwipete   | 78,249  | 258,999   | 828   | 94,503  | 3.3×    | 32.3%   | 97.5  | 2.28 |
+  | CPW pos3   | 11,280  | 23,164    | 67    | 168,358 | 2.1×    | 33.7%   | 94.4  | 2.35 |
+  | CPW pos4   | 32,064  | 178,010   | 366   | 88,087  | 5.6×    | 27.7%   | 96.9  | 2.57 |
+  | pos5       | 12,842  | 25,835    | 92    | 139,586 | 2.0×    | 38.9%   | 94.8  | 1.73 |
+  | pos6       | 21,298  | 58,028    | 170   | 125,282 | 2.7×    | 36.5%   | 95.8  | 1.61 |
+  | Aggregate  | 170,026 | —         | 1,783 | 95,359  | —       | —       | —     | —    |
+
+- vs. v0.4.2 aggregate 92,505 NPS → **+3% improvement**
+- Small gain because the prior SEE rewrite already removed the dominant per-node allocation; TT writes occur less frequently than SEE calls (only at beta-cutoffs/completions, not every move scored). Improvement is expected to compound more at high thread counts (Lazy SMP) where TT write rate × thread count was highest.
+- Perft depth 5 (startpos): 4,865,609 ✓ (unchanged)
+- Nodes/sec: 95,359 (aggregate d8)
+- Elo vs. baseline: not measured this cycle
+
+**Next:**
+- Profile remaining bottleneck: likely `MovesGenerator` allocation in `quiescence` or `alphaBeta` generate call, or `UnmakeInfo` object pool overhead
+- Investigate double-SEE: `MoveOrderer.scoreMove` calls SEE for ordering score; `alphaBeta` loop calls SEE again for `captureSee` (pruning). Caching SEE scores from ordering pass into move loop could halve SEE evaluations per node.

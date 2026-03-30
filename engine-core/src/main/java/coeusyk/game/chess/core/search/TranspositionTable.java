@@ -1,7 +1,5 @@
 package coeusyk.game.chess.core.search;
 
-import coeusyk.game.chess.core.models.Move;
-
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReferenceArray;
@@ -83,14 +81,14 @@ public class TranspositionTable {
      *   <li>the new depth is ≥ the stored depth (prefer deeper analysis).</li>
      * </ul>
      */
-    public void store(long key, Move bestMove, int depth, int score, TTBound bound) {
+    public void store(long key, int bestMove, int depth, int score, TTBound bound) {
         int index = indexFor(key);
         Entry existing = table.get(index);
         if (existing == null || existing.key() != key || depth >= existing.depth()) {
             if (existing == null) {
                 occupiedCount.incrementAndGet();
             }
-            table.set(index, new Entry(key, copyMove(bestMove), depth, score, bound));
+            table.set(index, new Entry(key, bestMove, depth, score, bound));
         }
     }
 
@@ -141,13 +139,10 @@ public class TranspositionTable {
         return (int) (key ^ (key >>> 32)) & mask;
     }
 
-    private Move copyMove(Move move) {
-        if (move == null) {
-            return null;
-        }
-        return new Move(move.startSquare, move.targetSquare, move.reaction);
-    }
-
-    public record Entry(long key, Move bestMove, int depth, int score, TTBound bound) {
+    /**
+     * Packed-int best move, or {@link coeusyk.game.chess.core.models.Move#NONE} if none.
+     * Encoding: bits 0-5 = from, bits 6-11 = to, bits 12-15 = flag.
+     */
+    public record Entry(long key, int bestMove, int depth, int score, TTBound bound) {
     }
 }
