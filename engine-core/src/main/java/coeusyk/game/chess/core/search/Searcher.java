@@ -251,6 +251,10 @@ public class Searcher {
     ) {
         timeManager.startNow();
         this.timeManager = timeManager;
+        // Invalidate old-generation TT entries from previous moves so that
+        // depth-preferred replacement doesn't get stuck behind deep entries
+        // that were written during earlier positions and can never be evicted.
+        transpositionTable.incrementGeneration();
         BooleanSupplier softStop = () -> externalStop.getAsBoolean() || timeManager.shouldStopSoft();
         BooleanSupplier hardStop = () -> externalStop.getAsBoolean() || timeManager.shouldStopHard();
         return iterativeDeepening(board, maxDepth, softStop, hardStop, listener);
@@ -398,6 +402,20 @@ public class Searcher {
             }
 
             nodesPerDepth[depth] = totalNodes - nodesBeforeDepth;
+
+            // Stop before starting the next depth if the soft time budget is
+            // already exceeded after completing this one.  Prevents a cheap
+            // depth-N from allowing a very expensive depth-N+1 to start when
+            // the engine has already gone past the soft limit.
+            if (shouldStopSoft.getAsBoolean()) {
+                break;
+            }
+
+            // If a forced mate has been confirmed at this depth, there is no
+            // benefit to searching deeper — the result cannot improve.
+            if (Math.abs(bestScore) >= MATE_SCORE - MAX_PLY) {
+                break;
+            }
             long elapsedMs = timeManager != null
                     ? timeManager.elapsedMs()
                     : (System.nanoTime() - searchStartNanos) / 1_000_000L;

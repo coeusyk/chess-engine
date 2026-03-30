@@ -3176,3 +3176,34 @@ Per `alphaBeta` node: `new MovesGenerator(board)` internally allocated one `Arra
 - Profile next hotspot: `filterLegal` inside `generateCaptures` now runs twice per Q-node (once for check evasion detection); identify if fast-path is possible
 - Consider `generateCapturesNoFilter` for in-check Q-search path (currently uses full `generate()`)
 - Bench EBF reduction strategies: IID (Internal Iterative Deepening) or PV-move caching to improve move ordering at root
+
+---
+
+### [2026-03-30] Phase 7 — Time Management Fixes: TT Aging, Mate-Exit, Hard-Limit Cap
+
+**Built:**
+- `TranspositionTable.Entry` record extended with a `byte generation` field (6th field). `store()` now evicts any entry from a previous generation regardless of depth. `incrementGeneration()` method added; called once per `searchWithTimeManager()` invocation (i.e., once per `go wtime`/`go movetime` command).
+- Post-iteration soft stop in `Searcher.iterativeDeepening`: after completing depth N cleanly, if `shouldStopSoft` is already true, the loop breaks instead of launching depth N+1.
+- Mate-score early exit in `Searcher.iterativeDeepening`: if `|bestScore| >= MATE_SCORE - MAX_PLY` after any depth, the loop breaks — no benefit deeper searching a confirmed forced mate.
+- Hard limit formula tightened in `TimeManager.configureClock`: `hard = min(remaining/3, soft*5/2)` (was `min(remaining/4, soft*4)`). Worst-case single-depth overshoot capped at 2.5× soft instead of 4×.
+
+**Decisions Made:**
+- TT generation byte uses `byte` (wraps at 256 moves) rather than `int` to keep Entry record compact. A 256-move game is beyond any realistic scenario; wrapping is acceptable.
+- Old-gen entries are evicted unconditionally (regardless of depth) from a different generation. Within the same generation, depth-preferred replacement is preserved. This keeps TT utilization high while ensuring entries from move 1 (depth 16) can't block entries from move 20 (depth 14).
+- `go depth N` path in `UciApplication` does NOT call `incrementGeneration()` — depth searches are for testing/benchmarking, not real play, so stale TT entries are acceptable there.
+- Hard limit tightened to 2.5× (not 2×) to still allow meaningful time extension for complex positions where soft limit triggers early but move quality is genuinely uncertain.
+
+**Broke / Fixed:**
+- `SearcherTest.java`: 5 `Entry` constructor call sites updated to pass `(byte) 0` as the new 6th generation argument. All 235 tests pass after fix.
+- Observed during Lichess play: move 7 (Bxd7+, obvious winning capture) took 75s; move 22 (Rxf8#, mate-in-1) took 32s; TT hashfull at 100% from move 9 onward. All three root causes addressed by the changes above.
+
+**Measurements:**
+- Full test suite: 235 pass, 0 fail (1 skipped — TacticalSuite requires `-Dtactical.enabled=true`)
+- Perft depth 5 (startpos): 4,865,609 ✓ (unchanged — time management does not affect move generation)
+- Nodes/sec: not measured this cycle (NPS unaffected; this is a time control correctness fix)
+- Elo vs. baseline: not measured this cycle — pending SPRT
+
+**Next:**
+- Run SPRT to confirm no Elo regression from TT aging (old-gen eviction may reduce hash hit rate early in search)
+- Measure revised time budgets in practice: confirm Bxd7+ class moves now complete within soft limit
+- If SPRT passes, release as v0.4.6 and bump to v0.4.7-SNAPSHOT
