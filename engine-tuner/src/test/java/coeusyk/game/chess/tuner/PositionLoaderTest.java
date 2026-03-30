@@ -185,4 +185,32 @@ class PositionLoaderTest {
 
         positions.forEach(lp -> assertNotNull(lp.board(), "Board must not be null"));
     }
+
+    // -----------------------------------------------------------------------
+    // Streaming load with maxPositions cap
+    // -----------------------------------------------------------------------
+
+    @Test
+    void loadWithMaxPositionsStopsAtCap(@TempDir Path tempDir) throws Exception {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 100; i++) {
+            sb.append(START_FEN).append(" [0.5]\n");
+        }
+        Path file = Files.writeString(tempDir.resolve("data.epd"), sb.toString());
+
+        List<LabelledPosition> positions = PositionLoader.load(file, 10);
+
+        assertEquals(10, positions.size(), "Load should stop after maxPositions");
+    }
+
+    @Test
+    void loadWithMaxPositionsLargerThanFileReturnsAll(@TempDir Path tempDir) throws Exception {
+        Path file = Files.writeString(tempDir.resolve("data.epd"),
+                START_FEN + " [1.0]\n" + START_FEN + " [0.0]\n");
+
+        List<LabelledPosition> positions = PositionLoader.load(file, 1000);
+
+        assertEquals(2, positions.size(),
+                "Should return all positions when maxPositions exceeds file size");
+    }
 }

@@ -24,8 +24,24 @@ public final class PositionLoader {
 
     private PositionLoader() {}
 
+    /**
+     * Loads all positions from the file.
+     */
     public static List<LabelledPosition> load(Path file) throws IOException {
+        return load(file, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Loads up to {@code maxPositions} positions from the file.
+     * Stops reading as soon as the cap is reached, avoiding OOM on large corpora.
+     *
+     * @param file         dataset path
+     * @param maxPositions maximum number of positions to load
+     * @return parsed positions (size ≤ maxPositions)
+     */
+    public static List<LabelledPosition> load(Path file, int maxPositions) throws IOException {
         List<LabelledPosition> result = new ArrayList<>();
+        int skipped = 0;
         try (BufferedReader reader = new BufferedReader(new FileReader(file.toFile()))) {
             String line;
             while ((line = reader.readLine()) != null) {
@@ -33,8 +49,16 @@ public final class PositionLoader {
                 if (line.isEmpty() || line.startsWith("#")) continue;
 
                 LabelledPosition lp = tryParse(line);
-                if (lp != null) result.add(lp);
+                if (lp != null) {
+                    result.add(lp);
+                    if (result.size() >= maxPositions) break;
+                } else {
+                    skipped++;
+                }
             }
+        }
+        if (skipped > 0) {
+            System.out.printf("[PositionLoader] Skipped %,d unparseable lines%n", skipped);
         }
         return result;
     }

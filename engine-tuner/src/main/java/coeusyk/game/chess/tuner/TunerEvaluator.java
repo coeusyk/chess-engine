@@ -19,6 +19,10 @@ import java.util.List;
  */
 public final class TunerEvaluator {
 
+    /** Thread-local qsearch instances for parallel MSE computation. */
+    private static final ThreadLocal<TunerQuiescence> QSEARCH =
+            ThreadLocal.withInitial(TunerQuiescence::new);
+
     private static final int TOTAL_PHASE = 24;
 
     // Phase weights — architectural, not tunable
@@ -115,13 +119,27 @@ public final class TunerEvaluator {
     // =========================================================================
 
     /**
+     * Evaluates {@code board} from White's perspective using qsearch to resolve
+     * captures before returning the static eval. This ensures noisy positions
+     * with hanging pieces are evaluated at a quiet state.
+     *
+     * @param board  position to evaluate (modified via make/unmake but restored)
+     * @param params parameter array of length {@link EvalParams#TOTAL_PARAMS}
+     * @return centipawn score (positive = White advantage)
+     */
+    public static int evaluate(Board board, double[] params) {
+        return QSEARCH.get().search(board, params);
+    }
+
+    /**
      * Evaluates {@code board} from White's perspective using the given params.
+     * Pure static eval — no qsearch. Called by {@link TunerQuiescence} at leaf nodes.
      *
      * @param board  position to evaluate
      * @param params parameter array of length {@link EvalParams#TOTAL_PARAMS}
      * @return centipawn score (positive = White advantage)
      */
-    public static int evaluate(Board board, double[] params) {
+    static int evaluateStatic(Board board, double[] params) {
         int mgScore = 0;
         int egScore = 0;
 

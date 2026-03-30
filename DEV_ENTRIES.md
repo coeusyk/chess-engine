@@ -3290,3 +3290,46 @@ Per `alphaBeta` node: `new MovesGenerator(board)` internally allocated one `Arra
 **Next:**
 - Begin Texel Tuning V2 issues: #92 (scale dataset + qsearch filtering), #94 (parameter
   coverage), #93 (Adam optimizer), #95 (K recalibration).
+
+---
+
+### [2026-03-30] Phase 8 — Scale Dataset + QSearch Filtering (#92)
+
+**Built:**
+- Created `TunerQuiescence` — a captures-only quiescence search for the tuner module.
+  Depth-limited to 4 plies, stand-pat cutoff, uses `MovesGenerator.generateCaptures()`
+  from engine-core. Per-instance move buffers; thread-safe via `ThreadLocal`.
+- Modified `TunerEvaluator.evaluate()` to run qsearch before returning a score. The
+  previous static eval is now `evaluateStatic()` (package-private), called by
+  `TunerQuiescence` at leaf nodes. All existing callers (`computeMse`, `CoordinateDescent`)
+  go through the qsearch path transparently.
+- Added `PositionLoader.load(Path, int maxPositions)` overload — stops reading the file
+  as soon as `maxPositions` are parsed, avoiding OOM on the full 700k-position corpus.
+  Logs count of skipped unparseable lines.
+- Updated `TunerMain` to use streaming load with timing. The `maxPositions` argument now
+  caps the file read rather than subsetting an in-memory list.
+
+**Decisions Made:**
+- `TunerQuiescence` is a standalone class in the tuner module — no engine-core changes.
+  It reimplements a minimal qsearch rather than reusing the engine's `Searcher.quiescence`
+  because the engine's version has dependencies on per-search state (SEE, delta pruning,
+  killer moves) that don't apply in a tuning context.
+- Score returned from qsearch is always from White's perspective, consistent with the
+  existing `evaluateStatic` convention and the MSE computation.
+- No SEE or delta pruning in the tuner qsearch — simplicity is more important here,
+  and the dataset is already quiet-labelled so most positions have no captures.
+
+**Broke / Fixed:**
+- Nothing broke. All 43 tuner tests pass (6 new), all 139 engine-core tests pass.
+
+**Measurements:**
+- Perft depth 5 (startpos): 4,865,609 ✓
+- Tuner tests: 43 passed, 0 failed, 1 skipped
+- Engine-core tests: 139 passed, 0 failed, 1 skipped
+- MSE on full corpus: not yet measured (requires tuner run on actual dataset)
+- Nodes/sec: not measured this cycle
+- Elo vs. baseline: not measured this cycle
+
+**Next:**
+- Run tuner on full quiet-labeled.epd corpus to record baseline MSE with qsearch.
+- Issue #94: expand parameter coverage (unfreeze material, add missing eval terms).

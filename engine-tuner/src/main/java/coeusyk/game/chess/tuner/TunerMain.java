@@ -2,6 +2,8 @@ package coeusyk.game.chess.tuner;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 
 /**
@@ -42,12 +44,11 @@ public final class TunerMain {
                 maxPositions == Integer.MAX_VALUE ? "all" : maxPositions);
         System.out.printf("[TunerMain] Max iters:     %d%n", maxIters);
 
-        // --- Load positions ---
-        List<LabelledPosition> positions = PositionLoader.load(datasetPath);
-        if (positions.size() > maxPositions) {
-            positions = positions.subList(0, maxPositions);
-        }
-        System.out.printf("[TunerMain] Loaded %,d positions%n", positions.size());
+        // --- Load positions (streaming with early stop at maxPositions) ---
+        Instant loadStart = Instant.now();
+        List<LabelledPosition> positions = PositionLoader.load(datasetPath, maxPositions);
+        long loadMs = Duration.between(loadStart, Instant.now()).toMillis();
+        System.out.printf("[TunerMain] Loaded %,d positions in %,d ms%n", positions.size(), loadMs);
 
         // --- Extract initial parameters from hardcoded engine constants ---
         double[] params = EvalParams.extractFromCurrentEval();
