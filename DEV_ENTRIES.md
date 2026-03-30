@@ -2968,3 +2968,55 @@ Per `alphaBeta` node: `new MovesGenerator(board)` internally allocated one `Arra
 - Bitboard-based SEE to replace `new MovesGenerator(board).getActiveMoves()` in `StaticExchangeEvaluator`
 - Continue toward 200k+ NPS target
 - Measure CPW pos3/pos4 in next bench session
+
+---
+
+### [2026-03-30] Phase 7 — Bitboard LVA in SEE: Zero-Allocation Capture Exchange
+
+**Built:**
+- Rewrote `StaticExchangeEvaluator` to use a bitboard-based least-valuable attacker (LVA) method, eliminating all allocation from the SEE hot path.
+- `bitboardLva(Board board, int toSq, int sideToMove): int` — scans attacker types from pawn (lowest) to king (highest), using `AttackTables.KNIGHT_ATTACKS`, `AttackTables.KING_ATTACKS`, `MagicBitboards.getBishopAttacks`, `getRookAttacks`, `getQueenAttacks`; returns the from-square of the LVA or -1 if no attacker. Handles queen as the union of rook + bishop attacks. Zero allocation.
+- `recaptureFlag(Board board, int from, int toSq): int` — returns the correct packed-int `Move` flag for a recapture (normal, EP, or capturing-promotion-to-queen for edge-rank captures). Retains correct EP detection via en-passant square check.
+- `bestReplyGain` loop now calls `board.makeMove(int packed)` instead of `board.makeMove(Move)` — eliminates `Move` object allocation per SEE recursion level.
+- Pawn attack mask direction (a8=0 convention) for `bitboardLva`:
+  - White pawn attackers of `toSq`: `((mask & ~FILE_H) << 9 | (mask & ~FILE_A) << 7) & whitePawns`
+  - Black pawn attackers of `toSq`: `((mask & ~FILE_H) >> 7 | (mask & ~FILE_A) >> 9) & blackPawns`
+- Removed: `findLeastValuableCapture(Board, int, int)` (old Move-allocating method) and `capturedValueForRecapture(Board, Move, int)`.
+- Public API unchanged: `evaluate(Board, Move)`, `evaluate(Board, int)`, `evaluateSquareOccupation(Board, int)`.
+
+**Decisions Made:**
+- X-ray correctness is preserved automatically: `board.makeMove(packed)` updates occupancy bitboards, so the next recursive `bitboardLva` call sees updated occupancy and naturally reveals hidden sliders (rooks, bishops, queens behind the captured piece) through the magic bitboard lookup.
+- EP recaptures in SEE: detected by comparing `toSq` to `board.getEpTargetSquare()` and verifying the attacker is a pawn. Pawn attacks the EP target square diagonally, so the magic bitboard call is skipped and `FLAG_EN_PASSANT` is returned.
+- Capturing promotions (pawn on rank 1/8 making a capture): always promote to queen for SEE purposes. The LVA value is still PAWN; the promotion gain is not separately scored in SEE (correct — SEE measures exchange balance, not promotion bonus).
+- Outer make/unmake in `evaluate(Board, Move)` is retained (the first capture in the sequence is always the move being evaluated, not a recapture, so no change was needed there).
+
+**Broke / Fixed:**
+- 5/5 `StaticExchangeEvaluatorTest` pass: equal pawn exchange (0), winning capture (>0), losing capture (<0), x-ray recapture (≤0), packed-int overload.
+- 139 engine-core tests pass, 1 skipped. All perft counts unchanged.
+- `SearchRegressionTest` 31/31 pass.
+- Perft startpos depth 5: 4,865,609 ✓
+
+**Measurements:**
+- Bench depth 8 (vs. 2026-03-29 packed-int baseline):
+
+  | Position   | Old NPS (d8) | New NPS (d8) | Change  | Q-ratio | EBF  |
+  |------------|-------------|-------------|---------|---------|------|
+  | startpos   | 33,011      | 60,054      | +82%    | 2.1×    | 2.02 |
+  | Kiwipete   | 12,993      | 91,949      | +608%   | 3.3×    | 2.28 |
+  | CPW pos3   | not measured| 156,666     | —       | 2.1×    | 2.35 |
+  | CPW pos4   | not measured| 85,962      | —       | 5.6×    | 2.57 |
+  | pos5       | not measured| 135,178     | —       | 2.0×    | 1.73 |
+  | pos6       | not measured| 120,327     | —       | 2.7×    | 1.61 |
+  | Aggregate  | —           | 92,505      | —       | 3.4×    | —    |
+
+- Kiwipete improvement of +608% confirms that position is capture-heavy; SEE was called on virtually every node and the old allocating path was dominating execution time.
+- All Q-ratios ≤5.6× (threshold ≤10×) ✓. All EBFs ≤2.57 (threshold ≤3.5) ✓.
+- Phase 7 NPS target (≥1,000,000): not yet met (~60K–157K range at depth 8). Next: profile to find remaining bottleneck.
+- Perft depth 5 (startpos): 4,865,609 ✓ (unchanged)
+- Nodes/sec: 92,505 (aggregate d8), up from ~13K–33K
+- Elo vs. baseline: not measured this cycle
+
+**Next:**
+- Profile hot path to identify remaining NPS bottleneck (still ~10× short of 1M target)
+- Candidates: `MovesGenerator` constructor per `alphaBeta`/`quiescence` call (via `generate` static), `UnmakeInfo` pool size check, JVM JIT warmup
+- Consider running bench at depth 13 for more realistic NPS measurement
