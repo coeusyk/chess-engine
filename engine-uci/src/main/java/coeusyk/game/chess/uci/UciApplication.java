@@ -307,11 +307,29 @@ public class UciApplication {
 
         stopRequested.set(false);
         latestIterativeBestMove = null;
-        searchRunning = true;
 
         String positionSnapshot = board.boardStates.get(board.boardStates.size() - 1);
         Board searchBoard = new Board(positionSnapshot);
         searchBoard.setSearchMode(true);
+
+        // Forced move detection: if exactly one legal move exists, play it
+        // immediately without entering the search. Saves clock time in positions
+        // where there is no choice (e.g. single legal reply to check).
+        List<Move> legalMoves = new MovesGenerator(searchBoard).getActiveMoves(searchBoard.getActiveColor());
+        if (legalMoves.size() == 1) {
+            emitBestMove(legalMoves.get(0));
+            System.out.flush();
+            return;
+        }
+        if (legalMoves.isEmpty()) {
+            // Checkmate or stalemate — no move to play.
+            System.err.println("warn: handleGo called with 0 legal moves");
+            emitBestMove(null);
+            System.out.flush();
+            return;
+        }
+
+        searchRunning = true;
         Thread worker = new Thread(() -> runSearch(command, searchBoard), "uci-search-thread");
         worker.setDaemon(true);
         searchThread = worker;

@@ -3260,3 +3260,33 @@ Per `alphaBeta` node: `new MovesGenerator(board)` internally allocated one `Arra
 - Run SPRT to confirm that faster eval path does not introduce strength regression.
 - Continue hot-path profiling for the next gain tranche toward the 1M NPS Phase 7 target.
 - If SPRT/bench acceptance criteria hold, release as `v0.4.7` and bump to `0.4.8-SNAPSHOT`.
+
+### [2026-03-30] Phase 8 — Forced Move Detection (#96)
+
+**Built:**
+- Added forced move detection in `UciApplication.handleGo()`: when exactly one legal move
+  exists, emit `bestmove` immediately without entering the search.
+- When zero legal moves exist (checkmate/stalemate), emit `bestmove 0000` with a warning
+  log rather than entering a futile search.
+- Moved `searchRunning = true` below the forced-move check so the flag is never set
+  when the search is skipped.
+
+**Decisions Made:**
+- The forced move check uses the existing `MovesGenerator.getActiveMoves()` path — no new
+  move generator needed. The cost is one legal move generation per `go` command, which is
+  negligible compared to a full iterative-deepening search.
+- No `info` lines are emitted before the forced `bestmove` — there is no search to report on.
+
+**Broke / Fixed:**
+- Nothing broke. Change is confined to the UCI adapter layer; no engine-core modifications.
+
+**Measurements:**
+- Perft depth 5 (startpos): 4,865,609 ✓
+- All engine-core tests: 139 passed, 0 failed, 1 skipped
+- All engine-uci tests: 6 passed, 7 skipped (Syzygy integration tests)
+- Nodes/sec: not measured this cycle
+- Elo vs. baseline: not measured this cycle
+
+**Next:**
+- Begin Texel Tuning V2 issues: #92 (scale dataset + qsearch filtering), #94 (parameter
+  coverage), #93 (Adam optimizer), #95 (K recalibration).
