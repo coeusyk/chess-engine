@@ -64,8 +64,8 @@ public class Searcher {
     private TimeManager timeManager;
     private long searchStartNanos;
 
-    private Move[][] pvTable;
-    private int[] pvLength;
+    private final int[][] pvTable = new int[MOVE_LIST_POOL_SIZE][MOVE_LIST_POOL_SIZE];
+    private final int[] pvLength = new int[MOVE_LIST_POOL_SIZE];
 
     private final boolean moveOrderingEnabled;
     private final boolean aspirationWindowsEnabled;
@@ -78,7 +78,7 @@ public class Searcher {
     private final Evaluator evaluator = new Evaluator();
     private final MoveOrderer moveOrderer = new MoveOrderer();
     private final StaticExchangeEvaluator staticExchangeEvaluator = new StaticExchangeEvaluator();
-    private final Move[][] killerMoves = new Move[MAX_PLY][2];
+    private final int[][] killerMoves = initKillerMoves();
     private final int[][] historyHeuristic = new int[7][64];
     // Not final: can be replaced with a shared instance for Lazy SMP multi-threaded search.
     private TranspositionTable transpositionTable = new TranspositionTable();
@@ -90,13 +90,18 @@ public class Searcher {
     // aliased. Each helper-thread Searcher has its own pool (never shared).
     private static final int MOVE_LIST_POOL_SIZE = MAX_PLY + MAX_Q_DEPTH + 14; // 148
 
-    private final ArrayList<Move>[] moveListPool = initMoveListPool();
+    private static final int MOVE_BUFFER_SIZE = 256;
+    private final int[][] moveListPool = new int[MOVE_LIST_POOL_SIZE][MOVE_BUFFER_SIZE];
+    // Root search still uses ArrayList<Move> (called ~10x per game move; trivial cost).
+    private final ArrayList<Move> rootMoveList = new ArrayList<>(128);
 
-    @SuppressWarnings("unchecked")
-    private static ArrayList<Move>[] initMoveListPool() {
-        ArrayList<Move>[] pool = new ArrayList[MOVE_LIST_POOL_SIZE];
-        for (int i = 0; i < MOVE_LIST_POOL_SIZE; i++) pool[i] = new ArrayList<>(64);
-        return pool;
+    private static int[][] initKillerMoves() {
+        int[][] km = new int[MAX_PLY][2];
+        for (int[] row : km) {
+            row[0] = Move.NONE;
+            row[1] = Move.NONE;
+        }
+        return km;
     }
 
     private Move rootTtMoveHint;
@@ -326,10 +331,7 @@ public class Searcher {
                 lmrApplications = 0;
                 futilitySkips = 0;
                 deltaPruningSkips = 0;
-                int pvSize = depth + maxCheckExtensions + 4;
-                pvTable = new Move[pvSize][pvSize];
-                pvLength = new int[pvSize];
-
+                // pvTable and pvLength are pre-allocated; no per-depth allocation needed.
                 RootResult iteration;
                 if (pvIndex == 0 && aspirationWindowsEnabled && depth >= 2 && previousBestMove != null) {
                     iteration = searchRootWithAspiration(board, depth, previousBestMove, bestScore, shouldStopHard, maxCheckExtensions, excludedMoves);
@@ -485,7 +487,8 @@ public class Searcher {
             int maxCheckExtensions,
             List<Move> excludedRootMoves
     ) {
-        ArrayList<Move> moves = moveListPool[0];
+        ArrayList<Move> moves = rootMoveList;
+        moves.clear();
         new MovesGenerator(board, moves);
         TranspositionTable.Entry rootEntry = transpositionTable.probe(board.getZobristHash());
 
@@ -570,7 +573,7 @@ public class Searcher {
                 bestScore = score;
                 bestMove = move;
 
-                pvTable[0][0] = move;
+                pvTable[0][0] = move.pack();
                 int childPvLength = pvLength[1];
                 for (int i = 0; i < childPvLength; i++) {
                     pvTable[0][i + 1] = pvTable[1][i];
@@ -627,7 +630,7 @@ public class Searcher {
         long zobrist = board.getZobristHash();
         int alphaOrig = alpha;
         TranspositionTable.Entry ttEntry = transpositionTable.probe(zobrist);
-        Integer ttScore = applyTtBound(ttEntry, effectiveDepth, alpha, beta);
+        Integer ttScore = applyTtBound(ttEntry, effectiveDepth, alpha, beta, ply);
         if (ttScore != null) {
             ttHits++;
             return ttScore;
@@ -685,26 +688,28 @@ public class Searcher {
 
         nodesVisited++;
 
-        ArrayList<Move> moves = moveListPool[Math.min(ply, MOVE_LIST_POOL_SIZE - 1)];
-        new MovesGenerator(board, moves);
-        Move ttMove = ttEntry != null ? ttEntry.bestMove() : null;
+        int poolIdx = Math.min(ply, MOVE_LIST_POOL_SIZE - 1);
+        int[] moves = moveListPool[poolIdx];
+        int moveCount = MovesGenerator.generate(board, moves);
+        int ttMoveInt = (ttEntry != null && ttEntry.bestMove() != null) ? ttEntry.bestMove().pack() : Move.NONE;
         if (moveOrderingEnabled) {
             int orderPly = Math.min(ply, MAX_PLY - 1);
-            moveOrderer.orderMoves(board, moves, orderPly, ttMove, killerMoves, historyHeuristic);
+            moveOrderer.orderMoves(board, moves, moveCount, orderPly, ttMoveInt, killerMoves, historyHeuristic);
         }
 
         int staticEval = (effectiveDepth <= 2) ? evaluate(board) : 0;
 
-        if (moves.isEmpty()) {
+        if (moveCount == 0) {
             leafNodes++;
             return evaluateTerminal(board, ply);
         }
 
-        Move singularMoveToExtend = null;
+        int singularMoveToExtend = Move.NONE;
         if (canAttemptSingularity(effectiveDepth, ttEntry, inSingularitySearch, sideToMoveInCheck, alpha, beta)) {
             SingularityOutcome singularity = runSingularitySearch(
                     board,
                     moves,
+                    moveCount,
                     ttEntry.bestMove(),
                     ttEntry.score(),
                     effectiveDepth,
@@ -723,18 +728,19 @@ public class Searcher {
             }
 
             if (singularity.failLow()) {
-                singularMoveToExtend = ttEntry.bestMove();
+                singularMoveToExtend = ttEntry.bestMove().pack();
             }
         }
 
         int bestScore = -INF;
-        Move bestMove = null;
+        int bestMove = Move.NONE;
         int moveIndex = 0;
-        for (Move move : moves) {
+        for (int mi = 0; mi < moveCount; mi++) {
+            int move = moves[mi];
             boolean isQuiet = isQuietMove(board, move);
             boolean isCapture = moveOrderer.isCapture(board, move);
             boolean isKiller = isKillerMove(ply, move);
-            boolean isTtMove = ttMove != null && sameMove(ttMove, move);
+            boolean isTtMove = ttMoveInt != Move.NONE && move == ttMoveInt;
             Integer captureSee = null;
             if (isCapture && seeEnabled) {
                 captureSee = staticExchangeEvaluator.evaluate(board, move);
@@ -752,8 +758,8 @@ public class Searcher {
                 childExtensionsUsed++;
             }
 
-            if (singularMoveToExtend != null
-                    && sameMove(singularMoveToExtend, move)
+            if (singularMoveToExtend != Move.NONE
+                    && singularMoveToExtend == move
                     && childExtensionsUsed < maxExtensions) {
                 childDepth = Math.min(MAX_PLY - 1, childDepth + 1);
                 childExtensionsUsed++;
@@ -879,7 +885,10 @@ public class Searcher {
 
         if (!aborted && bestScore != -INF) {
             TTBound bound = resolveBound(bestScore, alphaOrig, beta);
-            transpositionTable.store(zobrist, bestMove, effectiveDepth, bestScore, bound);
+            Move bestMoveForTT = (bestMove != Move.NONE)
+                    ? new Move(Move.from(bestMove), Move.to(bestMove), Move.reactionOf(bestMove))
+                    : null;
+            transpositionTable.store(zobrist, bestMoveForTT, effectiveDepth, scoreToTT(bestScore, ply), bound);
         }
 
         return bestScore;
@@ -1022,7 +1031,8 @@ public class Searcher {
 
     private SingularityOutcome runSingularitySearch(
             Board board,
-            List<Move> moves,
+            int[] moves,
+            int moveCount,
             Move ttMove,
             int ttScore,
             int depth,
@@ -1038,10 +1048,12 @@ public class Searcher {
         int singularAlpha = ttScore - getSingularMargin(depth);
         int singularBeta = singularAlpha + 1;
         int reducedDepth = Math.max(1, depth / 2);
+        int ttMoveInt = ttMove.pack();
 
         boolean searchedAlternative = false;
-        for (Move move : moves) {
-            if (sameMove(move, ttMove)) {
+        for (int i = 0; i < moveCount; i++) {
+            int move = moves[i];
+            if (move == ttMoveInt) {
                 continue;
             }
 
@@ -1088,13 +1100,13 @@ public class Searcher {
         return reductions;
     }
 
-    private boolean isKillerMove(int ply, Move move) {
+    private boolean isKillerMove(int ply, int move) {
         if (ply < 0 || ply >= MAX_PLY) {
             return false;
         }
 
-        return (killerMoves[ply][0] != null && sameMove(killerMoves[ply][0], move))
-                || (killerMoves[ply][1] != null && sameMove(killerMoves[ply][1], move));
+        return (killerMoves[ply][0] != Move.NONE && killerMoves[ply][0] == move)
+                || (killerMoves[ply][1] != Move.NONE && killerMoves[ply][1] == move);
     }
 
     int getLmrReductionForTesting(int depth, int moveIndexOneBased) {
@@ -1132,7 +1144,7 @@ public class Searcher {
 
     private boolean shouldApplyPawnPromotionExtension(
             Board board,
-            Move move,
+            int move,
             boolean moveGivesCheck,
             int extensionsUsed,
             int maxExtensions
@@ -1145,7 +1157,7 @@ public class Searcher {
             return false;
         }
 
-        int targetSquare = move.targetSquare;
+        int targetSquare = Move.to(move);
         int targetPiece = board.getPiece(targetSquare);
         
         if (Piece.type(targetPiece) != Piece.Pawn) {
@@ -1177,15 +1189,39 @@ public class Searcher {
         return RAZOR_MARGIN_DEPTH_1;
     }
 
-    Integer applyTtBound(TranspositionTable.Entry entry, int depth, int alpha, int beta) {
+    /**
+     * Convert a root-relative mate score to a node-relative score for TT storage.
+     * Non-mate scores pass through unchanged.
+     * Root-relative: MATE_SCORE - plyOfCheckmate (from root). After adjustment the
+     * stored value encodes plies-to-mate from THIS node, making it portable across
+     * different plies where the same position is revisited in a later iteration.
+     */
+    static int scoreToTT(int score, int ply) {
+        if (score >= MATE_SCORE - MAX_PLY) return score + ply;
+        if (score <= -(MATE_SCORE - MAX_PLY)) return score - ply;
+        return score;
+    }
+
+    /**
+     * Convert a node-relative mate score retrieved from the TT back to a root-relative
+     * score. Non-mate scores pass through unchanged.
+     */
+    static int scoreFromTT(int score, int ply) {
+        if (score >= MATE_SCORE - MAX_PLY) return score - ply;
+        if (score <= -(MATE_SCORE - MAX_PLY)) return score + ply;
+        return score;
+    }
+
+    Integer applyTtBound(TranspositionTable.Entry entry, int depth, int alpha, int beta, int ply) {
         if (entry == null || entry.depth() < depth) {
             return null;
         }
 
+        int score = scoreFromTT(entry.score(), ply);
         return switch (entry.bound()) {
-            case EXACT -> entry.score();
-            case LOWER_BOUND -> (entry.score() >= beta) ? entry.score() : null;
-            case UPPER_BOUND -> (entry.score() <= alpha) ? entry.score() : null;
+            case EXACT -> score;
+            case LOWER_BOUND -> (score >= beta) ? score : null;
+            case UPPER_BOUND -> (score <= alpha) ? score : null;
         };
     }
 
@@ -1222,15 +1258,17 @@ public class Searcher {
 
         if (inCheck) {
             // Must search all legal evasions; no stand-pat (king in check = must evade or be mated)
-            ArrayList<Move> legalMoves = moveListPool[Math.min(ply, MOVE_LIST_POOL_SIZE - 1)];
-            new MovesGenerator(board, legalMoves);
-            if (legalMoves.isEmpty()) {
+            int poolIdxQ = Math.min(ply, MOVE_LIST_POOL_SIZE - 1);
+            int[] legalMoves = moveListPool[poolIdxQ];
+            int legalCount = MovesGenerator.generate(board, legalMoves);
+            if (legalCount == 0) {
                 leafNodes++;
                 return evaluateTerminal(board, ply); // checkmate
             }
 
             int bestScore = -MATE_SCORE;
-            for (Move move : legalMoves) {
+            for (int qi = 0; qi < legalCount; qi++) {
+                int move = legalMoves[qi];
                 board.makeMove(move);
                 int score = -quiescence(board, -beta, -alpha, ply + 1, qPly + 1, shouldStopHard);
                 board.unmakeMove();
@@ -1277,19 +1315,27 @@ public class Searcher {
             }
         }
 
-        ArrayList<Move> qMoves = moveListPool[Math.min(ply, MOVE_LIST_POOL_SIZE - 1)];
-        new MovesGenerator(board, qMoves);
-        qMoves.removeIf(move -> !shouldIncludeInQuiescence(board, move));
-        if (qMoves.isEmpty()) {
+        int poolIdxQq = Math.min(ply, MOVE_LIST_POOL_SIZE - 1);
+        int[] allQMoves = moveListPool[poolIdxQq];
+        int allQCount = MovesGenerator.generate(board, allQMoves);
+        // In-place compaction: keep only moves suitable for quiescence search.
+        int qCount = 0;
+        for (int i = 0; i < allQCount; i++) {
+            if (shouldIncludeInQuiescence(board, allQMoves[i])) {
+                allQMoves[qCount++] = allQMoves[i];
+            }
+        }
+        if (qCount == 0) {
             leafNodes++;
             return standPat;
         }
 
         int bestScore = standPat;
-        for (Move move : qMoves) {
+        for (int qi = 0; qi < qCount; qi++) {
+            int move = allQMoves[qi];
             // Per-move delta pruning: skip non-promotion captures whose material gain
             // plus the safety margin still cannot raise alpha.
-            if (deltaPruningAllowed && !isPromotion(move.reaction)) {
+            if (deltaPruningAllowed && !Move.isPromotion(move)) {
                 int captureGain = capturedPieceValueForDelta(board, move);
                 if (standPat + captureGain + DELTA_MARGIN <= alpha) {
                     deltaPruningSkips++;
@@ -1318,11 +1364,11 @@ public class Searcher {
         return bestScore;
     }
 
-    private int capturedPieceValueForDelta(Board board, Move move) {
-        if ("en-passant".equals(move.reaction)) {
+    private int capturedPieceValueForDelta(Board board, int move) {
+        if (Move.isEnPassant(move)) {
             return DELTA_PIECE_VALUES[Piece.Pawn];
         }
-        int captured = board.getPiece(move.targetSquare);
+        int captured = board.getPiece(Move.to(move));
         if (captured == Piece.None) {
             return 0;
         }
@@ -1403,10 +1449,10 @@ public class Searcher {
     }
 
     boolean shouldIncludeInQuiescenceForTesting(Board board, Move move) {
-        return shouldIncludeInQuiescence(board, move);
+        return shouldIncludeInQuiescence(board, move.pack());
     }
 
-    private boolean shouldIncludeInQuiescence(Board board, Move move) {
+    private boolean shouldIncludeInQuiescence(Board board, int move) {
         if (!isQuiescenceMove(board, move)) {
             return false;
         }
@@ -1414,53 +1460,42 @@ public class Searcher {
         return !seeEnabled || !moveOrderer.isCapture(board, move) || staticExchangeEvaluator.evaluate(board, move) >= 0;
     }
 
-    private boolean isQuiescenceMove(Board board, Move move) {
-        boolean isQueenPromotion = "promote-q".equals(move.reaction);
-        boolean isEnPassant = "en-passant".equals(move.reaction);
-        boolean isCapture = isEnPassant || board.getPiece(move.targetSquare) != Piece.None;
+    private boolean isQuiescenceMove(Board board, int move) {
+        boolean isQueenPromotion = Move.flag(move) == Move.FLAG_PROMO_Q;
+        boolean isCapture = Move.isEnPassant(move) || board.getPiece(Move.to(move)) != Piece.None;
         return isCapture || isQueenPromotion;
     }
 
-    private boolean isQuietMove(Board board, Move move) {
-        if (moveOrderer.isCapture(board, move)) {
-            return false;
-        }
-
-        return !isPromotion(move.reaction);
+    private boolean isQuietMove(Board board, int move) {
+        return !moveOrderer.isCapture(board, move) && !Move.isPromotion(move);
     }
 
-    private boolean isPromotion(String reaction) {
-        return "promote-q".equals(reaction)
-                || "promote-r".equals(reaction)
-                || "promote-b".equals(reaction)
-                || "promote-n".equals(reaction);
-    }
-
-    private void storeKillerMove(int ply, Move move) {
+    private void storeKillerMove(int ply, int move) {
         if (ply < 0 || ply >= MAX_PLY) {
             return;
         }
 
-        if (killerMoves[ply][0] != null && sameMove(killerMoves[ply][0], move)) {
+        if (killerMoves[ply][0] != Move.NONE && killerMoves[ply][0] == move) {
             return;
         }
 
         killerMoves[ply][1] = killerMoves[ply][0];
-        killerMoves[ply][0] = new Move(move.startSquare, move.targetSquare, move.reaction);
+        killerMoves[ply][0] = move;
     }
 
-    private void updateHistory(Move move, Board board, int depth) {
-        int movingPiece = board.getPiece(move.startSquare);
+    private void updateHistory(int move, Board board, int depth) {
+        int movingPiece = board.getPiece(Move.from(move));
         int pieceType = Piece.type(movingPiece);
         if (pieceType <= 0 || pieceType >= historyHeuristic.length) {
             return;
         }
 
-        if (move.targetSquare < 0 || move.targetSquare >= historyHeuristic[pieceType].length) {
+        int targetSquare = Move.to(move);
+        if (targetSquare < 0 || targetSquare >= historyHeuristic[pieceType].length) {
             return;
         }
 
-        historyHeuristic[pieceType][move.targetSquare] += depth * depth;
+        historyHeuristic[pieceType][targetSquare] += depth * depth;
     }
 
     private boolean sameMove(Move a, Move b) {
@@ -1482,7 +1517,8 @@ public class Searcher {
 
         List<Move> line = new ArrayList<>(pvLength[0]);
         for (int i = 0; i < pvLength[0]; i++) {
-            line.add(pvTable[0][i]);
+            int packed = pvTable[0][i];
+            line.add(new Move(Move.from(packed), Move.to(packed), Move.reactionOf(packed)));
         }
         return List.copyOf(line);
     }

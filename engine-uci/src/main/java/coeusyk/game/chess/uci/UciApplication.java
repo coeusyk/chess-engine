@@ -47,13 +47,15 @@ public class UciApplication {
     private static final int AVAILABLE_CORES = Runtime.getRuntime().availableProcessors();
 
     // Cached thread pool for Lazy SMP helper threads.
-    // Helpers run at BELOW_NORMAL priority so they never starve the main search
-    // thread.  On machines with spare cores they run at near-full speed; on
-    // saturated cores they yield to the main thread automatically.
+    // Helpers run one step below normal priority (NORM_PRIORITY - 1 = 4) so that
+    // when they compete with the main search thread on the same core the main thread
+    // wins, while still getting near-full throughput on idle/spare cores.
+    // MIN_PRIORITY (1) mapped to THREAD_PRIORITY_IDLE on Windows and effectively
+    // starved helpers of CPU time, negating the SMP benefit.
     private final ExecutorService smpExecutor = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "smp-helper");
         t.setDaemon(true);
-        t.setPriority(Thread.MIN_PRIORITY);
+        t.setPriority(Thread.NORM_PRIORITY - 1);
         return t;
     });
 
@@ -308,7 +310,9 @@ public class UciApplication {
         searchRunning = true;
 
         String positionSnapshot = board.boardStates.get(board.boardStates.size() - 1);
-        Thread worker = new Thread(() -> runSearch(command, new Board(positionSnapshot)), "uci-search-thread");
+        Board searchBoard = new Board(positionSnapshot);
+        searchBoard.setSearchMode(true);
+        Thread worker = new Thread(() -> runSearch(command, searchBoard), "uci-search-thread");
         worker.setDaemon(true);
         searchThread = worker;
         worker.start();
@@ -349,6 +353,7 @@ public class UciApplication {
                             Searcher helper = new Searcher();
                             helper.setSharedTranspositionTable(sharedTT);
                             Board helperBoard = new Board(positionFen);
+                            helperBoard.setSearchMode(true);
                             helper.iterativeDeepening(
                                     helperBoard,
                                     MAX_SEARCH_DEPTH,
@@ -451,6 +456,7 @@ public class UciApplication {
         System.out.printf("Bench depth %d | hash %dMB | %d positions%n", depth, BENCH_HASH_MB, BENCH_FENS.length);
         for (int i = 0; i < BENCH_FENS.length; i++) {
             Board benchBoard = new Board(BENCH_FENS[i]);
+            benchBoard.setSearchMode(true);
             searcher.clearTranspositionTable();
             long posStart = System.currentTimeMillis();
             SearchResult result = searcher.iterativeDeepening(benchBoard, depth);

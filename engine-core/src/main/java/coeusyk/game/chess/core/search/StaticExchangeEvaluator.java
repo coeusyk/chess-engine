@@ -111,4 +111,45 @@ public class StaticExchangeEvaluator {
     private boolean isCapture(Board board, Move move) {
         return "en-passant".equals(move.reaction) || board.getPiece(move.targetSquare) != Piece.None;
     }
+
+    // ==================== Packed-int overloads ====================
+
+    /**
+     * SEE for a packed-int move. Returns 0 for non-captures.
+     */
+    public int evaluate(Board board, int packedMove) {
+        if (!isCapture(board, packedMove)) {
+            return 0;
+        }
+
+        int capturedValue = capturedPieceValue(board, packedMove);
+        int promoDelta    = promotionDelta(Move.flag(packedMove));
+
+        board.makeMove(packedMove);
+        int lossByRecaptures = bestReplyGain(board, Move.to(packedMove), board.getActiveColor());
+        board.unmakeMove();
+
+        return capturedValue + promoDelta - lossByRecaptures;
+    }
+
+    private boolean isCapture(Board board, int move) {
+        return Move.isEnPassant(move) || board.getPiece(Move.to(move)) != Piece.None;
+    }
+
+    private int capturedPieceValue(Board board, int move) {
+        if (Move.isEnPassant(move)) {
+            return PIECE_VALUES[Piece.Pawn];
+        }
+        return PIECE_VALUES[Piece.type(board.getPiece(Move.to(move)))];
+    }
+
+    private int promotionDelta(int flag) {
+        return switch (flag) {
+            case Move.FLAG_PROMO_Q -> PIECE_VALUES[Piece.Queen]  - PIECE_VALUES[Piece.Pawn];
+            case Move.FLAG_PROMO_R -> PIECE_VALUES[Piece.Rook]   - PIECE_VALUES[Piece.Pawn];
+            case Move.FLAG_PROMO_B -> PIECE_VALUES[Piece.Bishop] - PIECE_VALUES[Piece.Pawn];
+            case Move.FLAG_PROMO_N -> PIECE_VALUES[Piece.Knight] - PIECE_VALUES[Piece.Pawn];
+            default -> 0;
+        };
+    }
 }

@@ -2842,3 +2842,129 @@ Per `alphaBeta` node: `new MovesGenerator(board)` internally allocated one `Arra
 - Consider running a longer SPRT (500+ games) to get a tighter Elo estimate.
 - Phase 9: Self-generated opening book exploration, or additional tuning runs with
   more positions (500k+) to improve eval precision.
+
+---
+
+### [2026-03-29] Phase 7 — Performance: NPS Fix + TT Mate Score Normalization
+
+**Built:**
+- **TT mate score ply normalization** (`Searcher.java`):
+  - Added `scoreToTT(score, ply)` and `scoreFromTT(score, ply)` static helpers.
+  - `evaluateTerminal` encodes root-relative scores (`-MATE_SCORE + ply`). When stored
+    raw, retrieving at a different ply yields the wrong distance from root. Fixed by
+    normalizing to node-relative ("plies-to-mate from this node") on store and
+    converting back on retrieval.
+  - Changed `applyTtBound` to accept `ply` and apply `scoreFromTT` before returning.
+  - Changed TT store call to wrap `bestScore` with `scoreToTT(bestScore, ply)`.
+  - Root cause of CuteChess displaying mate in half-moves (plies) instead of full moves.
+- **`searchMode` flag** (`Board.java`):
+  - Added `private boolean searchMode = false` + `public void setSearchMode(boolean)`.
+  - When `true`, `makeMove()` skips `movesPlayed.add(move)` and
+    `boardStates.add(getCurrentFEN())`. `unmakeMove()` skips the corresponding removes.
+  - Root cause of 33K NPS: `getCurrentFEN()` called every search node (FEN string
+    allocation: StringBuilder + 64-square scan + castling/EP formatting).
+  - Set `searchMode(true)` in `UciApplication.handleGo` on the main search board,
+    in `runSearch` on every helper board, and on all bench boards.
+- **Pre-allocated UnmakeInfo pool** (`Board.java`):
+  - Replaced `Stack<UnmakeInfo> unmakeStack` with `UnmakeInfo[] unmakePool` (768 entries)
+    + `int unmakeSP` stack pointer.
+  - `UnmakeInfo` now has a pool constructor (no-arg) + `set(...)` method using
+    `System.arraycopy` for castling rights instead of `boolean[].clone()`.
+  - Eliminates per-node `new UnmakeInfo(...)` + `clone()` GC pressure.
+  - Changed guard in `unmakeMove` from `movesPlayed.isEmpty()` to `unmakeSP == 0`.
+- **Static reaction set** (`Board.java`):
+  - Replaced `Arrays.asList(reactionIds).contains(move.reaction)` with
+    a `static final Set<String> VALID_REACTIONS = Set.of(...)` lookup.
+  - Eliminates per-reaction-move `ArrayList` wrapper allocation.
+
+**Decisions Made:**
+- `boardStates` and `movesPlayed` are still maintained for non-search code paths
+  (`ChessGameService` REST API, `UciApplication` position snapshotting). The flag
+  approach avoids any API break while eliminating the hot-path cost.
+- `UNMAKE_POOL_SIZE = 768`: 128 max search ply + 512 game moves + 128 margin.
+  Pre-allocated at Board construction; no GC on any make/unmake call.
+- Using `unmakeSP == 0` as the unmake guard is correct for both search mode and
+  non-search mode because both paths increment `unmakeSP` on make.
+
+**Broke / Fixed:**
+- Nothing broken. Perft 5/5 pass (startpos, Kiwipete, CPW pos3/4/5) with unchanged counts.
+- `boardStates` access in `runSearch` for helper FEN snapshot reads correctly because the
+  snapshot is taken before the main search runs any moves.
+
+**Measurements:**
+- Bench depth 8 (vs. baseline 2026-03-28, depth 8):
+
+  | Position | Old NPS | New NPS | Change  | Old Q-ratio | New Q-ratio |
+  |----------|---------|---------|---------|-------------|-------------|
+  | startpos | 6,029   | 15,419  | +156%   | 2.2x        | 2.1x        |
+  | Kiwipete | 555     | 4,719   | +751%   | 15.6x       | 3.3x        |
+  | CPW pos3 | 17,244  | 33,372  | +94%    | 2.2x        | 2.1x        |
+  | CPW pos4 | 733     | 6,718   | +817%   | 16.0x       | 5.6x        |
+
+- Q-ratio Phase 7 exit criterion (≤10x all positions): **MET** post-fix.
+- EBF Phase 7 exit criterion (≤3.5 all positions): **MET** (all ≤2.6).
+- NPS Phase 7 exit criterion (≥1,000,000): not yet met (~5K–33K range).
+- Perft depth 5 (startpos): 4,865,609 ✓ (unchanged).
+- SPRT (issue #73 Lazy SMP, 2T vs 1T, TC=30+0.3): running, game 24, score 0.500 (too early).
+
+**Next:**
+- Wait for SPRT (issue #73) to conclude. 
+- If H1 accepted: close #73, commit, update version.
+- If H0 accepted: investigate SMP benefit at this TC, consider changing search divergence strategy.
+- Still to close Phase 7: NPS ≥1M target requires magic bitboards (Phase 7 task).
+
+---
+
+### [2026-03-30] Phase 7 — Packed-Int Move Encoding: Zero-Allocation Search Hot Path
+
+**Built:**
+- **`Move.java`** — Added full packed-int API alongside existing class (backward compatible):
+  - `int packed = from | (to << 6) | (flag << 12)` encoding; bits 0-5: from, 6-11: to, 12-15: flag
+  - FLAG_NORMAL=0, FLAG_CASTLING_K=1, FLAG_CASTLING_Q=2, FLAG_EN_PASSANT=3, FLAG_EP_TARGET=4, FLAG_PROMO_Q=5..FLAG_PROMO_N=8; NONE = -1 sentinel
+  - Static encode/decode: `of(from,to)`, `of(from,to,flag)`, `from(int)`, `to(int)`, `flag(int)`
+  - Type predicates: `isPromotion(int)`, `isEnPassant(int)`, `isEpTarget(int)`, `isCastling(int)`
+  - `pack()` instance method; `reactionOf(int)`, `flagToReaction(int)`, `reactionToFlag(String)`
+- **`Board.java`** — `makeMove(int packed)` primary implementation; `makeMove(Move)` thin delegate calling `makeMove(move.pack())`; `UnmakeInfo.packedMove: int` replacing `UnmakeInfo.move: Move`
+- **`MovesGenerator.java`** — Static `generate(Board, int[])` fills a caller-supplied `int[]` with packed moves and returns count; no `Move` objects created in generation path
+- **`MoveOrderer.java`** — `orderMoves(Board, int[], moveCount, ply, ttMoveInt, int[][] killers, int[][] history)` hot-path overload; `isCapture(Board, int)` and `mvvLvaScore(Board, int)` helpers; root path `List<Move>` overload with `int[][] killers`
+- **`StaticExchangeEvaluator.java`** — `evaluate(Board, int packedMove)` overload; `promotionDelta(int flag)` switch on FLAG_PROMO_* constants
+- **`Searcher.java`** — Full hot-path refactor eliminating all `Move` heap allocations:
+  - `pvTable`: `Move[][]` reallocated per depth iteration → `final int[][] pvTable[148][148]` (pre-allocated once)
+  - `pvLength`: same → `final int[]`
+  - `killerMoves`: `Move[][]` with `new Move(...)` per cutoff → `int[][]` initialized with `Move.NONE` sentinel
+  - `moveListPool`: `ArrayList<Move>[]` → `final int[][256]`; `rootMoveList: ArrayList<Move>` kept at root only (called ~10×/game, trivial cost)
+  - `alphaBeta` loop: `MovesGenerator.generate(board, moves)` → `int move = moves[mi]` → `board.makeMove(move)`; no `Move` allocations in hot path
+  - TT store: single `new Move(from, to, reactionOf)` only at beta-cutoff boundary (once per node that raises alpha or causes cutoff)
+  - `quiescence`: in-place `int[]` compaction with `shouldIncludeInQuiescence(Board, int)` replaces `removeIf` lambda on `ArrayList<Move>`
+  - All helper methods converted to `int` signatures: `isKillerMove`, `storeKillerMove`, `updateHistory`, `isQuietMove`, `isQuiescenceMove`, `capturedPieceValueForDelta`, `shouldApplyPawnPromotionExtension`
+  - `buildPrincipalVariation()`: decodes `int packed → new Move(from, to, reactionOf)` at output boundary only
+  - `runSingularitySearch()`: takes `int[] moves, int moveCount, int ttMoveInt`
+
+**Decisions Made:**
+- `searchRoot` intentionally keeps `ArrayList<Move>` — it is called ~10 times per game move; the cost is negligible vs the hot-path savings and the code simplicity is worth it.
+- TT best-move boundary: `TranspositionTable.Entry.bestMove()` still returns `Move`; read with `.pack()`, stored with `new Move(from, to, reaction)` once per cutoff node. This is the minimal allocation point.
+- SEE's `findLeastValuableCapture` still allocates `new MovesGenerator(board).getActiveMoves()` — bitboard SEE replacement is a separate follow-up task.
+
+**Broke / Fixed:**
+- 139 tests pass, 1 skipped. All perft suites pass with unchanged node counts.
+
+**Measurements:**
+- Bench depth 8 (vs. baseline 2026-03-29 post-NPS-fix, same depth):
+
+  | Position   | Old NPS (d8) | New NPS (d8) | Change  | Old Q-ratio | New Q-ratio |
+  |------------|-------------|-------------|---------|-------------|-------------|
+  | startpos   | 15,419      | 33,011      | +114%   | 2.1x        | 2.2x        |
+  | Kiwipete   | 4,719       | 12,993      | +175%   | 3.3x        | 3.3x        |
+  | CPW pos3   | 33,372      | not re-measured this cycle | — | — | — |
+  | CPW pos4   | 6,718       | not re-measured this cycle | — | — | — |
+
+- startpos depth 13 NPS: **51,310** (q_ratio=2.2×, ebf=1.90, nodes=436,444, qnodes=948,129, ms=8,506)
+- Phase 7 NPS exit criterion (≥1,000,000): not yet met (~13K–51K range). Next step: bitboard SEE.
+- Perft depth 5 (startpos): 4,865,609 ✓ (unchanged).
+- Nodes/sec: 51,310 (new), 15,419 (prior baseline)
+- Elo vs. baseline: not measured this cycle
+
+**Next:**
+- Bitboard-based SEE to replace `new MovesGenerator(board).getActiveMoves()` in `StaticExchangeEvaluator`
+- Continue toward 200k+ NPS target
+- Measure CPW pos3/pos4 in next bench session

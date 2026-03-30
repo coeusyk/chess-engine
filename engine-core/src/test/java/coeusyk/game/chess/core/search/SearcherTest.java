@@ -400,13 +400,13 @@ class SearcherTest {
         TranspositionTable.Entry lower = new TranspositionTable.Entry(1L, null, 4, 120, TTBound.LOWER_BOUND);
         TranspositionTable.Entry upper = new TranspositionTable.Entry(1L, null, 4, -80, TTBound.UPPER_BOUND);
 
-        assertEquals(50, searcher.applyTtBound(exact, 3, -100, 100));
-        assertEquals(120, searcher.applyTtBound(lower, 3, -100, 100));
-        assertEquals(-80, searcher.applyTtBound(upper, 3, -70, 100));
+        assertEquals(50, searcher.applyTtBound(exact, 3, -100, 100, 0));
+        assertEquals(120, searcher.applyTtBound(lower, 3, -100, 100, 0));
+        assertEquals(-80, searcher.applyTtBound(upper, 3, -70, 100, 0));
 
-        assertNull(searcher.applyTtBound(lower, 3, -100, 200));
-        assertNull(searcher.applyTtBound(upper, 3, -120, 100));
-        assertNull(searcher.applyTtBound(exact, 5, -100, 100));
+        assertNull(searcher.applyTtBound(lower, 3, -100, 200, 0));
+        assertNull(searcher.applyTtBound(upper, 3, -120, 100, 0));
+        assertNull(searcher.applyTtBound(exact, 5, -100, 100, 0));
     }
 
     private Move findMove(Board board, int startSquare, int targetSquare) {
