@@ -1316,13 +1316,19 @@ public class Searcher {
 
         int poolIdxQq = Math.min(ply, MOVE_LIST_POOL_SIZE - 1);
         int[] allQMoves = moveListPool[poolIdxQq];
-        int allQCount = MovesGenerator.generate(board, allQMoves);
-        // In-place compaction: keep only moves suitable for quiescence search.
+        // Generate only captures and queen promotions — avoids producing and discarding
+        // the ~80% of quiet moves that generate() would return and shouldIncludeInQuiescence
+        // would filter out.
+        int allQCount = MovesGenerator.generateCaptures(board, allQMoves);
+        // Apply SEE filter: remove losing captures; always keep queen promotions.
         int qCount = 0;
         for (int i = 0; i < allQCount; i++) {
-            if (shouldIncludeInQuiescence(board, allQMoves[i])) {
-                allQMoves[qCount++] = allQMoves[i];
+            int qm = allQMoves[i];
+            if (seeEnabled && moveOrderer.isCapture(board, qm)
+                    && staticExchangeEvaluator.evaluate(board, qm) < 0) {
+                continue;
             }
+            allQMoves[qCount++] = qm;
         }
         if (qCount == 0) {
             leafNodes++;

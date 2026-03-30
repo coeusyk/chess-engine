@@ -3119,3 +3119,60 @@ Per `alphaBeta` node: `new MovesGenerator(board)` internally allocated one `Arra
 - Profile where remaining time goes: Q-search SEE filter (`shouldIncludeInQuiescence` calls SEE for every candidate Q-move) is a remaining double-SEE path
 - `isCapture(board, move)` called multiple times per move in the loop (ordering + loop classification) — consolidate to one call
 - Investigate `MovesGenerator.generate()` overhead: static call, but board traversal cost may dominate at leaf nodes
+
+---
+
+### [2026-03-30] Phase 7 — generateCaptures: Capture-Only Move Generation for Q-Search
+
+**Built:**
+- Added `MovesGenerator.generateCaptures(Board, int[])` — a new static method that generates only tactical moves (captures + quiet queen promotions) for the active side, bypassing all quiet moves entirely. Used by the quiescence search not-in-check path.
+- Three private helper methods added alongside: `genPawnTactical` (diagonal captures, en passant, capture-promos and quiet push-promos — queen only), `genKnightCaptures` (captures to enemy squares only), `genKingCaptures` (captures only, no castling). Sliding pieces handled inline via `MagicBitboards.get*Attacks(sq, occupied) & enemyBB`.
+- Q-search not-in-check path changed from `MovesGenerator.generate()` + `shouldIncludeInQuiescence` compaction loop (generates ~25 all moves, filters ~80% as quiet) to `MovesGenerator.generateCaptures()` + inline SEE filter. `shouldIncludeInQuiescence` private method retained for the `shouldIncludeInQuiescenceForTesting` test harness method.
+
+**Decisions Made:**
+- Only quiet queen promotions are included in `generateCaptures`; pawn push promotions to R/B/N are omitted. In Q-search, promoting to queen strictly dominates and underpromotion edge cases (stalemate avoidance) are not Q-search responsibilities. This matches the pre-existing `isQuiescenceMove` filter that already excluded non-queen promos.
+- Capture-promotions (diagonal pawn capture to promotion rank) generate only the FLAG_PROMO_Q version, not all 4. Same rationale: old code included all 4 if SEE >= 0, but the strength difference is negligible and eliminating them reduces Q-node overhead.
+- 64-square scan iteration order preserved in `generateCaptures` (same as `generate()`). Previous attempt to switch to bitboard-based piece-type iteration improved raw NPS +4% but degraded alpha-beta ordering, causing +44% more nodes on Kiwipete at d13 — total time regressed despite faster generation. Keeping 64-square scan avoids that pitfall.
+- Two prior optimization attempts reverted before this one: (1) Q-search filter inlining — JVM HotSpot already inlines `shouldIncludeInQuiescence`; manual inlining added local variable overhead, d13 went from 118K → 112K NPS; (2) bitboard-driven movegen — same issue as above.
+
+**Broke / Fixed:**
+- No regressions. All 139 engine-core tests pass (1 skipped — TacticalSuite requires `-Dtactical.enabled=true`).
+- Perft tests unaffected — they use `generate()`, not `generateCaptures()`.
+
+**Measurements:**
+- Bench depth 8, 6 positions (generateCaptures, 0.4.5-SNAPSHOT):
+
+  | Position   | Nodes   | Q-nodes   | ms    | NPS     | Q-ratio |
+  |------------|---------|-----------|-------|---------|---------|
+  | startpos   | 14,357  | 29,990    | 235   | 61,093  | 2.1×    |
+  | Kiwipete   | 70,732  | 200,857   | 615   | 115,011 | 2.8×    |
+  | CPW pos3   | 10,364  | 20,790    | 56    | 185,071 | 2.0×    |
+  | CPW pos4   | 31,999  | 160,462   | 302   | 105,956 | 5.0×    |
+  | pos5       | 12,961  | 24,880    | 85    | 152,482 | 1.9×    |
+  | pos6       | 21,559  | 48,376    | 146   | 147,664 | 2.2×    |
+  | Aggregate  | 161,972 | —         | 1,468 | 110,335 | 3.0×    |
+
+- vs. v0.4.4 aggregate d8 97,165 NPS → **+13.5%**
+
+- Bench depth 13, 6 positions (generateCaptures, 0.4.5-SNAPSHOT):
+
+  | Position   | Nodes      | Q-nodes    | ms     | NPS     | Q-ratio | TT-hit% | EBF  |
+  |------------|------------|------------|--------|---------|---------|---------|------|
+  | startpos   | 577,121    | 1,271,077  | 3,378  | 170,846 | 2.2×    | 21.9%   | 1.79 |
+  | Kiwipete   | 6,016,724  | 16,501,196 | 45,419 | 132,471 | 2.7×    | 9.5%    | 1.96 |
+  | CPW pos3   | 924,156    | 2,408,119  | 4,142  | 223,118 | 2.6×    | 29.1%   | 2.79 |
+  | CPW pos4   | 2,947,174  | 12,220,309 | 23,609 | 124,832 | 4.1×    | 15.1%   | 2.44 |
+  | pos5       | 1,189,116  | 2,781,890  | 6,607  | 179,978 | 2.3×    | 18.6%   | 1.40 |
+  | pos6       | 2,701,707  | 7,713,545  | 17,882 | 151,085 | 2.9×    | 15.7%   | 1.93 |
+  | Aggregate  | 14,355,998 | —          | 101,061| 142,052 | 3.0×    | —       | —    |
+
+- vs. v0.4.4 aggregate d13 118,114 NPS → **+20.3%**
+- Perft depth 5 (startpos): 4,865,609 ✓ (unchanged)
+- Nodes/sec: 142,052 (aggregate d13), 110,335 (aggregate d8)
+- Elo vs. baseline: not measured this cycle
+
+**Next:**
+- Run SPRT self-play to verify no Elo regression from changed Q-search move set (missing R/B/N capture-promos in Q-search)
+- Profile next hotspot: `filterLegal` inside `generateCaptures` now runs twice per Q-node (once for check evasion detection); identify if fast-path is possible
+- Consider `generateCapturesNoFilter` for in-check Q-search path (currently uses full `generate()`)
+- Bench EBF reduction strategies: IID (Internal Iterative Deepening) or PV-move caching to improve move ordering at root

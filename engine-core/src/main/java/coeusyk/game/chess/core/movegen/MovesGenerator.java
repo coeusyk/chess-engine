@@ -578,6 +578,118 @@ public class MovesGenerator {
         return filterLegal(board, dest, count, activeColor);
     }
 
+    /**
+     * Generates only tactical moves (captures and quiet queen promotions) for the active side.
+     * Used by the quiescence search (not-in-check path) to avoid generating quiet moves that
+     * are immediately discarded. Returns the count of legal tactical moves.
+     * The caller must supply a buffer of at least 64 ints.
+     */
+    public static int generateCaptures(Board board, int[] dest) {
+        int count = 0;
+        int activeColor = board.getActiveColor();
+        long enemyBB = (activeColor == Piece.White) ? board.getBlackOccupancy() : board.getWhiteOccupancy();
+        long occupied = board.getAllOccupancy();
+
+        for (int sq = 0; sq < 64; sq++) {
+            int piece = board.getPiece(sq);
+            if (piece == Piece.None || !Piece.isColor(piece, activeColor)) continue;
+
+            if (Piece.isSliding(piece)) {
+                int pt = Piece.type(piece);
+                long attacks;
+                if (pt == Piece.Bishop) {
+                    attacks = MagicBitboards.getBishopAttacks(sq, occupied);
+                } else if (pt == Piece.Rook) {
+                    attacks = MagicBitboards.getRookAttacks(sq, occupied);
+                } else {
+                    attacks = MagicBitboards.getQueenAttacks(sq, occupied);
+                }
+                attacks &= enemyBB; // captures only — no quiet moves
+                while (attacks != 0) {
+                    int target = Long.numberOfTrailingZeros(attacks);
+                    dest[count++] = Move.of(sq, target);
+                    attacks &= attacks - 1;
+                }
+            } else {
+                count = switch (Piece.type(piece)) {
+                    case Piece.Pawn   -> genPawnTactical(board, dest, count, sq, piece, enemyBB);
+                    case Piece.Knight -> genKnightCaptures(board, dest, count, sq, piece, enemyBB);
+                    case Piece.King   -> genKingCaptures(board, dest, count, sq, piece, enemyBB);
+                    default           -> count;
+                };
+            }
+        }
+
+        return filterLegal(board, dest, count, activeColor);
+    }
+
+    /** Pawn tactical moves: diagonal captures (incl. en passant), capture-promotions (queen only),
+     *  and quiet pushes to the promotion rank (queen only). */
+    private static int genPawnTactical(Board board, int[] dest, int count,
+                                       int startSquare, int pawn, long enemyBB) {
+        boolean isWhite = Piece.isWhite(pawn);
+        int[] captureOffsets = isWhite ? new int[]{ -9, -7 } : new int[]{ 7, 9 };
+
+        for (int offset : captureOffsets) {
+            int target = startSquare + offset;
+            if (target < 0 || target > 63) continue;
+            if (Math.abs((startSquare % 8) - (target % 8)) != 1) continue;
+
+            if (target == board.getEpTargetSquare()) {
+                int epPawnSq = isWhite ? target + 8 : target - 8;
+                int epPawn = board.getPiece(epPawnSq);
+                if (Piece.type(epPawn) == Piece.Pawn && !Piece.isColor(epPawn, pawn)) {
+                    dest[count++] = Move.of(startSquare, target, Move.FLAG_EN_PASSANT);
+                }
+            } else if ((enemyBB & (1L << target)) != 0) {
+                if (isPromotionRankStatic(target, pawn)) {
+                    dest[count++] = Move.of(startSquare, target, Move.FLAG_PROMO_Q); // queen only
+                } else {
+                    dest[count++] = Move.of(startSquare, target);
+                }
+            }
+        }
+
+        // Quiet push to promotion rank → include as queen promo (not R/B/N; Q dominates in Q-search).
+        int naturalOffset = isWhite ? -8 : 8;
+        int pushTarget = startSquare + naturalOffset;
+        if (pushTarget >= 0 && pushTarget < 64 && board.getPiece(pushTarget) == Piece.None
+                && isPromotionRankStatic(pushTarget, pawn)) {
+            dest[count++] = Move.of(startSquare, pushTarget, Move.FLAG_PROMO_Q);
+        }
+
+        return count;
+    }
+
+    /** Knight captures only — no quiet moves. */
+    private static int genKnightCaptures(Board board, int[] dest, int count,
+                                         int startSquare, int knight, long enemyBB) {
+        for (int i = 0; i < KNIGHT_OFFSETS.length; i++) {
+            int target = startSquare + KNIGHT_OFFSETS[i];
+            if (Math.abs((startSquare / 8) - (target / 8)) != KNIGHT_RANK_DISTANCE[i]) continue;
+            if (target < 0 || target > 63) continue;
+            if ((enemyBB & (1L << target)) != 0) {
+                dest[count++] = Move.of(startSquare, target);
+            }
+        }
+        return count;
+    }
+
+    /** King captures only — no quiet moves, no castling. */
+    private static int genKingCaptures(Board board, int[] dest, int count,
+                                       int startSquare, int king, long enemyBB) {
+        int[] edgeDists = SquaresToEdges[startSquare];
+        for (int dir = 0; dir < DirectionOffsets.length; dir++) {
+            if (edgeDists[dir] <= 0) continue;
+            int target = startSquare + DirectionOffsets[dir];
+            if (target < 0 || target > 63) continue;
+            if ((enemyBB & (1L << target)) != 0) {
+                dest[count++] = Move.of(startSquare, target);
+            }
+        }
+        return count;
+    }
+
     private static int genSliding(Board board, int[] dest, int count, int startSquare, int piece) {
         int pieceType = Piece.type(piece);
         long occupied = board.getAllOccupancy();
