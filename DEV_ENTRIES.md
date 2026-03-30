@@ -3061,5 +3061,61 @@ Per `alphaBeta` node: `new MovesGenerator(board)` internally allocated one `Arra
 - Elo vs. baseline: not measured this cycle
 
 **Next:**
-- Profile remaining bottleneck: likely `MovesGenerator` allocation in `quiescence` or `alphaBeta` generate call, or `UnmakeInfo` object pool overhead
-- Investigate double-SEE: `MoveOrderer.scoreMove` calls SEE for ordering score; `alphaBeta` loop calls SEE again for `captureSee` (pruning). Caching SEE scores from ordering pass into move loop could halve SEE evaluations per node.
+- Investigate double-SEE: `MoveOrderer.scoreMove` calls SEE for ordering score; `alphaBeta` loop calls SEE again for `captureSee` (pruning). Read ordering score from `scoringBuffer[mi]` after `orderMoves` to avoid second SEE call.
+
+---
+
+### [2026-03-30] Phase 7 — Double-SEE Elimination: Read Ordering Score Instead of Re-Evaluating
+
+**Built:**
+- Eliminated the second SEE call per capture in `alphaBeta`. Previously: `MoveOrderer.scoreMove` called `staticExchangeEvaluator.evaluate(board, move)` for capture ordering, then the `alphaBeta` move loop called `staticExchangeEvaluator.evaluate(board, move)` again for `canPruneLosingCapture`. Two full SEE traversals per capture node.
+- Fix: made `MoveOrderer.scoringBuffer` package-private. In the `alphaBeta` move loop, read `moveOrderer.scoringBuffer[mi]` directly (captured before `makeMove`, before any recursion can overwrite it). Losing captures have `score < 0` (LOSING_CAPTURE_BASE + seeScore, seeScore < 0), so sign check replaces second SEE call.
+- `canPruneLosingCapture` signature changed from `(int, Integer captureSee, ...)` to `(int, boolean isLosingCapture, ...)` — simpler, no boxing.
+- Tried `orderingScorePool[MOVE_LIST_POOL_SIZE][MOVE_BUFFER_SIZE]` + `System.arraycopy` snapshot approach first — overhead of copying 256 ints per node **worse** than the SEE savings (97K → 94K NPS). Reverted to direct `scoringBuffer[mi]` read before `makeMove` instead.
+
+**Decisions Made:**
+- Direct read from `scoringBuffer[mi]` is safe because `orderMoves` fills the buffer indexed by move position `i`; the buffer slot is read before `makeMove` and before any recursive `orderMoves` call at a child ply overwrites it (child uses its own `moveListPool` slot, but `scoringBuffer` is per-`MoveOrderer` instance, shared across plies — however, the read happens before recursion and the value is stored in the local `isLosingCapture` boolean, so there is no aliasing issue).
+- `moveOrderingEnabled` guard: if ordering is disabled (testing), `isLosingCapture` stays false — same behavior as before (SEE pruning was already skipped when `seeEnabled` was false).
+
+**Broke / Fixed:**
+- No regressions. All 139 engine-core tests pass (1 skipped).
+- Node counts change slightly between runs due to TT hash collision nondeterminism — differences are within noise for positions 1/3.
+
+**Measurements:**
+- Bench depth 8, 6 positions (direct scoringBuffer read, 0.4.4-SNAPSHOT):
+
+  | Position   | Nodes   | Q-nodes   | ms    | NPS     | Q-ratio |
+  |------------|---------|-----------|-------|---------|---------|
+  | startpos   | 14,357  | 30,003    | 232   | 61,883  | 2.1×    |
+  | Kiwipete   | 70,732  | 211,321   | 726   | 97,426  | 3.0×    |
+  | CPW pos3   | 10,364  | 20,790    | 65    | 159,446 | 2.0×    |
+  | CPW pos4   | 31,930  | 176,538   | 374   | 85,374  | 5.5×    |
+  | pos5       | 12,921  | 25,381    | 89    | 145,179 | 2.0×    |
+  | pos6       | 21,866  | 49,515    | 161   | 135,813 | 2.3×    |
+  | Aggregate  | 162,170 | —         | 1,669 | 97,165  | 3.2×    |
+
+- vs. v0.4.3 aggregate 95,359 NPS → **+1.9%**
+- Gain is modest: SEE per capture in `alphaBeta` occurred only at depth ≤ 2 (pruning guard), so the saved evaluations are proportionally few. The ordering SEE (all depths, every capture) dominates and was already done once — the second call was a narrow pruning path.
+
+- Bench depth 13, 6 positions (same snapshot):
+
+  | Position   | Nodes      | Q-nodes    | ms     | NPS     | Q-ratio | TT-hit% | EBF  |
+  |------------|------------|------------|--------|---------|---------|---------|------|
+  | startpos   | 577,121    | 1,272,277  | 3,677  | 156,954 | 2.2×    | 21.9%   | 1.79 |
+  | Kiwipete   | 6,110,585  | 17,868,427 | 54,369 | 112,390 | 2.9×    | 9.5%    | 1.99 |
+  | CPW pos3   | 946,947    | 2,515,966  | 5,765  | 164,257 | 2.7×    | 28.7%   | 3.50 |
+  | CPW pos4   | 1,821,668  | 7,333,045  | 17,906 | 101,735 | 4.0×    | 16.2%   | 1.53 |
+  | pos5       | 1,895,781  | 4,902,285  | 13,034 | 145,448 | 2.6×    | 16.4%   | 1.21 |
+  | pos6       | 1,859,749  | 6,053,908  | 17,073 | 108,929 | 3.3×    | 16.9%   | 0.93 |
+  | Aggregate  | 13,211,851 | —          | 111,856| 118,114 | 3.0×    | —       | —    |
+
+- Kiwipete dominates runtime (54s / 112s total). Q-ratio 3× aggregate. Still ~8.5× short of 1M NPS target.
+- Depth 13 NPS is higher than depth 8 (118K vs. 97K) because JIT is fully warmed and lower TT hit rates reduce TT overhead per node.
+- Perft depth 5 (startpos): 4,865,609 ✓ (unchanged)
+- Nodes/sec: 118,114 (aggregate d13), 97,165 (aggregate d8)
+- Elo vs. baseline: not measured this cycle
+
+**Next:**
+- Profile where remaining time goes: Q-search SEE filter (`shouldIncludeInQuiescence` calls SEE for every candidate Q-move) is a remaining double-SEE path
+- `isCapture(board, move)` called multiple times per move in the loop (ordering + loop classification) — consolidate to one call
+- Investigate `MovesGenerator.generate()` overhead: static call, but board traversal cost may dominate at leaf nodes

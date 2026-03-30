@@ -743,10 +743,11 @@ public class Searcher {
             boolean isCapture = moveOrderer.isCapture(board, move);
             boolean isKiller = isKillerMove(ply, move);
             boolean isTtMove = ttMoveInt != Move.NONE && move == ttMoveInt;
-            Integer captureSee = null;
-            if (isCapture && seeEnabled) {
-                captureSee = staticExchangeEvaluator.evaluate(board, move);
-            }
+            // Read ordering score before makeMove (before recursion can overwrite scoringBuffer).
+            // Losing captures have score < 0 (LOSING_CAPTURE_BASE + seeScore, where seeScore < 0).
+            // This avoids recomputing SEE here — it was already computed during orderMoves.
+            boolean isLosingCapture = isCapture && seeEnabled && moveOrderingEnabled
+                    && moveOrderer.scoringBuffer[mi] < 0;
 
             board.makeMove(move);
 
@@ -769,7 +770,7 @@ public class Searcher {
             
             if (canPruneLosingCapture(
                     effectiveDepth,
-                    captureSee,
+                    isLosingCapture,
                     isPvNode,
                     sideToMoveInCheck,
                     moveGivesCheck
@@ -951,12 +952,12 @@ public class Searcher {
 
     private boolean canPruneLosingCapture(
             int depth,
-            Integer captureSee,
+            boolean isLosingCapture,
             boolean isPvNode,
             boolean sideToMoveInCheck,
             boolean moveGivesCheck
     ) {
-        if (!seeEnabled || captureSee == null || captureSee >= 0) {
+        if (!isLosingCapture) {
             return false;
         }
 

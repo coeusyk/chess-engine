@@ -27,7 +27,8 @@ public class MoveOrderer {
 
     // Per-instance scoring buffer avoids allocating ScoredMove objects per orderMoves call.
     // Each Searcher owns exactly one MoveOrderer and never shares it across threads.
-    private final int[] scoringBuffer = new int[256];
+    // Package-private so Searcher can snapshot the scores after ordering to avoid recomputing SEE.
+    final int[] scoringBuffer = new int[256];
 
     public List<Move> orderMoves(
             Board board,
