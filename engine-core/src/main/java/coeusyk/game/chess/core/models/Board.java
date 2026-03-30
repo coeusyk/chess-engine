@@ -4,6 +4,7 @@ import coeusyk.game.chess.core.bitboard.AttackTables;
 import coeusyk.game.chess.core.bitboard.BitboardPosition;
 import coeusyk.game.chess.core.bitboard.MagicBitboards;
 import coeusyk.game.chess.core.bitboard.ZobristHash;
+import coeusyk.game.chess.core.eval.PieceSquareTables;
 import coeusyk.game.chess.core.movegen.MovesGenerator;
 
 import java.util.*;
@@ -23,12 +24,14 @@ public class Board {
         int previousHalfmoveClock;      // Halfmove clock before the move
         int previousFullMoves;          // Full move counter before the move
         int packedMove;                 // The move encoded as a packed int (Move.of)
+        int previousMgScore;            // Incremental material+PST MG score before the move
+        int previousEgScore;            // Incremental material+PST EG score before the move
 
         /** Pool constructor — fields are set via set() before first use. */
         UnmakeInfo() {}
 
         void set(int packed, int capturedPiece, int capturedEPPiece, int prevEP,
-                 boolean[] prevCastling, int prevHalf, int prevFull) {
+                 boolean[] prevCastling, int prevHalf, int prevFull, int prevMg, int prevEg) {
             this.packedMove = packed;
             this.capturedPiece = capturedPiece;
             this.capturedEPPiece = capturedEPPiece;
@@ -36,6 +39,8 @@ public class Board {
             System.arraycopy(prevCastling, 0, this.previousCastlingRights, 0, 4);
             this.previousHalfmoveClock = prevHalf;
             this.previousFullMoves = prevFull;
+            this.previousMgScore = prevMg;
+            this.previousEgScore = prevEg;
         }
     }
 
@@ -61,6 +66,16 @@ public class Board {
     public void setSearchMode(boolean enabled) {
         this.searchMode = enabled;
     }
+
+    // Material values mirroring Evaluator.MG_MATERIAL / EG_MATERIAL — keep in sync.
+    // Indexed by Piece type constants (Piece.Pawn=1 .. Piece.King=6).
+    private static final int[] INC_MG_MATERIAL = { 0,  82, 337, 365,  477, 1025, 0 };
+    private static final int[] INC_EG_MATERIAL = { 0,  94, 281, 297,  512,  936, 0 };
+
+    // Incrementally maintained material+PST score (white minus black, before tapering).
+    // Updated in makeMove, restored in unmakeMove, initialised in recomputeIncrementalScores().
+    private int incMgScore = 0;
+    private int incEgScore = 0;
 
     // Bitboard representation (12 piece types: 6 per color)
     private long whitePawns, whiteKnights, whiteBishops, whiteRooks, whiteQueens, whiteKing;
@@ -246,6 +261,9 @@ public class Board {
         // Compute Zobrist hash for the initial position
         zobristHash = recomputeZobristHash();
         zobristHistory.add(zobristHash);
+
+        // Initialize incremental material+PST scores from the FEN position
+        recomputeIncrementalScores();
     }
 
     // Function for obtaining the FEN string of the current position (for storing states of the board):
@@ -363,6 +381,52 @@ public class Board {
         whiteOccupancy = whitePawns | whiteKnights | whiteBishops | whiteRooks | whiteQueens | whiteKing;
         blackOccupancy = blackPawns | blackKnights | blackBishops | blackRooks | blackQueens | blackKing;
         allOccupancy = whiteOccupancy | blackOccupancy;
+    }
+
+    /**
+     * Adjusts the incremental material+PST scores when a piece is added (delta=+1) or
+     * removed (delta=-1) from the given square. White pieces contribute positively;
+     * black pieces contribute negatively (scores are from White's perspective).
+     */
+    private void incAdjust(int piece, int square, int delta) {
+        int type = Piece.type(piece);
+        boolean white = Piece.isWhite(piece);
+        int pstSq = white ? square : (square ^ 56);
+        int mg = INC_MG_MATERIAL[type] + PieceSquareTables.mg(type, pstSq);
+        int eg = INC_EG_MATERIAL[type] + PieceSquareTables.eg(type, pstSq);
+        if (white) {
+            incMgScore += delta * mg;
+            incEgScore += delta * eg;
+        } else {
+            incMgScore -= delta * mg;
+            incEgScore -= delta * eg;
+        }
+    }
+
+    /** Recomputes incMgScore/incEgScore from scratch by iterating all 12 bitboards. */
+    private void recomputeIncrementalScores() {
+        incMgScore = 0;
+        incEgScore = 0;
+        accumBitboard(whitePawns,   Piece.White | Piece.Pawn);
+        accumBitboard(whiteKnights, Piece.White | Piece.Knight);
+        accumBitboard(whiteBishops, Piece.White | Piece.Bishop);
+        accumBitboard(whiteRooks,   Piece.White | Piece.Rook);
+        accumBitboard(whiteQueens,  Piece.White | Piece.Queen);
+        accumBitboard(whiteKing,    Piece.White | Piece.King);
+        accumBitboard(blackPawns,   Piece.Black | Piece.Pawn);
+        accumBitboard(blackKnights, Piece.Black | Piece.Knight);
+        accumBitboard(blackBishops, Piece.Black | Piece.Bishop);
+        accumBitboard(blackRooks,   Piece.Black | Piece.Rook);
+        accumBitboard(blackQueens,  Piece.Black | Piece.Queen);
+        accumBitboard(blackKing,    Piece.Black | Piece.King);
+    }
+
+    private void accumBitboard(long bb, int piece) {
+        while (bb != 0) {
+            int sq = Long.numberOfTrailingZeros(bb);
+            incAdjust(piece, sq, +1);
+            bb &= bb - 1;
+        }
     }
     
     private long recomputeZobristHash() {
@@ -544,7 +608,8 @@ public class Board {
         // Save undo information before modifying the board (reuse pooled object — no allocation)
         UnmakeInfo unmakeInfo = unmakePool[unmakeSP++];
         unmakeInfo.set(packed, capturedPiece, capturedEPPiece,
-                epTargetSquare, castlingAvailability, halfmoveClock, fullMoves);
+                epTargetSquare, castlingAvailability, halfmoveClock, fullMoves,
+                incMgScore, incEgScore);
 
         // Update Zobrist hash for side-to-move
         zobristHash ^= ZobristHash.getKeyForBlackToMove();
@@ -557,15 +622,19 @@ public class Board {
                 int rookSquare = startSquare + 3;
                 int rookPiece = getPiece(rookSquare);
                 zobristHash ^= ZobristHash.getKeyForPieceSquare(rookPiece, rookSquare);
+                incAdjust(rookPiece, rookSquare, -1);       // rook leaves source
                 castlingReaction(rookSquare, false);
                 zobristHash ^= ZobristHash.getKeyForPieceSquare(rookPiece, rookSquare - 2);
+                incAdjust(rookPiece, rookSquare - 2, +1);   // rook arrives at destination
             }
             case Move.FLAG_CASTLING_Q -> {
                 int rookSquare = startSquare - 4;
                 int rookPiece = getPiece(rookSquare);
                 zobristHash ^= ZobristHash.getKeyForPieceSquare(rookPiece, rookSquare);
+                incAdjust(rookPiece, rookSquare, -1);       // rook leaves source
                 castlingReaction(rookSquare, false);
                 zobristHash ^= ZobristHash.getKeyForPieceSquare(rookPiece, rookSquare + 3);
+                incAdjust(rookPiece, rookSquare + 3, +1);   // rook arrives at destination
             }
             case Move.FLAG_EN_PASSANT -> {
                 int captureSquare = Piece.isWhite(movingPiece) ? targetSquare + 8 : targetSquare - 8;
@@ -573,6 +642,7 @@ public class Board {
                 unmakeInfo.capturedEPPiece = capturedEPPiece;
                 zobristHash ^= ZobristHash.getKeyForPieceSquare(capturedEPPiece, captureSquare);
                 clearBit(captureSquare, capturedEPPiece);
+                incAdjust(capturedEPPiece, captureSquare, -1); // captured EP pawn removed
                 isCapture = true;
             }
             case Move.FLAG_EP_TARGET -> {
@@ -598,15 +668,18 @@ public class Board {
         if (capturedPiece != Piece.None) {
             zobristHash ^= ZobristHash.getKeyForPieceSquare(capturedPiece, targetSquare);
             clearBit(targetSquare, capturedPiece);
+            incAdjust(capturedPiece, targetSquare, -1);  // captured piece removed
         }
 
         // Remove piece from source square
         zobristHash ^= ZobristHash.getKeyForPieceSquare(movingPiece, startSquare);
         clearBit(startSquare, movingPiece);
+        incAdjust(movingPiece, startSquare, -1);         // moving piece vacates source
 
         // Place piece at target square (promotion can change piece type)
         zobristHash ^= ZobristHash.getKeyForPieceSquare(pieceOnTarget, targetSquare);
         setBit(targetSquare, pieceOnTarget);
+        incAdjust(pieceOnTarget, targetSquare, +1);      // piece appears at target
 
         updateCastlingAvailabilityForMove(movingPiece, startSquare, capturedPiece, targetSquare);
 
@@ -649,6 +722,10 @@ public class Board {
         }
 
         UnmakeInfo undoInfo = unmakePool[--unmakeSP];
+
+        // Restore incremental material+PST scores before any bitboard changes
+        incMgScore = undoInfo.previousMgScore;
+        incEgScore = undoInfo.previousEgScore;
         int packed = undoInfo.packedMove;
         int startSquare = Move.from(packed);
         int targetSquare = Move.to(packed);
@@ -973,6 +1050,12 @@ public class Board {
     public long getZobristHash() {
         return zobristHash;
     }
+
+    /** Returns the incrementally maintained MG material+PST score (white minus black). */
+    public int getIncMgScore() { return incMgScore; }
+
+    /** Returns the incrementally maintained EG material+PST score (white minus black). */
+    public int getIncEgScore() { return incEgScore; }
 
     /**
      * Compute a Zobrist hash for the pawn structure only (white and black pawns by square).

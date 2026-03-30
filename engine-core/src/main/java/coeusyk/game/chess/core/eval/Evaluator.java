@@ -62,21 +62,19 @@ public class Evaluator {
     }
 
     public int evaluate(Board board) {
-        int mgScore = 0;
-        int egScore = 0;
-
-        mgScore += computeMaterialAndPst(board, true, true) - computeMaterialAndPst(board, false, true);
-        egScore += computeMaterialAndPst(board, true, false) - computeMaterialAndPst(board, false, false);
+        // Material + PST scores are maintained incrementally in Board; read the cached values.
+        int mgScore = board.getIncMgScore();
+        int egScore = board.getIncEgScore();
 
         long allOccupancy = board.getWhiteOccupancy() | board.getBlackOccupancy();
         long whitePawnAtk = Attacks.whitePawnAttacks(board.getWhitePawns());
         long blackPawnAtk = Attacks.blackPawnAttacks(board.getBlackPawns());
 
-        int[] whiteMobility = computeMobility(board, true, allOccupancy, blackPawnAtk);
-        int[] blackMobility = computeMobility(board, false, allOccupancy, whitePawnAtk);
+        long whiteMobility = computeMobilityPacked(board, true, allOccupancy, blackPawnAtk);
+        long blackMobility = computeMobilityPacked(board, false, allOccupancy, whitePawnAtk);
 
-        mgScore += whiteMobility[0] - blackMobility[0];
-        egScore += whiteMobility[1] - blackMobility[1];
+        mgScore += unpackMg(whiteMobility) - unpackMg(blackMobility);
+        egScore += unpackEg(whiteMobility) - unpackEg(blackMobility);
 
         int pawnMg, pawnEg;
         long pawnKey = board.getPawnZobristHash();
@@ -104,40 +102,42 @@ public class Evaluator {
         return Piece.isWhite(board.getActiveColor()) ? score : -score;
     }
 
-    private int[] computeMobility(Board board, boolean white, long allOccupancy, long enemyPawnAttacks) {
+        private long computeMobilityPacked(Board board, boolean white, long allOccupancy, long enemyPawnAttacks) {
         long friendly = white ? board.getWhiteOccupancy() : board.getBlackOccupancy();
         long safeMask = ~friendly & ~enemyPawnAttacks;
 
         int mgMob = 0;
         int egMob = 0;
 
-        mgMob += pieceMobility(white ? board.getWhiteKnights() : board.getBlackKnights(),
-                Piece.Knight, allOccupancy, safeMask, true);
-        egMob += pieceMobility(white ? board.getWhiteKnights() : board.getBlackKnights(),
-                Piece.Knight, allOccupancy, safeMask, false);
+        long kn = pieceMobilityPacked(white ? board.getWhiteKnights() : board.getBlackKnights(),
+            Piece.Knight, allOccupancy, safeMask);
+        mgMob += unpackMg(kn);
+        egMob += unpackEg(kn);
 
-        mgMob += pieceMobility(white ? board.getWhiteBishops() : board.getBlackBishops(),
-                Piece.Bishop, allOccupancy, safeMask, true);
-        egMob += pieceMobility(white ? board.getWhiteBishops() : board.getBlackBishops(),
-                Piece.Bishop, allOccupancy, safeMask, false);
+        long bi = pieceMobilityPacked(white ? board.getWhiteBishops() : board.getBlackBishops(),
+            Piece.Bishop, allOccupancy, safeMask);
+        mgMob += unpackMg(bi);
+        egMob += unpackEg(bi);
 
-        mgMob += pieceMobility(white ? board.getWhiteRooks() : board.getBlackRooks(),
-                Piece.Rook, allOccupancy, safeMask, true);
-        egMob += pieceMobility(white ? board.getWhiteRooks() : board.getBlackRooks(),
-                Piece.Rook, allOccupancy, safeMask, false);
+        long ro = pieceMobilityPacked(white ? board.getWhiteRooks() : board.getBlackRooks(),
+            Piece.Rook, allOccupancy, safeMask);
+        mgMob += unpackMg(ro);
+        egMob += unpackEg(ro);
 
-        mgMob += pieceMobility(white ? board.getWhiteQueens() : board.getBlackQueens(),
-                Piece.Queen, allOccupancy, safeMask, true);
-        egMob += pieceMobility(white ? board.getWhiteQueens() : board.getBlackQueens(),
-                Piece.Queen, allOccupancy, safeMask, false);
+        long qu = pieceMobilityPacked(white ? board.getWhiteQueens() : board.getBlackQueens(),
+            Piece.Queen, allOccupancy, safeMask);
+        mgMob += unpackMg(qu);
+        egMob += unpackEg(qu);
 
-        return new int[]{ mgMob, egMob };
+        return packMobility(mgMob, egMob);
     }
 
-    private int pieceMobility(long pieces, int pieceType, long allOccupancy, long safeMask, boolean mg) {
-        int bonus = mg ? MG_MOBILITY[pieceType] : EG_MOBILITY[pieceType];
+        private long pieceMobilityPacked(long pieces, int pieceType, long allOccupancy, long safeMask) {
+        int mgBonus = MG_MOBILITY[pieceType];
+        int egBonus = EG_MOBILITY[pieceType];
         int baseline = MOBILITY_BASELINE[pieceType];
-        int total = 0;
+        int mgTotal = 0;
+        int egTotal = 0;
         while (pieces != 0) {
             int sq = Long.numberOfTrailingZeros(pieces);
             long attacks;
@@ -149,10 +149,24 @@ public class Evaluator {
                 default: attacks = 0L;
             }
             int safeSquares = Long.bitCount(attacks & safeMask);
-            total += (safeSquares - baseline) * bonus;
+            int delta = safeSquares - baseline;
+            mgTotal += delta * mgBonus;
+            egTotal += delta * egBonus;
             pieces &= pieces - 1;
         }
-        return total;
+        return packMobility(mgTotal, egTotal);
+    }
+
+    private static long packMobility(int mg, int eg) {
+        return (((long) mg) << 32) | (eg & 0xffffffffL);
+    }
+
+    private static int unpackMg(long packed) {
+        return (int) (packed >> 32);
+    }
+
+    private static int unpackEg(long packed) {
+        return (int) packed;
     }
 
     int computePhase(Board board) {
@@ -162,39 +176,6 @@ public class Evaluator {
         phase += Long.bitCount(board.getWhiteRooks()   | board.getBlackRooks())   * PHASE_WEIGHTS[Piece.Rook];
         phase += Long.bitCount(board.getWhiteQueens()   | board.getBlackQueens())  * PHASE_WEIGHTS[Piece.Queen];
         return Math.min(phase, TOTAL_PHASE);
-    }
-
-    private int computeMaterialAndPst(Board board, boolean white, boolean mg) {
-        int score = 0;
-        int[] material = mg ? MG_MATERIAL : EG_MATERIAL;
-
-        score += sumPiecePst(white ? board.getWhitePawns() : board.getBlackPawns(),
-                Piece.Pawn, white, mg, material);
-        score += sumPiecePst(white ? board.getWhiteKnights() : board.getBlackKnights(),
-                Piece.Knight, white, mg, material);
-        score += sumPiecePst(white ? board.getWhiteBishops() : board.getBlackBishops(),
-                Piece.Bishop, white, mg, material);
-        score += sumPiecePst(white ? board.getWhiteRooks() : board.getBlackRooks(),
-                Piece.Rook, white, mg, material);
-        score += sumPiecePst(white ? board.getWhiteQueens() : board.getBlackQueens(),
-                Piece.Queen, white, mg, material);
-        score += sumPiecePst(white ? board.getWhiteKing() : board.getBlackKing(),
-                Piece.King, white, mg, material);
-
-        return score;
-    }
-
-    private int sumPiecePst(long bitboard, int pieceType, boolean white, boolean mg, int[] material) {
-        int score = 0;
-        while (bitboard != 0) {
-            int square = Long.numberOfTrailingZeros(bitboard);
-            score += material[pieceType];
-            int pstSquare = white ? square : (square ^ 56);
-            score += mg ? PieceSquareTables.mg(pieceType, pstSquare)
-                        : PieceSquareTables.eg(pieceType, pstSquare);
-            bitboard &= bitboard - 1; // clear LSB
-        }
-        return score;
     }
 
     public static int mgMaterialValue(int pieceType) {

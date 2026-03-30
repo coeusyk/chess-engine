@@ -3207,3 +3207,56 @@ Per `alphaBeta` node: `new MovesGenerator(board)` internally allocated one `Arra
 - Run SPRT to confirm no Elo regression from TT aging (old-gen eviction may reduce hash hit rate early in search)
 - Measure revised time budgets in practice: confirm Bxd7+ class moves now complete within soft limit
 - If SPRT passes, release as v0.4.6 and bump to v0.4.7-SNAPSHOT
+
+---
+
+### [2026-03-30] Phase 7 — Incremental Eval Cache + Single-Pass Mobility (NPS)
+
+**Built:**
+- Added incremental material+PST score tracking to `Board`:
+  - new fields `incMgScore` / `incEgScore` (white-minus-black perspective)
+  - updated in `makeMove(int packed)` for all move kinds (normal, capture, en passant, castling, promotion)
+  - restored in `unmakeMove()` via pooled `UnmakeInfo` snapshots (`previousMgScore` / `previousEgScore`)
+  - initialized from FEN by `recomputeIncrementalScores()`
+  - exposed through `getIncMgScore()` / `getIncEgScore()`
+- Switched `Evaluator.evaluate()` to consume board-cached MG/EG material+PST instead of rescanning all piece bitboards every eval.
+- Reworked mobility scoring to a single attack-generation pass per piece:
+  - removed per-eval `int[]` allocations from `computeMobility`
+  - merged MG+EG mobility accumulation into packed helpers (`computeMobilityPacked`, `pieceMobilityPacked`)
+  - eliminated duplicate attack recomputation that previously happened once for MG and again for EG.
+
+**Decisions Made:**
+- Kept incremental score state in `Board` (not `Evaluator`) because make/unmake is the single source of truth for position transitions and already has a pooled undo stack.
+- Stored MG/EG snapshots inside `UnmakeInfo` for O(1) rollback to avoid fragile reverse-delta logic in `unmakeMove`.
+- Used white-minus-black signed scoring in board caches so evaluator blending remains straightforward and color flip happens only once at the final return.
+
+**Broke / Fixed:**
+- First pass (incremental material+PST only) showed unstable/worse wall-clock NPS on repeated d13 benches due mobility still doing duplicate attack generation and array allocation.
+- Fixed by introducing single-pass packed mobility accumulation; this removed the regression and produced a net gain above the v0.4.5 baseline.
+- Validation after final code:
+  - `mvn -pl engine-core clean test`: 139 passed, 0 failed (1 tactical skipped)
+  - `mvn test` (all modules): BUILD SUCCESS; no failures/errors
+  - Perft harness unchanged: startpos depth 5 = 4,865,609 ✓
+
+**Measurements:**
+- Bench depth 13, 6 positions (`engine-uci-0.4.7-SNAPSHOT`, hash 16MB):
+
+  | Position   | Nodes      | Q-nodes    | ms     | NPS     | Q-ratio | TT-hit% | EBF  |
+  |------------|------------|------------|--------|---------|---------|---------|------|
+  | startpos   | 577,121    | 1,271,077  | 2,960  | 194,973 | 2.2×    | 21.9%   | 1.79 |
+  | Kiwipete   | 6,016,724  | 16,501,196 | 40,932 | 146,993 | 2.7×    | 9.5%    | 1.96 |
+  | CPW pos3   | 924,156    | 2,408,119  | 4,004  | 230,808 | 2.6×    | 29.1%   | 2.79 |
+  | CPW pos4   | 2,947,174  | 12,220,309 | 22,845 | 129,007 | 4.1×    | 15.1%   | 2.44 |
+  | pos5       | 1,189,116  | 2,781,890  | 6,187  | 192,195 | 2.3×    | 18.6%   | 1.40 |
+  | pos6       | 2,701,707  | 7,713,545  | 16,913 | 159,741 | 2.9×    | 15.7%   | 1.93 |
+  | Aggregate  | 14,355,998 | —          | 93,861 | 152,949 | 3.0×    | —       | —    |
+
+- vs. v0.4.5 aggregate d13 baseline 142,052 NPS → **+7.7%**
+- Perft depth 5 (startpos): 4,865,609 ✓
+- Nodes/sec: 152,949 (aggregate d13)
+- Elo vs. baseline: not measured this cycle
+
+**Next:**
+- Run SPRT to confirm that faster eval path does not introduce strength regression.
+- Continue hot-path profiling for the next gain tranche toward the 1M NPS Phase 7 target.
+- If SPRT/bench acceptance criteria hold, release as `v0.4.7` and bump to `0.4.8-SNAPSHOT`.
