@@ -3333,3 +3333,63 @@ Per `alphaBeta` node: `new MovesGenerator(board)` internally allocated one `Arra
 **Next:**
 - Run tuner on full quiet-labeled.epd corpus to record baseline MSE with qsearch.
 - Issue #94: expand parameter coverage (unfreeze material, add missing eval terms).
+
+### [2026-06-23] Phase 8 — Expand Parameter Coverage (#94)
+
+**Built:**
+- Expanded `EvalParams` from 812 → 817 parameters with 5 new eval terms:
+  - `IDX_TEMPO` (812): side-to-move bonus, initial value 15cp, range [0, 30]
+  - `IDX_BISHOP_PAIR_MG` (813): initial 30cp, range [0, 60]
+  - `IDX_BISHOP_PAIR_EG` (814): initial 50cp, range [0, 80]
+  - `IDX_ROOK_7TH_MG` (815): initial 20cp, range [0, 50]
+  - `IDX_ROOK_7TH_EG` (816): initial 30cp, range [0, 50]
+- Unfroze material values in `EvalParams`: all piece types now float freely within
+  reasonable bounds (P-EG [70,130], N [250-450/200-400], B [250-450/200-400],
+  R [350-600/350-650], Q [800-1200/700-1100]). Pawn MG hard-pinned at 100
+  (min==max==100). King pinned at 0.
+- Added `EvalParams.enforceMaterialOrdering()`: ensures P<N<B<R<Q for both MG and EG
+  after every optimizer step via forward clamping.
+- Integrated `enforceMaterialOrdering()` into `CoordinateDescent.tune()` — called after
+  every +1 and −1 trial (both accept and revert paths, 4 call sites).
+- Implemented `TunerEvaluator.bishopPair()`: awards MG/EG bonus when a side has ≥ 2 bishops.
+- Implemented `TunerEvaluator.rookOnSeventh()`: awards MG/EG bonus per rook on the 7th rank.
+  Uses a8=0 convention: WHITE_RANK_7 = 0x000000000000FF00L (row 1), BLACK_RANK_7 =
+  0x00FF000000000000L (row 6).
+- Tempo bonus applied after phase interpolation in `evaluateStatic()`: +tempo for White STM,
+  −tempo for Black STM (single scalar, not MG/EG split).
+- Added param count logging to `TunerMain`: `[TunerMain] Parameter count: %d`.
+- Updated `writeToFile()` with a new "## MISC TERMS" section covering tempo, bishop pair,
+  and rook on 7th.
+- Added 13 new `EvalParamsTest` tests: param count, pawn MG pinning, king pinning, material
+  float verification, new term indices, initial values, bounds, enforceMaterialOrdering
+  (no-op, MG violation, EG violation, cascading), clampOne.
+- Added 4 new `TunerEvaluatorTest` tests: bishop pair bonus, rook on 7th bonus, tempo
+  positive for White STM, tempo negative for Black STM.
+- Updated 5 existing tests for tempo: `startposEvaluatesToTempo`,
+  `evalDiffersBySideToMoveByTwiceTempo`, `computeMseSmallForSymmetricDrawnPositions`,
+  `noRegressionOnDrawnPositions`, `threadSafety`.
+
+**Decisions Made:**
+- Pawn MG anchored at 100 (not the PeSTO default of 82) to give the optimizer a stable
+  reference point — all other material values float relative to this anchor.
+- Tempo is a single scalar applied after phase interpolation rather than separate MG/EG
+  values. This is simpler and avoids over-parameterization for a term that doesn't change
+  much between phases.
+- Bishop pair uses ≥ 2 bishops (not exactly 2) to handle promotion edge cases.
+- Material ordering enforcement uses forward clamping (heavier piece = lighter + 1 on
+  violation) rather than averaging or soft penalties, keeping the optimizer deterministic.
+
+**Broke / Fixed:**
+- 5 existing tests broke from tempo introduction (startpos no longer evaluates to 0,
+  eval depends on STM). Fixed by updating test expectations to account for tempo.
+
+**Measurements:**
+- Perft depth 5 (startpos): 4,865,609 ✓
+- Tuner tests: 60 passed, 0 failed, 1 skipped (was 43 before)
+- Engine-core tests: 139 passed, 0 failed, 1 skipped
+- Nodes/sec: not measured this cycle
+- Elo vs. baseline: not measured this cycle
+
+**Next:**
+- Issue #93: implement Adam gradient descent optimizer as alternative to coordinate descent.
+- Issue #95: K recalibration policy (re-run KFinder after each optimizer pass).

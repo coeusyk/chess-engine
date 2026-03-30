@@ -163,8 +163,28 @@ public final class TunerEvaluator {
 
         mgScore += kingSafety(board, params);
 
+        // --- Bishop pair bonus ---
+        int[] bp = bishopPair(board, params);
+        mgScore += bp[0];
+        egScore += bp[1];
+
+        // --- Rook on 7th rank bonus ---
+        int[] r7 = rookOnSeventh(board, params);
+        mgScore += r7[0];
+        egScore += r7[1];
+
         int phase = computePhase(board);
-        return (mgScore * phase + egScore * (TOTAL_PHASE - phase)) / TOTAL_PHASE;
+        int score = (mgScore * phase + egScore * (TOTAL_PHASE - phase)) / TOTAL_PHASE;
+
+        // --- Tempo bonus (applied after phase interpolation, from White's perspective) ---
+        int tempo = (int) params[EvalParams.IDX_TEMPO];
+        if (Piece.isWhite(board.getActiveColor())) {
+            score += tempo;
+        } else {
+            score -= tempo;
+        }
+
+        return score;
     }
 
     /**
@@ -428,6 +448,40 @@ public final class TunerEvaluator {
             pieces &= pieces - 1;
         }
         return count;
+    }
+
+    // =========================================================================
+    // Bishop pair
+    // =========================================================================
+
+    private static int[] bishopPair(Board board, double[] params) {
+        int mg = 0, eg = 0;
+        if (Long.bitCount(board.getWhiteBishops()) >= 2) {
+            mg += (int) params[EvalParams.IDX_BISHOP_PAIR_MG];
+            eg += (int) params[EvalParams.IDX_BISHOP_PAIR_EG];
+        }
+        if (Long.bitCount(board.getBlackBishops()) >= 2) {
+            mg -= (int) params[EvalParams.IDX_BISHOP_PAIR_MG];
+            eg -= (int) params[EvalParams.IDX_BISHOP_PAIR_EG];
+        }
+        return new int[]{ mg, eg };
+    }
+
+    // =========================================================================
+    // Rook on 7th rank
+    // =========================================================================
+
+    /** Rank 7 for White = row 1 (a8=0), rank 7 for Black = row 6 (a8=0). */
+    private static final long WHITE_RANK_7 = 0x000000000000FF00L;
+    private static final long BLACK_RANK_7 = 0x00FF000000000000L;
+
+    private static int[] rookOnSeventh(Board board, double[] params) {
+        int mg = 0, eg = 0;
+        int wCount = Long.bitCount(board.getWhiteRooks() & WHITE_RANK_7);
+        int bCount = Long.bitCount(board.getBlackRooks() & BLACK_RANK_7);
+        mg += (wCount - bCount) * (int) params[EvalParams.IDX_ROOK_7TH_MG];
+        eg += (wCount - bCount) * (int) params[EvalParams.IDX_ROOK_7TH_EG];
+        return new int[]{ mg, eg };
     }
 
     // =========================================================================

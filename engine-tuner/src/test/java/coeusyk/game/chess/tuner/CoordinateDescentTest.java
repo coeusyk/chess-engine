@@ -79,17 +79,18 @@ class CoordinateDescentTest {
     }
 
     @Test
-    void noChangeWhenAlreadyAtZeroMse() {
-        // MSE = 0 from the start (all drawn, all eval=0).
-        // No parameter change can improve on 0; the tuner must terminate quickly
-        // and not corrupt the params.
+    void noRegressionOnDrawnPositions() {
+        // With tempo, startpos eval is no longer zero, so MSE is not zero.
+        // But the optimizer must not increase MSE from the starting point.
         double[] params = EvalParams.extractFromCurrentEval();
         double k = 1.0;
 
+        double mseBefore = TunerEvaluator.computeMse(perfectlyDrawnPositions(), params, k);
         double[] tuned = CoordinateDescent.tune(perfectlyDrawnPositions(), params, k, 5);
         double mseFinal = TunerEvaluator.computeMse(perfectlyDrawnPositions(), tuned, k);
 
-        assertEquals(0.0, mseFinal, 1e-12,
-                "MSE must remain 0.0 when the starting MSE is already 0");
+        assertTrue(mseFinal <= mseBefore + 1e-9,
+                "MSE must not increase after tuning drawn positions (" +
+                        mseBefore + " → " + mseFinal + ")");
     }
 }

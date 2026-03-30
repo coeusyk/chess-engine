@@ -58,10 +58,12 @@ class TunerQuiescenceTest {
     @Test
     void threadSafety() throws Exception {
         // Run many evaluations in parallel to verify ThreadLocal<TunerQuiescence> works.
+        // With tempo, startpos evaluates to the tempo value, not 0.
         Board[] boards = new Board[100];
         for (int i = 0; i < boards.length; i++) {
             boards[i] = new Board();
         }
+        int expectedEval = (int) defaultParams[EvalParams.IDX_TEMPO];
 
         java.util.concurrent.atomic.AtomicBoolean failed = new java.util.concurrent.atomic.AtomicBoolean(false);
         Thread[] threads = new Thread[8];
@@ -70,13 +72,13 @@ class TunerQuiescenceTest {
             threads[t] = new Thread(() -> {
                 for (int i = 0; i < boards.length / threads.length; i++) {
                     int eval = TunerEvaluator.evaluate(boards[offset + i], defaultParams);
-                    if (eval != 0) failed.set(true);
+                    if (eval != expectedEval) failed.set(true);
                 }
             });
         }
         for (Thread t : threads) t.start();
         for (Thread t : threads) t.join();
 
-        assertFalse(failed.get(), "All startpos evaluations should return 0");
+        assertFalse(failed.get(), "All startpos evaluations should return " + expectedEval);
     }
 }

@@ -52,6 +52,7 @@ public final class TunerMain {
 
         // --- Extract initial parameters from hardcoded engine constants ---
         double[] params = EvalParams.extractFromCurrentEval();
+        System.out.printf("[TunerMain] Parameter count: %d%n", params.length);
 
         // --- Find optimal K (sigmoid scaling constant) ---
         System.out.println("[TunerMain] Finding optimal K...");

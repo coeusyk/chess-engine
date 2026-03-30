@@ -9,10 +9,13 @@ import java.util.Arrays;
 /**
  * Bridge between the tuner parameter array and the live evaluator constants.
  *
- * Parameter layout (812 total):
+ * Parameter layout (817 total):
  * <pre>
  *   [0..11]    Material MG/EG for pawn, knight, bishop, rook, queen, king
  *              (indices alternate: [2n] = MG, [2n+1] = EG)
+ *              Pawn MG (index 0) is hard-pinned at 100 (min==max==100).
+ *              King MG/EG (indices 10,11) are pinned at 0.
+ *              All other material values float freely.
  *
  *   [12..75]   pawn MG PST (64 values)
  *   [76..139]  pawn EG PST
@@ -51,11 +54,17 @@ import java.util.Arrays;
  *   [809]      mobility EG bonus/sq Bishop
  *   [810]      mobility EG bonus/sq Rook
  *   [811]      mobility EG bonus/sq Queen
+ *
+ *   [812]      tempo bonus (side-to-move advantage, single scalar)
+ *   [813]      bishop pair MG bonus
+ *   [814]      bishop pair EG bonus
+ *   [815]      rook on 7th rank MG bonus
+ *   [816]      rook on 7th rank EG bonus
  * </pre>
  */
 public final class EvalParams {
 
-    public static final int TOTAL_PARAMS = 812;
+    public static final int TOTAL_PARAMS = 817;
 
     // --- Indices for documentation / cross-referencing ---
     public static final int IDX_MATERIAL_START  = 0;   // [0..11]
@@ -76,6 +85,11 @@ public final class EvalParams {
     public static final int IDX_ATK_QUEEN       = 803;
     public static final int IDX_MOB_MG_START    = 804;
     public static final int IDX_MOB_EG_START    = 808;
+    public static final int IDX_TEMPO           = 812;
+    public static final int IDX_BISHOP_PAIR_MG  = 813;
+    public static final int IDX_BISHOP_PAIR_EG  = 814;
+    public static final int IDX_ROOK_7TH_MG     = 815;
+    public static final int IDX_ROOK_7TH_EG     = 816;
 
     /**
      * Per-parameter lower bounds enforced during coordinate descent.
@@ -90,39 +104,77 @@ public final class EvalParams {
 
     private static double[] buildMin() {
         double[] lo = new double[TOTAL_PARAMS];
-        // Material: fixed at PeSTO defaults (min==max pins the value).
-        // Tuning material independently breaks piece-to-pawn ratios — e.g. pawn dropping to 74
-        // while knights stay at 337 makes Knights worth 4.5 pawns (standard: 3.2x).
-        // Only PSTs, pawn structure, mobility, and king safety are tunable.
-        double[] matFixed = { 82, 94, 337, 281, 365, 297, 477, 512, 1025, 936, 0, 0 };
-        System.arraycopy(matFixed, 0, lo, 0, 12);
+        // Material: pawn MG hard-pinned at 100 (min==max), king MG/EG pinned at 0.
+        // All other material values float freely with reasonable lower bounds.
+        //           P-MG  P-EG  N-MG  N-EG  B-MG  B-EG  R-MG  R-EG  Q-MG   Q-EG  K-MG K-EG
+        double[] matLo = { 100,  70,  250,  200,  250,  200,  350,  350,  800,  700,  0,   0 };
+        System.arraycopy(matLo, 0, lo, 0, 12);
         Arrays.fill(lo, IDX_PST_START, IDX_PASSED_MG_START, -200);  // PST: no extreme positional skew
         Arrays.fill(lo, IDX_PASSED_MG_START, IDX_ISOLATED_MG,  0);  // Passed pawn bonuses >= 0
         Arrays.fill(lo, IDX_ISOLATED_MG, IDX_SHIELD_RANK2,     0);  // Pawn penalties >= 0
         Arrays.fill(lo, IDX_SHIELD_RANK2, IDX_MOB_MG_START,    0);  // King safety >= 0
         Arrays.fill(lo, IDX_MOB_MG_START, IDX_MOB_EG_START,   -5);  // Mobility MG may be slightly negative
-        Arrays.fill(lo, IDX_MOB_EG_START, TOTAL_PARAMS,         0);  // Mobility EG must be >= 0
+        Arrays.fill(lo, IDX_MOB_EG_START, IDX_TEMPO,            0);  // Mobility EG must be >= 0
+        lo[IDX_TEMPO]          = 0;   // Tempo bonus >= 0
+        lo[IDX_BISHOP_PAIR_MG] = 0;   // Bishop pair MG >= 0
+        lo[IDX_BISHOP_PAIR_EG] = 0;   // Bishop pair EG >= 0
+        lo[IDX_ROOK_7TH_MG]   = 0;   // Rook on 7th MG >= 0
+        lo[IDX_ROOK_7TH_EG]   = 0;   // Rook on 7th EG >= 0
         return lo;
     }
 
     private static double[] buildMax() {
         double[] hi = new double[TOTAL_PARAMS];
-        // Material: fixed (same as min — see buildMin comment)
-        double[] matFixed = { 82, 94, 337, 281, 365, 297, 477, 512, 1025, 936, 0, 0 };
-        System.arraycopy(matFixed, 0, hi, 0, 12);
+        // Material: pawn MG hard-pinned at 100 (min==max), king MG/EG pinned at 0.
+        // All other material values float freely with reasonable upper bounds.
+        //           P-MG  P-EG  N-MG  N-EG  B-MG  B-EG  R-MG  R-EG  Q-MG   Q-EG  K-MG K-EG
+        double[] matHi = { 100, 130,  450,  400,  450,  400,  600,  650,  1200, 1100, 0,   0 };
+        System.arraycopy(matHi, 0, hi, 0, 12);
         Arrays.fill(hi, IDX_PST_START, IDX_PASSED_MG_START, 200);   // PST
         Arrays.fill(hi, IDX_PASSED_MG_START, IDX_PASSED_EG_START, 150); // Passed pawn MG
         Arrays.fill(hi, IDX_PASSED_EG_START, IDX_ISOLATED_MG,  200);    // Passed pawn EG
         Arrays.fill(hi, IDX_ISOLATED_MG, IDX_SHIELD_RANK2,      60);    // Pawn penalties
         Arrays.fill(hi, IDX_SHIELD_RANK2, IDX_MOB_MG_START,     80);    // King safety
         Arrays.fill(hi, IDX_MOB_MG_START, IDX_MOB_EG_START,     15);    // Mobility MG
-        Arrays.fill(hi, IDX_MOB_EG_START, TOTAL_PARAMS,          15);    // Mobility EG
+        Arrays.fill(hi, IDX_MOB_EG_START, IDX_TEMPO,             15);    // Mobility EG
+        hi[IDX_TEMPO]          = 30;   // Tempo bonus <= 30cp
+        hi[IDX_BISHOP_PAIR_MG] = 60;   // Bishop pair MG <= 60cp
+        hi[IDX_BISHOP_PAIR_EG] = 80;   // Bishop pair EG <= 80cp
+        hi[IDX_ROOK_7TH_MG]   = 50;   // Rook on 7th MG <= 50cp
+        hi[IDX_ROOK_7TH_EG]   = 50;   // Rook on 7th EG <= 50cp
         return hi;
     }
 
     /** Clamps a single parameter value to its legal range. */
     public static double clampOne(int i, double value) {
         return Math.max(PARAM_MIN[i], Math.min(PARAM_MAX[i], value));
+    }
+
+    /**
+     * Enforces P &lt; N &lt; B &lt; R &lt; Q material ordering for both MG and EG.
+     * If a violation is found, the offending value is clamped upward to one more
+     * than the preceding piece's value (i.e., the lighter piece value + 1).
+     * Called after each optimizer step to prevent pathological material ratios.
+     *
+     * <p>Indices: Pawn MG=0, Pawn EG=1, Knight MG=2, Knight EG=3, Bishop MG=4,
+     * Bishop EG=5, Rook MG=6, Rook EG=7, Queen MG=8, Queen EG=9.
+     * King (10,11) is excluded — always 0.
+     */
+    public static void enforceMaterialOrdering(double[] params) {
+        // MG ordering: P(0) < N(2) < B(4) < R(6) < Q(8)
+        int[] mgIndices = { 0, 2, 4, 6, 8 };
+        for (int i = 1; i < mgIndices.length; i++) {
+            if (params[mgIndices[i]] <= params[mgIndices[i - 1]]) {
+                params[mgIndices[i]] = params[mgIndices[i - 1]] + 1;
+            }
+        }
+        // EG ordering: P(1) < N(3) < B(5) < R(7) < Q(9)
+        int[] egIndices = { 1, 3, 5, 7, 9 };
+        for (int i = 1; i < egIndices.length; i++) {
+            if (params[egIndices[i]] <= params[egIndices[i - 1]]) {
+                params[egIndices[i]] = params[egIndices[i - 1]] + 1;
+            }
+        }
     }
 
     private EvalParams() {}
@@ -139,7 +191,8 @@ public final class EvalParams {
         // --- Material MG/EG ---
         // Piece type indices (Piece.Pawn=1, Knight=2, Bishop=3, Rook=4, Queen=5, King=6)
         // Stored as 2 per type: [2*(type-1)] = MG, [2*(type-1)+1] = EG
-        p[0]  = 82;   p[1]  = 94;    // Pawn
+        // Pawn MG is hard-pinned at 100 (anchoring point for all other values).
+        p[0]  = 100;  p[1]  = 94;    // Pawn (MG pinned at 100)
         p[2]  = 337;  p[3]  = 281;   // Knight
         p[4]  = 365;  p[5]  = 297;   // Bishop
         p[6]  = 477;  p[7]  = 512;   // Rook
@@ -318,6 +371,13 @@ public final class EvalParams {
         p[IDX_MOB_EG_START + 2] = 4;  // Rook
         p[IDX_MOB_EG_START + 3] = 8;  // Queen
 
+        // --- New eval terms (not yet in the live evaluator — initial estimates) ---
+        p[IDX_TEMPO]          = 15;   // Tempo bonus ~15cp
+        p[IDX_BISHOP_PAIR_MG] = 30;   // Bishop pair MG ~30cp
+        p[IDX_BISHOP_PAIR_EG] = 50;   // Bishop pair EG ~50cp
+        p[IDX_ROOK_7TH_MG]   = 20;   // Rook on 7th rank MG ~20cp
+        p[IDX_ROOK_7TH_EG]   = 30;   // Rook on 7th rank EG ~30cp
+
         return p;
     }
 
@@ -369,6 +429,13 @@ public final class EvalParams {
             w.write(String.format("EG  N=%.0f B=%.0f R=%.0f Q=%.0f%n",
                 params[IDX_MOB_EG_START], params[IDX_MOB_EG_START+1],
                 params[IDX_MOB_EG_START+2], params[IDX_MOB_EG_START+3]));
+
+            w.write("\n## MISC TERMS\n");
+            w.write(String.format("TEMPO=%.0f%n", params[IDX_TEMPO]));
+            w.write(String.format("BISHOP_PAIR  MG=%.0f  EG=%.0f%n",
+                params[IDX_BISHOP_PAIR_MG], params[IDX_BISHOP_PAIR_EG]));
+            w.write(String.format("ROOK_ON_7TH  MG=%.0f  EG=%.0f%n",
+                params[IDX_ROOK_7TH_MG], params[IDX_ROOK_7TH_EG]));
         }
     }
 

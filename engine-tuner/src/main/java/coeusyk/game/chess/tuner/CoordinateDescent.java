@@ -65,6 +65,7 @@ public final class CoordinateDescent {
                 // Try +1 (only if within upper bound)
                 if (params[i] < hi) {
                     params[i] += 1.0;
+                    EvalParams.enforceMaterialOrdering(params);
                     double msePlus = TunerEvaluator.computeMse(positions, params, k);
                     if (msePlus < currentMse) {
                         currentMse = msePlus;
@@ -72,11 +73,13 @@ public final class CoordinateDescent {
                         continue;
                     }
                     params[i] -= 1.0;
+                    EvalParams.enforceMaterialOrdering(params);
                 }
 
                 // Try -1 (only if within lower bound)
                 if (params[i] > lo) {
                     params[i] -= 1.0;
+                    EvalParams.enforceMaterialOrdering(params);
                     double mseMinus = TunerEvaluator.computeMse(positions, params, k);
                     if (mseMinus < currentMse) {
                         currentMse = mseMinus;
@@ -84,6 +87,7 @@ public final class CoordinateDescent {
                         continue;
                     }
                     params[i] += 1.0;
+                    EvalParams.enforceMaterialOrdering(params);
                 }
             }
 
