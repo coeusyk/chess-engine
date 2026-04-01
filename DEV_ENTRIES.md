@@ -3653,8 +3653,8 @@ Both use 16 parallel threads. K (100k subset): 1.655876.
 - PawnStructure.PASSED_EG[6] fixed: 116 → 128. Rank-7 passed pawn (idx=6 in a8=0 convention
   for white) must score higher than rank-6 (idx=5, value=123). Old value 116 < 123 violated
   monotonicity. New value 128 restores it.
-- MovesGenerator.SquaresToEdges marked inal — the array was never written after
-  static init, so inal expresses correct semantics and allows JIT optimisation.
+- MovesGenerator.SquaresToEdges marked final — the array was never written after
+  static init, so final expresses correct semantics and allows JIT optimisation.
 - EvalConfig record (new file) — immutable value holder for 17 scalar eval constants
   (tempo, bishop pair, rook-7th, rook open/semi file, knight outpost, connected pawn,
   backward pawn, rook-behind-passer — each MG and EG). Java record generates accessors
@@ -3669,7 +3669,7 @@ Both use 16 parallel threads. K (100k subset): 1.655876.
 - 2-fold (not 3-fold) draw detection in search: CPW recommends treating ANY repetition within
   the search path as a draw to avoid infinite loops. 3-fold is only needed for adjudication
   at the root; 2-fold is more conservative and more correct for search pruning.
-- Skip draw detection at root (ply=0): root always needs a estMove returned from
+- Skip draw detection at root (ply=0): root always needs a bestMove returned from
   searchRoot(); returning score=0 with no move would crash callers.
 - halfmoveClock + 1 window: repetitions cannot span an irreversible move (capture or
   pawn push resets the 50-move clock), so no need to scan further back.
