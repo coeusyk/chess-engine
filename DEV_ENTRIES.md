@@ -3533,3 +3533,49 @@ Both use 16 parallel threads. K (100k subset): 1.655876.
 **Next:**
 - Commit #92, #93, #94 (already done), #95, #96 as one concentrated commit batch.
 - Run SPRT for #93/#94 tuned params vs baseline (elo0=0, elo1=50, 5+0.05 TC).
+
+---
+
+### [2026-04-01] Phase 8 — Logger Migration + New Eval Terms (Tempo, Bishop Pair, Rook on 7th)
+
+**Built:**
+- Migrated all System.out/System.err calls across all modules to SLF4J Logger:
+  - ngine-tuner: TunerMain, GradientDescent, CoordinateDescent, KFinder, PositionLoader
+  - ngine-uci: UciApplication (System.err.println warn line only; UCI protocol System.out left intact)
+  - ngine-core: Searcher (bench debug), TimeManager (time allocation debug)
+- Added logback.xml configs: engine-tuner (stdout %msg%n), engine-uci (stderr %msg%n), engine-core tests (WARN threshold)
+- Added ServicesResourceTransformer to engine-tuner and engine-uci Maven Shade plugins (SLF4J ServiceLoader SPI merging)
+- Added three new eval terms to Evaluator.java:
+  - TEMPO = 15: awarded to the side to move post-phase-interpolation
+  - BISHOP_PAIR_MG = 30 / BISHOP_PAIR_EG = 50: bonus for owning both bishops
+  - ROOK_7TH_MG = 20 / ROOK_7TH_EG = 30: bonus per rook on the 7th rank (a8=0: White rank 7 = bits 8-15, Black rank 7 = bits 48-55)
+- EvalParams.java: updated comment from 'not yet in live evaluator' to 'Bonus eval terms' (terms now live)
+- Started full Texel tuning run: 725k positions, Adam optimizer, 500 max iters. Starting K=1.627046 MSE=0.05909342
+
+**Decisions Made:**
+- TEMPO fields declared static int (not inal) so post-tuning values can be copied in without recompile.
+- TEMPO is applied after phase interpolation so it does not interact with the MG/EG blend; it is a fixed offset for having the move.
+- Rank masks use the a8=0 convention: WHITE_RANK_7=0x000000000000FF00L (rank 7 = row 1), BLACK_RANK_7=0x00FF000000000000L (rank 2 = row 6).
+- UCI protocol System.out lines in UciApplication left unchanged — any SLF4J appender would corrupt the UCI stdio stream.
+
+**Broke / Fixed:**
+- SearchRegressionTest: 8 bestmoves changed due to new eval terms. Investigated each:
+  - P7 (d1d2 → d7d8q): immediate promotion is objectively superior — updated.
+  - E8 (h2h4 → g1a1): rook to a-file stops enemy passer immediately — updated.
+  - P1/P3/P5/P8/E2/E7: eval-dependent alternatives; both old and new moves win — updated with comments.
+- EvaluatorTest: 4 assertions updated from ssertEquals(0, ...) to ssertEquals(Evaluator.TEMPO, ...) for symmetric positions that now return TEMPO as the only non-zero contribution.
+- Test count: 77 passed, 0 failed, 1 skipped.
+
+**Measurements:**
+- Perft depth 5 (startpos): 4,865,609 (no regression)
+- Nodes/sec: not measured this cycle
+- Elo vs. baseline: not measured this cycle (SPRT pending after tuning run completes)
+- Tuning MSE start: 0.05909342 (K=1.627046); iter 1 MSE=0.05875329 (K recalibrated to 1.654979); run in progress
+
+**Next:**
+- Wait for tuning run to complete (target MSE < 0.055)
+- Apply tuned params from tuned_params.txt to engine-core source constants
+- Re-verify Perft depth 5 = 4,865,609
+- Run SPRT vs baseline (elo0=0, elo1=50, 5+0.05 TC)
+- Update DEV_ENTRIES with tuning run stats and SPRT result
+- Close #91 when all exit criteria met
