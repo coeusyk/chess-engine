@@ -1,2 +1,2 @@
 @echo off
-java -jar "C:\Users\yashk\WorkDir\Projects\ChessEngine\chess-engine\engine-uci\target\engine-uci-0.4.2-SNAPSHOT-shaded.jar"
+java -jar "C:\Users\yashk\WorkDir\Projects\ChessEngine\chess-engine\engine-uci\target\engine-uci-0.4.7-SNAPSHOT-shaded.jar"
