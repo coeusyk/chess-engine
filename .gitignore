@@ -37,3 +37,4 @@ build/
 .devcontainer/
 
 .mvn/
+dependency-reduced-pom.xml

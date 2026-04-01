@@ -1402,16 +1402,6 @@ public class Searcher {
         }
     }
 
-    private List<Move> extractQuiescenceMoves(Board board, List<Move> legalMoves) {
-        List<Move> qMoves = new ArrayList<>();
-        for (Move move : legalMoves) {
-            if (shouldIncludeInQuiescence(board, move)) {
-                qMoves.add(move);
-            }
-        }
-        return qMoves;
-    }
-
     boolean shouldIncludeInQuiescenceForTesting(Board board, Move move) {
         return shouldIncludeInQuiescence(board, move);
     }

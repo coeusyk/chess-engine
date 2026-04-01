@@ -16,6 +16,7 @@
         <module>engine-core</module>
         <module>engine-uci</module>
         <module>chess-engine-api</module>
+        <module>engine-tuner</module>
     </modules>
 
     <properties>
