@@ -371,12 +371,12 @@ public final class EvalParams {
         p[IDX_MOB_EG_START + 2] = 4;  // Rook
         p[IDX_MOB_EG_START + 3] = 8;  // Queen
 
-        // --- New eval terms (not yet in the live evaluator — initial estimates) ---
-        p[IDX_TEMPO]          = 15;   // Tempo bonus ~15cp
-        p[IDX_BISHOP_PAIR_MG] = 30;   // Bishop pair MG ~30cp
-        p[IDX_BISHOP_PAIR_EG] = 50;   // Bishop pair EG ~50cp
-        p[IDX_ROOK_7TH_MG]   = 20;   // Rook on 7th rank MG ~20cp
-        p[IDX_ROOK_7TH_EG]   = 30;   // Rook on 7th rank EG ~30cp
+        // --- Bonus eval terms ---
+        p[IDX_TEMPO]          = 15;   // Tempo bonus
+        p[IDX_BISHOP_PAIR_MG] = 30;   // Bishop pair MG
+        p[IDX_BISHOP_PAIR_EG] = 50;   // Bishop pair EG
+        p[IDX_ROOK_7TH_MG]   = 20;   // Rook on 7th rank MG
+        p[IDX_ROOK_7TH_EG]   = 30;   // Rook on 7th rank EG
 
         return p;
     }

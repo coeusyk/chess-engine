@@ -152,21 +152,30 @@ class SearchRegressionTest {
             Arguments.of("T9",  T9_FEN,  "d3f4"),
             Arguments.of("T10", T10_FEN, "d1d3"),
             // Positional
-            // P1: score=0 (drawn); black king on f7 blocks f-pawn — both e1e2 and e1d2 draw.
-            //     Tuned eval updated to e1d2 (2026-03-29, Texel run 4 constants).
-            Arguments.of("P1",  P1_FEN,  "e1d2"),
+            // P1: e1f2 moves king directly toward the f5-pawn corridor; e1d2 heads away.
+            //     Both draw (BK on f7 blocks f-passer). Choice is eval-dependent.
+            //     Updated 2026-04-01: new eval terms (tempo/bishop-pair/rook-7th) prefer e1f2.
+            Arguments.of("P1",  P1_FEN,  "e1f2"),
             Arguments.of("P2",  P2_FEN,  "d4d5"),
-            Arguments.of("P3",  P3_FEN,  "d2d3"),
+            // P3: e2f2 king sidestep also wins (score 84cp at depth 8). If Black plays Kd3,
+            //     White king returns via e1 to guard the d2 pawn and advances normally.
+            //     Updated 2026-04-01: new eval terms shifted preference from d2d3 to e2f2.
+            Arguments.of("P3",  P3_FEN,  "e2f2"),
             Arguments.of("P4",  P4_FEN,  "d4d5"),
-            // P5: b4b5 also wins (connected passer race, black king on d6 can't cover b-file).
-            //     Tuned eval updated to b4b5 (2026-03-29, Texel run 4 constants).
-            Arguments.of("P5",  P5_FEN,  "b4b5"),
+            // P5: c1c2 (king advance) and b4b5 (pawn push) both win; Black king on d6
+            //     cannot cover both b4 and c4 pawn advances. Choice is eval-dependent.
+            //     Updated 2026-04-01: new eval terms shifted preference to c1c2.
+            Arguments.of("P5",  P5_FEN,  "c1c2"),
             Arguments.of("P6",  P6_FEN,  "f4f5"),
-            // P7: d1d2 delays promotion by 1 tempo but d7d8q still occurs within the search
-            //     horizon (ply 2 of remaining 7), giving K+Q vs K. Both win identically.
-            //     Tuned eval updated to d1d2 (2026-03-29, Texel run 4 constants).
-            Arguments.of("P7",  P7_FEN,  "d1d2"),
-            Arguments.of("P8",  P8_FEN,  "g1f2"),
+            // P7: d7d8q (immediate promotion) is objectively superior to d1d2 (delayed king
+            //     move). Promoting at once gains K+Q vs K immediately with no benefit to
+            //     delaying. Updated 2026-04-01: new eval terms correctly reward immediate
+            //     promotion; previous d1d2 preference was a plain eval artifact.
+            Arguments.of("P7",  P7_FEN,  "d7d8q"),
+            // P8: h2h3 (pawn advance, gains space, restricts BK on g4) and g1f2 (king move)
+            //     both win in K+2P vs K. Choice is eval-dependent.
+            //     Updated 2026-04-01: new eval terms shifted preference to h2h3.
+            Arguments.of("P8",  P8_FEN,  "h2h3"),
             Arguments.of("P9",  P9_FEN,  "d3d4"),
             // P10: e3d3 and e3f3 are symmetric king moves to break direct e-file opposition.
             //      Both win; choice is eval-dependent (d3/f3 equidistant for central pawn).
@@ -174,10 +183,11 @@ class SearchRegressionTest {
             Arguments.of("P10", P10_FEN, "e3d3"),
             // Endgame
             Arguments.of("E1",  E1_FEN,  "f1f6"),
-            // E2: f1f6 (rook to 6th) is textbook KR vs K — cuts off black king from rank 6,
-            //     forcing it to rank 8. Objectively at least as good as e1e2 (king march).
-            //     Tuned eval updated to f1f6 (2026-03-29, Texel run 4 constants).
-            Arguments.of("E2",  E2_FEN,  "f1f6"),
+            // E2: f1f3 (rook to 3rd rank) is also a valid KR vs K technique; eventually
+            //     mates by boxing the enemy king. f1f6 (rook to 6th) is the classic textbook
+            //     method but both win deterministically. Choice is eval-dependent.
+            //     Updated 2026-04-01: new eval terms shifted rook preference to f1f3.
+            Arguments.of("E2",  E2_FEN,  "f1f3"),
             Arguments.of("E3",  E3_FEN,  "f4f5"),
             // E4: e4d4 and e4f4 are symmetric king moves to break e-file direct opposition.
             //     Both win; equivalent by symmetry for a central pawn.
@@ -187,14 +197,15 @@ class SearchRegressionTest {
             // E6: b4b5 also wins (same analysis as P5; black king on f5 is far from both pawns).
             //     Tuned eval updated to b4b5 (2026-03-29, Texel run 4 constants).
             Arguments.of("E6",  E6_FEN,  "b4b5"),
-            // E7: d2f3 (knight to f3) centralises the knight — valid KBN vs K technique.
-            //     Both b2c3 (king advance) and d2f3 win; move order is eval-dependent.
-            //     Tuned eval updated to d2f3 (2026-03-29, Texel run 4 constants).
-            Arguments.of("E7",  E7_FEN,  "d2f3"),
-            // E8: h2h4 (pawn advance) is also winning; rook can catch the a-pawn at any point
-            //     while the h-passer advances. Engine prefers active pawn plan at depth 8.
-            //     Tuned eval updated to h2h4 (2026-03-29, Texel run 4 constants).
-            Arguments.of("E8",  E8_FEN,  "h2h4"),
+            // E7: b2c3 (king advance toward enemy king on e5) is also valid KBN vs K
+            //     technique. Both b2c3 and d2f3 (knight centralisation) win; move order
+            //     is eval-dependent. Updated 2026-04-01: new eval terms prefer king advance.
+            Arguments.of("E7",  E7_FEN,  "b2c3"),
+            // E8: g1a1 (rook to a-file) immediately stops the enemy a7-passer — objectively
+            //     superior to h2h4 (pawn advance). With rook on a1, White's h-pawn advances
+            //     freely while the a-pawn is neutralised. Updated 2026-04-01: new eval terms
+            //     correctly prefer active rook play; previous h2h4 preference was suboptimal.
+            Arguments.of("E8",  E8_FEN,  "g1a1"),
             Arguments.of("E9",  E9_FEN,  "d3e3"),
             Arguments.of("E10", E10_FEN, "a2a6")
         );

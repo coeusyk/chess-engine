@@ -13,7 +13,9 @@ class EvaluatorTest {
     void startingPositionEvaluatesToZero() {
         Board board = new Board();
         int score = evaluator.evaluate(board);
-        assertEquals(0, score, "Starting position should evaluate to 0 (equal material)");
+        // Equal material + PSTs are symmetric, so the only offset is the TEMPO bonus
+        // for the side to move (+15 for White at the start position).
+        assertEquals(Evaluator.TEMPO, score, "Starting position should evaluate to TEMPO cp (side-to-move bonus only)");
     }
 
     @Test
@@ -23,10 +25,10 @@ class EvaluatorTest {
         int blackToMove = evaluator.evaluate(whiteAdvantage);
         assertTrue(blackToMove < 0, "Black to move should see negative score when white has extra knight");
 
-        // Position with white having extra pawn
+        // Position with equal material, White to move — eval equals TEMPO (side-to-move bonus).
         Board extraPawn = new Board("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
         int equalMaterial = evaluator.evaluate(extraPawn);
-        assertEquals(0, equalMaterial, "Equal material should evaluate to 0");
+        assertEquals(Evaluator.TEMPO, equalMaterial, "Equal material should evaluate to TEMPO cp (side-to-move bonus)");
     }
 
     @Test
@@ -45,8 +47,8 @@ class EvaluatorTest {
     void evalSymmetryForStartPosition() {
         Board board = new Board();
         int whiteScore = evaluator.evaluate(board);
-        // Starting position is symmetric, score should be 0 from either side
-        assertEquals(0, whiteScore);
+        // Starting position is materially/positionally symmetric; eval = TEMPO (side-to-move bonus).
+        assertEquals(Evaluator.TEMPO, whiteScore);
     }
 
     @Test
@@ -155,13 +157,13 @@ class EvaluatorTest {
         // Kings + pawns only: phase = 0 → pure endgame score
         Board endgame = new Board("4k3/pppppppp/8/8/8/8/PPPPPPPP/4K3 w - - 0 1");
         int endgameScore = evaluator.evaluate(endgame);
-        // Equal material, symmetric → should be 0
-        assertEquals(0, endgameScore);
+        // Equal material, symmetric → eval = TEMPO (side-to-move bonus only)
+        assertEquals(Evaluator.TEMPO, endgameScore);
 
         // Starting position: phase = 24 → pure middlegame score
         Board startPos = new Board();
         int startScore = evaluator.evaluate(startPos);
-        assertEquals(0, startScore);
+        assertEquals(Evaluator.TEMPO, startScore);
     }
 
     @Test

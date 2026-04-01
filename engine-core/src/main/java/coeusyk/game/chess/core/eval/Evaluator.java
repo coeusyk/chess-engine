@@ -25,6 +25,21 @@ public class Evaluator {
     // Baseline: subtract this many safe squares before applying bonus
     private static final int[] MOBILITY_BASELINE = new int[7];
 
+    // Tempo bonus for side to move (centipawns, applied after phase interpolation)
+    static int TEMPO = 15;
+
+    // Bishop pair bonus
+    static int BISHOP_PAIR_MG = 30;
+    static int BISHOP_PAIR_EG = 50;
+
+    // Rook on 7th rank bonus
+    static int ROOK_7TH_MG = 20;
+    static int ROOK_7TH_EG = 30;
+
+    // Rank 7 bitboards (a8=0 convention): rank 7 = bits 8-15, rank 2 = bits 48-55
+    private static final long WHITE_RANK_7 = 0x000000000000FF00L;
+    private static final long BLACK_RANK_7 = 0x00FF000000000000L;
+
     static {
         PHASE_WEIGHTS[Piece.Knight] = 1;
         PHASE_WEIGHTS[Piece.Bishop] = 1;
@@ -95,9 +110,28 @@ public class Evaluator {
 
         mgScore += KingSafety.evaluate(board);
 
+        // --- Bishop pair bonus ---
+        if (Long.bitCount(board.getWhiteBishops()) >= 2) {
+            mgScore += BISHOP_PAIR_MG;
+            egScore += BISHOP_PAIR_EG;
+        }
+        if (Long.bitCount(board.getBlackBishops()) >= 2) {
+            mgScore -= BISHOP_PAIR_MG;
+            egScore -= BISHOP_PAIR_EG;
+        }
+
+        // --- Rook on 7th rank bonus ---
+        int wRook7 = Long.bitCount(board.getWhiteRooks() & WHITE_RANK_7);
+        int bRook7 = Long.bitCount(board.getBlackRooks() & BLACK_RANK_7);
+        mgScore += (wRook7 - bRook7) * ROOK_7TH_MG;
+        egScore += (wRook7 - bRook7) * ROOK_7TH_EG;
+
         int phase = computePhase(board);
         egScore += MopUp.evaluate(board, phase);
         int score = (mgScore * phase + egScore * (TOTAL_PHASE - phase)) / TOTAL_PHASE;
+
+        // --- Tempo bonus (applied after phase interpolation) ---
+        score += Piece.isWhite(board.getActiveColor()) ? TEMPO : -TEMPO;
 
         return Piece.isWhite(board.getActiveColor()) ? score : -score;
     }
