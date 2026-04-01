@@ -1,5 +1,8 @@
 package coeusyk.game.chess.tuner;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.List;
 
 /**
@@ -17,6 +20,8 @@ import java.util.List;
  * dramatically during coordinate descent on a well-balanced eval.
  */
 public final class KFinder {
+
+    private static final Logger LOG = LoggerFactory.getLogger(KFinder.class);
 
     /** Lower bound of the K search range. */
     public static final double K_MIN = 0.5;
@@ -55,8 +60,8 @@ public final class KFinder {
         }
 
         double best = (lo + hi) / 2.0;
-        System.out.printf("[KFinder] K = %.6f  (MSE = %.8f)%n",
-                best, TunerEvaluator.computeMse(positions, params, best));
+        LOG.info(String.format("[KFinder] K = %.6f  (MSE = %.8f)",
+                best, TunerEvaluator.computeMse(positions, params, best)));
         return best;
     }
 }

@@ -2,7 +2,11 @@ package coeusyk.game.chess.core.search;
 
 import coeusyk.game.chess.core.models.Piece;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public class TimeManager {
+    private static final Logger LOG = LoggerFactory.getLogger(TimeManager.class);
     private long moveOverheadMs = 30;
     private long softLimitMs = 1;
     private long hardLimitMs = 1;
@@ -44,7 +48,7 @@ public class TimeManager {
         softLimitMs = Math.max(soft, 50);
         hardLimitMs = Math.max(hard, softLimitMs + 50);
 
-        System.err.printf("[TIME] allocated soft=%dms hard=%dms%n", softLimitMs, hardLimitMs);
+        LOG.debug(String.format("[TIME] allocated soft=%dms hard=%dms", softLimitMs, hardLimitMs));
     }
 
     public void startNow() {

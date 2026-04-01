@@ -2,6 +2,9 @@ package coeusyk.game.chess.tuner;
 
 import coeusyk.game.chess.core.models.Board;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
@@ -21,6 +24,8 @@ import java.util.List;
  * Lines that cannot be parsed are silently skipped.
  */
 public final class PositionLoader {
+
+    private static final Logger LOG = LoggerFactory.getLogger(PositionLoader.class);
 
     private PositionLoader() {}
 
@@ -58,7 +63,7 @@ public final class PositionLoader {
             }
         }
         if (skipped > 0) {
-            System.out.printf("[PositionLoader] Skipped %,d unparseable lines%n", skipped);
+            LOG.info(String.format("[PositionLoader] Skipped %,d unparseable lines", skipped));
         }
         return result;
     }

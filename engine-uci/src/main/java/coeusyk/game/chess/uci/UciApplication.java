@@ -19,7 +19,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public class UciApplication {
+    private static final Logger LOG = LoggerFactory.getLogger(UciApplication.class);
     private static final String ENGINE_NAME = "Vex";
     private static final String ENGINE_AUTHOR = "coeusyk";
     private static final int MATE_SCORE = 100_000;
@@ -323,7 +327,7 @@ public class UciApplication {
         }
         if (legalMoves.isEmpty()) {
             // Checkmate or stalemate — no move to play.
-            System.err.println("warn: handleGo called with 0 legal moves");
+            LOG.warn("warn: handleGo called with 0 legal moves");
             emitBestMove(null);
             System.out.flush();
             return;

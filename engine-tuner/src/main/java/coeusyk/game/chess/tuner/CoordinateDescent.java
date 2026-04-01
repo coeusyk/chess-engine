@@ -1,5 +1,8 @@
 package coeusyk.game.chess.tuner;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -23,6 +26,8 @@ import java.util.List;
  * update races.
  */
 public final class CoordinateDescent {
+
+    private static final Logger LOG = LoggerFactory.getLogger(CoordinateDescent.class);
 
     /** Default maximum number of full-pass iterations. */
     public static final int DEFAULT_MAX_ITERATIONS = 500;
@@ -72,8 +77,8 @@ public final class CoordinateDescent {
         }
         double currentMse = TunerEvaluator.computeMse(positions, params, k);
 
-        System.out.printf("[Tuner] start  MSE=%.8f  params=%d  positions=%d%n",
-                currentMse, params.length, positions.size());
+        LOG.info(String.format("[Tuner] start  MSE=%.8f  params=%d  positions=%d",
+                currentMse, params.length, positions.size()));
 
         for (int iter = 1; iter <= maxIters; iter++) {
             Instant iterStart = Instant.now();
@@ -117,20 +122,20 @@ public final class CoordinateDescent {
                 double newK = KFinder.findK(positions, params);
                 double kDrift = Math.abs(newK - k);
                 if (kDrift < 0.001) {
-                    System.out.printf("[Tuner] K stable (drift=%.6f < 0.001), skipping recalibration%n", kDrift);
+                    LOG.info(String.format("[Tuner] K stable (drift=%.6f < 0.001), skipping recalibration", kDrift));
                 } else {
-                    System.out.printf("[Tuner] K recalibrated: %.6f → %.6f (drift=%.6f)%n", k, newK, kDrift);
+                    LOG.info(String.format("[Tuner] K recalibrated: %.6f \u2192 %.6f (drift=%.6f)", k, newK, kDrift));
                     k = newK;
                     currentMse = TunerEvaluator.computeMse(positions, params, k);
                 }
             }
 
             long ms = Duration.between(iterStart, Instant.now()).toMillis();
-            System.out.printf("[Tuner] iter %3d  K=%.6f  MSE=%.8f  improved=%b  time=%dms%n",
-                    iter, k, currentMse, improved, ms);
+            LOG.info(String.format("[Tuner] iter %3d  K=%.6f  MSE=%.8f  improved=%b  time=%dms",
+                    iter, k, currentMse, improved, ms));
 
             if (!improved) {
-                System.out.printf("[Tuner] converged after %d iterations%n", iter);
+                LOG.info(String.format("[Tuner] converged after %d iterations", iter));
                 break;
             }
         }

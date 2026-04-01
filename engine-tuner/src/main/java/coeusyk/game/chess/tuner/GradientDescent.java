@@ -1,5 +1,8 @@
 package coeusyk.game.chess.tuner;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -22,6 +25,8 @@ import java.util.List;
  * via a thread-safe collector to avoid mutable-identity bugs in {@code reduce()}.
  */
 public final class GradientDescent {
+
+    private static final Logger LOG = LoggerFactory.getLogger(GradientDescent.class);
 
     /** Default maximum number of iterations (passes over all parameters). */
     public static final int DEFAULT_MAX_ITERATIONS = 500;
@@ -90,8 +95,8 @@ public final class GradientDescent {
 
         double currentMse = TunerEvaluator.computeMse(positions, params, k);
 
-        System.out.printf("[Adam] start  MSE=%.8f  params=%d  positions=%d  threads=%d%n",
-                currentMse, n, positions.size(), Runtime.getRuntime().availableProcessors());
+        LOG.info(String.format("[Adam] start  MSE=%.8f  params=%d  positions=%d  threads=%d",
+                currentMse, n, positions.size(), Runtime.getRuntime().availableProcessors()));
 
         for (int iter = 1; iter <= maxIters; iter++) {
             Instant iterStart = Instant.now();
@@ -133,9 +138,9 @@ public final class GradientDescent {
                 double newK = KFinder.findK(positions, params);
                 double kDrift = Math.abs(newK - k);
                 if (kDrift < 0.001) {
-                    System.out.printf("[Adam] K stable (drift=%.6f < 0.001), skipping recalibration%n", kDrift);
+                    LOG.info(String.format("[Adam] K stable (drift=%.6f < 0.001), skipping recalibration", kDrift));
                 } else {
-                    System.out.printf("[Adam] K recalibrated: %.6f → %.6f (drift=%.6f)%n", k, newK, kDrift);
+                    LOG.info(String.format("[Adam] K recalibrated: %.6f \u2192 %.6f (drift=%.6f)", k, newK, kDrift));
                     k = newK;
                 }
             }
@@ -143,13 +148,13 @@ public final class GradientDescent {
             double newMse = TunerEvaluator.computeMse(positions, params, k);
             long ms = Duration.between(iterStart, Instant.now()).toMillis();
 
-            System.out.printf("[Adam] iter %3d  K=%.6f  MSE=%.8f  time=%dms%n",
-                    iter, k, newMse, ms);
+            LOG.info(String.format("[Adam] iter %3d  K=%.6f  MSE=%.8f  time=%dms",
+                    iter, k, newMse, ms));
 
             // Convergence check
             if (currentMse > 0 && Math.abs(currentMse - newMse) / currentMse < CONVERGENCE_THRESHOLD) {
-                System.out.printf("[Adam] converged after %d iterations (MSE delta < %.1e)%n",
-                        iter, CONVERGENCE_THRESHOLD);
+                LOG.info(String.format("[Adam] converged after %d iterations (MSE delta < %.1e)",
+                        iter, CONVERGENCE_THRESHOLD));
                 currentMse = newMse;
                 break;
             }
