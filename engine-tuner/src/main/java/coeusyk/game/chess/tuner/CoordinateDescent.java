@@ -44,6 +44,27 @@ public final class CoordinateDescent {
                                 double[] initialParams,
                                 double k,
                                 int maxIters) {
+        return tune(positions, initialParams, k, maxIters, true);
+    }
+
+    /**
+     * Runs coordinate descent and returns the optimised parameter array.
+     *
+     * <p>The input {@code params} array is not modified; a copy is returned.
+     *
+     * @param positions     pre-loaded training set
+     * @param initialParams starting point (length {@link EvalParams#TOTAL_PARAMS})
+     * @param k             sigmoid scaling constant (from {@link KFinder})
+     * @param maxIters      iteration cap
+     * @param recalibrateK  if {@code true}, re-runs {@link KFinder} after each pass
+     *                      and logs K drift; skip if drift &lt; 0.001
+     * @return tuned parameter array (same length as {@code initialParams})
+     */
+    public static double[] tune(List<LabelledPosition> positions,
+                                double[] initialParams,
+                                double k,
+                                int maxIters,
+                                boolean recalibrateK) {
         double[] params = initialParams.clone();
         // Clamp initial params to legal bounds before the first MSE computation
         for (int i = 0; i < params.length; i++) {
@@ -91,9 +112,22 @@ public final class CoordinateDescent {
                 }
             }
 
+            // K recalibration after each pass
+            if (recalibrateK) {
+                double newK = KFinder.findK(positions, params);
+                double kDrift = Math.abs(newK - k);
+                if (kDrift < 0.001) {
+                    System.out.printf("[Tuner] K stable (drift=%.6f < 0.001), skipping recalibration%n", kDrift);
+                } else {
+                    System.out.printf("[Tuner] K recalibrated: %.6f → %.6f (drift=%.6f)%n", k, newK, kDrift);
+                    k = newK;
+                    currentMse = TunerEvaluator.computeMse(positions, params, k);
+                }
+            }
+
             long ms = Duration.between(iterStart, Instant.now()).toMillis();
-            System.out.printf("[Tuner] iter %3d  MSE=%.8f  improved=%b  time=%dms%n",
-                    iter, currentMse, improved, ms);
+            System.out.printf("[Tuner] iter %3d  K=%.6f  MSE=%.8f  improved=%b  time=%dms%n",
+                    iter, k, currentMse, improved, ms);
 
             if (!improved) {
                 System.out.printf("[Tuner] converged after %d iterations%n", iter);

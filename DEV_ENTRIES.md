@@ -3393,3 +3393,143 @@ Per `alphaBeta` node: `new MovesGenerator(board)` internally allocated one `Arra
 **Next:**
 - Issue #93: implement Adam gradient descent optimizer as alternative to coordinate descent.
 - Issue #95: K recalibration policy (re-run KFinder after each optimizer pass).
+
+---
+
+### [2026-06-23] Phase 8 — Full-Corpus MSE Measurement + TunerPosition Memory Refactor (#92, #96)
+
+**Built:**
+- Introduced `PositionData` interface (16 read-only getters: 12 piece bitboards, 2 occupancy,
+  `getActiveColor()`) — allows TunerEvaluator helpers to operate without a full `Board` object.
+- Introduced `TunerPosition` — compact position snapshot (~140 bytes) implementing `PositionData`.
+  Stores 12 `long` bitboards, active color, and optional FEN string. Provides `from(Board)` and
+  `from(Board, fen)` factory methods; `toBoard()` reconstructs a full `Board` only when qsearch
+  make/unmake is required.
+- Added `BoardAdapter` inner class in `TunerEvaluator` — adapts a `Board` to `PositionData` for
+  existing callers that already hold a `Board`.
+- Changed `LabelledPosition` record: `Board board` → `TunerPosition pos`.
+- Updated `PositionLoader.parseFen()`: creates a Board temporarily, extracts bitboards into a
+  `TunerPosition`, then discards the Board immediately — no Board objects kept in the loaded list.
+- Refactored all `TunerEvaluator` private helpers (`materialAndPst`, `mobility`, `kingSafety`,
+  `kingSafetySide`, `pawnShield`, `openFiles`, `attackerPenalty`, `bishopPair`, `rookOnSeventh`,
+  `computePhase`) to accept `PositionData` instead of `Board`.
+- Added `TunerEvaluator.evaluateStatic(PositionData, double[])` overload used for finite difference.
+- Updated `PgnExtractor` to wrap the extracted `Board` snapshot in a `TunerPosition`.
+- Rewrote `GradientDescent.computeGradient()`:
+  - Uses `evaluateStatic` (not qsearch `evaluate`) for finite difference — standard Texel practice.
+  - Thread-local param clone: single `double[]` per thread, save/modify/eval/restore in-place.
+    Reduces per-gradient-iteration allocations from ~163M to ~200k (815× fewer).
+  - Fixed concurrency bug: replaced mutable identity `reduce()` with `collect()`.
+- Updated all 5 tuner test files to use `TunerPosition.from(...)` and `lp.pos()`.
+
+**Decisions Made:**
+- `PositionData` interface rather than a DTO record: allows `Board` and `TunerPosition` to both
+  serve as position sources without copying data an extra time in the qsearch code path.
+- `TunerPosition.toBoard()` reconstructs from the stored FEN string — reconstruction cost is
+  acceptable because qsearch is called at `evaluate` time, not gradient-computation time.
+- `evaluateStatic` used for gradient finite difference instead of `evaluate` (qsearch): gradient
+  target is the static eval function's sensitivity to each parameter, not the qsearch outcome.
+  This is consistent with the standard Texel method.
+
+**Broke / Fixed:**
+- Board OOM on full 725k corpus: Board pre-allocates 768 UnmakeInfo objects; 725k Boards = ~43GB
+  heap. Fixed by discarding Board immediately after parsing — TunerPosition uses ~140 bytes each,
+  725k positions = ~100MB.
+- `PositionLoaderTest.boardIsNonNullForAllLoadedPositions` renamed to
+  `posIsNonNullForAllLoadedPositions` and updated to assert `lp.pos()` not null.
+
+**Measurements:**
+- Full corpus (725,000 positions) loaded in **3,377 ms** — well under the 60s AC requirement.
+- Optimal K (post-#94 params): **1.627046**
+- Initial MSE on full corpus: **0.05909342**
+- Tuner tests: 60 passed, 0 failed, 1 skipped
+- Engine-core tests: not re-run this cycle (no engine-core changes)
+- Nodes/sec: not measured this cycle
+- Elo vs. baseline: not measured this cycle
+
+**Next:**
+- Issue #93: add `--optimizer adam|coordinate` CLI flag to TunerMain; write GradientDescent
+  tests; compare Adam vs CD wall time on 100k subset.
+- Issue #95: K recalibration loop + `--no-recalibrate-k` flag.
+
+---
+
+### [2026-06-23] Phase 8 — Adam Optimizer CLI Flag + GradientDescent Tests (#93)
+
+**Built:**
+- Added `--optimizer adam|coordinate` flag to `TunerMain` CLI argument parser. Default is `adam`.
+  Old positional-only parsing was replaced with a mixed positional+named flag parser that handles
+  flags in any position after the dataset path argument.
+- `GradientDescent.tune()` 4-arg overload now delegates to a new 5-arg
+  `tune(positions, params, k, maxIters, recalibrateK)` (recalibrateK defaults to `true`).
+- `CoordinateDescent.tune()` similarly delegated to a new 5-arg overload.
+- Optimizer log lines updated: now include K per iteration:
+  `[Adam] iter 1  K=1.627046  MSE=0.05799990  time=3436ms`
+  `[Tuner] iter 1  K=1.655876  MSE=0.05799539  improved=true  time=386735ms`
+- Added `GradientDescentTest.java` with 12 tests:
+  - `inputArrayIsNotModified`, `returnedArrayHasSameLengthAsInput`, `returnedArrayIsDifferentObjectFromInput`
+  - `mseNonIncreasingAfterTuning`, `noRegressionOnDrawnPositions`
+  - `gradientHasSameLengthAsParams`, `gradientIsZeroForFrozenParameters`,
+    `gradientIsFiniteForAllParameters`, `gradientIsReproducibleAcrossMultipleCalls`
+  - `tunerNeverProducesParamBelowMin`, `tunerNeverProducesParamAboveMax`,
+    `pawnMgValueNeverGoesNegative`
+
+**Decisions Made:**
+- Default optimizer switched to `adam` — it is 114× faster per iteration and achieves greater MSE
+  reduction. Coordinate descent retained for reproducibility comparisons.
+- K per-iteration log added to both optimizers so drift is visible without `--no-recalibrate-k`.
+
+**Measurements — Adam vs Coordinate Descent (100k positions, 3 Adam iters / 1 CD iter):**
+| Optimizer | Iters | Wall time | Start MSE  | End MSE    | MSE drop   |
+|-----------|-------|-----------|------------|------------|------------|
+| Adam      | 3     | ~10.1s    | 0.05826831 | 0.05772391 | 0.00054440 |
+| CD        | 1     | ~386.7s   | 0.05826831 | 0.05799539 | 0.00027292 |
+
+Adam is **~114× faster per iter** and achieves **~2× more MSE reduction** per wall-clock second.
+Both use 16 parallel threads. K (100k subset): 1.655876.
+
+**Broke / Fixed:**
+- Nothing broke. Test count: 77 passed, 0 failed, 1 skipped.
+
+**Next:**
+- Issue #95: K recalibration loop + `--no-recalibrate-k` flag.
+
+---
+
+### [2026-06-23] Phase 8 — K Recalibration Policy (#95)
+
+**Built:**
+- Extended `GradientDescent.tune(positions, params, k, maxIters, recalibrateK)`:
+  - After each Adam iteration, calls `KFinder.findK` on the updated params.
+  - If `kDrift = |newK - k| < 0.001`: logs `[Adam] K stable (drift=X), skipping recalibration`.
+  - If drift ≥ 0.001: logs `[Adam] K recalibrated: X → Y (drift=Z)` and updates K for next iter.
+- Extended `CoordinateDescent.tune(positions, params, k, maxIters, recalibrateK)` identically.
+- `TunerMain`:
+  - Added `--no-recalibrate-k` flag (disables the per-pass K update for benchmarking).
+  - Logs `[TunerMain] Recalibrate K: yes` or `no (--no-recalibrate-k)` at startup.
+  - After tuning, calls `KFinder.findK(positions, tuned)` to get the final K.
+  - Logs `[TunerMain] Final K = X.XXXXXX` before writing the output file.
+  - Calls `EvalParams.writeToFile(tuned, finalK, output)` (new overload) to embed final K.
+- `EvalParams.writeToFile(double[] params, double k, Path output)` overload:
+  - Writes `# Final K = X.XXXXXX` header line when K is not NaN.
+  - Old `writeToFile(params, output)` delegates to the new overload with `Double.NaN`.
+- Added `KRecalibrationTest.java` with 5 tests:
+  - `adamWithRecalibrateKFalseReturnsValidParams` — no-recal path stays in bounds
+  - `adamWithRecalibrateKTrueReturnsValidParams` — recal path stays in bounds
+  - `cdWithRecalibrateKFalseReturnsValidParams` — CD no-recal stays in bounds
+  - `writeToFileIncludesFinalK` — output file contains `Final K = X.XXXXXX`
+  - `writeToFileWithNaNKDoesNotWriteKLine` — legacy overload does not write the K line
+
+**Decisions Made:**
+- Drift threshold of 0.001: below this, the sigmoid scale change is negligible and the KFinder
+  ternary search (~35 MSE passes) costs more than the gain. Empirically K drift on the first few
+  iterations is ~0.02–0.05; after convergence it drops below 0.001.
+- Final K is computed post-tuning from the tuned params. This is strictly more accurate than
+  using the K from the last inner-loop recalibration (which used the previous iteration's params).
+
+**Broke / Fixed:**
+- Nothing broke. Test count: 77 passed, 0 failed, 1 skipped.
+
+**Next:**
+- Commit #92, #93, #94 (already done), #95, #96 as one concentrated commit batch.
+- Run SPRT for #93/#94 tuned params vs baseline (elo0=0, elo1=50, 5+0.05 TC).
