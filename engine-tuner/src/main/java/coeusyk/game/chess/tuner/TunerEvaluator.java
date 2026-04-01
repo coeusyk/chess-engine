@@ -201,6 +201,31 @@ public final class TunerEvaluator {
         mgScore += r7[0];
         egScore += r7[1];
 
+        // --- Rook on open / semi-open file bonus ---
+        int[] rookFiles = rookOpenFile(pos, params);
+        mgScore += rookFiles[0];
+        egScore += rookFiles[1];
+
+        // --- Knight outpost bonus ---
+        int[] outpost = knightOutpost(pos, params);
+        mgScore += outpost[0];
+        egScore += outpost[1];
+
+        // --- Connected pawn bonus ---
+        int[] connPawn = connectedPawn(pos, params);
+        mgScore += connPawn[0];
+        egScore += connPawn[1];
+
+        // --- Backward pawn penalty ---
+        int[] backPawn = backwardPawn(pos, params);
+        mgScore -= backPawn[0];
+        egScore -= backPawn[1];
+
+        // --- Rook behind passed pawn bonus ---
+        int[] rookBehind = rookBehindPasser(pos, params);
+        mgScore += rookBehind[0];
+        egScore += rookBehind[1];
+
         int phase = computePhase(pos);
         int score = (mgScore * phase + egScore * (TOTAL_PHASE - phase)) / TOTAL_PHASE;
 
@@ -520,6 +545,154 @@ public final class TunerEvaluator {
         return new int[]{ mg, eg };
     }
 
+    private static final long FILE_MASK_BASE = 0x0101010101010101L;
+
+    private static int[] rookOpenFile(PositionData pos, double[] params) {
+        int mg = 0, eg = 0;
+        int bonusOpenMg   = (int) params[EvalParams.IDX_ROOK_OPEN_FILE_MG];
+        int bonusOpenEg   = (int) params[EvalParams.IDX_ROOK_OPEN_FILE_EG];
+        int bonusSemiMg   = (int) params[EvalParams.IDX_ROOK_SEMI_OPEN_MG];
+        int bonusSemiEg   = (int) params[EvalParams.IDX_ROOK_SEMI_OPEN_EG];
+
+        // White rooks
+        long temp = pos.getWhiteRooks();
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            long fileMask = FILE_MASK_BASE << (sq % 8);
+            if ((pos.getWhitePawns() & fileMask) == 0) {
+                if ((pos.getBlackPawns() & fileMask) == 0) {
+                    mg += bonusOpenMg; eg += bonusOpenEg;
+                } else {
+                    mg += bonusSemiMg; eg += bonusSemiEg;
+                }
+            }
+            temp &= temp - 1;
+        }
+        // Black rooks (negate since score is from White's perspective)
+        temp = pos.getBlackRooks();
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            long fileMask = FILE_MASK_BASE << (sq % 8);
+            if ((pos.getBlackPawns() & fileMask) == 0) {
+                if ((pos.getWhitePawns() & fileMask) == 0) {
+                    mg -= bonusOpenMg; eg -= bonusOpenEg;
+                } else {
+                    mg -= bonusSemiMg; eg -= bonusSemiEg;
+                }
+            }
+            temp &= temp - 1;
+        }
+        return new int[]{ mg, eg };
+    }
+
+    // White outpost zone: ranks 4-6 (rows 2-4 in a8=0, bits 16-39)
+    // Black outpost zone: ranks 3-5 (rows 3-5 in a8=0, bits 24-47)
+    private static final long WHITE_OUTPOST_ZONE = 0x000000FFFFFF0000L;
+    private static final long BLACK_OUTPOST_ZONE = 0x0000FFFFFF000000L;
+
+    private static int[] knightOutpost(PositionData pos, double[] params) {
+        long whitePawnAtk = Attacks.whitePawnAttacks(pos.getWhitePawns());
+        long blackPawnAtk = Attacks.blackPawnAttacks(pos.getBlackPawns());
+        int wOut = Long.bitCount(pos.getWhiteKnights() & WHITE_OUTPOST_ZONE & ~blackPawnAtk);
+        int bOut = Long.bitCount(pos.getBlackKnights() & BLACK_OUTPOST_ZONE & ~whitePawnAtk);
+        int net = wOut - bOut;
+        int mg = net * (int) params[EvalParams.IDX_KNIGHT_OUTPOST_MG];
+        int eg = net * (int) params[EvalParams.IDX_KNIGHT_OUTPOST_EG];
+        return new int[]{ mg, eg };
+    }
+
+    private static int[] connectedPawn(PositionData pos, double[] params) {
+        int wConn = connectedPawnCount(pos.getWhitePawns());
+        int bConn = connectedPawnCount(pos.getBlackPawns());
+        int net = wConn - bConn;
+        return new int[]{ net * (int) params[EvalParams.IDX_CONNECTED_PAWN_MG],
+                          net * (int) params[EvalParams.IDX_CONNECTED_PAWN_EG] };
+    }
+
+    private static int connectedPawnCount(long pawns) {
+        long attacks = ((pawns & NOT_A_FILE) >>> 1) | ((pawns & NOT_H_FILE) << 1);
+        attacks |= ((pawns & NOT_A_FILE) >>> 9) | ((pawns & NOT_H_FILE) << 7)
+                 | ((pawns & NOT_A_FILE) << 7)  | ((pawns & NOT_H_FILE) >>> 9);
+        return Long.bitCount(pawns & attacks);
+    }
+
+    private static int[] backwardPawn(PositionData pos, double[] params) {
+        int wBack = backwardPawnCount(pos.getWhitePawns(), pos.getBlackPawns(), true);
+        int bBack = backwardPawnCount(pos.getBlackPawns(), pos.getWhitePawns(), false);
+        // net = wBack - bBack; caller subtracts this (penalty)
+        int net = wBack - bBack;
+        return new int[]{ net * (int) params[EvalParams.IDX_BACKWARD_PAWN_MG],
+                          net * (int) params[EvalParams.IDX_BACKWARD_PAWN_EG] };
+    }
+
+    private static final long FILE_MASK_BASE_TE = 0x0101010101010101L;
+
+    private static int backwardPawnCount(long friendly, long enemy, boolean white) {
+        long enemyAtk = white ? Attacks.blackPawnAttacks(enemy) : Attacks.whitePawnAttacks(enemy);
+        long temp = friendly;
+        int count = 0;
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            int file = sq % 8;
+            long adjFiles = 0L;
+            if (file > 0) adjFiles |= FILE_MASK_BASE_TE << (file - 1);
+            if (file < 7) adjFiles |= FILE_MASK_BASE_TE << (file + 1);
+            long adjFriendly = friendly & adjFiles;
+            if (white) {
+                long ahead = adjFriendly & ((1L << sq) - 1);
+                int stopSq = sq - 8;
+                if (stopSq >= 0 && ahead == 0 && (enemyAtk & (1L << stopSq)) != 0) count++;
+            } else {
+                long ahead = adjFriendly & ~((1L << (sq + 8)) - 1);
+                int stopSq = sq + 8;
+                if (stopSq < 64 && ahead == 0 && (enemyAtk & (1L << stopSq)) != 0) count++;
+            }
+            temp &= temp - 1;
+        }
+        return count;
+    }
+
+    private static int[] rookBehindPasser(PositionData pos, double[] params) {
+        int mg = 0, eg = 0;
+        // White rooks behind white passed pawns (rook on same file, lower row in a8=0 = behind)
+        long wRooks = pos.getWhiteRooks();
+        long wPawns = pos.getWhitePawns();
+        long bPawns = pos.getBlackPawns();
+        long temp = wRooks;
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            long fileMask = FILE_MASK_BASE_TE << (sq % 8);
+            long passedOnFile = wPawns & fileMask & ((1L << sq) - 1);
+            while (passedOnFile != 0) {
+                int psq = Long.numberOfTrailingZeros(passedOnFile);
+                if ((bPawns & fileMask & ((1L << psq) - 1)) == 0) {
+                    mg += (int) params[EvalParams.IDX_ROOK_BEHIND_PASSER_MG];
+                    eg += (int) params[EvalParams.IDX_ROOK_BEHIND_PASSER_EG];
+                }
+                passedOnFile &= passedOnFile - 1;
+            }
+            temp &= temp - 1;
+        }
+        // Black rooks behind black passed pawns
+        long bRooks = pos.getBlackRooks();
+        temp = bRooks;
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            long fileMask = FILE_MASK_BASE_TE << (sq % 8);
+            long passedOnFile = bPawns & fileMask & ~((1L << sq) - 1) & ~(1L << sq);
+            while (passedOnFile != 0) {
+                int psq = Long.numberOfTrailingZeros(passedOnFile);
+                if ((wPawns & fileMask & ~((1L << psq) - 1) & ~(1L << psq)) == 0) {
+                    mg -= (int) params[EvalParams.IDX_ROOK_BEHIND_PASSER_MG];
+                    eg -= (int) params[EvalParams.IDX_ROOK_BEHIND_PASSER_EG];
+                }
+                passedOnFile &= passedOnFile - 1;
+            }
+            temp &= temp - 1;
+        }
+        return new int[]{ mg, eg };
+    }
+
     // =========================================================================
     // Phase
     // =========================================================================
@@ -531,5 +704,489 @@ public final class TunerEvaluator {
         phase += Long.bitCount(pos.getWhiteRooks()   | pos.getBlackRooks())   * PHASE_WEIGHT[Piece.Rook];
         phase += Long.bitCount(pos.getWhiteQueens()  | pos.getBlackQueens())  * PHASE_WEIGHT[Piece.Queen];
         return Math.min(phase, TOTAL_PHASE);
+    }
+
+    // =========================================================================
+    // Precomputed feature vector construction (for analytical gradient)
+    // =========================================================================
+
+    /**
+     * Builds a {@link PositionFeatures} from a position, precomputing all
+     * phase-tapered coefficients for analytical gradient computation.
+     *
+     * <p>Each bitboard operation runs exactly once here at load time; during
+     * subsequent Adam iterations the eval is computed via a cheap dot product.
+     */
+    static PositionFeatures buildFeatures(PositionData pos, float outcome) {
+        int phase     = computePhase(pos);
+        float mgTaper = (float) phase / TOTAL_PHASE;
+        float egTaper = 1.0f - mgTaper;
+
+        float[] tmp = new float[EvalParams.TOTAL_PARAMS];
+
+        // 1. Material + PST contributions (tapered)
+        addMaterialPstFeatures(pos, tmp, mgTaper, egTaper);
+
+        // 2. Mobility bonus per piece type (tapered)
+        addMobilityFeatures(pos, tmp, mgTaper, egTaper);
+
+        // 3. Pawn structure (tapered)
+        addPawnStructureFeatures(pos, tmp, mgTaper, egTaper);
+
+        // 4. King safety – linear parts only (MG only, then tapered by mgTaper).
+        //    Returns 8 king-zone attacker counts for the non-linear penalty.
+        int[] atkCounts = addKingSafetyLinearFeatures(pos, tmp, mgTaper);
+
+        // 5. Bishop pair bonus (tapered)
+        addBishopPairFeatures(pos, tmp, mgTaper, egTaper);
+
+        // 6. Rook on 7th rank bonus (tapered)
+        addRookOnSeventhFeatures(pos, tmp, mgTaper, egTaper);
+
+        // 7. Rook on open / semi-open file bonus (tapered)
+        addRookOpenFileFeatures(pos, tmp, mgTaper, egTaper);
+
+        // 8. Knight outpost bonus (tapered)
+        addKnightOutpostFeatures(pos, tmp, mgTaper, egTaper);
+
+        // 9. Connected pawn bonus (tapered)
+        addConnectedPawnFeatures(pos, tmp, mgTaper, egTaper);
+
+        // 10. Backward pawn penalty (tapered)
+        addBackwardPawnFeatures(pos, tmp, mgTaper, egTaper);
+
+        // 11. Rook behind passed pawn bonus (tapered)
+        addRookBehindPasserFeatures(pos, tmp, mgTaper, egTaper);
+
+        // 12. Tempo bonus (not tapered – applied after phase interpolation)
+        tmp[EvalParams.IDX_TEMPO] = Piece.isWhite(pos.getActiveColor()) ? 1.0f : -1.0f;
+
+        // 13. Convert dense tmp[] to sparse (indices + weights), skipping zeros.
+        int nnz = 0;
+        for (int i = 0; i < EvalParams.TOTAL_PARAMS; i++) {
+            if (tmp[i] != 0.0f) nnz++;
+        }
+        short[] indices = new short[nnz];
+        float[] weights = new float[nnz];
+        int k = 0;
+        for (int i = 0; i < EvalParams.TOTAL_PARAMS; i++) {
+            if (tmp[i] != 0.0f) {
+                indices[k] = (short) i;
+                weights[k] = tmp[i];
+                k++;
+            }
+        }
+
+        return new PositionFeatures(outcome, phase, indices, weights,
+                (short) atkCounts[0], (short) atkCounts[1],
+                (short) atkCounts[2], (short) atkCounts[3],
+                (short) atkCounts[4], (short) atkCounts[5],
+                (short) atkCounts[6], (short) atkCounts[7]);
+    }
+
+    /** Pieces bitboard accessor by type and color (feature extraction helper). */
+    private static long getPieces(PositionData pos, int pt, boolean white) {
+        return switch (pt) {
+            case Piece.Pawn   -> white ? pos.getWhitePawns()   : pos.getBlackPawns();
+            case Piece.Knight -> white ? pos.getWhiteKnights() : pos.getBlackKnights();
+            case Piece.Bishop -> white ? pos.getWhiteBishops() : pos.getBlackBishops();
+            case Piece.Rook   -> white ? pos.getWhiteRooks()   : pos.getBlackRooks();
+            case Piece.Queen  -> white ? pos.getWhiteQueens()  : pos.getBlackQueens();
+            case Piece.King   -> white ? pos.getWhiteKing()    : pos.getBlackKing();
+            default           -> 0L;
+        };
+    }
+
+    /**
+     * Accumulates material and PST feature weights into {@code tmp[]}. White
+     * pieces contribute positively; black pieces negatively (mirrored square).
+     */
+    private static void addMaterialPstFeatures(PositionData pos, float[] tmp,
+                                                float mgTaper, float egTaper) {
+        for (int pt = Piece.Pawn; pt <= Piece.King; pt++) {
+            int matMgIdx = EvalParams.IDX_MATERIAL_START + (pt - 1) * 2;
+            int matEgIdx = matMgIdx + 1;
+            int pstMgBase = EvalParams.IDX_PST_START + (pt - 1) * 128;
+            int pstEgBase = pstMgBase + 64;
+
+            long wPieces = getPieces(pos, pt, true);
+            while (wPieces != 0) {
+                int sq = Long.numberOfTrailingZeros(wPieces);
+                tmp[matMgIdx]       += mgTaper;
+                tmp[matEgIdx]       += egTaper;
+                tmp[pstMgBase + sq] += mgTaper;
+                tmp[pstEgBase + sq] += egTaper;
+                wPieces &= wPieces - 1;
+            }
+
+            long bPieces = getPieces(pos, pt, false);
+            while (bPieces != 0) {
+                int sq    = Long.numberOfTrailingZeros(bPieces);
+                int pstSq = sq ^ 56;  // mirror rank for black
+                tmp[matMgIdx]          -= mgTaper;
+                tmp[matEgIdx]          -= egTaper;
+                tmp[pstMgBase + pstSq] -= mgTaper;
+                tmp[pstEgBase + pstSq] -= egTaper;
+                bPieces &= bPieces - 1;
+            }
+        }
+    }
+
+    /**
+     * Accumulates mobility feature weights. Safe-move count above baseline,
+     * net white minus black, tapered by MG/EG.
+     */
+    private static void addMobilityFeatures(PositionData pos, float[] tmp,
+                                             float mgTaper, float egTaper) {
+        long allOcc      = pos.getWhiteOccupancy() | pos.getBlackOccupancy();
+        long whitePawnAtk = Attacks.whitePawnAttacks(pos.getWhitePawns());
+        long blackPawnAtk = Attacks.blackPawnAttacks(pos.getBlackPawns());
+        long whiteSafe   = ~pos.getWhiteOccupancy() & ~blackPawnAtk;
+        long blackSafe   = ~pos.getBlackOccupancy() & ~whitePawnAtk;
+
+        for (int pt : new int[]{ Piece.Knight, Piece.Bishop, Piece.Rook, Piece.Queen }) {
+            int baseline = MOBILITY_BASELINE[pt];
+            int wMob = mobilityTotal(getPieces(pos, pt, true),  pt, allOcc, whiteSafe, baseline);
+            int bMob = mobilityTotal(getPieces(pos, pt, false), pt, allOcc, blackSafe, baseline);
+            int net  = wMob - bMob;
+            int off  = mobilityOffset(pt);
+            tmp[EvalParams.IDX_MOB_MG_START + off] += net * mgTaper;
+            tmp[EvalParams.IDX_MOB_EG_START + off] += net * egTaper;
+        }
+    }
+
+    /**
+     * Computes total safe-move count above baseline for all pieces of a given
+     * type (identical logic to {@link #pieceMobility} but returns the raw count
+     * rather than multiplying by a param).
+     */
+    private static int mobilityTotal(long pieces, int pt, long allOcc,
+                                     long safeMask, int baseline) {
+        int total = 0;
+        while (pieces != 0) {
+            int sq = Long.numberOfTrailingZeros(pieces);
+            long atk = switch (pt) {
+                case Piece.Knight -> Attacks.knightAttacks(sq);
+                case Piece.Bishop -> Attacks.bishopAttacks(sq, allOcc);
+                case Piece.Rook   -> Attacks.rookAttacks(sq, allOcc);
+                case Piece.Queen  -> Attacks.queenAttacks(sq, allOcc);
+                default           -> 0L;
+            };
+            total += Long.bitCount(atk & safeMask) - baseline;
+            pieces &= pieces - 1;
+        }
+        return total;
+    }
+
+    /** Accumulates pawn structure feature weights (passed, isolated, doubled). */
+    private static void addPawnStructureFeatures(PositionData pos, float[] tmp,
+                                                  float mgTaper, float egTaper) {
+        long wPawns = pos.getWhitePawns();
+        long bPawns = pos.getBlackPawns();
+
+        // Passed pawn bonuses per rank (white and black processed separately)
+        addPassedPawnFeatures(wPawns, bPawns, true,  tmp, mgTaper, egTaper);
+        addPassedPawnFeatures(bPawns, wPawns, false, tmp, mgTaper, egTaper);
+
+        // Isolated pawn penalty (net: white count minus black count)
+        int netIso = isolatedCount(wPawns) - isolatedCount(bPawns);
+        tmp[EvalParams.IDX_ISOLATED_MG] -= netIso * mgTaper;
+        tmp[EvalParams.IDX_ISOLATED_EG] -= netIso * egTaper;
+
+        // Doubled pawn penalty
+        int netDbl = doubledCount(wPawns) - doubledCount(bPawns);
+        tmp[EvalParams.IDX_DOUBLED_MG] -= netDbl * mgTaper;
+        tmp[EvalParams.IDX_DOUBLED_EG] -= netDbl * egTaper;
+    }
+
+    /**
+     * Accumulates passed-pawn rank bonus features for one side.
+     * {@code sign} is +1 for white (adds), −1 for black (subtracts).
+     */
+    private static void addPassedPawnFeatures(long friendly, long enemy, boolean white,
+                                               float[] tmp, float mgTaper, float egTaper) {
+        long[] masks = white ? WHITE_PASSED_MASKS : BLACK_PASSED_MASKS;
+        float sign   = white ? 1.0f : -1.0f;
+        long temp = friendly;
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            if ((enemy & masks[sq]) == 0) {
+                int row = sq / 8;
+                int idx = white ? (7 - row) : row;
+                if (idx >= 1 && idx <= 6) {
+                    tmp[EvalParams.IDX_PASSED_MG_START + idx - 1] += sign * mgTaper;
+                    tmp[EvalParams.IDX_PASSED_EG_START + idx - 1] += sign * egTaper;
+                }
+            }
+            temp &= temp - 1;
+        }
+    }
+
+    /**
+     * Accumulates the LINEAR king-safety feature weights (pawn shield and open
+     * files) and returns the eight king-zone attacker counts needed for the
+     * non-linear attacker-penalty term.
+     *
+     * <p>The shield/open-file terms go into mgScore (then tapered) – multiply
+     * by {@code mgTaper}. The attacker counts are stored in
+     * {@link PositionFeatures#wN}…{@link PositionFeatures#bQ} for
+     * per-iteration non-linear handling.
+     *
+     * @return int[8]: {wN, wB, wR, wQ, bN, bB, bR, bQ}
+     *         where wX = black X-pieces attacking White king zone,
+     *               bX = white X-pieces attacking Black king zone.
+     */
+    private static int[] addKingSafetyLinearFeatures(PositionData pos, float[] tmp,
+                                                      float mgTaper) {
+        long allOcc = pos.getWhiteOccupancy() | pos.getBlackOccupancy();
+
+        int wShield2 = 0, wShield3 = 0, wOpen = 0, wHalfOpen = 0;
+        int wN_ = 0, wB_ = 0, wR_ = 0, wQ_ = 0;
+
+        long wKingBb = pos.getWhiteKing();
+        if (wKingBb != 0) {
+            int kSq = Long.numberOfTrailingZeros(wKingBb);
+            if (isCastled(true, kSq)) {
+                int[] sc = pawnShieldCounts(pos.getWhitePawns(), true, kSq);
+                wShield2 = sc[0];
+                wShield3 = sc[1];
+            }
+            int[] of = openFileCounts(pos.getWhitePawns(), pos.getBlackPawns(), kSq);
+            wOpen     = of[0];
+            wHalfOpen = of[1];
+            long zone = WHITE_KING_ZONE[kSq];
+            wN_ = countAttackers(pos.getBlackKnights(), Piece.Knight, zone, allOcc);
+            wB_ = countAttackers(pos.getBlackBishops(), Piece.Bishop, zone, allOcc);
+            wR_ = countAttackers(pos.getBlackRooks(),   Piece.Rook,   zone, allOcc);
+            wQ_ = countAttackers(pos.getBlackQueens(),  Piece.Queen,  zone, allOcc);
+        }
+
+        int bShield2 = 0, bShield3 = 0, bOpen = 0, bHalfOpen = 0;
+        int bN_ = 0, bB_ = 0, bR_ = 0, bQ_ = 0;
+
+        long bKingBb = pos.getBlackKing();
+        if (bKingBb != 0) {
+            int kSq = Long.numberOfTrailingZeros(bKingBb);
+            if (isCastled(false, kSq)) {
+                int[] sc = pawnShieldCounts(pos.getBlackPawns(), false, kSq);
+                bShield2 = sc[0];
+                bShield3 = sc[1];
+            }
+            int[] of = openFileCounts(pos.getBlackPawns(), pos.getWhitePawns(), kSq);
+            bOpen     = of[0];
+            bHalfOpen = of[1];
+            long zone = BLACK_KING_ZONE[kSq];
+            bN_ = countAttackers(pos.getWhiteKnights(), Piece.Knight, zone, allOcc);
+            bB_ = countAttackers(pos.getWhiteBishops(), Piece.Bishop, zone, allOcc);
+            bR_ = countAttackers(pos.getWhiteRooks(),   Piece.Rook,   zone, allOcc);
+            bQ_ = countAttackers(pos.getWhiteQueens(),  Piece.Queen,  zone, allOcc);
+        }
+
+        // kingSafety = white_side − black_side, goes into mgScore → scale by mgTaper.
+        // Shield bonus: positive means white side better protected.
+        tmp[EvalParams.IDX_SHIELD_RANK2]   += (wShield2 - bShield2) * mgTaper;
+        tmp[EvalParams.IDX_SHIELD_RANK3]   += (wShield3 - bShield3) * mgTaper;
+        // Open-file: openFiles(white) = -(wOpen*OPEN + wHalfOpen*HALF);
+        // net kingSafety = -(wOpen-bOpen)*OPEN - (wHalfOpen-bHalfOpen)*HALF
+        tmp[EvalParams.IDX_OPEN_FILE]      += -(wOpen     - bOpen)     * mgTaper;
+        tmp[EvalParams.IDX_HALF_OPEN_FILE] += -(wHalfOpen - bHalfOpen) * mgTaper;
+
+        return new int[]{ wN_, wB_, wR_, wQ_, bN_, bB_, bR_, bQ_ };
+    }
+
+    /** Counts pawns in the two rank-layer shield in front of the king (castled only). */
+    private static int[] pawnShieldCounts(long friendlyPawns, boolean white, int kSq) {
+        int file = kSq % 8;
+        int row  = kSq / 8;
+        int r1   = white ? row - 1 : row + 1;
+        int r2   = white ? row - 2 : row + 2;
+        int rank2 = 0, rank3 = 0;
+        for (int df = -1; df <= 1; df++) {
+            int f = file + df;
+            if (f < 0 || f > 7) continue;
+            if (r1 >= 0 && r1 < 8 && (friendlyPawns & (1L << (r1 * 8 + f))) != 0) rank2++;
+            if (r2 >= 0 && r2 < 8 && (friendlyPawns & (1L << (r2 * 8 + f))) != 0) rank3++;
+        }
+        return new int[]{ rank2, rank3 };
+    }
+
+    /**
+     * Counts open and half-open files around the given king square.
+     * An "open" file has no friendly pawn; a "half-open" file has no friendly
+     * pawn but has an enemy pawn.
+     */
+    private static int[] openFileCounts(long friendlyPawns, long enemyPawns, int kSq) {
+        int file = kSq % 8;
+        int openCount = 0, halfOpenCount = 0;
+        for (int df = -1; df <= 1; df++) {
+            int f = file + df;
+            if (f < 0 || f > 7) continue;
+            long fileMask = 0x0101010101010101L << f;
+            if ((friendlyPawns & fileMask) == 0) {
+                if ((enemyPawns & fileMask) == 0) openCount++;
+                else                              halfOpenCount++;
+            }
+        }
+        return new int[]{ openCount, halfOpenCount };
+    }
+
+    /** Accumulates bishop-pair feature weights (tapered). */
+    private static void addBishopPairFeatures(PositionData pos, float[] tmp,
+                                               float mgTaper, float egTaper) {
+        int net = 0;
+        if (Long.bitCount(pos.getWhiteBishops()) >= 2) net++;
+        if (Long.bitCount(pos.getBlackBishops()) >= 2) net--;
+        if (net != 0) {
+            tmp[EvalParams.IDX_BISHOP_PAIR_MG] += net * mgTaper;
+            tmp[EvalParams.IDX_BISHOP_PAIR_EG] += net * egTaper;
+        }
+    }
+
+    /** Accumulates rook-on-7th-rank feature weights (tapered). */
+    private static void addRookOnSeventhFeatures(PositionData pos, float[] tmp,
+                                                  float mgTaper, float egTaper) {
+        int net = Long.bitCount(pos.getWhiteRooks() & WHITE_RANK_7)
+                - Long.bitCount(pos.getBlackRooks() & BLACK_RANK_7);
+        if (net != 0) {
+            tmp[EvalParams.IDX_ROOK_7TH_MG] += net * mgTaper;
+            tmp[EvalParams.IDX_ROOK_7TH_EG] += net * egTaper;
+        }
+    }
+
+    /** Accumulates rook on open/semi-open file feature weights (tapered). */
+    private static void addRookOpenFileFeatures(PositionData pos, float[] tmp,
+                                                 float mgTaper, float egTaper) {
+        // White rooks
+        long temp = pos.getWhiteRooks();
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            long fileMask = FILE_MASK_BASE << (sq % 8);
+            if ((pos.getWhitePawns() & fileMask) == 0) {
+                if ((pos.getBlackPawns() & fileMask) == 0) {
+                    tmp[EvalParams.IDX_ROOK_OPEN_FILE_MG] += mgTaper;
+                    tmp[EvalParams.IDX_ROOK_OPEN_FILE_EG] += egTaper;
+                } else {
+                    tmp[EvalParams.IDX_ROOK_SEMI_OPEN_MG] += mgTaper;
+                    tmp[EvalParams.IDX_ROOK_SEMI_OPEN_EG] += egTaper;
+                }
+            }
+            temp &= temp - 1;
+        }
+        // Black rooks (negate — score is from White's perspective)
+        temp = pos.getBlackRooks();
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            long fileMask = FILE_MASK_BASE << (sq % 8);
+            if ((pos.getBlackPawns() & fileMask) == 0) {
+                if ((pos.getWhitePawns() & fileMask) == 0) {
+                    tmp[EvalParams.IDX_ROOK_OPEN_FILE_MG] -= mgTaper;
+                    tmp[EvalParams.IDX_ROOK_OPEN_FILE_EG] -= egTaper;
+                } else {
+                    tmp[EvalParams.IDX_ROOK_SEMI_OPEN_MG] -= mgTaper;
+                    tmp[EvalParams.IDX_ROOK_SEMI_OPEN_EG] -= egTaper;
+                }
+            }
+            temp &= temp - 1;
+        }
+    }
+
+    /** Accumulates knight outpost feature weights (tapered). */
+    private static void addKnightOutpostFeatures(PositionData pos, float[] tmp,
+                                                  float mgTaper, float egTaper) {
+        long whitePawnAtk = Attacks.whitePawnAttacks(pos.getWhitePawns());
+        long blackPawnAtk = Attacks.blackPawnAttacks(pos.getBlackPawns());
+        int wOut = Long.bitCount(pos.getWhiteKnights() & WHITE_OUTPOST_ZONE & ~blackPawnAtk);
+        int bOut = Long.bitCount(pos.getBlackKnights() & BLACK_OUTPOST_ZONE & ~whitePawnAtk);
+        int net = wOut - bOut;
+        if (net != 0) {
+            tmp[EvalParams.IDX_KNIGHT_OUTPOST_MG] += net * mgTaper;
+            tmp[EvalParams.IDX_KNIGHT_OUTPOST_EG] += net * egTaper;
+        }
+    }
+
+    /** Accumulates connected pawn feature weights (tapered). */
+    private static void addConnectedPawnFeatures(PositionData pos, float[] tmp,
+                                                  float mgTaper, float egTaper) {
+        int net = connectedPawnCount(pos.getWhitePawns()) - connectedPawnCount(pos.getBlackPawns());
+        if (net != 0) {
+            tmp[EvalParams.IDX_CONNECTED_PAWN_MG] += net * mgTaper;
+            tmp[EvalParams.IDX_CONNECTED_PAWN_EG] += net * egTaper;
+        }
+    }
+
+    /** Accumulates backward pawn penalty feature weights (tapered). */
+    private static void addBackwardPawnFeatures(PositionData pos, float[] tmp,
+                                                 float mgTaper, float egTaper) {
+        int net = backwardPawnCount(pos.getWhitePawns(), pos.getBlackPawns(), true)
+                - backwardPawnCount(pos.getBlackPawns(), pos.getWhitePawns(), false);
+        if (net != 0) {
+            // backward pawn is a penalty — subtract from white's perspective
+            tmp[EvalParams.IDX_BACKWARD_PAWN_MG] -= net * mgTaper;
+            tmp[EvalParams.IDX_BACKWARD_PAWN_EG] -= net * egTaper;
+        }
+    }
+
+    /** Accumulates rook-behind-passed-pawn feature weights (tapered). */
+    private static void addRookBehindPasserFeatures(PositionData pos, float[] tmp,
+                                                     float mgTaper, float egTaper) {
+        long wRooks = pos.getWhiteRooks();
+        long wPawns = pos.getWhitePawns();
+        long bPawns = pos.getBlackPawns();
+        long bRooks = pos.getBlackRooks();
+        // White rooks behind white passed pawns
+        long temp = wRooks;
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            long fileMask = FILE_MASK_BASE_TE << (sq % 8);
+            long passedOnFile = wPawns & fileMask & ((1L << sq) - 1);
+            while (passedOnFile != 0) {
+                int psq = Long.numberOfTrailingZeros(passedOnFile);
+                if ((bPawns & fileMask & ((1L << psq) - 1)) == 0) {
+                    tmp[EvalParams.IDX_ROOK_BEHIND_PASSER_MG] += mgTaper;
+                    tmp[EvalParams.IDX_ROOK_BEHIND_PASSER_EG] += egTaper;
+                }
+                passedOnFile &= passedOnFile - 1;
+            }
+            temp &= temp - 1;
+        }
+        // Black rooks behind black passed pawns (negate)
+        temp = bRooks;
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            long fileMask = FILE_MASK_BASE_TE << (sq % 8);
+            long passedOnFile = bPawns & fileMask & ~((1L << sq) - 1) & ~(1L << sq);
+            while (passedOnFile != 0) {
+                int psq = Long.numberOfTrailingZeros(passedOnFile);
+                if ((wPawns & fileMask & ~((1L << psq) - 1) & ~(1L << psq)) == 0) {
+                    tmp[EvalParams.IDX_ROOK_BEHIND_PASSER_MG] -= mgTaper;
+                    tmp[EvalParams.IDX_ROOK_BEHIND_PASSER_EG] -= egTaper;
+                }
+                passedOnFile &= passedOnFile - 1;
+            }
+            temp &= temp - 1;
+        }
+    }
+
+    // =========================================================================
+    // Feature-based MSE (static-eval, no qsearch; used for per-iteration monitoring)
+    // =========================================================================
+
+    /**
+     * Mean squared error over all positions using precomputed feature vectors.
+     *
+     * <p>This is faster than {@link #computeMse(List, double[], double)} because
+     * each eval is a dot product rather than a full static-eval call, and no
+     * Board allocations occur. Used for per-iteration convergence monitoring
+     * and K recalibration during Adam.
+     */
+    public static double computeMseFromFeatures(List<PositionFeatures> features, double[] params, double k) {
+        return features.parallelStream()
+                .mapToDouble(pf -> {
+                    double sig = sigmoid(pf.eval(params), k);
+                    double err = pf.outcome - sig;
+                    return err * err;
+                })
+                .average()
+                .orElse(0.0);
     }
 }

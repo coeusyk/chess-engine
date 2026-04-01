@@ -32,7 +32,7 @@ public final class GradientDescent {
     public static final int DEFAULT_MAX_ITERATIONS = 500;
 
     // Adam hyperparameters
-    private static final double LR      = 1.0;
+    private static final double LR      = 0.05; // Diagnostic: reduced from 3.0 to diagnose plateau
     private static final double BETA1   = 0.9;
     private static final double BETA2   = 0.999;
     private static final double EPSILON = 1e-8;
@@ -171,6 +171,152 @@ public final class GradientDescent {
                                 double[] initialParams,
                                 double k) {
         return tune(positions, initialParams, k, DEFAULT_MAX_ITERATIONS);
+    }
+
+    // =========================================================================
+    // Fast path: analytical gradient using precomputed feature vectors
+    // =========================================================================
+
+    /**
+     * Runs Adam gradient descent using precomputed {@link PositionFeatures}.
+     *
+     * <p>Each gradient computation is O(N × avgActiveFeatures) instead of
+     * O(N × P × 2 × evalCost) — typically 100–1000× faster than the finite-
+     * difference path.
+     *
+     * @param features     precomputed list (build via {@link PositionFeatures#buildList})
+     * @param initialParams starting point (length {@link EvalParams#TOTAL_PARAMS})
+     * @param k            sigmoid scaling constant (from {@link KFinder})
+     * @param maxIters     iteration cap
+     * @param recalibrateK if {@code true}, re-runs {@link KFinder} after each iteration
+     * @return tuned parameter array
+     */
+    public static double[] tuneWithFeatures(List<PositionFeatures> features,
+                                            double[] initialParams,
+                                            double k,
+                                            int maxIters,
+                                            boolean recalibrateK) {
+        int n = initialParams.length;
+        double[] params = initialParams.clone();
+
+        for (int i = 0; i < n; i++) {
+            params[i] = EvalParams.clampOne(i, params[i]);
+        }
+
+        double[] accum = params.clone();
+        double[] m = new double[n];
+        double[] v = new double[n];
+
+        double currentMse = TunerEvaluator.computeMseFromFeatures(features, params, k);
+
+        LOG.info(String.format("[Adam/fast] start  MSE=%.8f  params=%d  positions=%d  threads=%d",
+                currentMse, n, features.size(), Runtime.getRuntime().availableProcessors()));
+
+        for (int iter = 1; iter <= maxIters; iter++) {
+            Instant iterStart = Instant.now();
+
+            double[] grad = computeGradientFromFeatures(features, params, k);
+
+            for (int i = 0; i < n; i++) {
+                if (EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i]) continue;
+
+                m[i] = BETA1 * m[i] + (1 - BETA1) * grad[i];
+                v[i] = BETA2 * v[i] + (1 - BETA2) * grad[i] * grad[i];
+
+                double mHat = m[i] / (1 - Math.pow(BETA1, iter));
+                double vHat = v[i] / (1 - Math.pow(BETA2, iter));
+
+                accum[i] -= LR * mHat / (Math.sqrt(vHat) + EPSILON);
+                params[i] = EvalParams.clampOne(i, Math.round(accum[i]));
+            }
+
+            EvalParams.enforceMaterialOrdering(params);
+
+            for (int i = 0; i < n; i++) {
+                if (EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i]) {
+                    accum[i] = params[i];
+                }
+            }
+
+            if (recalibrateK) {
+                double newK    = KFinder.findKFromFeatures(features, params);
+                double kDrift  = Math.abs(newK - k);
+                if (kDrift < 0.001) {
+                    LOG.info(String.format("[Adam/fast] K stable (drift=%.6f < 0.001), skipping recalibration", kDrift));
+                } else {
+                    LOG.info(String.format("[Adam/fast] K recalibrated: %.6f \u2192 %.6f (drift=%.6f)", k, newK, kDrift));
+                    k = newK;
+                }
+            }
+
+            double newMse = TunerEvaluator.computeMseFromFeatures(features, params, k);
+            long ms = Duration.between(iterStart, Instant.now()).toMillis();
+
+            LOG.info(String.format("[Adam/fast] iter %3d  K=%.6f  MSE=%.8f  time=%dms",
+                    iter, k, newMse, ms));
+
+            if (currentMse > 0 && Math.abs(currentMse - newMse) / currentMse < CONVERGENCE_THRESHOLD) {
+                LOG.info(String.format("[Adam/fast] converged after %d iterations (MSE delta < %.1e)",
+                        iter, CONVERGENCE_THRESHOLD));
+                currentMse = newMse;
+                break;
+            }
+            currentMse = newMse;
+        }
+
+        return params;
+    }
+
+    /**
+     * Convenience overload for feature-based tuning with
+     * {@link #DEFAULT_MAX_ITERATIONS}.
+     */
+    public static double[] tuneWithFeatures(List<PositionFeatures> features,
+                                            double[] initialParams,
+                                            double k) {
+        return tuneWithFeatures(features, initialParams, k, DEFAULT_MAX_ITERATIONS, true);
+    }
+
+    /**
+     * Computes the analytical gradient of the MSE objective using precomputed
+     * feature vectors.
+     *
+     * <p>For each position p with sigmoid prediction s and outcome y:
+     * <pre>
+     *   dMSE/dParams[i] = (2/N) × Σ (s−y) × s×(1−s) × K×ln10/400 × dEval/dParams[i]
+     * </pre>
+     * For linear params, {@code dEval/dParams[i] = features.weights[i]}.
+     * For the non-linear ATK params, the derivative involves the current-
+     * params-dependent king-zone attacker weights and is computed per-position
+     * via {@link PositionFeatures#accumulateGradient}.
+     *
+     * <p>No bitboard operations are performed here — all positional structure is
+     * encoded in the precomputed feature vectors.
+     */
+    static double[] computeGradientFromFeatures(List<PositionFeatures> features,
+                                    double[] params,
+                                    double k) {
+        int n = params.length;
+        double kFactor = k * Math.log(10.0) / 400.0;
+
+        double[] grad = features.parallelStream()
+                .map(pf -> {
+                    double[] localGrad = new double[n];
+                    double eval   = pf.eval(params);
+                    double sig    = TunerEvaluator.sigmoid(eval, k);
+                    double factor = (sig - pf.outcome) * sig * (1.0 - sig) * kFactor;
+                    pf.accumulateGradient(localGrad, params, factor);
+                    return localGrad;
+                })
+                .collect(
+                    () -> new double[n],
+                    (acc, lg) -> { for (int i = 0; i < n; i++) acc[i] += lg[i]; },
+                    (a,   b)  -> { for (int i = 0; i < n; i++) a[i]  +=  b[i]; }
+                );
+
+        double scale = 2.0 / features.size();
+        for (int i = 0; i < n; i++) grad[i] *= scale;
+        return grad;
     }
 
     /**

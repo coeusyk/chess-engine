@@ -9,7 +9,7 @@ import java.util.Arrays;
 /**
  * Bridge between the tuner parameter array and the live evaluator constants.
  *
- * Parameter layout (817 total):
+ * Parameter layout (823 total):
  * <pre>
  *   [0..11]    Material MG/EG for pawn, knight, bishop, rook, queen, king
  *              (indices alternate: [2n] = MG, [2n+1] = EG)
@@ -60,11 +60,25 @@ import java.util.Arrays;
  *   [814]      bishop pair EG bonus
  *   [815]      rook on 7th rank MG bonus
  *   [816]      rook on 7th rank EG bonus
+ *
+ *   [817]      rook on open file MG bonus
+ *   [818]      rook on open file EG bonus
+ *   [819]      rook on semi-open file MG bonus
+ *   [820]      rook on semi-open file EG bonus
+ *
+ *   [821]      knight outpost MG bonus
+ *   [822]      knight outpost EG bonus
+ *   [823]      connected pawn MG bonus
+ *   [824]      connected pawn EG bonus
+ *   [825]      backward pawn MG penalty
+ *   [826]      backward pawn EG penalty
+ *   [827]      rook behind passer MG bonus
+ *   [828]      rook behind passer EG bonus
  * </pre>
  */
 public final class EvalParams {
 
-    public static final int TOTAL_PARAMS = 817;
+    public static final int TOTAL_PARAMS = 829;
 
     // --- Indices for documentation / cross-referencing ---
     public static final int IDX_MATERIAL_START  = 0;   // [0..11]
@@ -88,8 +102,20 @@ public final class EvalParams {
     public static final int IDX_TEMPO           = 812;
     public static final int IDX_BISHOP_PAIR_MG  = 813;
     public static final int IDX_BISHOP_PAIR_EG  = 814;
-    public static final int IDX_ROOK_7TH_MG     = 815;
-    public static final int IDX_ROOK_7TH_EG     = 816;
+    public static final int IDX_ROOK_7TH_MG          = 815;
+    public static final int IDX_ROOK_7TH_EG          = 816;
+    public static final int IDX_ROOK_OPEN_FILE_MG     = 817;
+    public static final int IDX_ROOK_OPEN_FILE_EG     = 818;
+    public static final int IDX_ROOK_SEMI_OPEN_MG     = 819;
+    public static final int IDX_ROOK_SEMI_OPEN_EG     = 820;
+    public static final int IDX_KNIGHT_OUTPOST_MG     = 821;
+    public static final int IDX_KNIGHT_OUTPOST_EG     = 822;
+    public static final int IDX_CONNECTED_PAWN_MG     = 823;
+    public static final int IDX_CONNECTED_PAWN_EG     = 824;
+    public static final int IDX_BACKWARD_PAWN_MG      = 825;
+    public static final int IDX_BACKWARD_PAWN_EG      = 826;
+    public static final int IDX_ROOK_BEHIND_PASSER_MG = 827;
+    public static final int IDX_ROOK_BEHIND_PASSER_EG = 828;
 
     /**
      * Per-parameter lower bounds enforced during coordinate descent.
@@ -120,6 +146,18 @@ public final class EvalParams {
         lo[IDX_BISHOP_PAIR_EG] = 0;   // Bishop pair EG >= 0
         lo[IDX_ROOK_7TH_MG]   = 0;   // Rook on 7th MG >= 0
         lo[IDX_ROOK_7TH_EG]   = 0;   // Rook on 7th EG >= 0
+        lo[IDX_ROOK_OPEN_FILE_MG]  = 0;   // Rook open file MG >= 0
+        lo[IDX_ROOK_OPEN_FILE_EG]  = 0;   // Rook open file EG >= 0
+        lo[IDX_ROOK_SEMI_OPEN_MG]  = 0;   // Rook semi-open file MG >= 0
+        lo[IDX_ROOK_SEMI_OPEN_EG]  = 0;   // Rook semi-open file EG >= 0
+        lo[IDX_KNIGHT_OUTPOST_MG]  = 0;   // Knight outpost MG >= 0
+        lo[IDX_KNIGHT_OUTPOST_EG]  = 0;   // Knight outpost EG >= 0
+        lo[IDX_CONNECTED_PAWN_MG]  = 0;   // Connected pawn MG >= 0
+        lo[IDX_CONNECTED_PAWN_EG]  = 0;   // Connected pawn EG >= 0
+        lo[IDX_BACKWARD_PAWN_MG]   = 0;   // Backward pawn penalty MG >= 0
+        lo[IDX_BACKWARD_PAWN_EG]   = 0;   // Backward pawn penalty EG >= 0
+        lo[IDX_ROOK_BEHIND_PASSER_MG] = 0;  // Rook behind passer MG >= 0
+        lo[IDX_ROOK_BEHIND_PASSER_EG] = 0;  // Rook behind passer EG >= 0
         return lo;
     }
 
@@ -142,6 +180,18 @@ public final class EvalParams {
         hi[IDX_BISHOP_PAIR_EG] = 80;   // Bishop pair EG <= 80cp
         hi[IDX_ROOK_7TH_MG]   = 50;   // Rook on 7th MG <= 50cp
         hi[IDX_ROOK_7TH_EG]   = 50;   // Rook on 7th EG <= 50cp
+        hi[IDX_ROOK_OPEN_FILE_MG]  = 50;   // Rook open file MG <= 50cp
+        hi[IDX_ROOK_OPEN_FILE_EG]  = 50;   // Rook open file EG <= 50cp
+        hi[IDX_ROOK_SEMI_OPEN_MG]  = 30;   // Rook semi-open file MG <= 30cp
+        hi[IDX_ROOK_SEMI_OPEN_EG]  = 30;   // Rook semi-open file EG <= 30cp
+        hi[IDX_KNIGHT_OUTPOST_MG]  = 40;   // Knight outpost MG <= 40cp
+        hi[IDX_KNIGHT_OUTPOST_EG]  = 30;   // Knight outpost EG <= 30cp
+        hi[IDX_CONNECTED_PAWN_MG]  = 25;   // Connected pawn MG <= 25cp
+        hi[IDX_CONNECTED_PAWN_EG]  = 20;   // Connected pawn EG <= 20cp
+        hi[IDX_BACKWARD_PAWN_MG]   = 25;   // Backward pawn penalty MG <= 25cp
+        hi[IDX_BACKWARD_PAWN_EG]   = 20;   // Backward pawn penalty EG <= 20cp
+        hi[IDX_ROOK_BEHIND_PASSER_MG] = 40;  // Rook behind passer MG <= 40cp
+        hi[IDX_ROOK_BEHIND_PASSER_EG] = 50;  // Rook behind passer EG <= 50cp
         return hi;
     }
 
@@ -192,134 +242,134 @@ public final class EvalParams {
         // Piece type indices (Piece.Pawn=1, Knight=2, Bishop=3, Rook=4, Queen=5, King=6)
         // Stored as 2 per type: [2*(type-1)] = MG, [2*(type-1)+1] = EG
         // Pawn MG is hard-pinned at 100 (anchoring point for all other values).
-        p[0]  = 100;  p[1]  = 94;    // Pawn (MG pinned at 100)
-        p[2]  = 337;  p[3]  = 281;   // Knight
-        p[4]  = 365;  p[5]  = 297;   // Bishop
-        p[6]  = 477;  p[7]  = 512;   // Rook
-        p[8]  = 1025; p[9]  = 936;   // Queen
+        p[0]  = 100;  p[1]  = 86;    // Pawn (MG pinned at 100)
+        p[2]  = 391;  p[3]  = 287;   // Knight
+        p[4]  = 416;  p[5]  = 302;   // Bishop
+        p[6]  = 564;  p[7]  = 537;   // Rook
+        p[8]  = 1200; p[9]  = 991;   // Queen
         p[10] = 0;    p[11] = 0;     // King
 
         // --- PST tables ---
         // White tables from PieceSquareTables (a8=0 convention, rank 8 at top)
         int[] MG_PAWN = {
-              0,   0,   0,   0,   0,   0,   0,   0,
-             51,  69,   7,  35,   9,  44, -16, -61,
-            -26, -14,   9,   3,  49,  49,   4, -23,
-            -24,   6,   8,  16,  22,  14,  17, -25,
-            -28,  -7,  -2,  10,  20,  10,   1, -27,
-            -23,  -9,  -1, -13,   5,   7,  30, -10,
-            -30,  -7, -18, -22,  -6,  26,  29, -20,
-              0,   0,   0,   0,   0,   0,   0,   0,
+              0,    0,    0,    0,    0,    0,    0,    0,
+             32,   90,   18,   55,   36,   80,  -42, -105,
+             -1,   -2,   16,   15,   59,   74,   22,  -12,
+            -23,   -6,   -1,   15,   16,   10,   -1,  -26,
+            -32,  -27,   -4,    8,   12,    4,  -13,  -30,
+            -26,  -22,   -5,   -9,    6,    3,   15,  -16,
+            -28,  -15,  -21,  -13,  -10,   21,   22,  -19,
+              0,    0,    0,    0,    0,    0,    0,    0,
         };
         int[] EG_PAWN = {
-              0,   0,   0,   0,   0,   0,   0,   0,
-            131, 108, 104,  62,  86,  45, 108, 138,
-             77,  70,  43,  24,   9,  26,  47,  61,
-             29,  12,   0, -11,  -8,  -4,   6,  17,
-             23,   9,  -4, -13, -13,  -9,  -4,   3,
-              3,   1,  -3,  -1,   2,  -4, -13,  -8,
-             22,   3,  10,  14,   5,  -6, -10, -10,
-              0,   0,   0,   0,   0,   0,   0,   0,
+              0,    0,    0,    0,    0,    0,    0,    0,
+            131,  108,   94,   62,   75,   60,  114,  153,
+             45,   38,   13,  -21,  -38,  -17,   14,   26,
+             26,   14,    2,  -17,  -12,   -6,    8,   12,
+             16,   11,   -6,  -11,  -10,   -9,   -2,    0,
+              4,    3,   -6,   -2,   -3,   -5,  -12,   -8,
+             10,   -1,    7,   -3,    7,   -4,  -13,  -12,
+              0,    0,    0,    0,    0,    0,    0,    0,
         };
         int[] MG_KNIGHT = {
-            -190, -70, -13, -43,  81, -73,  18, -93,
-             -82, -44,  94,  27,  48,  32,  -5, -44,
-             -52,  64,  27,  57,  67, 133,  56,  25,
-             -21,   4,  19,  55,  28,  65,   6,  19,
-             -19,   5,  17,   7,  22,   8,  26,   8,
-             -22, -14,   8,   8,  31,  15,  20, -22,
-              13, -33,  -9,   7,   4,  29,   3, -13,
-             -79, -17, -55, -22,  -3,   3,  -8,  11,
+            -182, -100,  -55,  -61,   55, -111,  -30, -112,
+             -69,  -34,   87,   20,   18,   60,    1,  -15,
+             -35,   64,   35,   58,   89,  123,   75,   48,
+               7,   28,   24,   58,   38,   70,   26,   32,
+              11,   26,   30,   30,   36,   32,   32,   13,
+              -4,   11,   28,   32,   47,   39,   45,    8,
+              -2,  -22,   13,   34,   36,   42,   17,   16,
+            -105,   10,  -19,    4,   26,    9,   14,   10,
         };
         int[] EG_KNIGHT = {
-             -41,   0,  16,  -5, -13,  -4, -25, -117,
-              -3,   9, -42, -10,   8, -41, -11, -63,
-             -12, -11,   6,  12,  -7,  -5, -13, -51,
-               4,   1,  21,  22,  21,  -2,   2,  -8,
-             -12,  -1,  18,  25,  22,  31,  10, -17,
-             -31,   1,   1,  23,   8,  -2, -27,   4,
-             -71,  -4, -18,  -3,   6, -25, -16, -33,
-             -23, -42, -17, -11,  -9, -33, -44, -32,
+             -38,  -24,    2,  -16,  -28,  -17,  -56,  -82,
+             -11,    5,  -24,    9,   -2,  -23,  -14,  -42,
+             -14,  -13,   19,   13,   -5,   -8,  -18,  -38,
+              -6,   13,   33,   27,   29,   16,   15,  -11,
+              -9,    3,   24,   33,   24,   25,   14,  -11,
+             -15,    5,    3,   20,   13,   -2,  -16,  -12,
+             -27,   -9,    0,   -4,   -1,  -12,  -13,  -41,
+              -2,  -41,  -14,   -4,  -17,  -13,  -43,  -64,
         };
         int[] MG_BISHOP = {
-            -21,  12, -83, -42, -37, -36,  19,  -5,
-             -4,  22,  -8, -18,  22,  79, -11, -24,
-            -27,  28,  44,  18,  16,  65,   7, -14,
-             12,  10,  19,  53,  31,  35,   9, -16,
-             -2,   4,  13,  20,  31,   7,  22,   2,
-              4,  15,  23,  13,   7,  35,  10,   7,
-             23,  31,  31,  12,  21,  38,  43,  36,
-            -29,  17,   5, -10, -15,   2, -16, -29,
+             -31,  -16, -132,  -98,  -65,  -69,  -33,   -5,
+             -20,   20,  -23,  -33,   21,   50,   20,  -52,
+             -18,   35,   43,   23,   26,   44,   20,  -10,
+               5,   22,   18,   53,   37,   28,   17,    5,
+              17,   21,   23,   40,   46,   10,   23,   22,
+              21,   37,   39,   31,   33,   56,   34,   30,
+              35,   47,   37,   29,   41,   47,   68,   29,
+              -4,   30,   24,   21,   27,   22,  -13,    4,
         };
         int[] EG_BISHOP = {
-             -8, -29,  12,   2,   2,   5,  -9,   5,
-            -12,  11,  -8, -13,   1,  -2,   1, -16,
-             14,  -6,  -9,   6,  -5,  -3,  11,   9,
-              3,  12,  11,  -1,  21,   6,   0,   7,
-              4,  13,  13,  25,  14,  24,   6,  10,
-             -6,   6,  11,  15,  25,   4,   6,  -2,
-              8,  -8,   8,   6,  11,  10, -10,  -1,
-              5,   5,  -4,  12,  -8,   1,  13,  -3,
+               0,   -3,   20,   18,   19,   12,    6,  -11,
+               9,    7,   22,    9,    7,    2,    3,    5,
+              20,    5,    6,    7,    4,    7,   15,   18,
+              11,   16,   18,   13,   15,   14,    7,   14,
+               5,   11,   19,   21,    8,   17,    4,    4,
+               3,    7,   16,   19,   21,    3,    8,    0,
+               0,  -10,    3,    5,    5,    2,   -9,  -17,
+              -3,    7,   -4,    7,    4,    3,   14,    0,
         };
         int[] MG_ROOK = {
-             30,  34,  12,  46,  63, -10,  26,  34,
-             20,  23,  65,  67,  65,  53,  31,  43,
-             -9,   8,  33,  41,  17,  47,  46,  10,
-            -28,   1,  15,  31,  25,  38,  -1, -17,
-            -34, -19,   1,   7,  12,  -1,   1, -32,
-            -42, -15,   2, -16,  -2,  10,  -7, -19,
-            -39,  -9,  -7,   3,   3,  16,   6, -76,
-            -16, -10,   4,  18,  14,   8, -30, -20,
+             14,   31,   -2,   45,   39,  -20,   -7,   -1,
+              7,    9,   48,   57,   72,   67,    4,   26,
+            -12,   13,   13,   27,   -6,   38,   73,    1,
+            -24,  -15,   12,   22,   17,   29,  -10,  -27,
+            -36,  -18,   -2,    4,   14,   -4,   11,  -32,
+            -37,  -13,    2,   -2,   14,   11,    3,  -26,
+            -30,   -3,    0,   13,   23,   25,   13,  -51,
+             -1,    7,   26,   34,   37,   25,  -10,    2,
         };
         int[] EG_ROOK = {
-             10,  -1,   7,   0,  13,  -2,   2,   5,
-             12,  17,   8,  14,  -6,   9,  10,   9,
-              9,  14,  12,   6,   9,  -3,   4,  -6,
-             18,  17,  22,  12,   2,  12,   8,  19,
-             13,  15,  17,   8,   9,   3,  -6,  -4,
-             15,  16,   7,   6,  -1,   9,  -2,   3,
-              3,   5,  12,  17,   3,   0,   2,  14,
-              2,  13,   6,  -2,  -4,  -4,  13, -12,
+             28,   21,   33,   18,   23,   33,   31,   28,
+              7,    9,   -1,   -5,  -20,   -9,    9,    0,
+             29,   26,   24,   21,   23,   12,    3,   17,
+             31,   27,   30,   17,   19,   17,   20,   30,
+             32,   29,   28,   22,   14,   15,   10,   20,
+             22,   22,   11,   17,    7,    5,   10,    9,
+             19,   12,   16,   16,    4,    4,    2,   20,
+             10,   14,   11,    6,    2,    0,   12,   -9,
         };
         int[] MG_QUEEN = {
-            -15, -17,  24,  29,  45,  20,  63,  48,
-            -16, -33, -14,  11, -10,  63,  19,  86,
-            -20, -27,   7,   6,  26,  53,  43,  59,
-            -35, -45, -18,  -9, -23,  16,  35, -16,
-             -9, -38, -17, -17, -25,   4,   1,  -1,
-            -15,  11, -23,   9, -15,  -4,  13,  -6,
-            -33,   9,  17,   4,  18,  15,  13,  -3,
-             -4, -12,   2,  22,  -9,  -8, -42, -34,
+            -15,  -31,  -14,  -20,  111,   94,   71,   58,
+            -15,  -39,  -10,  -14,  -49,   62,   39,   66,
+             -1,  -12,   18,  -17,   23,   73,   48,   55,
+            -27,  -14,  -21,  -19,    1,    2,    0,   -1,
+             13,  -28,    6,   -2,    5,    4,    1,    5,
+             -3,   26,   11,   19,   15,   17,   23,   15,
+             -5,   19,   35,   37,   46,   50,   30,   37,
+             29,   32,   39,   47,   31,   19,   14,  -25,
         };
         int[] EG_QUEEN = {
-             -3,   2,  29,  38,  16,  -4,  35,  26,
-            -21,  28,  33,  45,  55,  15,   6,  19,
-             -6,  11,  20,  55,  58,  40,  19,  16,
-             12,  37,  16,  47,  53,  30,  66,  50,
-            -28,  48,  14,  49,  18,  31,  42,  29,
-             -8, -24,   4,  10,   2,  28,  27,  -3,
-            -21, -18, -28, -16, -18, -26, -39, -33,
-            -27, -31,  -7, -38,   5, -19, -14, -24,
+              4,   58,   58,   59,   -3,    7,    1,   36,
+              5,   33,   44,   66,   97,   32,   35,   17,
+              4,   25,    3,   76,   63,   35,   45,   35,
+             43,   36,   39,   52,   63,   60,   92,   79,
+             -5,   57,   23,   51,   35,   44,   69,   53,
+             17,  -28,   16,    2,   19,   31,   40,   41,
+             -1,  -20,  -26,  -25,  -21,  -20,  -33,  -18,
+            -32,  -43,  -32,  -35,   -4,  -20,  -18,  -26,
         };
         int[] MG_KING = {
-            -60,  56,  50,   2, -33, -34,   9,  12,
-             20,  18,  -2,  29,   9,  21, -29, -12,
-             -3,  23,  14,  -1, -21,  10,  41, -36,
-            -24,  -7,  -5, -23, -32, -27,  -7, -41,
-            -53,   2, -28, -44, -39, -43, -29, -54,
-              3,  -3, -10, -32, -42, -27,  -9, -24,
-              8,   3,  -9, -54, -43, -17,  13,  12,
-            -12,  21,  10, -45,  11, -25,  20,  13,
+            -124,  200,  200,  140,  -78,  -30,   94,   -3,
+             192,  119,   78,  147,   76,   56,   18, -138,
+              64,  101,  131,   65,   94,  140,  147,  -27,
+              -5,   15,   50,   -2,  -12,  -18,   -7, -104,
+             -74,   42,  -27,  -65,  -79,  -60,  -66, -107,
+             -19,   -4,  -15,  -38,  -46,  -48,  -15,  -53,
+             -10,    7,  -13,  -59,  -41,  -27,   12,    9,
+             -32,   15,    2,  -61,    4,  -29,   10,   -5,
         };
         int[] EG_KING = {
-            -85, -45, -51, -26,  -9,   1, -26,  -9,
-            -30,  24,  22,  22,  35,  17,  28,  31,
-            -11,   4,   8,  21,  22,  49,  53,  11,
-            -33,  23,  15,  38,  34,  35,  37,   7,
-            -18,  -7,  28,  31,  35,  31,  18, -17,
-            -32,  -8,  28,  39,  37,  23,   8, -16,
-            -41, -13,  10,  29,  22,  10,  -3, -22,
-            -66, -42, -27,   4, -22, -10, -30, -56,
+            -73,  -72,  -55,  -42,    4,   20,  -15,  -28,
+            -55,   -3,    6,   -4,   10,   33,   24,   29,
+             -9,    9,    7,   11,    7,   32,   24,   11,
+            -15,   23,   24,   36,   35,   42,   33,   16,
+            -12,   -5,   34,   45,   48,   38,   24,    2,
+            -22,    2,   23,   35,   38,   30,   11,   -7,
+            -33,  -10,   15,   29,   27,   16,   -8,  -31,
+            -66,  -47,  -19,    3,  -21,   -8,  -40,  -67,
         };
 
         int[][] mgTables = { null, MG_PAWN, MG_KNIGHT, MG_BISHOP, MG_ROOK, MG_QUEEN, MG_KING };
@@ -337,46 +387,58 @@ public final class EvalParams {
         }
 
         // --- Pawn structure ---
-        // PASSED_MG = {0, 0, 2, 6, 23, 43, 43, 0} — indices 1..6 are tunable
-        int[] PASSED_MG = {0, 0, 2, 6, 23, 43, 43, 0};
-        int[] PASSED_EG = {0, 0, 6, 26, 53, 83, 108, 0};
+        // PASSED_MG = {0, 6, 1, 0, 8, 7, 45, 0} — indices 1..6 are tunable
+        int[] PASSED_MG = {0, 6, 1, 0, 8, 7, 45, 0};
+        int[] PASSED_EG = {0, 4, 9, 29, 56, 123, 116, 0};
         for (int i = 0; i < 6; i++) {
             p[IDX_PASSED_MG_START + i] = PASSED_MG[i + 1];
             p[IDX_PASSED_EG_START + i] = PASSED_EG[i + 1];
         }
-        p[IDX_ISOLATED_MG] = 9;
-        p[IDX_ISOLATED_EG] = 12;
-        p[IDX_DOUBLED_MG]  = 1;
-        p[IDX_DOUBLED_EG]  = 19;
+        p[IDX_ISOLATED_MG] = 17;
+        p[IDX_ISOLATED_EG] = 9;
+        p[IDX_DOUBLED_MG]  = 0;
+        p[IDX_DOUBLED_EG]  = 11;
 
         // --- King safety ---
-        p[IDX_SHIELD_RANK2]   = 11;
-        p[IDX_SHIELD_RANK3]   = 5;
-        p[IDX_OPEN_FILE]      = 31;
-        p[IDX_HALF_OPEN_FILE] = 7;
-        p[IDX_ATK_KNIGHT]     = 4;
-        p[IDX_ATK_BISHOP]     = 5;
-        p[IDX_ATK_ROOK]       = 6;
-        p[IDX_ATK_QUEEN]      = 6;
+        p[IDX_SHIELD_RANK2]   = 12;
+        p[IDX_SHIELD_RANK3]   = 8;
+        p[IDX_OPEN_FILE]      = 45;
+        p[IDX_HALF_OPEN_FILE] = 15;
+        p[IDX_ATK_KNIGHT]     = 6;
+        p[IDX_ATK_BISHOP]     = 4;
+        p[IDX_ATK_ROOK]       = 5;
+        p[IDX_ATK_QUEEN]      = 7;
 
         // --- Mobility ---
-        // MG: N=5, B=4, R=5, Q=0
-        p[IDX_MOB_MG_START]     = 5;  // Knight
-        p[IDX_MOB_MG_START + 1] = 4;  // Bishop
-        p[IDX_MOB_MG_START + 2] = 5;  // Rook
-        p[IDX_MOB_MG_START + 3] = 0;  // Queen
-        // EG: N=0, B=2, R=4, Q=8
+        // MG: N=6, B=7, R=8, Q=3
+        p[IDX_MOB_MG_START]     = 6;  // Knight
+        p[IDX_MOB_MG_START + 1] = 7;  // Bishop
+        p[IDX_MOB_MG_START + 2] = 8;  // Rook
+        p[IDX_MOB_MG_START + 3] = 3;  // Queen
+        // EG: N=0, B=2, R=2, Q=6
         p[IDX_MOB_EG_START]     = 0;  // Knight
         p[IDX_MOB_EG_START + 1] = 2;  // Bishop
-        p[IDX_MOB_EG_START + 2] = 4;  // Rook
-        p[IDX_MOB_EG_START + 3] = 8;  // Queen
+        p[IDX_MOB_EG_START + 2] = 2;  // Rook
+        p[IDX_MOB_EG_START + 3] = 6;  // Queen
 
         // --- Bonus eval terms ---
-        p[IDX_TEMPO]          = 15;   // Tempo bonus
-        p[IDX_BISHOP_PAIR_MG] = 30;   // Bishop pair MG
-        p[IDX_BISHOP_PAIR_EG] = 50;   // Bishop pair EG
-        p[IDX_ROOK_7TH_MG]   = 20;   // Rook on 7th rank MG
-        p[IDX_ROOK_7TH_EG]   = 30;   // Rook on 7th rank EG
+        p[IDX_TEMPO]          = 19;   // Tempo bonus
+        p[IDX_BISHOP_PAIR_MG] = 31;   // Bishop pair MG
+        p[IDX_BISHOP_PAIR_EG] = 51;   // Bishop pair EG
+        p[IDX_ROOK_7TH_MG]          = 9;    // Rook on 7th rank MG
+        p[IDX_ROOK_7TH_EG]          = 20;   // Rook on 7th rank EG
+        p[IDX_ROOK_OPEN_FILE_MG]    = 20;   // Rook on open file MG
+        p[IDX_ROOK_OPEN_FILE_EG]    = 10;   // Rook on open file EG
+        p[IDX_ROOK_SEMI_OPEN_MG]    = 10;   // Rook on semi-open file MG
+        p[IDX_ROOK_SEMI_OPEN_EG]    = 5;    // Rook on semi-open file EG
+        p[IDX_KNIGHT_OUTPOST_MG]    = 20;   // Knight outpost MG
+        p[IDX_KNIGHT_OUTPOST_EG]    = 10;   // Knight outpost EG
+        p[IDX_CONNECTED_PAWN_MG]    = 10;   // Connected pawn bonus MG
+        p[IDX_CONNECTED_PAWN_EG]    = 8;    // Connected pawn bonus EG
+        p[IDX_BACKWARD_PAWN_MG]     = 10;   // Backward pawn penalty MG
+        p[IDX_BACKWARD_PAWN_EG]     = 5;    // Backward pawn penalty EG
+        p[IDX_ROOK_BEHIND_PASSER_MG] = 15;  // Rook behind passer MG
+        p[IDX_ROOK_BEHIND_PASSER_EG] = 25;  // Rook behind passer EG
 
         return p;
     }
@@ -444,6 +506,18 @@ public final class EvalParams {
                 params[IDX_BISHOP_PAIR_MG], params[IDX_BISHOP_PAIR_EG]));
             w.write(String.format("ROOK_ON_7TH  MG=%.0f  EG=%.0f%n",
                 params[IDX_ROOK_7TH_MG], params[IDX_ROOK_7TH_EG]));
+            w.write(String.format("ROOK_OPEN_FILE  MG=%.0f  EG=%.0f%n",
+                params[IDX_ROOK_OPEN_FILE_MG], params[IDX_ROOK_OPEN_FILE_EG]));
+            w.write(String.format("ROOK_SEMI_OPEN  MG=%.0f  EG=%.0f%n",
+                params[IDX_ROOK_SEMI_OPEN_MG], params[IDX_ROOK_SEMI_OPEN_EG]));
+            w.write(String.format("KNIGHT_OUTPOST  MG=%.0f  EG=%.0f%n",
+                params[IDX_KNIGHT_OUTPOST_MG], params[IDX_KNIGHT_OUTPOST_EG]));
+            w.write(String.format("CONNECTED_PAWN  MG=%.0f  EG=%.0f%n",
+                params[IDX_CONNECTED_PAWN_MG], params[IDX_CONNECTED_PAWN_EG]));
+            w.write(String.format("BACKWARD_PAWN  MG=%.0f  EG=%.0f%n",
+                params[IDX_BACKWARD_PAWN_MG], params[IDX_BACKWARD_PAWN_EG]));
+            w.write(String.format("ROOK_BEHIND_PASSER  MG=%.0f  EG=%.0f%n",
+                params[IDX_ROOK_BEHIND_PASSER_MG], params[IDX_ROOK_BEHIND_PASSER_EG]));
         }
     }
 

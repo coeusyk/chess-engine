@@ -7,8 +7,8 @@ import static org.junit.jupiter.api.Assertions.*;
 class EvalParamsTest {
 
     @Test
-    void totalParamsIs817() {
-        assertEquals(817, EvalParams.TOTAL_PARAMS);
+    void totalParamsIs829() {
+        assertEquals(829, EvalParams.TOTAL_PARAMS);
     }
 
     @Test

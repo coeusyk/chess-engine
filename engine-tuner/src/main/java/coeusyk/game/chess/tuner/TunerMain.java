@@ -94,15 +94,22 @@ public final class TunerMain {
         double[] params = EvalParams.extractFromCurrentEval();
         LOG.info("[TunerMain] Parameter count: {}", params.length);
 
-        // --- Find optimal K (sigmoid scaling constant) ---
+        // --- Precompute feature vectors (one-time cost, eliminates bitboard ops during training) ---
+        LOG.info("[TunerMain] Building precomputed feature vectors...");
+        Instant featStart = Instant.now();
+        List<PositionFeatures> features = PositionFeatures.buildList(positions);
+        long featMs = Duration.between(featStart, Instant.now()).toMillis();
+        LOG.info(String.format("[TunerMain] Feature vectors built in %,d ms", featMs));
+
+        // --- Find optimal K using fast feature-based MSE ---
         LOG.info("[TunerMain] Finding optimal K...");
-        double k = KFinder.findK(positions, params);
+        double k = KFinder.findKFromFeatures(features, params);
 
         // --- Run chosen optimizer ---
         double[] tuned;
         if ("adam".equals(optimizer)) {
-            LOG.info(String.format("[TunerMain] Running Adam gradient descent (K=%.6f, maxIters=%d)...", k, maxIters));
-            tuned = GradientDescent.tune(positions, params, k, maxIters, recalibrateK);
+            LOG.info(String.format("[TunerMain] Running Adam gradient descent (K=%.6f, maxIters=%d, fast-path)...", k, maxIters));
+            tuned = GradientDescent.tuneWithFeatures(features, params, k, maxIters, recalibrateK);
         } else {
             LOG.info(String.format("[TunerMain] Running coordinate descent (K=%.6f, maxIters=%d)...", k, maxIters));
             tuned = CoordinateDescent.tune(positions, params, k, maxIters, recalibrateK);
@@ -110,7 +117,7 @@ public final class TunerMain {
 
         // Final K after tuning (written to file per #95 AC)
         LOG.info("[TunerMain] Computing final K...");
-        double finalK = KFinder.findK(positions, tuned);
+        double finalK = KFinder.findKFromFeatures(features, tuned);
         LOG.info(String.format("[TunerMain] Final K = %.6f", finalK));
 
         // --- Write results ---
@@ -120,4 +127,3 @@ public final class TunerMain {
         LOG.info("[TunerMain] Copy values manually from tuned_params.txt into engine-core source files.");
     }
 }
-
