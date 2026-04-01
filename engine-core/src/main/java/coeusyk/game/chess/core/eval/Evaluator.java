@@ -25,20 +25,34 @@ public class Evaluator {
     // Baseline: subtract this many safe squares before applying bonus
     private static final int[] MOBILITY_BASELINE = new int[7];
 
-    // Tempo bonus for side to move (centipawns, applied after phase interpolation)
-    static int TEMPO = 15;
+    /**
+     * Default immutable eval configuration built from the current tuned constants.
+     * After a Texel tuning run, copy the new values here and commit.
+     * No runtime injection — this is the single live config used by all Evaluator instances.
+     */
+    public static final EvalConfig DEFAULT_CONFIG = new EvalConfig(
+        /* tempo              */ 19,
+        /* bishopPairMg/Eg   */ 31, 51,
+        /* rook7thMg/Eg      */ 9, 20,
+        /* rookOpenMg/Eg     */ 20, 10,
+        /* rookSemiMg/Eg     */ 10, 5,
+        /* knightOutpostMg/Eg*/ 20, 10,
+        /* connectedPawnMg/Eg*/ 10, 8,
+        /* backwardPawnMg/Eg */ 10, 5,
+        /* rookBehindMg/Eg   */ 15, 25
+    );
 
-    // Bishop pair bonus
-    static int BISHOP_PAIR_MG = 30;
-    static int BISHOP_PAIR_EG = 50;
+    private final EvalConfig config;
 
-    // Rook on 7th rank bonus
-    static int ROOK_7TH_MG = 20;
-    static int ROOK_7TH_EG = 30;
+    // White outpost zone: ranks 4-6 for white (rows 2-4 in a8=0: bits 16-39)
+    // Black outpost zone: ranks 3-5 for black (rows 3-5 in a8=0: bits 24-47)
+    private static final long WHITE_OUTPOST_ZONE = 0x000000FFFFFF0000L;
+    private static final long BLACK_OUTPOST_ZONE = 0x0000FFFFFF000000L;
 
     // Rank 7 bitboards (a8=0 convention): rank 7 = bits 8-15, rank 2 = bits 48-55
     private static final long WHITE_RANK_7 = 0x000000000000FF00L;
     private static final long BLACK_RANK_7 = 0x00FF000000000000L;
+    private static final long FILE_MASK_BASE = 0x0101010101010101L;
 
     static {
         PHASE_WEIGHTS[Piece.Knight] = 1;
@@ -46,34 +60,44 @@ public class Evaluator {
         PHASE_WEIGHTS[Piece.Rook]   = 2;
         PHASE_WEIGHTS[Piece.Queen]  = 4;
 
-        MG_MATERIAL[Piece.Pawn]   = 82;
-        MG_MATERIAL[Piece.Knight] = 337;
-        MG_MATERIAL[Piece.Bishop] = 365;
-        MG_MATERIAL[Piece.Rook]   = 477;
-        MG_MATERIAL[Piece.Queen]  = 1025;
+        MG_MATERIAL[Piece.Pawn]   = 100;
+        MG_MATERIAL[Piece.Knight] = 391;
+        MG_MATERIAL[Piece.Bishop] = 416;
+        MG_MATERIAL[Piece.Rook]   = 564;
+        MG_MATERIAL[Piece.Queen]  = 1200;
         MG_MATERIAL[Piece.King]   = 0;
 
-        EG_MATERIAL[Piece.Pawn]   = 94;
-        EG_MATERIAL[Piece.Knight] = 281;
-        EG_MATERIAL[Piece.Bishop] = 297;
-        EG_MATERIAL[Piece.Rook]   = 512;
-        EG_MATERIAL[Piece.Queen]  = 936;
+        EG_MATERIAL[Piece.Pawn]   = 86;
+        EG_MATERIAL[Piece.Knight] = 287;
+        EG_MATERIAL[Piece.Bishop] = 302;
+        EG_MATERIAL[Piece.Rook]   = 537;
+        EG_MATERIAL[Piece.Queen]  = 991;
         EG_MATERIAL[Piece.King]   = 0;
 
-        MG_MOBILITY[Piece.Knight] = 5;
-        MG_MOBILITY[Piece.Bishop] = 4;
-        MG_MOBILITY[Piece.Rook]   = 5;
-        MG_MOBILITY[Piece.Queen]  = 0;
+        MG_MOBILITY[Piece.Knight] = 6;
+        MG_MOBILITY[Piece.Bishop] = 7;
+        MG_MOBILITY[Piece.Rook]   = 8;
+        MG_MOBILITY[Piece.Queen]  = 3;
 
         EG_MOBILITY[Piece.Knight] = 0;
         EG_MOBILITY[Piece.Bishop] = 2;
-        EG_MOBILITY[Piece.Rook]   = 4;
-        EG_MOBILITY[Piece.Queen]  = 8;
+        EG_MOBILITY[Piece.Rook]   = 2;
+        EG_MOBILITY[Piece.Queen]  = 6;
 
         MOBILITY_BASELINE[Piece.Knight] = 4;
         MOBILITY_BASELINE[Piece.Bishop] = 7;
         MOBILITY_BASELINE[Piece.Rook]   = 7;
         MOBILITY_BASELINE[Piece.Queen]  = 14;
+    }
+
+    /** Creates an Evaluator using the default tuned configuration. */
+    public Evaluator() {
+        this(DEFAULT_CONFIG);
+    }
+
+    /** Creates an Evaluator using a custom configuration (for testing only). */
+    public Evaluator(EvalConfig config) {
+        this.config = config;
     }
 
     public int evaluate(Board board) {
@@ -112,31 +136,92 @@ public class Evaluator {
 
         // --- Bishop pair bonus ---
         if (Long.bitCount(board.getWhiteBishops()) >= 2) {
-            mgScore += BISHOP_PAIR_MG;
-            egScore += BISHOP_PAIR_EG;
+            mgScore += config.bishopPairMg();
+            egScore += config.bishopPairEg();
         }
         if (Long.bitCount(board.getBlackBishops()) >= 2) {
-            mgScore -= BISHOP_PAIR_MG;
-            egScore -= BISHOP_PAIR_EG;
+            mgScore -= config.bishopPairMg();
+            egScore -= config.bishopPairEg();
         }
 
         // --- Rook on 7th rank bonus ---
         int wRook7 = Long.bitCount(board.getWhiteRooks() & WHITE_RANK_7);
         int bRook7 = Long.bitCount(board.getBlackRooks() & BLACK_RANK_7);
-        mgScore += (wRook7 - bRook7) * ROOK_7TH_MG;
-        egScore += (wRook7 - bRook7) * ROOK_7TH_EG;
+        mgScore += (wRook7 - bRook7) * config.rook7thMg();
+        egScore += (wRook7 - bRook7) * config.rook7thEg();
+
+        // --- Rook on open / semi-open file bonus ---
+        long[] rookFiles = rookFileScores(board.getWhiteRooks(), board.getBlackRooks(),
+                board.getWhitePawns(), board.getBlackPawns());
+        mgScore += (int) (rookFiles[0] >> 32) - (int) (rookFiles[1] >> 32);
+        egScore += (int) rookFiles[0] - (int) rookFiles[1];
+
+        // --- Knight outpost bonus ---
+        int wOutpost = Long.bitCount(board.getWhiteKnights() & WHITE_OUTPOST_ZONE & ~blackPawnAtk);
+        int bOutpost = Long.bitCount(board.getBlackKnights() & BLACK_OUTPOST_ZONE & ~whitePawnAtk);
+        mgScore += (wOutpost - bOutpost) * config.knightOutpostMg();
+        egScore += (wOutpost - bOutpost) * config.knightOutpostEg();
+
+        // --- Connected pawn bonus ---
+        int wConn = connectedPawnCount(board.getWhitePawns());
+        int bConn = connectedPawnCount(board.getBlackPawns());
+        mgScore += (wConn - bConn) * config.connectedPawnMg();
+        egScore += (wConn - bConn) * config.connectedPawnEg();
+
+        // --- Backward pawn penalty ---
+        int wBack = backwardPawnCount(board.getWhitePawns(), board.getBlackPawns(), true);
+        int bBack = backwardPawnCount(board.getBlackPawns(), board.getWhitePawns(), false);
+        mgScore -= (wBack - bBack) * config.backwardPawnMg();
+        egScore -= (wBack - bBack) * config.backwardPawnEg();
+
+        // --- Rook behind passed pawn bonus ---
+        int[] rookBehind = rookBehindPasserScores(board.getWhiteRooks(), board.getBlackRooks(),
+                board.getWhitePawns(), board.getBlackPawns());
+        mgScore += rookBehind[0];
+        egScore += rookBehind[1];
 
         int phase = computePhase(board);
         egScore += MopUp.evaluate(board, phase);
         int score = (mgScore * phase + egScore * (TOTAL_PHASE - phase)) / TOTAL_PHASE;
 
         // --- Tempo bonus (applied after phase interpolation) ---
-        score += Piece.isWhite(board.getActiveColor()) ? TEMPO : -TEMPO;
+        score += Piece.isWhite(board.getActiveColor()) ? config.tempo() : -config.tempo();
 
         return Piece.isWhite(board.getActiveColor()) ? score : -score;
     }
 
-        private long computeMobilityPacked(Board board, boolean white, long allOccupancy, long enemyPawnAttacks) {
+    /**
+     * Returns a 2-element array: [0] = white packed MG/EG, [1] = black packed MG/EG.
+     * Each element packs MG score in the upper 32 bits and EG score in the lower 32 bits.
+     */
+    private long[] rookFileScores(long whiteRooks, long blackRooks, long whitePawns, long blackPawns) {
+        long wPacked = rookFilePacked(whiteRooks, whitePawns, blackPawns);
+        long bPacked = rookFilePacked(blackRooks, blackPawns, whitePawns);
+        return new long[]{ wPacked, bPacked };
+    }
+
+    private long rookFilePacked(long rooks, long friendlyPawns, long enemyPawns) {
+        int mg = 0, eg = 0;
+        long temp = rooks;
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            int file = sq % 8;
+            long fileMask = FILE_MASK_BASE << file;
+            if ((friendlyPawns & fileMask) == 0) {
+                if ((enemyPawns & fileMask) == 0) {
+                    mg += config.rookOpenFileMg();
+                    eg += config.rookOpenFileEg();
+                } else {
+                    mg += config.rookSemiOpenFileMg();
+                    eg += config.rookSemiOpenFileEg();
+                }
+            }
+            temp &= temp - 1;
+        }
+        return ((long) mg << 32) | (eg & 0xFFFFFFFFL);
+    }
+
+    private long computeMobilityPacked(Board board, boolean white, long allOccupancy, long enemyPawnAttacks) {
         long friendly = white ? board.getWhiteOccupancy() : board.getBlackOccupancy();
         long safeMask = ~friendly & ~enemyPawnAttacks;
 
@@ -218,5 +303,98 @@ public class Evaluator {
 
     public static int egMaterialValue(int pieceType) {
         return EG_MATERIAL[pieceType];
+    }
+
+    private static final long NOT_A_FILE = ~0x0101010101010101L;
+    private static final long NOT_H_FILE = ~0x8080808080808080L;
+
+    /** Count pawns that have a friendly neighbor on an adjacent file (same row ± 1 row). */
+    private static int connectedPawnCount(long pawns) {
+        // A pawn is connected if it attacks a friendly pawn, or a friendly pawn attacks it
+        long attacks = ((pawns & NOT_A_FILE) >>> 1) | ((pawns & NOT_H_FILE) << 1);
+        // Also count supporters one rank behind (diagonal support)
+        attacks |= ((pawns & NOT_A_FILE) >>> 9) | ((pawns & NOT_H_FILE) << 7)
+                 | ((pawns & NOT_A_FILE) << 7)  | ((pawns & NOT_H_FILE) >>> 9);
+        return Long.bitCount(pawns & attacks);
+    }
+
+    /**
+     * Count backward pawns: a pawn is backward if it cannot safely advance and is
+     * behind all friendly pawns on adjacent files.
+     */
+    private static int backwardPawnCount(long friendly, long enemy, boolean white) {
+        long enemyAtk = white ? Attacks.blackPawnAttacks(enemy) : Attacks.whitePawnAttacks(enemy);
+        long temp = friendly;
+        int count = 0;
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            int file = sq % 8;
+            int row = sq / 8;
+            // build adjacent-file fill of friendly pawns
+            long adjFiles = 0L;
+            if (file > 0) adjFiles |= FILE_MASK_BASE << (file - 1);
+            if (file < 7) adjFiles |= FILE_MASK_BASE << (file + 1);
+            long adjFriendly = friendly & adjFiles;
+            // For white (advancing toward row 0), backward = no friendly neighbor ahead (lower row),
+            // and the stop square is attacked by enemy pawns
+            if (white) {
+                long ahead = adjFriendly & ((1L << sq) - 1);   // rows < row are lower-index in a8=0
+                int stopSq = sq - 8; // one rank forward for white
+                if (stopSq >= 0 && ahead == 0 && (enemyAtk & (1L << stopSq)) != 0) {
+                    count++;
+                }
+            } else {
+                long ahead = adjFriendly & ~((1L << (sq + 8)) - 1);  // rows > row (higher index)
+                int stopSq = sq + 8;
+                if (stopSq < 64 && ahead == 0 && (enemyAtk & (1L << stopSq)) != 0) {
+                    count++;
+                }
+            }
+            temp &= temp - 1;
+        }
+        return count;
+    }
+
+    /**
+     * Score rook-behind-passed-pawn bonus. Returns [mg, eg] net score (white - black).
+     */
+    private int[] rookBehindPasserScores(long whiteRooks, long blackRooks,
+                                          long whitePawns, long blackPawns) {
+        int mg = 0, eg = 0;
+        // White rooks behind white passers
+        long temp = whiteRooks;
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            long fileMask = FILE_MASK_BASE << (sq % 8);
+            // Passed white pawn: on same file, ahead of rook (lower row in a8=0 = higher rank)
+            long passedOnFile = whitePawns & fileMask & ((1L << sq) - 1);
+            while (passedOnFile != 0) {
+                int psq = Long.numberOfTrailingZeros(passedOnFile);
+                // Check if this pawn is actually passed (no enemy pawn blocking ahead)
+                if ((blackPawns & fileMask & ((1L << psq) - 1)) == 0) {
+                    mg += config.rookBehindPasserMg();
+                    eg += config.rookBehindPasserEg();
+                }
+                passedOnFile &= passedOnFile - 1;
+            }
+            temp &= temp - 1;
+        }
+        // Black rooks behind black passers (black advances toward higher rows in a8=0)
+        temp = blackRooks;
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            long fileMask = FILE_MASK_BASE << (sq % 8);
+            long passedOnFile = blackPawns & fileMask & ~((1L << sq) - 1) & ~(1L << sq);
+            while (passedOnFile != 0) {
+                int psq = Long.numberOfTrailingZeros(passedOnFile);
+                if ((whitePawns & fileMask & ~((1L << psq) - 1) & ~(1L << psq)) == 0) {
+                    mg -= config.rookBehindPasserMg();
+                    eg -= config.rookBehindPasserEg();
+                }
+                passedOnFile &= passedOnFile - 1;
+            }
+            temp &= temp - 1;
+        }
+        return new int[]{mg, eg};
     }
 }

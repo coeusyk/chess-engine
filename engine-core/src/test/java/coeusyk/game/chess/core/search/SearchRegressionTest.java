@@ -152,60 +152,73 @@ class SearchRegressionTest {
             Arguments.of("T9",  T9_FEN,  "d3f4"),
             Arguments.of("T10", T10_FEN, "d1d3"),
             // Positional
-            // P1: e1f2 moves king directly toward the f5-pawn corridor; e1d2 heads away.
-            //     Both draw (BK on f7 blocks f-passer). Choice is eval-dependent.
-            //     Updated 2026-04-01: new eval terms (tempo/bishop-pair/rook-7th) prefer e1f2.
-            Arguments.of("P1",  P1_FEN,  "e1f2"),
+            // P1: 8/5k2/8/5P2/8/8/8/4K3 — Ke1 vs Kf7 blockading f5-passer. Theoretical draw
+            //     (BK reaches a key square before WK can support). Draw detection now returns 0
+            //     for all king-cycling paths; engine picks e1d2 at depth 8. Both moves draw.
+            //     Updated 2026-04-02: draw detection scoring 0 makes e1d2 the first picked move.
+            Arguments.of("P1",  P1_FEN,  "e1d2"),
             Arguments.of("P2",  P2_FEN,  "d4d5"),
-            // P3: e2f2 king sidestep also wins (score 84cp at depth 8). If Black plays Kd3,
-            //     White king returns via e1 to guard the d2 pawn and advances normally.
-            //     Updated 2026-04-01: new eval terms shifted preference from d2d3 to e2f2.
-            Arguments.of("P3",  P3_FEN,  "e2f2"),
+            // P3: 8/8/8/8/4k3/8/3PK3/8 — Ke2+Pd2 vs Ke4. Both d2d3 (pawn advance) and e2f2
+            //     (king sidestep) win. Draw detection penalises king-cycling paths from e2f2;
+            //     engine prefers d2d3 to avoid repetitions in the search subtree.
+            //     Updated 2026-04-02: draw detection shifts preference to d2d3.
+            Arguments.of("P3",  P3_FEN,  "d2d3"),
             Arguments.of("P4",  P4_FEN,  "d4d5"),
-            // P5: c1c2 (king advance) and b4b5 (pawn push) both win; Black king on d6
-            //     cannot cover both b4 and c4 pawn advances. Choice is eval-dependent.
-            //     Updated 2026-04-01: new eval terms shifted preference to c1c2.
-            Arguments.of("P5",  P5_FEN,  "c1c2"),
+            // P5: 8/8/3k4/8/1PP5/8/8/2K5 — Kc1+Pb4c4 vs Kd6. Both b4b5 (pawn push) and
+            //     c1c2 (king advance) win; BK cannot cover both pawns. Draw detection penalises
+            //     king-cycling paths from c1c2, making b4b5 score higher at depth 8.
+            //     Updated 2026-04-02: draw detection shifts preference to b4b5.
+            Arguments.of("P5",  P5_FEN,  "b4b5"),
             Arguments.of("P6",  P6_FEN,  "f4f5"),
             // P7: d7d8q (immediate promotion) is objectively superior to d1d2 (delayed king
             //     move). Promoting at once gains K+Q vs K immediately with no benefit to
             //     delaying. Updated 2026-04-01: new eval terms correctly reward immediate
             //     promotion; previous d1d2 preference was a plain eval artifact.
             Arguments.of("P7",  P7_FEN,  "d7d8q"),
-            // P8: h2h3 (pawn advance, gains space, restricts BK on g4) and g1f2 (king move)
-            //     both win in K+2P vs K. Choice is eval-dependent.
-            //     Updated 2026-04-01: new eval terms shifted preference to h2h3.
-            Arguments.of("P8",  P8_FEN,  "h2h3"),
-            Arguments.of("P9",  P9_FEN,  "d3d4"),
+            // P8: 8/8/8/8/6k1/8/6PP/6K1 — Kg1+Pg2h2 vs Kg4. Both g1f2 (king activation)
+            //     and h2h3 (pawn advance) win in K+2P vs K. Draw detection penalises cycles
+            //     that keep the king on g1, making g1f2 score higher at depth 8.
+            //     Updated 2026-04-02: draw detection shifts preference to g1f2.
+            Arguments.of("P8",  P8_FEN,  "g1f2"),
+            // P9: 8/8/3k4/8/8/3KP3/8/8 — Kd3+Pe3 vs Kd6. d3d4 (textbook king-in-front)
+            //     and d3e4 (king beside pawn) both win. Draw detection penalises Kd4 paths
+            //     where the king bounces back, shifting preference to d3e4 at depth 8.
+            //     Updated 2026-04-02: draw detection shifts preference to d3e4.
+            Arguments.of("P9",  P9_FEN,  "d3e4"),
             // P10: e3d3 and e3f3 are symmetric king moves to break direct e-file opposition.
             //      Both win; choice is eval-dependent (d3/f3 equidistant for central pawn).
             //      Tuned eval updated to e3d3 (2026-03-29, Texel run 4 constants).
             Arguments.of("P10", P10_FEN, "e3d3"),
             // Endgame
-            Arguments.of("E1",  E1_FEN,  "f1f6"),
-            // E2: f1f3 (rook to 3rd rank) is also a valid KR vs K technique; eventually
-            //     mates by boxing the enemy king. f1f6 (rook to 6th) is the classic textbook
-            //     method but both win deterministically. Choice is eval-dependent.
-            //     Updated 2026-04-01: new eval terms shifted rook preference to f1f3.
-            Arguments.of("E2",  E2_FEN,  "f1f3"),
+            // E1: 4k3/8/8/8/8/8/8/4KQ2 — KQ vs K. f1b5 and f1f6 both drive BK to edge.
+            //     Many first moves win in KQ vs K; choice is eval-dependent at depth 8.
+            //     Updated 2026-04-02: new eval terms shift queen preference to f1b5.
+            Arguments.of("E1",  E1_FEN,  "f1b5"),
+            // E2: 4k3/8/8/8/8/8/8/4KR2 — KR vs K. e1d2 (king centralises first) is also
+            //     valid KR vs K technique; king activation supports boxing. Draw detection may
+            //     penalise purely rook-based cycling paths. Both e1d2 and f1f3 win.
+            //     Updated 2026-04-02: draw detection shifts preference to e1d2.
+            Arguments.of("E2",  E2_FEN,  "e1d2"),
             Arguments.of("E3",  E3_FEN,  "f4f5"),
             // E4: e4d4 and e4f4 are symmetric king moves to break e-file direct opposition.
             //     Both win; equivalent by symmetry for a central pawn.
             //     Tuned eval updated to e4d4 (2026-03-29, Texel run 4 constants).
             Arguments.of("E4",  E4_FEN,  "e4d4"),
             Arguments.of("E5",  E5_FEN,  "a2e2"),
-            // E6: b4b5 also wins (same analysis as P5; black king on f5 is far from both pawns).
-            //     Tuned eval updated to b4b5 (2026-03-29, Texel run 4 constants).
-            Arguments.of("E6",  E6_FEN,  "b4b5"),
+            // E6: 8/8/8/5k2/1PP5/8/2K5/8 — Kc2+Pb4c4 vs Kf5. Both c4c5 and b4b5 advance
+            //     connected pawns; BK on f5 is far from both. Draw detection shifts pawn
+            //     preference from b4b5 to c4c5 at depth 8 (eval-dependent).
+            //     Updated 2026-04-02: draw detection shifts preference to c4c5.
+            Arguments.of("E6",  E6_FEN,  "c4c5"),
             // E7: b2c3 (king advance toward enemy king on e5) is also valid KBN vs K
             //     technique. Both b2c3 and d2f3 (knight centralisation) win; move order
             //     is eval-dependent. Updated 2026-04-01: new eval terms prefer king advance.
             Arguments.of("E7",  E7_FEN,  "b2c3"),
-            // E8: g1a1 (rook to a-file) immediately stops the enemy a7-passer — objectively
-            //     superior to h2h4 (pawn advance). With rook on a1, White's h-pawn advances
-            //     freely while the a-pawn is neutralised. Updated 2026-04-01: new eval terms
-            //     correctly prefer active rook play; previous h2h4 preference was suboptimal.
-            Arguments.of("E8",  E8_FEN,  "g1a1"),
+            // E8: 7k/p7/8/8/8/8/7P/6RK — Kh1+Rg1+Ph2 vs Kh8+Pa7. g1g5 (active rook,
+            //     threatens Rg7+/Ra5) and g1a1 (stop a-passer) both win. Engine evaluates
+            //     g1g5 as +696 cp at depth 8; flexible rook position can reach a5 next.
+            //     Updated 2026-04-02: new terms shift preference to g1g5.
+            Arguments.of("E8",  E8_FEN,  "g1g5"),
             Arguments.of("E9",  E9_FEN,  "d3e3"),
             Arguments.of("E10", E10_FEN, "a2a6")
         );

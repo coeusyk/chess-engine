@@ -15,7 +15,7 @@ class EvaluatorTest {
         int score = evaluator.evaluate(board);
         // Equal material + PSTs are symmetric, so the only offset is the TEMPO bonus
         // for the side to move (+15 for White at the start position).
-        assertEquals(Evaluator.TEMPO, score, "Starting position should evaluate to TEMPO cp (side-to-move bonus only)");
+        assertEquals(Evaluator.DEFAULT_CONFIG.tempo(), score, "Starting position should evaluate to TEMPO cp (side-to-move bonus only)");
     }
 
     @Test
@@ -28,7 +28,7 @@ class EvaluatorTest {
         // Position with equal material, White to move — eval equals TEMPO (side-to-move bonus).
         Board extraPawn = new Board("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
         int equalMaterial = evaluator.evaluate(extraPawn);
-        assertEquals(Evaluator.TEMPO, equalMaterial, "Equal material should evaluate to TEMPO cp (side-to-move bonus)");
+        assertEquals(Evaluator.DEFAULT_CONFIG.tempo(), equalMaterial, "Equal material should evaluate to TEMPO cp (side-to-move bonus)");
     }
 
     @Test
@@ -48,7 +48,7 @@ class EvaluatorTest {
         Board board = new Board();
         int whiteScore = evaluator.evaluate(board);
         // Starting position is materially/positionally symmetric; eval = TEMPO (side-to-move bonus).
-        assertEquals(Evaluator.TEMPO, whiteScore);
+        assertEquals(Evaluator.DEFAULT_CONFIG.tempo(), whiteScore);
     }
 
     @Test
@@ -109,27 +109,27 @@ class EvaluatorTest {
         // Tables stored in display order: a8=0, h1=63
         // Board also uses a8=0, so white PST lookup is direct (no mirror).
         // White knight on e4 → board sq 36 → table index 36
-        // MG_KNIGHT row 4 (32-39), col 4 = 22
-        assertEquals(22, PieceSquareTables.mg(2, 36));
-        // EG_KNIGHT row 4 (32-39), col 4 = 22
-        assertEquals(22, PieceSquareTables.eg(2, 36));
-        // MG_PAWN row 4 (32-39), col 4 = 20
-        assertEquals(20, PieceSquareTables.mg(1, 36));
+        // MG_KNIGHT row 4 (32-39), col 4 = 36 (Texel-tuned 2026-04-01)
+        assertEquals(36, PieceSquareTables.mg(2, 36));
+        // EG_KNIGHT row 4 (32-39), col 4 = 24 (Texel-tuned 2026-04-01)
+        assertEquals(24, PieceSquareTables.eg(2, 36));
+        // MG_PAWN row 4 (32-39), col 4 = 12 (Texel-tuned 2026-04-01)
+        assertEquals(12, PieceSquareTables.mg(1, 36));
     }
 
     @Test
     void mgAndEgMaterialValuesAreCorrect() {
-        assertEquals(82, Evaluator.mgMaterialValue(1));   // Pawn
-        assertEquals(337, Evaluator.mgMaterialValue(2));  // Knight
-        assertEquals(365, Evaluator.mgMaterialValue(3));  // Bishop
-        assertEquals(477, Evaluator.mgMaterialValue(4));  // Rook
-        assertEquals(1025, Evaluator.mgMaterialValue(5)); // Queen
+        assertEquals(100, Evaluator.mgMaterialValue(1));   // Pawn   (Texel-tuned 2026-04-01)
+        assertEquals(391, Evaluator.mgMaterialValue(2));  // Knight
+        assertEquals(416, Evaluator.mgMaterialValue(3));  // Bishop
+        assertEquals(564, Evaluator.mgMaterialValue(4));  // Rook
+        assertEquals(1200, Evaluator.mgMaterialValue(5)); // Queen
 
-        assertEquals(94, Evaluator.egMaterialValue(1));   // Pawn
-        assertEquals(281, Evaluator.egMaterialValue(2));  // Knight
-        assertEquals(297, Evaluator.egMaterialValue(3));  // Bishop
-        assertEquals(512, Evaluator.egMaterialValue(4));  // Rook
-        assertEquals(936, Evaluator.egMaterialValue(5));  // Queen
+        assertEquals(86, Evaluator.egMaterialValue(1));   // Pawn   (Texel-tuned 2026-04-01)
+        assertEquals(287, Evaluator.egMaterialValue(2));  // Knight
+        assertEquals(302, Evaluator.egMaterialValue(3));  // Bishop
+        assertEquals(537, Evaluator.egMaterialValue(4));  // Rook
+        assertEquals(991, Evaluator.egMaterialValue(5));  // Queen
     }
 
     @Test
@@ -158,12 +158,12 @@ class EvaluatorTest {
         Board endgame = new Board("4k3/pppppppp/8/8/8/8/PPPPPPPP/4K3 w - - 0 1");
         int endgameScore = evaluator.evaluate(endgame);
         // Equal material, symmetric → eval = TEMPO (side-to-move bonus only)
-        assertEquals(Evaluator.TEMPO, endgameScore);
+        assertEquals(Evaluator.DEFAULT_CONFIG.tempo(), endgameScore);
 
         // Starting position: phase = 24 → pure middlegame score
         Board startPos = new Board();
         int startScore = evaluator.evaluate(startPos);
-        assertEquals(Evaluator.TEMPO, startScore);
+        assertEquals(Evaluator.DEFAULT_CONFIG.tempo(), startScore);
     }
 
     @Test
@@ -291,8 +291,8 @@ class EvaluatorTest {
         int[] scoreDoubled = PawnStructure.evaluate(doubled, 0L);
         int[] scoreSpread = PawnStructure.evaluate(spread, 0L);
 
-        assertTrue(scoreSpread[0] > scoreDoubled[0],
-                "Doubled pawns should score lower in MG");
+        assertTrue(scoreSpread[0] >= scoreDoubled[0],
+                "Doubled pawns MG: spread >= doubled (DOUBLED_MG=0, Texel-tuned)");
         assertTrue(scoreSpread[1] > scoreDoubled[1],
                 "Doubled pawns should score lower in EG");
     }

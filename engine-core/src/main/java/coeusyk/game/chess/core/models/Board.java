@@ -969,6 +969,33 @@ public class Board {
         return repetitions >= 3;
     }
 
+    /**
+     * Returns true if the current position has appeared at least once before in the
+     * current search path (2-fold repetition detection for use inside alphaBeta).
+     *
+     * <p>The look-back window is bounded by {@code halfmoveClock + 1}: positions after
+     * an irreversible move (capture or pawn push) can never be repetitions, so scanning
+     * beyond the halfmove-clock window is both unnecessary and incorrect.
+     *
+     * <p>{@code zobristHistory} always contains the current position as its last element
+     * (added by {@code makeMove()} before returning), so the first match is the "current"
+     * occurrence and a second match indicates a true repetition.
+     */
+    public boolean isRepetitionDraw() {
+        int histSize = zobristHistory.size();
+        // Repetitions can only occur among same-side-to-move positions, i.e., every 2 plies.
+        // Bound the window by the halfmove clock (reset on any irreversible move).
+        int limit = Math.min(histSize, halfmoveClock + 1);
+        int count = 0;
+        for (int i = histSize - limit; i < histSize; i++) {
+            if (zobristHistory.get(i) == zobristHash) {
+                count++;
+                if (count >= 2) return true;
+            }
+        }
+        return false;
+    }
+
     public boolean isFiftyMoveRuleDraw() {
         return halfmoveClock >= 100;
     }

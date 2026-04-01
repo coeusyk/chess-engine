@@ -637,6 +637,14 @@ public class Searcher {
             return alpha;
         }
 
+        // Draw detection: return 0 for any recognized draw condition (skip at root so we
+        // always return a bestMove from searchRoot, never a raw draw score).
+        if (ply > 0) {
+            if (board.isRepetitionDraw() || board.isFiftyMoveRuleDraw() || board.isInsufficientMaterial()) {
+                return 0;
+            }
+        }
+
         int effectiveDepth = depth;
         boolean sideToMoveInCheck = board.isActiveColorInCheck();
         int currentExtensionsUsed = extensionsUsed;

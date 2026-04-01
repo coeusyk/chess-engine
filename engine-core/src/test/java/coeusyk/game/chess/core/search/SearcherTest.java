@@ -338,8 +338,11 @@ class SearcherTest {
 
     @Test
     void pawnPromotionExtensionAppliesOnSafeAdvanceTo7thRank() {
-        // White pawn on e6, advance to e7 is safe and should trigger extension
-        Board board = new Board("4k3/8/4P3/8/8/4K3/8/8 w - - 0 1");
+        // White pawn on e6, white king on e5, black king far on h1.
+        // Pawn advance (e6→e7) is safe (black king too far), so extension fires.
+        // All positions entered are unique (promotion path), so draw detection
+        // does not interfere with the node-count comparison.
+        Board board = new Board("8/8/4P3/4K3/8/8/8/7k w - - 0 1");
         Searcher withExtension = new Searcher(true, true, false, false, false, true);
         Searcher withoutExtension = new Searcher(true, true, false, false, false, true);
         withoutExtension.setSeeEnabledForTesting(false); // Disable SEE to prevent extension

@@ -10,7 +10,7 @@ import java.util.*;
 
 public class MovesGenerator {
     public static final int[] DirectionOffsets = { -8, 1, 8, -1, -9, -7, 9, 7 };
-    public static int[][] SquaresToEdges = new int[64][8];  // Holds the number of squares to each edge from each square (for easier computation)
+    public static final int[][] SquaresToEdges = new int[64][8];  // Holds the number of squares to each edge from each square (for easier computation)
 
     static {
         ComputeMoveData();
