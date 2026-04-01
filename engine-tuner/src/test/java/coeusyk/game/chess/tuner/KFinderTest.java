@@ -13,10 +13,10 @@ class KFinderTest {
         Board startpos = new Board();
         // Mix of outcomes so K search has a meaningful signal to optimise
         return List.of(
-                new LabelledPosition(startpos, 1.0),
-                new LabelledPosition(startpos, 0.5),
-                new LabelledPosition(startpos, 0.5),
-                new LabelledPosition(startpos, 0.0)
+                new LabelledPosition(TunerPosition.from(startpos), 1.0),
+                new LabelledPosition(TunerPosition.from(startpos), 0.5),
+                new LabelledPosition(TunerPosition.from(startpos), 0.5),
+                new LabelledPosition(TunerPosition.from(startpos), 0.0)
         );
     }
 

@@ -177,13 +177,13 @@ class PositionLoaderTest {
     }
 
     @Test
-    void boardIsNonNullForAllLoadedPositions(@TempDir Path tempDir) throws Exception {
+    void posIsNonNullForAllLoadedPositions(@TempDir Path tempDir) throws Exception {
         Path file = Files.writeString(tempDir.resolve("data.epd"),
                 START_FEN + " [0.5]\n");
 
         List<LabelledPosition> positions = PositionLoader.load(file);
 
-        positions.forEach(lp -> assertNotNull(lp.board(), "Board must not be null"));
+        positions.forEach(lp -> assertNotNull(lp.pos(), "TunerPosition must not be null"));
     }
 
     // -----------------------------------------------------------------------

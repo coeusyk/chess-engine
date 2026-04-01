@@ -89,10 +89,10 @@ public final class PositionLoader {
         if (outcome < 0) return null;
 
         String fenPart = line.substring(0, bracketOpen).strip();
-        Board board = parseFen(fenPart);
-        if (board == null) return null;
+        TunerPosition pos = parseFen(fenPart);
+        if (pos == null) return null;
 
-        return new LabelledPosition(board, outcome);
+        return new LabelledPosition(pos, outcome);
     }
 
     private static LabelledPosition parseFormat2(String line) {
@@ -111,22 +111,24 @@ public final class PositionLoader {
         double outcome = parseOutcome(resultPart);
         if (outcome < 0) return null;
 
-        Board board = parseFen(fenPart);
-        if (board == null) return null;
+        TunerPosition pos = parseFen(fenPart);
+        if (pos == null) return null;
 
-        return new LabelledPosition(board, outcome);
+        return new LabelledPosition(pos, outcome);
     }
 
     /**
-     * Converts FEN or EPD position to Board.
+     * Converts FEN or EPD position to a compact {@link TunerPosition}.
+     * Temporarily creates a full Board to extract bitboards, then discards it.
      * Appends "0 1" if halfmove/fullmove counters are absent (EPD format).
      */
-    private static Board parseFen(String fen) {
+    private static TunerPosition parseFen(String fen) {
         String[] parts = fen.split("\\s+");
         // EPD has 4 mandatory fields (position, color, castling, ep); FEN has 6
         String fullFen = parts.length >= 6 ? fen : fen + " 0 1";
         try {
-            return new Board(fullFen);
+            Board board = new Board(fullFen);
+            return TunerPosition.from(board, fullFen);
         } catch (Exception e) {
             return null;
         }

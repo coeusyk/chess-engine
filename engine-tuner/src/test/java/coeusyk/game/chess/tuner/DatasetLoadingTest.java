@@ -47,7 +47,7 @@ class DatasetLoadingTest {
         // Every position must have a valid board and a legitimate outcome
         for (int i = 0; i < positions.size(); i++) {
             LabelledPosition lp = positions.get(i);
-            assertNotNull(lp.board(), "Board at index " + i + " must not be null");
+            assertNotNull(lp.pos(), "Position at index " + i + " must not be null");
             double outcome = lp.outcome();
             assertTrue(outcome == 0.0 || outcome == 0.5 || outcome == 1.0,
                     "Outcome at index " + i + " must be 0.0, 0.5, or 1.0 — got " + outcome);

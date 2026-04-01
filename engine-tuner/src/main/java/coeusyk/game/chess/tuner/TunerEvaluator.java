@@ -112,11 +112,42 @@ public final class TunerEvaluator {
         }
     }
 
+    // Lightweight adapter so Board (engine-core) can be passed through
+    // the PositionData-based helper methods without modifying Board itself.
+    private static final class BoardAdapter implements PositionData {
+        private final Board board;
+        BoardAdapter(Board board) { this.board = board; }
+        @Override public long getWhitePawns()   { return board.getWhitePawns(); }
+        @Override public long getBlackPawns()   { return board.getBlackPawns(); }
+        @Override public long getWhiteKnights() { return board.getWhiteKnights(); }
+        @Override public long getBlackKnights() { return board.getBlackKnights(); }
+        @Override public long getWhiteBishops() { return board.getWhiteBishops(); }
+        @Override public long getBlackBishops() { return board.getBlackBishops(); }
+        @Override public long getWhiteRooks()   { return board.getWhiteRooks(); }
+        @Override public long getBlackRooks()   { return board.getBlackRooks(); }
+        @Override public long getWhiteQueens()  { return board.getWhiteQueens(); }
+        @Override public long getBlackQueens()  { return board.getBlackQueens(); }
+        @Override public long getWhiteKing()    { return board.getWhiteKing(); }
+        @Override public long getBlackKing()    { return board.getBlackKing(); }
+        @Override public long getWhiteOccupancy() { return board.getWhiteOccupancy(); }
+        @Override public long getBlackOccupancy() { return board.getBlackOccupancy(); }
+        @Override public int  getActiveColor()  { return board.getActiveColor(); }
+    }
+
     private TunerEvaluator() {}
 
     // =========================================================================
     // Public API
     // =========================================================================
+
+    /**
+     * Evaluates a position from White's perspective using qsearch.
+     * Reconstructs a full {@link Board} from the {@link TunerPosition}'s FEN
+     * so that make/unmake is available for the capture chain.
+     */
+    public static int evaluate(TunerPosition pos, double[] params) {
+        return QSEARCH.get().search(pos.toBoard(), params);
+    }
 
     /**
      * Evaluates {@code board} from White's perspective using qsearch to resolve
@@ -132,53 +163,50 @@ public final class TunerEvaluator {
     }
 
     /**
-     * Evaluates {@code board} from White's perspective using the given params.
-     * Pure static eval — no qsearch. Called by {@link TunerQuiescence} at leaf nodes.
-     *
-     * @param board  position to evaluate
-     * @param params parameter array of length {@link EvalParams#TOTAL_PARAMS}
-     * @return centipawn score (positive = White advantage)
+     * Pure static eval from White's perspective, operating on compact
+     * {@link PositionData}. No qsearch, no Board allocation.
+     * This is the hot path for gradient-based optimisers.
      */
-    static int evaluateStatic(Board board, double[] params) {
+    static int evaluateStatic(PositionData pos, double[] params) {
         int mgScore = 0;
         int egScore = 0;
 
-        mgScore += materialAndPst(board, true,  true,  params)
-                 - materialAndPst(board, false, true,  params);
-        egScore += materialAndPst(board, true,  false, params)
-                 - materialAndPst(board, false, false, params);
+        mgScore += materialAndPst(pos, true,  true,  params)
+                 - materialAndPst(pos, false, true,  params);
+        egScore += materialAndPst(pos, true,  false, params)
+                 - materialAndPst(pos, false, false, params);
 
-        long allOcc       = board.getWhiteOccupancy() | board.getBlackOccupancy();
-        long whitePawnAtk = Attacks.whitePawnAttacks(board.getWhitePawns());
-        long blackPawnAtk = Attacks.blackPawnAttacks(board.getBlackPawns());
+        long allOcc       = pos.getWhiteOccupancy() | pos.getBlackOccupancy();
+        long whitePawnAtk = Attacks.whitePawnAttacks(pos.getWhitePawns());
+        long blackPawnAtk = Attacks.blackPawnAttacks(pos.getBlackPawns());
 
-        int[] whiteMob = mobility(board, true,  allOcc, blackPawnAtk, params);
-        int[] blackMob = mobility(board, false, allOcc, whitePawnAtk, params);
+        int[] whiteMob = mobility(pos, true,  allOcc, blackPawnAtk, params);
+        int[] blackMob = mobility(pos, false, allOcc, whitePawnAtk, params);
         mgScore += whiteMob[0] - blackMob[0];
         egScore += whiteMob[1] - blackMob[1];
 
-        int[] pawn = pawnStructure(board.getWhitePawns(), board.getBlackPawns(), params);
+        int[] pawn = pawnStructure(pos.getWhitePawns(), pos.getBlackPawns(), params);
         mgScore += pawn[0];
         egScore += pawn[1];
 
-        mgScore += kingSafety(board, params);
+        mgScore += kingSafety(pos, params);
 
         // --- Bishop pair bonus ---
-        int[] bp = bishopPair(board, params);
-        mgScore += bp[0];
-        egScore += bp[1];
+        int[] bpair = bishopPair(pos, params);
+        mgScore += bpair[0];
+        egScore += bpair[1];
 
         // --- Rook on 7th rank bonus ---
-        int[] r7 = rookOnSeventh(board, params);
+        int[] r7 = rookOnSeventh(pos, params);
         mgScore += r7[0];
         egScore += r7[1];
 
-        int phase = computePhase(board);
+        int phase = computePhase(pos);
         int score = (mgScore * phase + egScore * (TOTAL_PHASE - phase)) / TOTAL_PHASE;
 
         // --- Tempo bonus (applied after phase interpolation, from White's perspective) ---
         int tempo = (int) params[EvalParams.IDX_TEMPO];
-        if (Piece.isWhite(board.getActiveColor())) {
+        if (Piece.isWhite(pos.getActiveColor())) {
             score += tempo;
         } else {
             score -= tempo;
@@ -188,13 +216,21 @@ public final class TunerEvaluator {
     }
 
     /**
+     * Board overload — wraps in {@link BoardAdapter} and delegates.
+     * Called by {@link TunerQuiescence} at leaf nodes.
+     */
+    static int evaluateStatic(Board board, double[] params) {
+        return evaluateStatic(new BoardAdapter(board), params);
+    }
+
+    /**
      * Mean squared error over all positions using the Texel sigmoid.
      * Runs in parallel for throughput.
      */
     public static double computeMse(List<LabelledPosition> positions, double[] params, double k) {
         return positions.parallelStream()
                 .mapToDouble(lp -> {
-                    double sig = sigmoid(evaluate(lp.board(), params), k);
+                    double sig = sigmoid(evaluate(lp.pos(), params), k);
                     double err = lp.outcome() - sig;
                     return err * err;
                 })
@@ -213,14 +249,14 @@ public final class TunerEvaluator {
     // Material + PST
     // =========================================================================
 
-    private static int materialAndPst(Board board, boolean white, boolean mg, double[] params) {
+    private static int materialAndPst(PositionData pos, boolean white, boolean mg, double[] params) {
         int score = 0;
-        score += sumPst(white ? board.getWhitePawns()   : board.getBlackPawns(),   Piece.Pawn,   white, mg, params);
-        score += sumPst(white ? board.getWhiteKnights() : board.getBlackKnights(), Piece.Knight, white, mg, params);
-        score += sumPst(white ? board.getWhiteBishops() : board.getBlackBishops(), Piece.Bishop, white, mg, params);
-        score += sumPst(white ? board.getWhiteRooks()   : board.getBlackRooks(),   Piece.Rook,   white, mg, params);
-        score += sumPst(white ? board.getWhiteQueens()  : board.getBlackQueens(),  Piece.Queen,  white, mg, params);
-        score += sumPst(white ? board.getWhiteKing()    : board.getBlackKing(),    Piece.King,   white, mg, params);
+        score += sumPst(white ? pos.getWhitePawns()   : pos.getBlackPawns(),   Piece.Pawn,   white, mg, params);
+        score += sumPst(white ? pos.getWhiteKnights() : pos.getBlackKnights(), Piece.Knight, white, mg, params);
+        score += sumPst(white ? pos.getWhiteBishops() : pos.getBlackBishops(), Piece.Bishop, white, mg, params);
+        score += sumPst(white ? pos.getWhiteRooks()   : pos.getBlackRooks(),   Piece.Rook,   white, mg, params);
+        score += sumPst(white ? pos.getWhiteQueens()  : pos.getBlackQueens(),  Piece.Queen,  white, mg, params);
+        score += sumPst(white ? pos.getWhiteKing()    : pos.getBlackKing(),    Piece.King,   white, mg, params);
         return score;
     }
 
@@ -247,19 +283,19 @@ public final class TunerEvaluator {
     // Mobility
     // =========================================================================
 
-    private static int[] mobility(Board board, boolean white, long allOcc, long enemyPawnAtk, double[] params) {
-        long friendly = white ? board.getWhiteOccupancy() : board.getBlackOccupancy();
+    private static int[] mobility(PositionData pos, boolean white, long allOcc, long enemyPawnAtk, double[] params) {
+        long friendly = white ? pos.getWhiteOccupancy() : pos.getBlackOccupancy();
         long safeMask = ~friendly & ~enemyPawnAtk;
         int mgMob = 0, egMob = 0;
 
-        mgMob += pieceMobility(white ? board.getWhiteKnights() : board.getBlackKnights(), Piece.Knight, allOcc, safeMask, true,  params);
-        egMob += pieceMobility(white ? board.getWhiteKnights() : board.getBlackKnights(), Piece.Knight, allOcc, safeMask, false, params);
-        mgMob += pieceMobility(white ? board.getWhiteBishops() : board.getBlackBishops(), Piece.Bishop, allOcc, safeMask, true,  params);
-        egMob += pieceMobility(white ? board.getWhiteBishops() : board.getBlackBishops(), Piece.Bishop, allOcc, safeMask, false, params);
-        mgMob += pieceMobility(white ? board.getWhiteRooks()   : board.getBlackRooks(),   Piece.Rook,   allOcc, safeMask, true,  params);
-        egMob += pieceMobility(white ? board.getWhiteRooks()   : board.getBlackRooks(),   Piece.Rook,   allOcc, safeMask, false, params);
-        mgMob += pieceMobility(white ? board.getWhiteQueens()  : board.getBlackQueens(),  Piece.Queen,  allOcc, safeMask, true,  params);
-        egMob += pieceMobility(white ? board.getWhiteQueens()  : board.getBlackQueens(),  Piece.Queen,  allOcc, safeMask, false, params);
+        mgMob += pieceMobility(white ? pos.getWhiteKnights() : pos.getBlackKnights(), Piece.Knight, allOcc, safeMask, true,  params);
+        egMob += pieceMobility(white ? pos.getWhiteKnights() : pos.getBlackKnights(), Piece.Knight, allOcc, safeMask, false, params);
+        mgMob += pieceMobility(white ? pos.getWhiteBishops() : pos.getBlackBishops(), Piece.Bishop, allOcc, safeMask, true,  params);
+        egMob += pieceMobility(white ? pos.getWhiteBishops() : pos.getBlackBishops(), Piece.Bishop, allOcc, safeMask, false, params);
+        mgMob += pieceMobility(white ? pos.getWhiteRooks()   : pos.getBlackRooks(),   Piece.Rook,   allOcc, safeMask, true,  params);
+        egMob += pieceMobility(white ? pos.getWhiteRooks()   : pos.getBlackRooks(),   Piece.Rook,   allOcc, safeMask, false, params);
+        mgMob += pieceMobility(white ? pos.getWhiteQueens()  : pos.getBlackQueens(),  Piece.Queen,  allOcc, safeMask, true,  params);
+        egMob += pieceMobility(white ? pos.getWhiteQueens()  : pos.getBlackQueens(),  Piece.Queen,  allOcc, safeMask, false, params);
 
         return new int[]{ mgMob, egMob };
     }
@@ -358,18 +394,18 @@ public final class TunerEvaluator {
     // King safety
     // =========================================================================
 
-    private static int kingSafety(Board board, double[] params) {
-        return kingSafetySide(board, true,  params)
-             - kingSafetySide(board, false, params);
+    private static int kingSafety(PositionData pos, double[] params) {
+        return kingSafetySide(pos, true,  params)
+             - kingSafetySide(pos, false, params);
     }
 
-    private static int kingSafetySide(Board board, boolean white, double[] params) {
-        long kingBb = white ? board.getWhiteKing() : board.getBlackKing();
+    private static int kingSafetySide(PositionData pos, boolean white, double[] params) {
+        long kingBb = white ? pos.getWhiteKing() : pos.getBlackKing();
         if (kingBb == 0) return 0;
         int kingSq = Long.numberOfTrailingZeros(kingBb);
-        return pawnShield(board, white, kingSq, params)
-             + openFiles(board, white, kingSq, params)
-             + attackerPenalty(board, white, kingSq, params);
+        return pawnShield(pos, white, kingSq, params)
+             + openFiles(pos, white, kingSq, params)
+             + attackerPenalty(pos, white, kingSq, params);
     }
 
     private static boolean isCastled(boolean white, int kingSq) {
@@ -378,9 +414,9 @@ public final class TunerEvaluator {
             : (kingSq == BLACK_G8 || kingSq == BLACK_H8 || kingSq == BLACK_C8 || kingSq == BLACK_B8);
     }
 
-    private static int pawnShield(Board board, boolean white, int kingSq, double[] params) {
+    private static int pawnShield(PositionData pos, boolean white, int kingSq, double[] params) {
         if (!isCastled(white, kingSq)) return 0;
-        long friendlyPawns = white ? board.getWhitePawns() : board.getBlackPawns();
+        long friendlyPawns = white ? pos.getWhitePawns() : pos.getBlackPawns();
         int file = kingSq % 8;
         int row  = kingSq / 8;
         int r1   = white ? row - 1 : row + 1;
@@ -397,10 +433,10 @@ public final class TunerEvaluator {
         return bonus;
     }
 
-    private static int openFiles(Board board, boolean white, int kingSq, double[] params) {
+    private static int openFiles(PositionData pos, boolean white, int kingSq, double[] params) {
         int  file     = kingSq % 8;
-        long friendly = white ? board.getWhitePawns() : board.getBlackPawns();
-        long enemy    = white ? board.getBlackPawns() : board.getWhitePawns();
+        long friendly = white ? pos.getWhitePawns() : pos.getBlackPawns();
+        long enemy    = white ? pos.getBlackPawns() : pos.getWhitePawns();
         int penalty = 0;
         for (int df = -1; df <= 1; df++) {
             int f = file + df;
@@ -415,14 +451,14 @@ public final class TunerEvaluator {
         return penalty;
     }
 
-    private static int attackerPenalty(Board board, boolean white, int kingSq, double[] params) {
+    private static int attackerPenalty(PositionData pos, boolean white, int kingSq, double[] params) {
         long zone   = white ? WHITE_KING_ZONE[kingSq] : BLACK_KING_ZONE[kingSq];
-        long allOcc = board.getWhiteOccupancy() | board.getBlackOccupancy();
+        long allOcc = pos.getWhiteOccupancy() | pos.getBlackOccupancy();
 
-        long eKnights = white ? board.getBlackKnights() : board.getWhiteKnights();
-        long eBishops = white ? board.getBlackBishops() : board.getWhiteBishops();
-        long eRooks   = white ? board.getBlackRooks()   : board.getWhiteRooks();
-        long eQueens  = white ? board.getBlackQueens()  : board.getWhiteQueens();
+        long eKnights = white ? pos.getBlackKnights() : pos.getWhiteKnights();
+        long eBishops = white ? pos.getBlackBishops() : pos.getWhiteBishops();
+        long eRooks   = white ? pos.getBlackRooks()   : pos.getWhiteRooks();
+        long eQueens  = white ? pos.getBlackQueens()  : pos.getWhiteQueens();
 
         int w = 0;
         w += countAttackers(eKnights, Piece.Knight, zone, allOcc) * (int) params[EvalParams.IDX_ATK_KNIGHT];
@@ -454,13 +490,13 @@ public final class TunerEvaluator {
     // Bishop pair
     // =========================================================================
 
-    private static int[] bishopPair(Board board, double[] params) {
+    private static int[] bishopPair(PositionData pos, double[] params) {
         int mg = 0, eg = 0;
-        if (Long.bitCount(board.getWhiteBishops()) >= 2) {
+        if (Long.bitCount(pos.getWhiteBishops()) >= 2) {
             mg += (int) params[EvalParams.IDX_BISHOP_PAIR_MG];
             eg += (int) params[EvalParams.IDX_BISHOP_PAIR_EG];
         }
-        if (Long.bitCount(board.getBlackBishops()) >= 2) {
+        if (Long.bitCount(pos.getBlackBishops()) >= 2) {
             mg -= (int) params[EvalParams.IDX_BISHOP_PAIR_MG];
             eg -= (int) params[EvalParams.IDX_BISHOP_PAIR_EG];
         }
@@ -475,10 +511,10 @@ public final class TunerEvaluator {
     private static final long WHITE_RANK_7 = 0x000000000000FF00L;
     private static final long BLACK_RANK_7 = 0x00FF000000000000L;
 
-    private static int[] rookOnSeventh(Board board, double[] params) {
+    private static int[] rookOnSeventh(PositionData pos, double[] params) {
         int mg = 0, eg = 0;
-        int wCount = Long.bitCount(board.getWhiteRooks() & WHITE_RANK_7);
-        int bCount = Long.bitCount(board.getBlackRooks() & BLACK_RANK_7);
+        int wCount = Long.bitCount(pos.getWhiteRooks() & WHITE_RANK_7);
+        int bCount = Long.bitCount(pos.getBlackRooks() & BLACK_RANK_7);
         mg += (wCount - bCount) * (int) params[EvalParams.IDX_ROOK_7TH_MG];
         eg += (wCount - bCount) * (int) params[EvalParams.IDX_ROOK_7TH_EG];
         return new int[]{ mg, eg };
@@ -488,12 +524,12 @@ public final class TunerEvaluator {
     // Phase
     // =========================================================================
 
-    private static int computePhase(Board board) {
+    private static int computePhase(PositionData pos) {
         int phase = 0;
-        phase += Long.bitCount(board.getWhiteKnights() | board.getBlackKnights()) * PHASE_WEIGHT[Piece.Knight];
-        phase += Long.bitCount(board.getWhiteBishops() | board.getBlackBishops()) * PHASE_WEIGHT[Piece.Bishop];
-        phase += Long.bitCount(board.getWhiteRooks()   | board.getBlackRooks())   * PHASE_WEIGHT[Piece.Rook];
-        phase += Long.bitCount(board.getWhiteQueens()  | board.getBlackQueens())  * PHASE_WEIGHT[Piece.Queen];
+        phase += Long.bitCount(pos.getWhiteKnights() | pos.getBlackKnights()) * PHASE_WEIGHT[Piece.Knight];
+        phase += Long.bitCount(pos.getWhiteBishops() | pos.getBlackBishops()) * PHASE_WEIGHT[Piece.Bishop];
+        phase += Long.bitCount(pos.getWhiteRooks()   | pos.getBlackRooks())   * PHASE_WEIGHT[Piece.Rook];
+        phase += Long.bitCount(pos.getWhiteQueens()  | pos.getBlackQueens())  * PHASE_WEIGHT[Piece.Queen];
         return Math.min(phase, TOTAL_PHASE);
     }
 }

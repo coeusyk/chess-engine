@@ -15,9 +15,9 @@ class CoordinateDescentTest {
     private static List<LabelledPosition> perfectlyDrawnPositions() {
         Board startpos = new Board();
         return List.of(
-                new LabelledPosition(startpos, 0.5),
-                new LabelledPosition(startpos, 0.5),
-                new LabelledPosition(startpos, 0.5)
+                new LabelledPosition(TunerPosition.from(startpos), 0.5),
+                new LabelledPosition(TunerPosition.from(startpos), 0.5),
+                new LabelledPosition(TunerPosition.from(startpos), 0.5)
         );
     }
 
@@ -27,10 +27,10 @@ class CoordinateDescentTest {
         Board whiteUp = new Board("rnb1kbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
         Board blackUp = new Board("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNB1KBNR b KQkq - 0 1");
         return List.of(
-                new LabelledPosition(whiteUp,  1.0),   // White up a queen → White wins
-                new LabelledPosition(blackUp,  0.0),   // Black up a queen → Black wins
-                new LabelledPosition(startpos, 0.5),   // Equal → draw
-                new LabelledPosition(startpos, 0.5)
+                new LabelledPosition(TunerPosition.from(whiteUp),  1.0),   // White up a queen → White wins
+                new LabelledPosition(TunerPosition.from(blackUp),  0.0),   // Black up a queen → Black wins
+                new LabelledPosition(TunerPosition.from(startpos), 0.5),   // Equal → draw
+                new LabelledPosition(TunerPosition.from(startpos), 0.5)
         );
     }
 

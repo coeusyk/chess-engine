@@ -113,9 +113,8 @@ public final class PgnExtractor {
                 // Extract position BEFORE the move (pre-move FEN)
                 // Only include quiet (non-check) positions
                 if (!board.isActiveColorInCheck()) {
-                    // Clone by round-tripping through FEN so Board state is independent
-                    Board snapshot = new Board(board.toFen());
-                    out.add(new LabelledPosition(snapshot, outcome));
+                    String positionFen = board.toFen();
+                    out.add(new LabelledPosition(TunerPosition.from(board, positionFen), outcome));
                 }
             }
 

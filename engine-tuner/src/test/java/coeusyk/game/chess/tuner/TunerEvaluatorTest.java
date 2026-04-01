@@ -144,7 +144,7 @@ class TunerEvaluatorTest {
         // With tempo bonus, startpos eval is ~15 rather than 0, so MSE for draws
         // is no longer exactly zero. But it should be very small.
         Board startpos = new Board();
-        LabelledPosition drawnPos = new LabelledPosition(startpos, 0.5);
+        LabelledPosition drawnPos = new LabelledPosition(TunerPosition.from(startpos), 0.5);
         List<LabelledPosition> positions = List.of(drawnPos, drawnPos, drawnPos);
 
         double mse = TunerEvaluator.computeMse(positions, defaultParams, 1.0);
@@ -158,9 +158,9 @@ class TunerEvaluatorTest {
         // MSE is always in [0, 1] by construction (error is at most 1.0, squared ≤ 1.0).
         Board startpos = new Board();
         List<LabelledPosition> positions = List.of(
-                new LabelledPosition(startpos, 1.0),   // wrong prediction → non-zero error
-                new LabelledPosition(startpos, 0.0),   // wrong prediction → non-zero error
-                new LabelledPosition(startpos, 0.5)    // correct prediction → zero error
+                new LabelledPosition(TunerPosition.from(startpos), 1.0),   // wrong prediction → non-zero error
+                new LabelledPosition(TunerPosition.from(startpos), 0.0),   // wrong prediction → non-zero error
+                new LabelledPosition(TunerPosition.from(startpos), 0.5)    // correct prediction → zero error
         );
 
         double mse = TunerEvaluator.computeMse(positions, defaultParams, 1.0);
