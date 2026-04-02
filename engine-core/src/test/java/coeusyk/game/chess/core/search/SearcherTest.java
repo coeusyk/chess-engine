@@ -311,6 +311,15 @@ class SearcherTest {
     }
 
     @Test
+    void quiescenceDepthCapIsDisabledWhileInCheck() {
+        Searcher searcher = new Searcher();
+
+        assertFalse(searcher.shouldApplyQuiescenceDepthCapForTesting(6, true));
+        assertFalse(searcher.shouldApplyQuiescenceDepthCapForTesting(8, true));
+        assertTrue(searcher.shouldApplyQuiescenceDepthCapForTesting(6, false));
+    }
+
+    @Test
     void ttMoveHintIsTriedFirstAtRoot() {
         // Knight captures an undefended queen — definitively best at depth 1 regardless of eval tuning.
         // Verifies that when set as the TT hint the move is tried first and returned as best.

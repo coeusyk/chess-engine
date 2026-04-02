@@ -1219,6 +1219,10 @@ public class Searcher {
         return RAZOR_MARGIN_DEPTH_1;
     }
 
+    boolean shouldApplyQuiescenceDepthCapForTesting(int qPly, boolean inCheck) {
+        return shouldApplyQuiescenceDepthCap(qPly, inCheck);
+    }
+
     /**
      * Convert a root-relative mate score to a node-relative score for TT storage.
      * Non-mate scores pass through unchanged.
@@ -1277,14 +1281,15 @@ public class Searcher {
             return alpha;
         }
 
+        boolean inCheck = board.isActiveColorInCheck(); // O(1) — no move generation
+
         // Q-search ply limit: once we've gone MAX_Q_DEPTH extra plies past the main
         // search frontier, return a static eval. Prevents explosion on tactical positions
         // with many long capture/check chains (e.g., CPW pos4).
-        if (qPly >= MAX_Q_DEPTH) {
+        // Never apply this cap while in check: legal evasions must still be searched.
+        if (shouldApplyQuiescenceDepthCap(qPly, inCheck)) {
             return evaluate(board);
         }
-
-        boolean inCheck = board.isActiveColorInCheck(); // O(1) — no move generation
 
         if (inCheck) {
             // Must search all legal evasions; no stand-pat (king in check = must evade or be mated)
@@ -1398,6 +1403,10 @@ public class Searcher {
         }
 
         return bestScore;
+    }
+
+    private boolean shouldApplyQuiescenceDepthCap(int qPly, boolean inCheck) {
+        return !inCheck && qPly >= MAX_Q_DEPTH;
     }
 
     private int capturedPieceValueForDelta(Board board, int move) {
