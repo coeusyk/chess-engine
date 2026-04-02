@@ -32,7 +32,7 @@ public final class GradientDescent {
     public static final int DEFAULT_MAX_ITERATIONS = 500;
 
     // Adam hyperparameters
-    private static final double LR      = 0.05; // Diagnostic: reduced from 3.0 to diagnose plateau
+    private static final double LR      = 1.0;
     private static final double BETA1   = 0.9;
     private static final double BETA2   = 0.999;
     private static final double EPSILON = 1e-8;

@@ -1,16 +1,17 @@
 @echo off
 setlocal
 
-set CUTECHESS=C:\Users\yashk\Downloads\cutechess-1.4.0-win64\cutechess-1.4.0-win64\cutechess-cli.exe
-set NEW=C:\Users\yashk\WorkDir\Projects\ChessEngine\chess-engine\engine-uci\target\engine-uci-0.4.8-SNAPSHOT.jar
-set OLD=C:\Users\yashk\WorkDir\Projects\ChessEngine\chess-engine\tools\pre-tuning-0.4.8.jar
+set CUTECHESS=C:\Tools\cutechess\cutechess-1.4.0-win64\cutechess-cli.exe
+set JAVA=C:\Tools\Java21\bin\java.exe
+set NEW=C:\WorkDir\Projects\ChessEngine\chess-engine\engine-uci\target\engine-uci-0.4.9-SNAPSHOT.jar
+set OLD=C:\WorkDir\Projects\ChessEngine\chess-engine\tools\pre-tuning-0.4.8.jar
 
 for /f %%I in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set "TS=%%I"
-set PGN=C:\Users\yashk\WorkDir\Projects\ChessEngine\chess-engine\tools\results\sprt_phase8_%TS%.pgn
+set PGN=C:\WorkDir\Projects\ChessEngine\chess-engine\tools\results\sprt_phase8_%TS%.pgn
 
 "%CUTECHESS%" ^
-  -engine name=Vex-new cmd=java arg=-jar arg="%NEW%" proto=uci ^
-  -engine name=Vex-old cmd=java arg=-jar arg="%OLD%" proto=uci ^
+  -engine name=Vex-new cmd="%JAVA%" arg=-jar arg="%NEW%" proto=uci ^
+  -engine name=Vex-old cmd="%JAVA%" arg=-jar arg="%OLD%" proto=uci ^
   -each tc=10+0.1 ^
   -games 20000 ^
   -repeat ^

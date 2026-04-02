@@ -69,8 +69,8 @@ public class Board {
 
     // Material values mirroring Evaluator.MG_MATERIAL / EG_MATERIAL — keep in sync.
     // Indexed by Piece type constants (Piece.Pawn=1 .. Piece.King=6).
-    private static final int[] INC_MG_MATERIAL = { 0,  82, 337, 365,  477, 1025, 0 };
-    private static final int[] INC_EG_MATERIAL = { 0,  94, 281, 297,  512,  936, 0 };
+    private static final int[] INC_MG_MATERIAL = { 0, 100, 391, 428,  558, 1200, 0 };
+    private static final int[] INC_EG_MATERIAL = { 0,  89, 287, 311,  555, 1040, 0 };
 
     // Incrementally maintained material+PST score (white minus black, before tapering).
     // Updated in makeMove, restored in unmakeMove, initialised in recomputeIncrementalScores().

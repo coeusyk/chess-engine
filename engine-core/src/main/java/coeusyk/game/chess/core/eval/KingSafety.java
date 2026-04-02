@@ -8,10 +8,10 @@ public final class KingSafety {
     private KingSafety() {}
 
     private static final int SHIELD_RANK_2_BONUS = 12;
-    private static final int SHIELD_RANK_3_BONUS = 8;
+    private static final int SHIELD_RANK_3_BONUS = 7;
 
     private static final int OPEN_FILE_PENALTY = 45;
-    private static final int HALF_OPEN_FILE_PENALTY = 15;
+    private static final int HALF_OPEN_FILE_PENALTY = 13;
 
     private static final int[] ATTACKER_WEIGHT = new int[7];
 
@@ -23,9 +23,9 @@ public final class KingSafety {
 
     static {
         ATTACKER_WEIGHT[Piece.Knight] = 6;
-        ATTACKER_WEIGHT[Piece.Bishop] = 4;
+        ATTACKER_WEIGHT[Piece.Bishop] = 5;
         ATTACKER_WEIGHT[Piece.Rook]   = 5;
-        ATTACKER_WEIGHT[Piece.Queen]  = 7;
+        ATTACKER_WEIGHT[Piece.Queen]  = 6;
 
         for (int sq = 0; sq < 64; sq++) {
             int row = sq / 8;
