@@ -3734,7 +3734,7 @@ Both use 16 parallel threads. K (100k subset): 1.655876.
 
 ---
 
-### [2025-07-14] Phase 8 — Texel Tuning V2: Adam LR Fix + Full-Corpus Run + Apply Params (Issue #91)
+### [2026-04-02] Phase 8 — Texel Tuning V2: Adam LR Fix + Full-Corpus Run + Apply Params (Issue #91)
 
 **Built:**
 - Diagnosed and fixed Adam optimizer convergence bug: `LR = 0.05` produced step size `Math.round(integer ± 0.05) = integer` — no integer param ever changed, MSE delta = 0.0 exactly, convergence after 1 iteration. Fixed to `LR = 1.0` in `GradientDescent.java`.
