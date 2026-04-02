@@ -3701,3 +3701,33 @@ Both use 16 parallel threads. K (100k subset): 1.655876.
 **Next:**
 - Run SPRT vs pre-draw-detection baseline to measure Elo gain from repetition handling
 - Commit this work and bump patch version per release workflow
+
+---
+
+### [2026-04-02] Phase 8 — SPRT v0.4.8 Release: Draw Detection + Texel Tuning Validated
+
+**Built:**
+- SPRT validation run: Vex-new (0.4.8-SNAPSHOT, draw detection + PASSED_EG + EvalConfig + Texel PST) vs Vex-old (pre-tuning-0.4.8.jar baseline)
+- Released v0.4.8 on both repos with full GitHub release and engine-uci-0.4.8.jar fat JAR asset
+- Bumped both repos to 0.4.9-SNAPSHOT immediately after release
+
+**Decisions Made:**
+- SPRT time control: 10+0.1 (standard), no opening book. High draw rate (~51%) from repeated startpos positions but LLR converged quickly due to strong improvement signal
+- H1 threshold 50 Elo, alpha=0.05, beta=0.05 — same parameters as all previous SPRT runs for consistency
+
+**Broke / Fixed:**
+- N/A — validation run only
+
+**Measurements:**
+- Perft depth 5 (startpos): not measured this cycle
+- Nodes/sec: not measured this cycle
+- Elo vs. baseline: +77.9 +/- 57.9 Elo (SPRT H1 accepted: LLR 3.19 vs bound 2.94, LOS 99.5%, 68 games, TC 10+0.1)
+- Score: 24-9-35 [0.610] in 68 games before LLR crossed upper bound
+
+**Releases:**
+- chess-engine v0.4.8: https://github.com/coeusyk/chess-engine/releases/tag/v0.4.8 (fat JAR: engine-uci-0.4.8.jar, 1,067,567 bytes)
+- chess-engine-ui v0.4.8: https://github.com/coeusyk/chess-engine-ui/releases/tag/v0.4.8
+
+**Next:**
+- Continue Phase 8 work under 0.4.9-SNAPSHOT
+- Remaining Phase 8 items: magic bitboard hot-path audit, NPS profiling, Q-node ratio optimisation
