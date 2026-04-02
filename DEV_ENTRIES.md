@@ -3809,7 +3809,7 @@ Both use 16 parallel threads. K (100k subset): 1.655876.
 
 ---
 
-### [2026-04-03] Phase 8 — NPS Hot-Path Optimizations: Bitboard Walk, King Cache, Eval Dedup, Stack
+### [2026-04-02] Phase 8 — NPS Hot-Path Optimizations: Bitboard Walk, King Cache, Eval Dedup, Stack
 
 **Built:**
 
@@ -3845,4 +3845,50 @@ Both use 16 parallel threads. K (100k subset): 1.655876.
 
 - SPRT to confirm no strength regression (NPS-only changes should be Elo-neutral — just faster).
 - Fix #6: incremental `recomputeOccupancies` — replace 13 OR ops with 2-4 bitwise clear/set ops per make/unmake.
+- Continue Phase 8 Texel tuning work (issues #92–#96).
+
+---
+
+### [2026-06-23] Phase 8 — BenchMain Harness, SPRT Regression Validation, Fix #6 Attempted and Reverted
+
+**Built:**
+
+- **BenchMain.java** (`engine-uci/.../uci/BenchMain.java`): Fixed-depth NPS harness. 4 positions (startpos, kiwipete, cpw-pos3, cpw-pos4), 5 warmup rounds (shared `Searcher`, primes JIT + TT), 10 measurement rounds (fresh `Searcher` each round, zeroed TT/killers/history). Prints per-round nodes/time/NPS, per-position MEAN ± stddev, and aggregate mean. Usage: `java -cp shaded.jar coeusyk.game.chess.uci.BenchMain [--depth N]`.
+- **SPRT regression validation** (Fixes #1–#5 vs v0.4.9): `H0 accepted` after 124 games at tc=5+0.05, H0=0, H1=50, α=β=0.05. LLR=-2.98 (lbound=-2.94). Elo=-16.8 ± 52.5, LOS=26.4%. Verdict: Fixes #1–#5 are confirmed **Elo-neutral**. Score: 42W–48L–34D [0.476].
+- **Fix #6 attempted and reverted** — see Measurements below.
+
+**Decisions Made:**
+
+- BenchMain uses a fresh `Searcher` per measurement round (not per position) to eliminate TT/killer carry-over between rounds. Warmup rounds use a shared `Searcher` to prime JIT.
+- Fix #6 (incremental occupancy updates in `setBit`/`clearBit`, removing `recomputeOccupancies()` from makeMove/unmakeMove) was **implemented, measured, and reverted** because it caused a 10–20% NPS regression (see Measurements).
+- Root cause of Fix #6 regression: the two uses of `recomputeOccupancies()` per make/unmake pair (26 branchless OR ops total) are compiled by the JIT into efficient vectorized or pipelined code. Distributing the occupancy update into per-call `setBit`/`clearBit` introduces a branch per call (`if (Piece.isWhite(piece))`), extra method-dispatch overhead, and worse instruction-cache utilization in the hot loop — despite reducing raw op count from 26 to ~12.
+- The hypothesis "fewer total ops in make/unmake must be faster" was disproven by measurement. The terminal batch `recomputeOccupancies()` is already well-optimized by the JIT and should not be replaced.
+- cutechess-cli was not installed — was only present as `.zip` in Downloads. Extracted to `C:\Users\yashk\Downloads\cutechess\cutechess-1.4.0-win64\`. v0.4.9 fat JAR placed in `tools/engine-uci-0.4.9.jar` (1,067,724 bytes).
+
+**Broke / Fixed:**
+
+- Fix #6 Board.java changes: reverted to original `setBit`/`clearBit` + `recomputeOccupancies()`. All 139/139 tests (1 skip) pass at both stages (post-apply and post-revert).
+
+**Measurements:**
+
+- **BenchMain NPS baseline (Fixes #1–#5, commit 76d24fe), depth 10, fresh Searcher:**
+  - startpos: **402,750** ± 19,976 NPS
+  - kiwipete: **221,785** ± 13,767 NPS
+  - cpw-pos3: **468,264** ± 40,037 NPS
+  - cpw-pos4: **230,318** ± 16,894 NPS
+  - **Aggregate mean: 330,779 NPS** ± 107,301
+
+- **BenchMain NPS after Fix #6 (incremental occupancy), depth 10, fresh Searcher:**
+  - startpos: ~321,000 NPS (-20% regression)
+  - kiwipete: ~192,000 NPS (-13% regression)
+  - cpw-pos3: ~445,000 NPS (-5%, within noise)
+  - cpw-pos4: ~217,000 NPS (-6% regression)
+  - **Aggregate mean: ~293,000 NPS** ← WORSE than baseline; Fix #6 reverted
+
+- **SPRT Fixes #1–#5 vs v0.4.9:** H0 accepted at LLR=-2.98, 124 games, tc=5+0.05
+
+**Next:**
+
+- NPS ceiling for current architecture is ~330K (depth 10, fresh Searcher). Main remaining bottleneck is quiescence search volume: Q-node ratio is expected to be >10× AB nodes, accounting for ~90% of total time.
+- Highest-impact next optimization: stand-pat β-cutoff check before `generateCaptures()` in `quiescenceSearch()` — eliminates capture generation entirely when static eval already beats beta.
 - Continue Phase 8 Texel tuning work (issues #92–#96).
