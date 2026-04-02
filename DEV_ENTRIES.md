@@ -3775,3 +3775,34 @@ Both use 16 parallel threads. K (100k subset): 1.655876.
 - Complete SPRT run (H1/H0 decision)
 - If H1 accepted: commit, release v0.4.9, close issue #91
 - If H0 accepted: commit improvements anyway, note result on issue #91, continue Phase 8
+
+---
+
+### [2026-04-02] Phase 8 — SPRT v0.4.9 Release: Texel Tuning V2 Validated
+
+**Built:**
+- SPRT validation run: Vex-new (0.4.9, Texel V2 tuning + Adam LR fix) vs Vex-old (pre-tuning-0.4.8.jar baseline)
+- Released v0.4.9 on both repos with full GitHub release and engine-uci-0.4.9.jar fat JAR asset
+- Bumped both repos to 0.4.10-SNAPSHOT immediately after release
+- Fixed EvaluatorTest stale assertions (Pawn EG 86→89, Bishop MG 416→428, Rook MG 564→558, Bishop EG 302→311, Rook EG 537→555, Queen EG 991→1040, MG_KNIGHT[36] 36→15, EG_KNIGHT[36] 24→10)
+
+**Decisions Made:**
+- SPRT time control: 10+0.1 (standard), no opening book. Very high decisive rate — 10W-0L-4D against baseline indicates strong material value improvement
+- H1 threshold 50 Elo, alpha=0.05, beta=0.05 — same parameters as all previous SPRT runs
+
+**Broke / Fixed:**
+- EvaluatorTest assertions were stale after Texel V2 changes. Updated all 8 affected material and PST assertions.
+
+**Measurements:**
+- Perft depth 5 (startpos): not measured this cycle
+- Nodes/sec: not measured this cycle
+- Elo vs. v0.4.8 baseline: +311.3 +/- 228.9 Elo (SPRT H1 accepted: LLR 3.11 vs bound 2.94, LOS 99.9%, 14 games, TC 10+0.1)
+- Score: 10-0-4 [0.857] in 14 games before LLR crossed upper bound
+
+**Releases:**
+- chess-engine v0.4.9: https://github.com/coeusyk/chess-engine/releases/tag/v0.4.9 (fat JAR: engine-uci-0.4.9.jar, 1,067,541 bytes)
+- chess-engine-ui v0.4.9: https://github.com/coeusyk/chess-engine-ui/releases/tag/v0.4.9
+
+**Next:**
+- Continue Phase 8 under 0.4.10-SNAPSHOT
+- Remaining Phase 8 items: magic bitboard hot-path audit, NPS profiling, Q-node ratio optimisation
