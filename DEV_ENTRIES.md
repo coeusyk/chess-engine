@@ -3806,3 +3806,43 @@ Both use 16 parallel threads. K (100k subset): 1.655876.
 **Next:**
 - Continue Phase 8 under 0.4.10-SNAPSHOT
 - Remaining Phase 8 items: magic bitboard hot-path audit, NPS profiling, Q-node ratio optimisation
+
+---
+
+### [2026-04-03] Phase 8 — NPS Hot-Path Optimizations: Bitboard Walk, King Cache, Eval Dedup, Stack
+
+**Built:**
+
+- **Fix #1 — `getKingSquare()` O(1)**: Replaced 64-square linear scan (64 sq × `getPiece()` = 768 bitboard checks per call) with `Long.numberOfTrailingZeros(kingBitboard)`. Called 3-4× per node by `isActiveColorInCheck()` and related helpers.
+- **Fix #2 — Eval/inCheck deduplication**: `canApplyNullMove()` called `evaluate(board)` before its own depth gate — unconditional at every single node. `canApplyRazoring()` called it again at depth 1-2. A third `staticEval = (depth<=2) ? evaluate(board) : 0` followed both. Changed both helper signatures to accept `boolean inCheck, int staticEval`; `staticEval = evaluate(board)` computed once in `alphaBeta()` before all pruning calls. Net: 3 `evaluate()` calls/node → 1 `evaluate()` call/node everywhere.
+- **Fix #3 — Bitboard walk in `generate()` / `generateCaptures()`**: Replaced 64-sq `for (sq=0;sq<64;sq++) { getPiece(sq); ... }` loop with per-piece-type bitboard walks (NTZ + LSB-clear: `bb &= bb-1`). Eliminates ~55 empty-square checks per call (average 16 pieces out of 64 squares). `generateCaptures()`: sliding pieces iterated separately by type enabling direct magic dispatch without a `Piece.type()` branch chain.
+- **Fix #4 — `long[] zobristStack`**: Replaced `ArrayList<Long> zobristHistory` with pre-allocated `long[] zobristStack` + `int zobristSP`. Eliminates `Long` autoboxing heap allocation on every `makeMove()`/`unmakeMove()` (the inner loop of search). Array sized to `UNMAKE_POOL_SIZE = 768`. All 7 usage sites updated across `makeMove`, `unmakeMove`, `isRepetitionDraw`, `isThreefoldRepetition`, and `resetTo`.
+- **Fix #5 — Inline genPawn/genKing array allocations**: `new int[]{-9,-7}` / `new int[]{7,9}` in `genPawn`/`genPawnTactical` and `new boolean[]{ca[0],ca[1]}` / `new boolean[]{ca[2],ca[3]}` in `genKing` replaced with stack scalar variables (`captureOffset0`, `captureOffset1`, `ca0`, `ca1`) — eliminates 2 array allocations per pawn piece per `generate()` call.
+
+**Decisions Made:**
+
+- Fix #6 (incremental `updateOccupancies` in make/unmake, replacing `recomputeOccupancies()`) deliberately deferred — the 13 OR ops per make/unmake are a lower-priority target after the above 5 structural fixes.
+- All 5 fixes are pure performance changes — no semantic change to search logic, evaluation, or move generation correctness.
+- `staticEval` is now always computed at every non-leaf node (previously skipped at depth > 2). This is semantically correct because the same eval was being called inside null-move and razoring regardless.
+
+**Broke / Fixed:**
+
+- No regressions: 5/5 Perft canonical positions matched reference counts; full engine-core test suite 139/139 pass (1 skipped: `TacticalSuite`).
+
+**Measurements:**
+
+- Perft depth 5 (startpos): 4,865,609 ✓
+- Perft: Kiwipete d4, CPW pos3/pos4/pos5 all ✓
+- Nodes/sec at startpos `movetime 5000` (JVM warm, 128MB TT):
+  - d9=122,879 → d10=178,222 → d11=230,943 → d12=282,870 → d13=310,810 → d14=**326,065** → d15=316,207
+  - Peak NPS: **326,065** (depth 14)
+- Previous NPS baseline (Phase 7 profiling, 2026-03-29): ~142,000 NPS
+- Improvement: **~130% NPS increase** from structural hot-path changes only
+- Engine-core test suite: 139 passed, 0 failed, 1 skipped
+- Elo vs. baseline: not measured this cycle (pure performance, no eval/search behaviour change)
+
+**Next:**
+
+- SPRT to confirm no strength regression (NPS-only changes should be Elo-neutral — just faster).
+- Fix #6: incremental `recomputeOccupancies` — replace 13 OR ops with 2-4 bitwise clear/set ops per make/unmake.
+- Continue Phase 8 Texel tuning work (issues #92–#96).

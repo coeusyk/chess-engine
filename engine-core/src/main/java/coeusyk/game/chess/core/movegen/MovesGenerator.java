@@ -557,22 +557,37 @@ public class MovesGenerator {
      */
     public static int generate(Board board, int[] dest) {
         int count = 0;
-        int activeColor = board.getActiveColor();
+        boolean isWhite = board.getActiveColor() == Piece.White;
+        int activeColor = isWhite ? Piece.White : Piece.Black;
 
-        for (int sq = 0; sq < 64; sq++) {
-            int piece = board.getPiece(sq);
-            if (piece == Piece.None || !Piece.isColor(piece, activeColor)) continue;
-
-            if (Piece.isSliding(piece)) {
-                count = genSliding(board, dest, count, sq, piece);
-            } else {
-                count = switch (Piece.type(piece)) {
-                    case Piece.Pawn   -> genPawn(board, dest, count, sq, piece);
-                    case Piece.Knight -> genKnight(board, dest, count, sq, piece);
-                    case Piece.King   -> genKing(board, dest, count, sq, piece);
-                    default           -> count;
-                };
-            }
+        if (isWhite) {
+            long bb;
+            bb = board.getWhitePawns();
+            while (bb != 0) { int sq = Long.numberOfTrailingZeros(bb); count = genPawn(board, dest, count, sq, Piece.White | Piece.Pawn); bb &= bb - 1; }
+            bb = board.getWhiteKnights();
+            while (bb != 0) { int sq = Long.numberOfTrailingZeros(bb); count = genKnight(board, dest, count, sq, Piece.White | Piece.Knight); bb &= bb - 1; }
+            bb = board.getWhiteBishops();
+            while (bb != 0) { int sq = Long.numberOfTrailingZeros(bb); count = genSliding(board, dest, count, sq, Piece.White | Piece.Bishop); bb &= bb - 1; }
+            bb = board.getWhiteRooks();
+            while (bb != 0) { int sq = Long.numberOfTrailingZeros(bb); count = genSliding(board, dest, count, sq, Piece.White | Piece.Rook); bb &= bb - 1; }
+            bb = board.getWhiteQueens();
+            while (bb != 0) { int sq = Long.numberOfTrailingZeros(bb); count = genSliding(board, dest, count, sq, Piece.White | Piece.Queen); bb &= bb - 1; }
+            bb = board.getWhiteKing();
+            if (bb != 0) { int sq = Long.numberOfTrailingZeros(bb); count = genKing(board, dest, count, sq, Piece.White | Piece.King); }
+        } else {
+            long bb;
+            bb = board.getBlackPawns();
+            while (bb != 0) { int sq = Long.numberOfTrailingZeros(bb); count = genPawn(board, dest, count, sq, Piece.Black | Piece.Pawn); bb &= bb - 1; }
+            bb = board.getBlackKnights();
+            while (bb != 0) { int sq = Long.numberOfTrailingZeros(bb); count = genKnight(board, dest, count, sq, Piece.Black | Piece.Knight); bb &= bb - 1; }
+            bb = board.getBlackBishops();
+            while (bb != 0) { int sq = Long.numberOfTrailingZeros(bb); count = genSliding(board, dest, count, sq, Piece.Black | Piece.Bishop); bb &= bb - 1; }
+            bb = board.getBlackRooks();
+            while (bb != 0) { int sq = Long.numberOfTrailingZeros(bb); count = genSliding(board, dest, count, sq, Piece.Black | Piece.Rook); bb &= bb - 1; }
+            bb = board.getBlackQueens();
+            while (bb != 0) { int sq = Long.numberOfTrailingZeros(bb); count = genSliding(board, dest, count, sq, Piece.Black | Piece.Queen); bb &= bb - 1; }
+            bb = board.getBlackKing();
+            if (bb != 0) { int sq = Long.numberOfTrailingZeros(bb); count = genKing(board, dest, count, sq, Piece.Black | Piece.King); }
         }
 
         return filterLegal(board, dest, count, activeColor);
@@ -586,39 +601,45 @@ public class MovesGenerator {
      */
     public static int generateCaptures(Board board, int[] dest) {
         int count = 0;
-        int activeColor = board.getActiveColor();
-        long enemyBB = (activeColor == Piece.White) ? board.getBlackOccupancy() : board.getWhiteOccupancy();
+        boolean isWhite = board.getActiveColor() == Piece.White;
+        int activeColor = isWhite ? Piece.White : Piece.Black;
+        long enemyBB = isWhite ? board.getBlackOccupancy() : board.getWhiteOccupancy();
         long occupied = board.getAllOccupancy();
+        long friendlyOccupancy = isWhite ? board.getWhiteOccupancy() : board.getBlackOccupancy();
 
-        for (int sq = 0; sq < 64; sq++) {
-            int piece = board.getPiece(sq);
-            if (piece == Piece.None || !Piece.isColor(piece, activeColor)) continue;
-
-            if (Piece.isSliding(piece)) {
-                int pt = Piece.type(piece);
-                long attacks;
-                if (pt == Piece.Bishop) {
-                    attacks = MagicBitboards.getBishopAttacks(sq, occupied);
-                } else if (pt == Piece.Rook) {
-                    attacks = MagicBitboards.getRookAttacks(sq, occupied);
-                } else {
-                    attacks = MagicBitboards.getQueenAttacks(sq, occupied);
-                }
-                attacks &= enemyBB; // captures only — no quiet moves
-                while (attacks != 0) {
-                    int target = Long.numberOfTrailingZeros(attacks);
-                    dest[count++] = Move.of(sq, target);
-                    attacks &= attacks - 1;
-                }
-            } else {
-                count = switch (Piece.type(piece)) {
-                    case Piece.Pawn   -> genPawnTactical(board, dest, count, sq, piece, enemyBB);
-                    case Piece.Knight -> genKnightCaptures(board, dest, count, sq, piece, enemyBB);
-                    case Piece.King   -> genKingCaptures(board, dest, count, sq, piece, enemyBB);
-                    default           -> count;
-                };
-            }
+        // Sliding captures — iterate per piece type via bitboard walk
+        long bishops = isWhite ? board.getWhiteBishops() : board.getBlackBishops();
+        while (bishops != 0) {
+            int sq = Long.numberOfTrailingZeros(bishops);
+            long attacks = MagicBitboards.getBishopAttacks(sq, occupied) & enemyBB;
+            while (attacks != 0) { int target = Long.numberOfTrailingZeros(attacks); dest[count++] = Move.of(sq, target); attacks &= attacks - 1; }
+            bishops &= bishops - 1;
         }
+        long rooks = isWhite ? board.getWhiteRooks() : board.getBlackRooks();
+        while (rooks != 0) {
+            int sq = Long.numberOfTrailingZeros(rooks);
+            long attacks = MagicBitboards.getRookAttacks(sq, occupied) & enemyBB;
+            while (attacks != 0) { int target = Long.numberOfTrailingZeros(attacks); dest[count++] = Move.of(sq, target); attacks &= attacks - 1; }
+            rooks &= rooks - 1;
+        }
+        long queens = isWhite ? board.getWhiteQueens() : board.getBlackQueens();
+        while (queens != 0) {
+            int sq = Long.numberOfTrailingZeros(queens);
+            long attacks = MagicBitboards.getQueenAttacks(sq, occupied) & enemyBB;
+            while (attacks != 0) { int target = Long.numberOfTrailingZeros(attacks); dest[count++] = Move.of(sq, target); attacks &= attacks - 1; }
+            queens &= queens - 1;
+        }
+
+        // Non-sliding captures
+        int pawnPiece   = activeColor | Piece.Pawn;
+        int knightPiece = activeColor | Piece.Knight;
+        int kingPiece   = activeColor | Piece.King;
+        long pawns = isWhite ? board.getWhitePawns() : board.getBlackPawns();
+        while (pawns != 0) { int sq = Long.numberOfTrailingZeros(pawns); count = genPawnTactical(board, dest, count, sq, pawnPiece, enemyBB); pawns &= pawns - 1; }
+        long knights = isWhite ? board.getWhiteKnights() : board.getBlackKnights();
+        while (knights != 0) { int sq = Long.numberOfTrailingZeros(knights); count = genKnightCaptures(board, dest, count, sq, knightPiece, enemyBB); knights &= knights - 1; }
+        long king = isWhite ? board.getWhiteKing() : board.getBlackKing();
+        if (king != 0) { int sq = Long.numberOfTrailingZeros(king); count = genKingCaptures(board, dest, count, sq, kingPiece, enemyBB); }
 
         return filterLegal(board, dest, count, activeColor);
     }
@@ -628,9 +649,11 @@ public class MovesGenerator {
     private static int genPawnTactical(Board board, int[] dest, int count,
                                        int startSquare, int pawn, long enemyBB) {
         boolean isWhite = Piece.isWhite(pawn);
-        int[] captureOffsets = isWhite ? new int[]{ -9, -7 } : new int[]{ 7, 9 };
+        int captureOffset0 = isWhite ? -9 : 7;
+        int captureOffset1 = isWhite ? -7 : 9;
 
-        for (int offset : captureOffsets) {
+        for (int i = 0; i < 2; i++) {
+            int offset = (i == 0) ? captureOffset0 : captureOffset1;
             int target = startSquare + offset;
             if (target < 0 || target > 63) continue;
             if (Math.abs((startSquare % 8) - (target % 8)) != 1) continue;
@@ -719,7 +742,8 @@ public class MovesGenerator {
         int naturalOffset = isWhite ? -8 : 8;
         int numSquares = isWhite ? ((startSquare / 8) == 6 ? 2 : 1)
                                  : ((startSquare / 8) == 1 ? 2 : 1);
-        int[] captureOffsets = isWhite ? new int[]{ -9, -7 } : new int[]{ 7, 9 };
+        int captureOffset0 = isWhite ? -9 : 7;
+        int captureOffset1 = isWhite ? -7 : 9;
 
         // Natural (non-capturing) moves
         for (int i = 0; i < numSquares; i++) {
@@ -739,8 +763,9 @@ public class MovesGenerator {
             }
         }
 
-        // Capturing moves
-        for (int offset : captureOffsets) {
+        // Capturing moves — unrolled from two-element array to avoid allocation
+        for (int i = 0; i < 2; i++) {
+            int offset = (i == 0) ? captureOffset0 : captureOffset1;
             int target = startSquare + offset;
             if (target < 0 || target > 63) continue;
             if (Math.abs((startSquare % 8) - (target % 8)) != 1) continue;
@@ -803,13 +828,12 @@ public class MovesGenerator {
 
         // Castling
         boolean[] ca = board.getCastlingAvailability();
-        boolean[] kingCA = Piece.isWhite(king)
-                ? new boolean[]{ ca[0], ca[1] }
-                : new boolean[]{ ca[2], ca[3] };
+        boolean ca0 = Piece.isWhite(king) ? ca[0] : ca[2];
+        boolean ca1 = Piece.isWhite(king) ? ca[1] : ca[3];
         boolean kingHome = (Piece.isWhite(king) && startSquare == 60)
                 || (Piece.isBlack(king) && startSquare == 4);
 
-        if (kingHome && kingCA[0]) {
+        if (kingHome && ca0) {
             int rookSq = startSquare + 3;
             int throughSq = startSquare + 1;
             int targetSq = startSquare + 2;
@@ -824,7 +848,7 @@ public class MovesGenerator {
             }
         }
 
-        if (kingHome && kingCA[1]) {
+        if (kingHome && ca1) {
             int rookSq = startSquare - 4;
             int throughSq = startSquare - 1;
             int targetSq = startSquare - 2;

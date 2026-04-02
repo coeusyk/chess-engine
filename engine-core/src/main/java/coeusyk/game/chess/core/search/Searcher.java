@@ -679,7 +679,9 @@ public class Searcher {
             }
         }
 
-        if (canApplyRazoring(board, effectiveDepth, alpha, beta, isPvNode)) {
+        int staticEval = evaluate(board);
+
+        if (canApplyRazoring(effectiveDepth, alpha, beta, isPvNode, sideToMoveInCheck, staticEval)) {
             int qScore = quiescence(board, alpha, alpha + 1, ply, 0, shouldStopHard);
             if (aborted) {
                 return alpha;
@@ -690,7 +692,8 @@ public class Searcher {
             }
         }
 
-        if (nullMovePruningEnabled && canApplyNullMove(board, effectiveDepth, previousMoveWasNull, beta)) {
+        if (nullMovePruningEnabled && canApplyNullMove(board, effectiveDepth, previousMoveWasNull, beta,
+                sideToMoveInCheck, staticEval)) {
             int nullReduction = effectiveDepth >= 6 ? 3 : 2;
             Board.NullMoveState nullMoveState = board.makeNullMove();
             int nullScore = -alphaBeta(
@@ -728,8 +731,6 @@ public class Searcher {
             int orderPly = Math.min(ply, MAX_PLY - 1);
             moveOrderer.orderMoves(board, moves, moveCount, orderPly, ttMoveInt, killerMoves, historyHeuristic);
         }
-
-        int staticEval = (effectiveDepth <= 2) ? evaluate(board) : 0;
 
         if (moveCount == 0) {
             leafNodes++;
@@ -924,27 +925,28 @@ public class Searcher {
         return bestScore;
     }
 
-    private boolean canApplyNullMove(Board board, int depth, boolean previousMoveWasNull, int beta) {
+    private boolean canApplyNullMove(Board board, int depth, boolean previousMoveWasNull, int beta,
+                                      boolean inCheck, int staticEval) {
         boolean enoughDepthForNullMove = depth >= NULL_MOVE_DEPTH_THRESHOLD;
         boolean hasRemainingDepth = (depth - 2 - 1) > 0; // use minimum R=2 for depth gate
-        int staticEval = evaluate(board);
         boolean isMateWindow = Math.abs(beta) >= (MATE_SCORE - MAX_PLY);
 
         return enoughDepthForNullMove
             && hasRemainingDepth
                 && !previousMoveWasNull
-                && !board.isActiveColorInCheck()
+                && !inCheck
                 && !isMateWindow
             && staticEval >= beta
                 && hasNonPawnMaterial(board, board.getActiveColor());
     }
 
-    private boolean canApplyRazoring(Board board, int depth, int alpha, int beta, boolean isPvNode) {
+    private boolean canApplyRazoring(int depth, int alpha, int beta, boolean isPvNode,
+                                      boolean inCheck, int staticEval) {
         if (!futilityRazoringEnabled || isPvNode) {
             return false;
         }
 
-        if (board.isActiveColorInCheck() || isMateWindow(alpha, beta)) {
+        if (inCheck || isMateWindow(alpha, beta)) {
             return false;
         }
 
@@ -952,7 +954,6 @@ public class Searcher {
             return false;
         }
 
-        int staticEval = evaluate(board);
         int margin = (depth == 1) ? RAZOR_MARGIN_DEPTH_1 : RAZOR_MARGIN_DEPTH_2;
 
         return (staticEval + margin) <= alpha;

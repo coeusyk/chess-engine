@@ -106,7 +106,10 @@ public class Board {
     // Moves made until current position:
     public ArrayList<Move> movesPlayed = new ArrayList<>();
     public ArrayList<String> boardStates = new ArrayList<>();  // Storing the states of the board
-    private final ArrayList<Long> zobristHistory = new ArrayList<>();
+    // Zobrist hash history — long[] stack to avoid autoboxing overhead of ArrayList<Long>.
+    // Size matches UNMAKE_POOL_SIZE: one entry per make, cleared on initWithFEN.
+    private final long[] zobristStack = new long[UNMAKE_POOL_SIZE];
+    private int zobristSP = 0;
 
     // Pre-allocated pool of UnmakeInfo objects — reused per make/unmake to avoid GC pressure.
     // unmakeSP is the next-free index (stack pointer). Pool entries are filled via set().
@@ -143,7 +146,7 @@ public class Board {
         whitePawns = whiteKnights = whiteBishops = whiteRooks = whiteQueens = whiteKing = 0L;
         blackPawns = blackKnights = blackBishops = blackRooks = blackQueens = blackKing = 0L;
         whiteOccupancy = blackOccupancy = allOccupancy = 0L;
-        zobristHistory.clear();
+        zobristSP = 0;
 
         String[] fenFields = fenString.split(" ");
 
@@ -260,7 +263,7 @@ public class Board {
         
         // Compute Zobrist hash for the initial position
         zobristHash = recomputeZobristHash();
-        zobristHistory.add(zobristHash);
+        zobristStack[zobristSP++] = zobristHash;
 
         // Initialize incremental material+PST scores from the FEN position
         recomputeIncrementalScores();
@@ -712,7 +715,7 @@ public class Board {
             movesPlayed.add(new Move(startSquare, targetSquare, Move.reactionOf(packed)));
             boardStates.add(getCurrentFEN());
         }
-        zobristHistory.add(zobristHash);
+        zobristStack[zobristSP++] = zobristHash;
     }
 
     // Reversing the latest move made using efficient bitboard operations:
@@ -775,10 +778,9 @@ public class Board {
         recomputeOccupancies();
         
         // Restore Zobrist hash in O(1) from history instead of full recomputation.
-        // zobristHistory contains the hash after each move; the second-to-last entry is
-        // the hash for the position we are restoring to.
-        if (zobristHistory.size() >= 2) {
-            zobristHash = zobristHistory.get(zobristHistory.size() - 2);
+        // zobristStack[zobristSP-1] is the hash we just popped; [zobristSP-2] is the prior position.
+        if (zobristSP >= 2) {
+            zobristHash = zobristStack[zobristSP - 2];
         } else {
             // Edge case (unmaking the very first move): fall back to full recomputation.
             zobristHash = recomputeZobristHash();
@@ -788,8 +790,8 @@ public class Board {
             movesPlayed.remove(movesPlayed.size() - 1);
             boardStates.remove(boardStates.size() - 1);
         }
-        if (!zobristHistory.isEmpty()) {
-            zobristHistory.remove(zobristHistory.size() - 1);
+        if (zobristSP > 0) {
+            zobristSP--;
         }
     }
     
@@ -897,15 +899,10 @@ public class Board {
         return String.format("%s%d", file, rank);
     }
 
-    public int getKingSquare(int activeColor) {
-        for (int sq = 0; sq < 64; sq++) {
-            int piece = getPiece(sq);
-            if ((Piece.type(piece) == Piece.King) && Piece.isColor(piece, activeColor)) {
-                return sq;
-            }
-        }
-
-        throw new IllegalStateException("error: could not find king on board");
+    public int getKingSquare(int color) {
+        long bb = (color == Piece.White) ? whiteKing : blackKing;
+        if (bb == 0L) throw new IllegalStateException("error: could not find king on board");
+        return Long.numberOfTrailingZeros(bb);
     }
 
     public boolean isActiveColorInCheck() {
@@ -961,8 +958,8 @@ public class Board {
 
     public boolean isThreefoldRepetition() {
         int repetitions = 0;
-        for (long hash : zobristHistory) {
-            if (hash == zobristHash) {
+        for (int i = 0; i < zobristSP; i++) {
+            if (zobristStack[i] == zobristHash) {
                 repetitions++;
             }
         }
@@ -982,13 +979,12 @@ public class Board {
      * occurrence and a second match indicates a true repetition.
      */
     public boolean isRepetitionDraw() {
-        int histSize = zobristHistory.size();
         // Repetitions can only occur among same-side-to-move positions, i.e., every 2 plies.
         // Bound the window by the halfmove clock (reset on any irreversible move).
-        int limit = Math.min(histSize, halfmoveClock + 1);
+        int limit = Math.min(zobristSP, halfmoveClock + 1);
         int count = 0;
-        for (int i = histSize - limit; i < histSize; i++) {
-            if (zobristHistory.get(i) == zobristHash) {
+        for (int i = zobristSP - limit; i < zobristSP; i++) {
+            if (zobristStack[i] == zobristHash) {
                 count++;
                 if (count >= 2) return true;
             }
