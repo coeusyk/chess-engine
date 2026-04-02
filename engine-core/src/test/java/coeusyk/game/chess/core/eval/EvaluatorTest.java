@@ -109,11 +109,11 @@ class EvaluatorTest {
         // Tables stored in display order: a8=0, h1=63
         // Board also uses a8=0, so white PST lookup is direct (no mirror).
         // White knight on e4 → board sq 36 → table index 36
-        // MG_KNIGHT row 4 (32-39), col 4 = 36 (Texel-tuned 2026-04-01)
-        assertEquals(36, PieceSquareTables.mg(2, 36));
-        // EG_KNIGHT row 4 (32-39), col 4 = 24 (Texel-tuned 2026-04-01)
-        assertEquals(24, PieceSquareTables.eg(2, 36));
-        // MG_PAWN row 4 (32-39), col 4 = 12 (Texel-tuned 2026-04-01)
+        // MG_KNIGHT row 4 (32-39), col 4 = 15 (Texel V2-tuned 2026-04-XX)
+        assertEquals(15, PieceSquareTables.mg(2, 36));
+        // EG_KNIGHT row 4 (32-39), col 4 = 10 (Texel V2-tuned 2026-04-XX)
+        assertEquals(10, PieceSquareTables.eg(2, 36));
+        // MG_PAWN row 4 (32-39), col 4 = 12 (unchanged)
         assertEquals(12, PieceSquareTables.mg(1, 36));
     }
 
@@ -121,15 +121,15 @@ class EvaluatorTest {
     void mgAndEgMaterialValuesAreCorrect() {
         assertEquals(100, Evaluator.mgMaterialValue(1));   // Pawn   (Texel-tuned 2026-04-01)
         assertEquals(391, Evaluator.mgMaterialValue(2));  // Knight
-        assertEquals(416, Evaluator.mgMaterialValue(3));  // Bishop
-        assertEquals(564, Evaluator.mgMaterialValue(4));  // Rook
+        assertEquals(428, Evaluator.mgMaterialValue(3));  // Bishop (Texel V2)
+        assertEquals(558, Evaluator.mgMaterialValue(4));  // Rook (Texel V2)
         assertEquals(1200, Evaluator.mgMaterialValue(5)); // Queen
 
-        assertEquals(86, Evaluator.egMaterialValue(1));   // Pawn   (Texel-tuned 2026-04-01)
+        assertEquals(89, Evaluator.egMaterialValue(1));   // Pawn   (Texel V2)
         assertEquals(287, Evaluator.egMaterialValue(2));  // Knight
-        assertEquals(302, Evaluator.egMaterialValue(3));  // Bishop
-        assertEquals(537, Evaluator.egMaterialValue(4));  // Rook
-        assertEquals(991, Evaluator.egMaterialValue(5));  // Queen
+        assertEquals(311, Evaluator.egMaterialValue(3));  // Bishop (Texel V2)
+        assertEquals(555, Evaluator.egMaterialValue(4));  // Rook (Texel V2)
+        assertEquals(1040, Evaluator.egMaterialValue(5)); // Queen (Texel V2)
     }
 
     @Test

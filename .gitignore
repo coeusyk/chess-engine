@@ -45,3 +45,6 @@ tools/*.epd
 tools/selfplay*.pgn
 tools/results/*.pgn
 tools/results/*.txt
+
+### Logs ###
+*.log
