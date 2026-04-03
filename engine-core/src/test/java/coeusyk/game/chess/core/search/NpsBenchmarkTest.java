@@ -7,6 +7,8 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Locale;
 
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 /**
  * Fixed-depth NPS benchmark.
  *
@@ -124,5 +126,15 @@ class NpsBenchmarkTest {
 
         System.out.printf(Locale.US,
             "[NpsBenchmark] AGGREGATE MEAN NPS: %,d  +/- %,d%n", aggMean, aggStddev);
+
+        // Regression gate: if nps.baseline is set, require aggMean >= baseline * (1 - nps.threshold).
+        long npsBaseline = Long.getLong("nps.baseline", 0L);
+        if (npsBaseline > 0) {
+            double threshold = Double.parseDouble(System.getProperty("nps.threshold", "0.05"));
+            long minRequired = (long) (npsBaseline * (1.0 - threshold));
+            assertTrue(aggMean >= minRequired, String.format(Locale.US,
+                "[NpsBenchmark] REGRESSION: aggregate NPS %,d < %,d (%.0f%% of baseline %,d)",
+                aggMean, minRequired, (1.0 - threshold) * 100, npsBaseline));
+        }
     }
 }

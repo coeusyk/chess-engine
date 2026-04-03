@@ -4174,3 +4174,78 @@ NPS (cold bench): 203,189 aggregate. NPS (warm same-session): 381,194 (from NpsB
 3. #103 — Lazy SMP 2 helper threads (separate SPRT required post-impl)
 4. #104 — Pawn hash table hit-rate measurement
 5. #105 — NPS CI gate (wire NpsBenchmarkTest into GitHub Actions)
+
+---
+
+### [2026-04-03] Phase 9A — Performance #101–#105 (NPS optimisation batch)
+
+**Built:**
+
+- **#101 — Incremental attacked-squares bitboard** (`Board.java`, `Evaluator.java`):
+  Added `attackedByWhite` / `attackedByBlack` bitboard cache to `Board`. Computation is
+  **lazy** — a dirty flag `attackedSquaresValid` is cleared on every `makeMove`/`unmakeMove`,
+  and `recomputeAttackedSquares()` is only called when `getAttackedByWhite()` /
+  `getAttackedByBlack()` is actually accessed. `hangingPenalty()` drops from ~56
+  `isSquareAttackedBy()` calls per `evaluate()` to 3 bitboard ops + 2 `Long.bitCount()`.
+
+- **#102 — Staged capture generation in Q-search** (`MovesGenerator.java`, `Searcher.java`):
+  Added `generateNonPawnCaptures()` (all non-pawn captures) and `appendPawnCaptures()` (pawn
+  tactical moves, appended in-place from a given start index). Q-search now runs Stage 1
+  (non-pawn captures) first; if a beta cutoff occurs there, pawn capture generation is skipped
+  entirely. Stage 2 pawn captures are only appended after confirming no stage-1 cutoff.
+  Stalemate guard moved to after both stages.
+
+- **#103 — Lazy SMP** (`UciApplication.java`): Already fully implemented in a prior session —
+  `threads` field, `smpExecutor`, staggered start-depth helper spawning. Integration tests
+  `lazySmpThreads2ReturnsLegalMove` and `lazySmpNoDeadlockOver1000Searches` already exist.
+  `tools/sprt_smp.ps1` is the designated SPRT script (run after cutting a release JAR).
+
+- **#104 — Pawn hash hit-rate measurement** (`Evaluator.java`):
+  Added `PAWN_HASH_STATS` flag (default `false`) and `pawnTableHits` / `pawnTableMisses`
+  counters gated behind it. `getPawnHashHitRate()`, `getPawnHashMisses()`, and
+  `getPawnTableSize()` accessors expose stats for bench analysis. Zero overhead in production.
+
+- **#105 — NPS CI gate** (`NpsBenchmarkTest.java`, `ci.yml`):
+  `NpsBenchmarkTest` now reads JVM property `nps.baseline` (default 0 = gate disabled) and
+  asserts `aggMean >= baseline * (1 - nps.threshold)` (threshold defaults to 5%).
+  `ci.yml` adds a separate *NPS benchmark gate* step:
+  `mvn test -pl engine-core -Dgroups=benchmark -Dbenchmark.enabled=true -Dnps.baseline=200000`
+  (200 k is conservative for GitHub Actions ubuntu-latest runners).
+
+**Decisions Made:**
+
+- Lazy attacked-squares (dirty flag) chosen over eager-per-make-unmake after profiling showed
+  eager recomputation at every node actually cost more than the `hangingPenalty` savings.
+  Eager version dropped NPS from 381 k → 294 k; lazy version recovers to ~362 k (difference
+  within ±1σ noise).
+- `appendPawnCaptures()` uses in-place legality filtering starting from `startIdx` so the
+  write pointer begins at `startIdx` and never overtakes the read pointer — safe by
+  construction, no extra allocation.
+- 200 k NPS CI gate is conservative: dev machine warm NPS ≈ 381 k, CI runners ≈2–3× slower.
+  Raises it to match real engine NPS after SMP SPRT passes naturally.
+- `PAWN_HASH_STATS = false` ensures zero production overhead; counters can be enabled
+  selectively for a depth-10 bench run to measure hit rate and decide on table resize.
+
+**Broke / Fixed:**
+
+- First impl of #101 (eager recompute) caused ~23% NPS regression (381 k → 294 k).
+  Fixed by converting to lazy/dirty-flag pattern: `attackedSquaresValid = false` in hot path,
+  `if (!attackedSquaresValid) recomputeAttackedSquares()` in getters.
+- `appendPawnCaptures()` stalemate guard position was initially wrong (moved after Stage 1
+  only); corrected to fire only after both stages are exhausted.
+
+**Measurements:**
+
+- NPS baseline (warm, depth 10): 381,194 ± std (from profiler session)
+- NPS after #101+#102 lazy: 362,025 ± 118,925 — within noise; no statistically significant
+  regression confirmed.
+- Regression suite (31 tactical tests): 31/31 pass.
+- Full test suite: 147 run, 0 failures, 2 skipped (TacticalSuiteTest + NpsBenchmarkTest).
+
+**Next:**
+
+- Run `tools/sprt_smp.ps1` with the current release JAR to get SPRT verdict for #103.
+- Enable `PAWN_HASH_STATS = true`, run depth-10 bench, measure hit rate. If miss rate > 15%
+  resize pawn hash table (double to 32 k entries).
+- After #103 SPRT passes, raise `nps.baseline` in `ci.yml` to the measured 2-thread NPS.
+- Begin Phase 9B: TT occupancy measurement and aging (#106), null-move depth > 2 (#107).
