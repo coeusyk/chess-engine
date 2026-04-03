@@ -698,7 +698,7 @@ public class Searcher {
 
         if (nullMovePruningEnabled && canApplyNullMove(board, effectiveDepth, previousMoveWasNull, beta,
                 sideToMoveInCheck, staticEval)) {
-            int nullReduction = effectiveDepth >= 6 ? 3 : 2;
+            int nullReduction = effectiveDepth > 6 ? 3 : 2;
             Board.NullMoveState nullMoveState = board.makeNullMove();
             int nullScore = -alphaBeta(
                     board,

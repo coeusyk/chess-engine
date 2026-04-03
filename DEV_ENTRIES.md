@@ -4389,3 +4389,29 @@ for Phase 9B). Per-entry generation visibility from UCI `info` (out of scope).
 
 **Closes #111**
 **Phase: 9B — Search Improvements**
+
+---
+
+### [2026-04-04] Phase 9B — Issue #112 Null-move depth adaptation: fix R threshold (>= 6 → > 6)
+
+**Branch:** `phase/9b-null-move-adapt`
+
+**What changed:**
+- Single-line fix in `Searcher.alphaBeta()`: `effectiveDepth >= 6` changed to `effectiveDepth > 6`
+  in the null-reduction computation.
+- Effect: at exactly depth == 6, R is now 2 (conservative) instead of 3 (aggressive).
+  Depths 7+ retain R=3. Depths 1-5 retain R=2.
+
+**Why:** At depth == 6, null-move verify search was running at depth 6 - 3 - 1 = 2. With the
+fix it runs at depth 6 - 2 - 1 = 3. The deeper verification at the boundary reduces the chance
+of a null-move cutoff masking a genuine forced capture at depth 6. Issue #112 spec says
+"R=2 when depth ≤ 6" which requires `> 6`, not `>= 6`.
+
+**Tests:** 150 run, 0 failures, 2 skipped. Search regression: 31/31 unchanged.
+
+**Left out:** Tuning the boundary (depth 6 vs 7 vs 8): SPRT scope (Issue #118). NULL_MOVE_DEPTH_THRESHOLD
+refactoring: constant already exists at 3 but is not used for the R computation — left as-is to avoid
+touching unrelated code.
+
+**Closes #112**
+**Phase: 9B — Search Improvements**
