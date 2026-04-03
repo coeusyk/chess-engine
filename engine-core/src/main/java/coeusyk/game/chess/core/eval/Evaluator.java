@@ -112,7 +112,7 @@ public class Evaluator {
     }
 
     /** Enable pawn-hash statistics tracking (hits and misses). Resets counters to zero. */
-    void enablePawnHashStats() {
+    public void enablePawnHashStats() {
         this.pawnHashStatsEnabled = true;
         this.pawnTableHits = 0;
         this.pawnTableMisses = 0;
