@@ -1,0 +1,120 @@
+name: Release Chess Engine
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Release type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+      version_override:
+        description: 'Override version (e.g. 0.5.0) — leave blank to auto-bump'
+        required: false
+        type: string
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Configure git
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Resolve release version
+        id: versions
+        run: |
+          CURRENT=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          BASE=${CURRENT%-SNAPSHOT}
+          
+          if [ -n "${{ inputs.version_override }}" ]; then
+            RELEASE="${{ inputs.version_override }}"
+          else
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE"
+            case "${{ inputs.release_type }}" in
+              major) RELEASE="$((MAJOR+1)).0.0" ;;
+              minor) RELEASE="${MAJOR}.$((MINOR+1)).0" ;;
+              patch) RELEASE="${MAJOR}.${MINOR}.$((PATCH+1))" ;;
+            esac
+          fi
+          
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$RELEASE"
+          NEXT="${MAJOR}.${MINOR}.$((PATCH+1))-SNAPSHOT"
+          
+          echo "release=$RELEASE"  >> $GITHUB_OUTPUT
+          echo "next=$NEXT"        >> $GITHUB_OUTPUT
+          echo "tag=v$RELEASE"     >> $GITHUB_OUTPUT
+
+      - name: Set release version in pom.xml
+        run: mvn -B versions:set -DnewVersion=${{ steps.versions.outputs.release }} -DgenerateBackupPoms=false
+
+      - name: Build, test, package
+        run: mvn -B clean verify
+
+      - name: Locate fat JAR
+        id: jar
+        run: |
+          JAR=$(find engine-uci/target -name "engine-uci-*-shaded.jar" \
+                  -o -name "engine-uci-*.jar" ! -name "*sources*" ! -name "*javadoc*" \
+                | head -1)
+          echo "path=$JAR" >> $GITHUB_OUTPUT
+          echo "name=$(basename $JAR)" >> $GITHUB_OUTPUT
+
+      - name: Commit release version
+        run: |
+          git add -A
+          git commit -m "chore(release): v${{ steps.versions.outputs.release }}"
+          git tag ${{ steps.versions.outputs.tag }}
+
+      - name: Set next SNAPSHOT version
+        run: |
+          mvn -B versions:set -DnewVersion=${{ steps.versions.outputs.next }} -DgenerateBackupPoms=false
+          git add -A
+          git commit -m "chore(release): bump to ${{ steps.versions.outputs.next }}"
+
+      - name: Push commits and tag
+        run: git push origin main --follow-tags
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.versions.outputs.tag }}
+          name: "v${{ steps.versions.outputs.release }}"
+          body: |
+            ## Vex Chess Engine ${{ steps.versions.outputs.release }}
+
+            ### Assets
+            - `${{ steps.jar.outputs.name }}` — UCI-compatible fat JAR (Java 21)
+
+            ### Usage
+            ```
+            java -jar ${{ steps.jar.outputs.name }}
+            ```
+
+            ### What's Changed
+            See [DEV_ENTRIES.md](https://github.com/coeusyk/chess-engine/blob/main/DEV_ENTRIES.md) for full development history.
+          files: ${{ steps.jar.outputs.path }}
+          draft: false
+          prerelease: false

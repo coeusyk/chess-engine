@@ -13,7 +13,7 @@ tools/
   match.sh         — Quick non-SPRT match (fixed game count)
   match.bat        — Windows equivalent of match.sh
   engines.json     — Engine definitions for cutechess-cli
-  profiles/        — Flamegraph HTML files (async-profiler output)
+  profiles/        — Profiling captures (.html, .jfr, heap/thread snapshots, GC logs)
   results/         — PGN output from SPRT/match runs
 ```
 
@@ -67,6 +67,52 @@ java -XX:StartFlightRecording=duration=30s,filename=tools/profiles/bench.jfr `
 
 **2. Open `bench.jfr` in Java Mission Control** (`jmc` — ships with JDK or download from
   https://adoptium.net/jmc/). Use the "Method Profiling" view for hot methods.
+
+### Windows — cutechess / engine-uci jar profiling
+
+For profiling the real `engine-uci` jar under cutechess, use the dedicated Phase 8 helper:
+
+```bat
+tools\sprt_profile_phase8.bat
+```
+
+This does three things for the `Vex-new` JVM only:
+- starts a tagged JVM and attaches `jcmd JFR.start settings=profile` after the engine process appears, so the UCI handshake stays clean
+- enables Native Memory Tracking (`-XX:NativeMemoryTracking=summary`) for live `jcmd` memory snapshots
+- writes a GC log alongside the `.jfr` recording
+
+Artifacts are written to `tools/profiles/`:
+- `sprt_phase8_new_<timestamp>.jfr` — CPU samples, allocation samples, lock and thread events
+- `sprt_phase8_new_<timestamp>_gc.log` — GC / heap pressure timeline
+- `tools/results/sprt_phase8_profiled_<timestamp>.pgn` — match output
+
+While the match is still running, capture live JVM snapshots in another PowerShell window:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\capture_uci_jvm_snapshot.ps1 -Match "vex-sprt-phase8-<timestamp>"
+```
+
+The helper batch prints the exact `-Match` tag when it starts. The snapshot script writes:
+- `VM.command_line`
+- `GC.heap_info`
+- `GC.class_histogram`
+- `Thread.print`
+- `VM.native_memory summary`
+
+Use this workflow for the questions you care about:
+- Method calling / hot paths: open the `.jfr` in JMC and inspect `Method Profiling`, `Hot Methods`, and the call tree under `jdk.ExecutionSample`
+- Heap / allocation pressure: inspect `Allocation` and `Garbage Collections` in JMC, plus `GC.class_histogram` from the live snapshot
+- Native / off-heap memory: inspect `VM.native_memory summary`
+- Thread state during search: inspect `Thread.print`
+
+For a quick text-only summary without opening JMC:
+
+```powershell
+jfr summary tools\profiles\sprt_phase8_new_<timestamp>.jfr
+jfr print --events jdk.ExecutionSample tools\profiles\sprt_phase8_new_<timestamp>.jfr | more
+```
+
+If you want cleaner single-engine CPU samples, temporarily reduce cutechess concurrency to `1` in the profiling batch.
 
 ---
 

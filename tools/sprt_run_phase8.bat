@@ -1,13 +1,27 @@
 @echo off
 setlocal
 
-set CUTECHESS=C:\Users\yashk\Downloads\cutechess-1.4.0-win64\cutechess-1.4.0-win64\cutechess-cli.exe
-set JAVA=C:\Program Files\OpenLogic\jdk-21.0.6.7-hotspot\bin\java.exe
-set NEW=C:\Users\yashk\WorkDir\Projects\ChessEngine\chess-engine\engine-uci\target\engine-uci-0.4.9-SNAPSHOT.jar
-set OLD=C:\Users\yashk\WorkDir\Projects\ChessEngine\chess-engine\tools\pre-tuning-0.4.8.jar
+:: Resolve cutechess-cli from CUTECHESS env var or PATH
+if "%CUTECHESS%"=="" for /f "delims=" %%C in ('where cutechess-cli 2^>nul') do set "CUTECHESS=%%C"
+if "%CUTECHESS%"=="" (
+    echo ERROR: cutechess-cli not found. Set CUTECHESS env var or add cutechess-cli.exe to PATH.
+    exit /b 1
+)
+
+:: Java: rely on PATH (or JAVA env var override)
+if "%JAVA%"=="" set "JAVA=java"
+
+:: Resolve engine jars relative to this script; find latest non-original engine-uci jar
+if "%NEW%"=="" for /f "delims=" %%F in ('dir /b /od "%~dp0..\engine-uci\target\engine-uci-*.jar" 2^>nul ^| findstr /v "^original-"') do set "NEW=%~dp0..\engine-uci\target\%%F"
+if "%NEW%"=="" (
+    echo ERROR: No engine-uci jar found. Run: mvnw -pl engine-uci -am package -DskipTests
+    exit /b 1
+)
+
+if "%OLD%"=="" set "OLD=%~dp0pre-tuning-0.4.8.jar"
 
 for /f %%I in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set "TS=%%I"
-set PGN=C:\Users\yashk\WorkDir\Projects\ChessEngine\chess-engine\tools\results\sprt_phase8_%TS%.pgn
+set PGN=%~dp0results\sprt_phase8_%TS%.pgn
 
 "%CUTECHESS%" ^
   -engine name=Vex-new cmd="%JAVA%" arg=-jar arg="%NEW%" proto=uci ^
