@@ -2,6 +2,7 @@ package coeusyk.game.chess.core.eval;
 
 import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Piece;
+import coeusyk.game.chess.core.search.StaticExchangeEvaluator;
 
 public class Evaluator {
 
@@ -43,6 +44,7 @@ public class Evaluator {
     );
 
     private final EvalConfig config;
+    private final StaticExchangeEvaluator see;
 
     // White outpost zone: ranks 4-6 for white (rows 2-4 in a8=0: bits 16-39)
     // Black outpost zone: ranks 3-5 for black (rows 3-5 in a8=0: bits 24-47)
@@ -98,6 +100,7 @@ public class Evaluator {
     /** Creates an Evaluator using a custom configuration (for testing only). */
     public Evaluator(EvalConfig config) {
         this.config = config;
+        this.see = new StaticExchangeEvaluator();
     }
 
     public int evaluate(Board board) {
@@ -187,7 +190,51 @@ public class Evaluator {
         // --- Tempo bonus (applied after phase interpolation) ---
         score += Piece.isWhite(board.getActiveColor()) ? config.tempo() : -config.tempo();
 
+        // --- Hanging piece penalty (undefended attacked non-king pieces) ---
+        score += hangingPenalty(board);
+
         return Piece.isWhite(board.getActiveColor()) ? score : -score;
+    }
+
+    /**
+     * Penalty for non-king pieces that are genuinely hanging, evaluated via SEE.
+     * SEE correctly handles king-as-sole-defender: a bishop on d5 defended only by a king on c4
+     * is NOT flagged as hanging because the king recapture makes the exchange unprofitable for
+     * the attacker (SEE returns 0).  The old isSquareAttackedBy check could not distinguish this.
+     * Returns a white-positive score: negative if white has hanging pieces, positive if black does.
+     */
+    private int hangingPenalty(Board board) {
+        int penalty = 0;
+        // White non-king pieces: penalise if Black can profitably capture (SEE gain > 0 for Black).
+        // Penalty = SEE_gain / 4: a 25% forward-look bonus detects genuinely hanging pieces without
+        // making the static eval of "piece still on board" equal to "piece already captured" (which
+        // would make the engine indifferent to actually capturing hanging pieces at shallow depths).
+        long whites = board.getWhiteOccupancy() & ~board.getWhiteKing();
+        long temp = whites;
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            temp &= temp - 1;
+            if (board.isSquareAttackedBy(sq, Piece.Black)) {
+                int gain = see.captureGainFor(board, sq, Piece.Black);
+                if (gain > 0) {
+                    penalty -= gain / 4;
+                }
+            }
+        }
+        // Black non-king pieces: bonus if White can profitably capture (SEE gain > 0 for White)
+        long blacks = board.getBlackOccupancy() & ~board.getBlackKing();
+        temp = blacks;
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            temp &= temp - 1;
+            if (board.isSquareAttackedBy(sq, Piece.White)) {
+                int gain = see.captureGainFor(board, sq, Piece.White);
+                if (gain > 0) {
+                    penalty += gain / 4;
+                }
+            }
+        }
+        return penalty;
     }
 
     /**

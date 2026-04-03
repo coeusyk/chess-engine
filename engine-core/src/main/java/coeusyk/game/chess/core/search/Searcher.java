@@ -51,6 +51,10 @@ public class Searcher {
     // Maximum extra plies the Q-search is allowed to recurse beyond the main-search horizon.
     // Prevents Q-search explosion on tactical positions with many long capture chains.
     private static final int MAX_Q_DEPTH = 6;
+    // Additional plies allowed when in check beyond MAX_Q_DEPTH. Without this cap, check-chain
+    // positions cause unbounded evasion trees (B^k nodes). The cap still gives 3 extra plies of
+    // check resolution before forcing a stand-pat return.
+    private static final int MAX_Q_CHECK_EXTENSION = 3;
 
     private long nodesVisited;
     private long leafNodes;
@@ -1223,6 +1227,11 @@ public class Searcher {
         return shouldApplyQuiescenceDepthCap(qPly, inCheck);
     }
 
+    /** Test accessor for quiescence — runs a single Q-search call with a no-abort supplier. */
+    int quiescenceForTesting(Board board, int alpha, int beta, int qPly) {
+        return quiescence(board, alpha, beta, 0, qPly, () -> false);
+    }
+
     /**
      * Convert a root-relative mate score to a node-relative score for TT storage.
      * Non-mate scores pass through unchanged.
@@ -1324,9 +1333,15 @@ public class Searcher {
             return bestScore;
         }
 
-        // Not in check: stand-pat, then captures only.
-        // Terminal detection skipped — not in check means not checkmate;
-        // stalemate is handled by the alpha-beta search above us.
+        // Not in check: stalemate guard FIRST — evaluate() would return a large score for the
+        // winning side, but a stalemate position must score 0 regardless of material imbalance.
+        // Without this early check the standPat >= beta cutoff below can return the wrong value
+        // (e.g. +700 cp instead of 0) under tight aspiration/NWS windows.
+        if (board.isStalemate()) {
+            leafNodes++;
+            return 0;
+        }
+
         int standPat = evaluate(board);
         if (standPat >= beta) {
             leafNodes++;
@@ -1406,7 +1421,7 @@ public class Searcher {
     }
 
     private boolean shouldApplyQuiescenceDepthCap(int qPly, boolean inCheck) {
-        return !inCheck && qPly >= MAX_Q_DEPTH;
+        return qPly >= (inCheck ? MAX_Q_DEPTH + MAX_Q_CHECK_EXTENSION : MAX_Q_DEPTH);
     }
 
     private int capturedPieceValueForDelta(Board board, int move) {

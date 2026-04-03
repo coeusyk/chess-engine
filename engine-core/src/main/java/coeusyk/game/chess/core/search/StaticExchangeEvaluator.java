@@ -59,6 +59,19 @@ public class StaticExchangeEvaluator {
         return occupantValue - lossByRecaptures;
     }
 
+    /**
+     * Returns the expected material gain for {@code attackerColor} from starting a
+     * capture sequence on {@code targetSquare}, assuming both sides play optimally.
+     * Positive = attacker gains material (piece is hanging); 0 = not profitable for attacker.
+     *
+     * <p>Used by {@code Evaluator.hangingPenalty()} to detect genuinely hanging pieces:
+     * a piece defended only by the king is correctly scored as not hanging when the king
+     * recapture is the optimal response (SEE returns 0 for that exchange).
+     */
+    public int captureGainFor(Board board, int targetSquare, int attackerColor) {
+        return bestReplyGain(board, targetSquare, attackerColor);
+    }
+
     // ==================== Core SEE: zero-allocation bitboard LVA ====================
 
     /**

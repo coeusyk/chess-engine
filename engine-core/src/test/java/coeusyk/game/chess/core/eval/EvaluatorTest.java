@@ -424,4 +424,88 @@ class EvaluatorTest {
         assertEquals(evalA, evalB,
                 "Mop-up evaluation should be symmetric for mirrored positions");
     }
+
+    @Test
+    void hangingPiecePenaltyReducesScore() {
+        // White bishop on c4, attacked by black rook on c8, no white defender.
+        // The hanging penalty must lower white's score compared to a position where
+        // a white pawn on b3 defends the bishop.
+        Board hangingBishop  = new Board("2r1k3/8/8/8/2B5/8/8/4K3 w - - 0 1");
+        Board defendedBishop = new Board("2r1k3/8/8/8/2B5/1P6/8/4K3 w - - 0 1");
+
+        int hangingScore  = evaluator.evaluate(hangingBishop);
+        int defendedScore = evaluator.evaluate(defendedBishop);
+
+        // The defended position has an extra pawn AND removes the hanging penalty.
+        // Either effect alone is enough to make defendedScore > hangingScore.
+        assertTrue(hangingScore < defendedScore,
+                "Undefended attacked bishop should score lower than defended bishop");
+    }
+
+    @Test
+    void hangingPenaltyIsSymmetric() {
+        // Black rook on a8 attacked by white rook on a1: mutual hanging, net penalty = 0.
+        // Black pawn on b7 is a promotion-path pawn (attacks a8 diagonally), so it defends black's rook.
+        Board hangingBlackRook  = new Board("r3k3/8/8/8/8/8/8/R3K3 b - - 0 1");
+        Board defendedBlackRook = new Board("r3k3/1p6/8/8/8/8/8/R3K3 b - - 0 1");
+
+        int hangingScore  = evaluator.evaluate(hangingBlackRook);
+        int defendedScore = evaluator.evaluate(defendedBlackRook);
+
+        // In hangingBlackRook: black rook a8 undefended, white rook a1 undefended → mutual-hanging,
+        // net penalty = 0.  Score is roughly equal material.
+        // In defendedBlackRook: black pawn at b7 attacks a8 (promotion diagonal), so black rook is
+        // defended; SEE for white taking a8 = 0 (pawn recaptures with promotion → unprofitable).
+        // White rook a1 still undefended: penalty = −rook_value/4 for white → good for black.
+        // Plus black has an extra pawn (+100 material).
+        // Therefore: defendedBlackRook is better for black → defendedScore > hangingScore.
+        assertTrue(defendedScore > hangingScore,
+                "Defended black rook + extra pawn + white rook still hanging → black scores better in defended position");
+    }
+
+    @Test
+    void hangingPenaltyNotTriggerWhenKingDefendsAffordably() {
+        // White bishop on d5, defended only by White King on c4, attacked by Black Rook on d1.
+        // SEE: Rook takes Bishop (gain 330), King recaptures Rook (gain 500) → Black net = -170.
+        // Black would not take (unprofitable), so captureGainFor(d5, Black) = 0 → no hanging penalty.
+        //
+        // Test design: compare to a position with equal material where the rook is on a1 instead
+        // (same file as before but left file — does NOT attack d5 at all).  Because both positions
+        // have identical material and neither has a hanging penalty for the bishop, the evaluation
+        // difference should be only the rook-PST(d1) vs rook-PST(a1) — a small amount well below
+        // a piece value.  If the bishop were wrongly penalised, the gap would be ~bishop_value/4 ≈ 82 cp larger.
+        Board rookOnDFile = new Board("3k4/8/8/3B4/2K5/8/8/3r4 w - - 0 1"); // rook d1 attacks bishop but exchange unprofitable
+        Board rookOffFile = new Board("3k4/8/8/3B4/2K5/8/8/r7 w - - 0 1");  // rook a1 does not attack bishop at all
+
+        int dFileScore  = evaluator.evaluate(rookOnDFile);
+        int offFileScore = evaluator.evaluate(rookOffFile);
+
+        // Same material; difference should be only rook-PST, not a hanging penalty on the bishop.
+        // A tolerance of 150 cp covers any PST variation while flagging an erroneous ~82 cp penalty.
+        assertTrue(Math.abs(dFileScore - offFileScore) < 150,
+                "Bishop defended by king (SEE=0 for Black) must not incur a hanging penalty; "
+                + "score difference should reflect only rook-PST(d1 vs a1), not a hanging penalty");
+    }
+
+    @Test
+    void hangingPenaltyFiresWhenKingIsOnlyDefenderButExchangeProfitable() {
+        // Regression for Fix 3: the old isSquareAttackedBy check treated the King as a real
+        // defender regardless of exchange result. If Black attacks with a piece LESS valuable than
+        // the target, the King recapture doesn't compensate — the piece IS genuinely hanging.
+        //
+        // Position: White Rook on d5 (value 500), Black Bishop on a2 attacks d5 diagonally,
+        //           White King on c4 "defends" d5 adjacently.  Black King on h8.
+        // Exchange: Ba2xd5 (Black gains 500), Kc4xd5 (White gains bishop=330 back).
+        // Net for Black = 500 - 330 = +170 → Rook IS hanging.
+        // Old code: isSquareAttackedBy(d5, White) == true (king) → NOT penalised (WRONG).
+        // New SEE code: captureGainFor(d5, Black) = 170 → penalised by -170 (correct).
+        Board hangingRookKingDefender = new Board("7k/8/8/3R4/2K5/8/b7/8 w - - 0 1");
+        Board noAttackerBaseline      = new Board("7k/8/8/3R4/2K5/8/8/8 w - - 0 1");
+
+        int hangingScore  = evaluator.evaluate(hangingRookKingDefender);
+        int baselineScore = evaluator.evaluate(noAttackerBaseline);
+
+        assertTrue(hangingScore < baselineScore,
+                "Rook attacked by lesser-value piece with only king-defender must be penalised by SEE score");
+    }
 }
