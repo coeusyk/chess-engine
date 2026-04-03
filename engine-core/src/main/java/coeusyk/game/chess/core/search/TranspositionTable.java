@@ -34,10 +34,16 @@ public class TranspositionTable {
     private final AtomicLong probes = new AtomicLong(0);
     private final AtomicLong hits   = new AtomicLong(0);
 
+    // Threshold (in generation ticks) beyond which a stored entry is considered
+    // stale and always evicted on the next store() collision, regardless of depth.
+    // Byte arithmetic wraps correctly: (byte)(currentGeneration - e.generation())
+    // returns the age in the range [0, 127] for entries up to 127 moves old.
+    // Default 4 means entries from the last 3 moves are preserved by depth-preference;
+    // entries 4 or more moves old are freely replaced by any new entry.
+    static final byte AGE_THRESHOLD = 4;
+
     // Per-search generation counter.  Incremented once at the start of each
-    // new move's search.  Old-generation entries are always evicted on store,
-    // regardless of depth, preventing the table from filling up with deep
-    // entries from previous moves that can never be replaced.
+    // new move's search.
     private volatile byte currentGeneration = 0;
 
     public TranspositionTable() {
@@ -89,21 +95,28 @@ public class TranspositionTable {
     }
 
     /**
-     * Stores an entry using a generation-aware depth-preferred replacement
-     * scheme.  A slot is overwritten when:
-     * <ul>
-     *   <li>the slot is empty, or</li>
-     *   <li>it belongs to a different position (key mismatch), or</li>
-     *   <li>the stored entry is from an older generation (stale — always evict), or</li>
-     *   <li>same generation and the new depth is ≥ the stored depth.</li>
-     * </ul>
+     * Stores an entry using a generation-age-aware depth-preferred replacement
+     * scheme.  The eviction priority order is:
+     * <ol>
+     *   <li>Empty slot — always fill.</li>
+     *   <li>Key mismatch — always replace (different position).</li>
+     *   <li>Age ≥ {@link #AGE_THRESHOLD} — always replace (stale regardless of depth).
+     *       Age is computed as {@code (byte)(currentGeneration - existing.generation())}
+     *       which wraps correctly for {@code byte} arithmetic.</li>
+     *   <li>Same key, entry is fresh (age &lt; threshold) — replace only when
+     *       the new depth ≥ existing depth (depth-preferred policy).</li>
+     * </ol>
+     *
+     * <p>Entries from the most recent {@code AGE_THRESHOLD - 1} searches are
+     * preserved by the depth-preference rule, avoiding premature eviction of
+     * deep results from adjacent positions in the game tree.
      */
     public void store(long key, int bestMove, int depth, int score, TTBound bound) {
         int index = indexFor(key);
         Entry existing = table.get(index);
         boolean replace = existing == null
                 || existing.key() != key
-                || existing.generation() != currentGeneration
+                || (byte)(currentGeneration - existing.generation()) >= AGE_THRESHOLD
                 || depth >= existing.depth();
         if (replace) {
             if (existing == null) {

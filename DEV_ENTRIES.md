@@ -4357,3 +4357,35 @@ cross-position stats are sufficient). TT size configurability via UCI (Issue #11
 
 **Closes #110**
 **Phase: 9B — Search Improvements**
+
+---
+
+### [2026-04-04] Phase 9B — Issue #111 TT Aging: evict entries older than AGE_THRESHOLD generations
+
+**Branch:** `phase/9b-tt-aging`
+
+**What changed:**
+- Added `static final byte AGE_THRESHOLD = 4` to `TranspositionTable`.
+- Updated `store()` replacement logic: the previous-generation check `existing.generation() != currentGeneration`
+  (which evicted ANY non-current-generation entry) is replaced with
+  `(byte)(currentGeneration - existing.generation()) >= AGE_THRESHOLD`, which preserves
+  entries from the last AGE_THRESHOLD-1 (= 3) searches under depth-preference rules.
+  Byte arithmetic wraps correctly for all generation counter values.
+- Two new unit tests in `TranspositionTableTest`: one confirms age-eligible entries are always evicted
+  (even by a shallow store), the other confirms entries below the threshold are preserved by the
+  depth-preference rule.
+
+**Why:** The original "evict any non-current-gen entry" policy discarded valid deep entries from
+the previous move immediately, reducing TT diversity in Lazy SMP (helpers and main thread can plant
+entries in separate generations). Preserving entries aged 1–3 moves retains useful continuation
+information across adjacent positions without filling the table with arbitrarily old entries.
+
+**Measurements:** Test suite: 150 run, 0 failures, 2 skipped (TacticalSuite + NpsBench).
+Search regression: 31/31 bestmoves unchanged. Perft: not re-run (no board or movegen change).
+NPS impact: not measured here; will be captured in Phase 9B SPRT for TT aging (Issue #118 scope).
+
+**Left out:** SPRT to quantify Elo impact (Issue #118 scope). AGE_THRESHOLD Texel-tuning (out of scope
+for Phase 9B). Per-entry generation visibility from UCI `info` (out of scope).
+
+**Closes #111**
+**Phase: 9B — Search Improvements**

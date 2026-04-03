@@ -73,4 +73,44 @@ class TranspositionTableTest {
         assertEquals(1, entryB.depth());
         assertEquals(25, entryB.score());
     }
+
+    @Test
+    void ageEligibleEntryReplacedRegardlessOfDepth() {
+        // An entry aged AGE_THRESHOLD generations is always evicted, even by a shallower store.
+        TranspositionTable table = new TranspositionTable(1);
+        long key = 42L;
+
+        table.store(key, Move.of(10, 18), 10, 100, TTBound.EXACT);
+        // Advance generation until the stored entry hits the eviction threshold.
+        for (int i = 0; i < TranspositionTable.AGE_THRESHOLD; i++) {
+            table.incrementGeneration();
+        }
+        // A shallower entry must evict the stale deep entry.
+        table.store(key, Move.of(11, 19), 1, 50, TTBound.LOWER_BOUND);
+
+        TranspositionTable.Entry entry = table.probe(key);
+        assertNotNull(entry);
+        assertEquals(1, entry.depth(), "shallow entry should replace stale deep entry");
+        assertEquals(50, entry.score());
+    }
+
+    @Test
+    void freshEntryWithinAgeThresholdPreservedByDepthPreference() {
+        // An entry aged less than AGE_THRESHOLD is kept over a shallower replacement.
+        TranspositionTable table = new TranspositionTable(1);
+        long key = 99L;
+
+        table.store(key, Move.of(10, 18), 10, 100, TTBound.EXACT);
+        // Advance to AGE_THRESHOLD - 1 (one tick below eviction threshold).
+        for (int i = 0; i < TranspositionTable.AGE_THRESHOLD - 1; i++) {
+            table.incrementGeneration();
+        }
+        // A shallower entry must NOT replace the still-fresh deep entry.
+        table.store(key, Move.of(11, 19), 1, 50, TTBound.LOWER_BOUND);
+
+        TranspositionTable.Entry entry = table.probe(key);
+        assertNotNull(entry);
+        assertEquals(10, entry.depth(), "deep fresh entry should be preserved over shallow replacement");
+        assertEquals(100, entry.score());
+    }
 }
