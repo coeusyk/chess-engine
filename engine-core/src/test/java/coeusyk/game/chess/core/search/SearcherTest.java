@@ -227,7 +227,7 @@ class SearcherTest {
     void futilityAndRazorMarginsAreDefinedAsConstants() {
         Searcher searcher = new Searcher();
 
-        assertEquals(100, searcher.getFutilityMarginForTesting(1));
+        assertEquals(150, searcher.getFutilityMarginForTesting(1));  // Phase 9B #114: raised 100 → 150
         assertEquals(300, searcher.getFutilityMarginForTesting(2));
         assertEquals(0, searcher.getFutilityMarginForTesting(3));
         assertEquals(300, searcher.getRazorMarginForTesting());

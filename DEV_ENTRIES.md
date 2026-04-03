@@ -4392,6 +4392,38 @@ for Phase 9B). Per-entry generation visibility from UCI `info` (out of scope).
 
 ---
 
+### [2026-04-04] Phase 9B — Issue #114 Futility margin depth-1: raise 100 → 150 cp (+) Issue #115 depth-2 already active
+
+**Branch:** `phase/9b-futility-margin`
+
+**What changed (#114):**
+- `Searcher.java`: `FUTILITY_MARGIN_DEPTH_1` raised from 100 to 150 cp.
+  Depth-1 futility pruning now requires a bigger static-eval deficit (150 cp) before pruning
+  a quiet move, which is more conservative and avoids over-pruning middlegame quiet moves
+  that are within 1-1.5 pawns of alpha.
+- `SearcherTest.futilityAndRazorMarginsAreDefinedAsConstants`: assertion updated from 100 → 150.
+
+**What changed (#115):**
+- No code change required. Investigation confirmed that depth-2 futility at 300 cp is **already
+  enabled** in the current codebase (`getFutilityMarginForDepth` returns `FUTILITY_MARGIN_DEPTH_2=300`
+  for depth==2; tested by `assertEquals(300, getFutilityMarginForTesting(2))`).
+- The Phase 3 DEV entry about "disabling depth-2 futility" referred to a regression that was
+  subsequently fixed in a later Phase 3 sub-issue (`FUTILITY_MARGIN_DEPTH_2` was re-added in
+  commit documented in entry "[2026-04-03] Phase 3 … extended futility depth 2").
+- Issue #115 is therefore resolved by verification only — no code to change.
+
+**Why:** Phase 9B spec (#114) raises the depth-1 margin to match typical tuned values in
+open-source engines (100–200 cp range, commonly 150). The larger margin reduces the risk of
+incorrectly pruning drawing or near-equal quiet moves at depth 1.
+
+**Tests:** 150 run, 0 failures, 2 skipped. SearchRegressionTest 31/31 unchanged.
+
+**Left out:** Tuning the exact margin (150 vs 175 vs 200): SPRT scope (Issue #118).
+Depth-3+ futility: beyond current spec; would need careful tactical validation.
+
+**Closes #114, #115**
+**Phase: 9B — Search Improvements**
+
 ### [2026-04-04] Phase 9B — Issue #113 LMR: update formula to log2-based and raise threshold to moveIndex >= 4
 
 **Branch:** `phase/9b-lmr-update`

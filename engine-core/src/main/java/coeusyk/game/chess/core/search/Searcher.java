@@ -32,7 +32,7 @@ public class Searcher {
     private static final int ASPIRATION_INITIAL_DELTA_CP = 50;
     private static final int NULL_MOVE_DEPTH_THRESHOLD = 3;
     private static final int MAX_LEGAL_MOVES = 256;
-    private static final int FUTILITY_MARGIN_DEPTH_1 = 100;
+    private static final int FUTILITY_MARGIN_DEPTH_1 = 150;
     private static final int FUTILITY_MARGIN_DEPTH_2 = 300;
     private static final int RAZOR_MARGIN_DEPTH_1 = 300;
     private static final int RAZOR_MARGIN_DEPTH_2 = 600;
