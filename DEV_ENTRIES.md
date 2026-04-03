@@ -4392,6 +4392,41 @@ for Phase 9B). Per-entry generation visibility from UCI `info` (out of scope).
 
 ---
 
+### [2026-04-04] Phase 9B — Issue #118 SPRT methodology and Phase 9B validation script
+
+**Branch:** `phase/9b-pawn-hash-stats` (committed together with #117)
+
+**What changed:**
+- Created `tools/sprt_phase9b.ps1`: consolidated Phase 9B SPRT script.
+  Runs the latest built JAR vs `engine-uci-0.4.9.jar` (Phase 9A baseline).
+  Parameters: H0=0, H1=10, alpha=0.05, beta=0.05, TC=5+0.05, concurrency=2.
+  H1=10 is used instead of H1=50 because individual search tweaks yield small gains.
+  Documents all Phase 9B changes in .DESCRIPTION block.
+
+**Phase 9B SPRT plan:**
+After merging all 9B branches via `develop`, build the consolidated JAR and run:
+```powershell
+$env:JAVA_HOME = "C:\Program Files\Java\jdk-21"
+.\mvnw.cmd -pl engine-uci -am package -DskipTests
+.\tools\sprt_phase9b.ps1
+```
+Interpret result:
+  - H1 accepted (LLR >= upper): Phase 9B improves Elo; tag release, bump to 0.5.0.
+  - H0 accepted (LLR <= lower): No significant gain; review individual changes via sub-SPRTs.
+  - No verdict after 20000 games: extend with additional SPRT run or lower H1 to 5.
+
+**Phase 9A SMP SPRT (currently running):**
+  - Test: Vex-2T vs Vex-1T (same engine, H0=0, H1=50, alpha=0.05, beta=0.05, TC=5+0.05)
+  - Purpose: determine if Lazy SMP with 2 threads provides meaningful Elo gain
+  - Status at last check (game 67): 15W-13L-38D [0.515] — trending toward H0; no verdict yet
+  - When verdict is available: record in a follow-up DEV entry and decide whether to enable
+    multi-threaded UCI defaults or keep default at 1T.
+
+**Tests:** No new tests. All Phase 9B tests remain 150 run, 0 failures, 2 skipped.
+
+**Closes #118**
+**Phase: 9B — Search Improvements**
+
 ### [2026-04-04] Phase 9B — Issue #117 Pawn hash CI gate: enable hit-rate tracking and assert ≥85%
 
 **Branch:** `phase/9b-pawn-hash-stats`
