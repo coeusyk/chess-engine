@@ -220,6 +220,10 @@ public class Searcher {
         return transpositionTable.getHitRate();
     }
 
+    public TranspositionTable.TTStats getTranspositionTableStats() {
+        return transpositionTable.getStats();
+    }
+
     public void setSyzygyProber(SyzygyProber prober) {
         this.syzygyProber = prober != null ? prober : new NoOpSyzygyProber();
     }

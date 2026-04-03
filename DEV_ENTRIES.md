@@ -4327,3 +4327,33 @@ Root cause of 4T underperformance vs 2T-on-single-core (+28 Elo):
 
 - Enable `PAWN_HASH_STATS = true`, run depth-10 bench, measure pawn hash hit rate.
 - Begin Phase 9B: TT occupancy measurement and aging (#106), null-move depth adaptation (#107).
+
+---
+
+### [2026-04-04] Phase 9B — Issue #110 TT Stats: TTStats record + NpsBenchmarkTest output
+
+**Branch:** `phase/9b-tt-stats`
+
+**What changed:**
+- Added `TTStats(long probes, long hits, int hashfull)` record to `TranspositionTable` as a public
+  nested record. Includes a derived `hitRate()` convenience method.
+- Added `getStats()` to `TranspositionTable`, returning a point-in-time snapshot.
+- Added `getTranspositionTableStats()` to `Searcher`, delegating to the internal TT.
+- Modified `NpsBenchmarkTest.aggregateNps()`: after all measurement rounds, runs all 4 positions
+  once more through a dedicated `statsSearcher` at depth 10, then prints:
+  - `TT hashfull: NNN/1000`
+  - `TT hit rate: XX.X%  (hits / probes)`
+
+**Why:** TT occupancy and hit rate are the primary indicators of TT sizing adequacy and
+depth-preferred replacement efficiency. Without visibility into these metrics there is no
+data-driven basis for choosing TT size, evaluating the aging policy (Issue #111), or setting
+the pawn hash CI gate (Issue #117).
+
+**Tests:** 148 run, 0 failures, 2 skipped (TacticalSuite + NpsBenchmark as normal). No
+existing test changed behavior — the new `getTranspositionTableStats()` method is additive.
+
+**Left out:** Printing TT stats per-round (unnecessary granularity — end-of-benchmark
+cross-position stats are sufficient). TT size configurability via UCI (Issue #117 scope).
+
+**Closes #110**
+**Phase: 9B — Search Improvements**

@@ -127,6 +127,24 @@ class NpsBenchmarkTest {
         System.out.printf(Locale.US,
             "[NpsBenchmark] AGGREGATE MEAN NPS: %,d  +/- %,d%n", aggMean, aggStddev);
 
+        // TT statistics: run all 4 positions once more through a dedicated Searcher
+        // so that TT stats reflect a realistic cross-position end-of-benchmark state.
+        System.out.println();
+        System.out.println("[NpsBenchmark] TT Statistics (single pass over all positions at depth " + BENCH_DEPTH + ")");
+        Searcher statsSearcher = new Searcher();
+        statsSearcher.setTranspositionTableSizeMb(BENCH_HASH_MB);
+        for (String fen : POSITION_FENS) {
+            Board b = new Board(fen);
+            b.setSearchMode(true);
+            statsSearcher.searchDepth(b, BENCH_DEPTH);
+        }
+        TranspositionTable.TTStats ttStats = statsSearcher.getTranspositionTableStats();
+        System.out.printf(Locale.US,
+            "[NpsBenchmark] TT hashfull:  %d/1000%n", ttStats.hashfull());
+        System.out.printf(Locale.US,
+            "[NpsBenchmark] TT hit rate:  %.1f%%  (%d / %d probes)%n",
+            ttStats.hitRate() * 100.0, ttStats.hits(), ttStats.probes());
+
         // Regression gate: if nps.baseline is set, require aggMean >= baseline * (1 - nps.threshold).
         long npsBaseline = Long.getLong("nps.baseline", 0L);
         if (npsBaseline > 0) {

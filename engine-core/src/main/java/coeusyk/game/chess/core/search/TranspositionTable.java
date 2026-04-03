@@ -166,4 +166,23 @@ public class TranspositionTable {
      */
     public record Entry(long key, int bestMove, int depth, int score, TTBound bound, byte generation) {
     }
+
+    /**
+     * Snapshot of transposition-table statistics at a point in time.
+     *
+     * @param probes   total probe calls since last {@link #resetStats()} / {@link #clear()}
+     * @param hits     successful probes (key matched) in the same window
+     * @param hashfull occupied entries per mille (0–1000), matching the UCI {@code hashfull} convention
+     */
+    public record TTStats(long probes, long hits, int hashfull) {
+        /** Hit rate in [0.0, 1.0]; returns 0.0 when no probes have been made. */
+        public double hitRate() {
+            return probes == 0 ? 0.0 : (double) hits / probes;
+        }
+    }
+
+    /** Returns a point-in-time snapshot of TT statistics. */
+    public TTStats getStats() {
+        return new TTStats(probes.get(), hits.get(), hashfull());
+    }
 }
