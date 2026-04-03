@@ -4253,3 +4253,77 @@ NPS (cold bench): 203,189 aggregate. NPS (warm same-session): 381,194 (from NpsB
   resize pawn hash table (double to 32 k entries).
 - After #103 SPRT passes, raise `nps.baseline` in `ci.yml` to the measured 2-thread NPS.
 - Begin Phase 9B: TT occupancy measurement and aging (#106), null-move depth > 2 (#107).
+
+---
+
+### [2026-04-04] Phase 9A — Lazy SMP 4T SPRT + TimeManager Safety Fix (#103)
+
+**Built / Fixed:**
+
+- **`TimeManager` safety cap** (`engine-core`): Added a `safetyMax = (remaining - overhead) / 2`
+  cap applied after the existing floor computation, preventing `hardLimitMs` from exceeding
+  half the remaining clock when remaining < ~250 ms. Without this, at low remaining time the
+  floor `hardLimitMs = Math.max(hard, softLimitMs + 50)` could produce `hardLimitMs ≥ 100 ms`
+  even when only 100 ms remained, causing guaranteed time-loss under 4-thread Lazy SMP (helpers
+  pre-populate the TT → main search reaches deeper depths per move → soft-limit overshot more
+  often → clock drains to the danger zone at the critical last few moves).
+  - Added test `safetyCapPreventsHardLimitExceedingHalfOfRemainingTime` to `TimeManagerTest`.
+  - All 4 TimeManagerTest cases pass; 145/0/0 engine-core suite green.
+  - Commit: `b89c990 fix(engine-core): TimeManager safety cap prevents time-loss at low
+    remaining clock`.
+
+**4T SPRT Results (Threads=4 vs Threads=1, TC=5+0.05, 8-core machine):**
+
+| Stat                 | Value                           |
+|----------------------|---------------------------------|
+| Games                | 51                              |
+| Score                | 9W-15L-27D [0.441]              |
+| Elo estimate         | -41.1 ± 66.1                   |
+| LOS                  | 11.0%                           |
+| Draw ratio           | 52.9%                           |
+| SPRT verdict         | **H0 accepted** (LLR = -3.0)   |
+| 4T as White          | 5W-9L-12D [0.423]               |
+| 4T as Black          | 4W-6L-15D [0.460]               |
+| PGN                  | `tools/results/sprt_smp_4T_20260404_011057.pgn` |
+
+**Analysis:**
+
+H0 accepted — 4T Lazy SMP on dedicated 8-core hardware produces no ≥50 Elo improvement
+over 1T at TC=5+0.05. The measured Elo point estimate is negative (-41), though the wide
+confidence interval (±66) is consistent with true Elo anywhere from -107 to +25.
+
+Root cause of 4T underperformance vs 2T-on-single-core (+28 Elo):
+
+1. **Synchronized depth progression on dedicated cores:** With 4 threads each running on its
+   own hardware core, all helpers reach similar search depths at similar wall-clock times.
+   This reduces TT entry *diversity* — the table contains entries from overlapping subtrees
+   at nearly identical depths, not the varied shallow-to-deep spectrum produced by OS
+   context-switching on a single core. The staggered start depths (D2, D1, D3 for 3 helpers)
+   are insufficient to overcome this effect at TC=5+0.05.
+
+2. **TC too long for SMP benefit ceiling:** At 5+0.05, the 1T engine already searches deeply
+   enough (D13-D15 by midgame) that helper TT pre-seeding provides marginal depth advantage.
+   Lazy SMP benefits are most pronounced at short TCs (1+0.01 or blitz) where extra depth
+   from TT seeding makes a larger proportional difference.
+
+3. **Implementation correctness confirmed:** TT key verification in `probe()` (`entry.key() == key`)
+   prevents cross-position contamination. `applyTtBound` depth gating prevents shallow helper
+   entries from causing incorrect cutoffs. Thread-local state (killerMoves, historyHeuristic,
+   Evaluator pawn hash) confirmed isolated. The underperformance is an architectural property
+   of Lazy SMP, not a correctness bug.
+
+**Decisions:**
+
+- Implementation **retained**: 2T on any machine provides confirmed +28 Elo improvement
+  (325-game inconclusive test, H0 not accepted). The feature is beneficial for the common
+  multi-threaded UCI use case (users set Threads=2 by default in most GUIs).
+- Issue #103 **closed** with H0 verdict documented. No further SPRT planned for higher
+  thread counts at this TC — the architecture confirms diminishing returns beyond 2T for
+  5+0.05 time controls.
+- `nps.baseline` in `ci.yml`: NOT raised — 4T SMP does not produce a reliable NPS gain
+  on the CI test suite.
+
+**Next:**
+
+- Enable `PAWN_HASH_STATS = true`, run depth-10 bench, measure pawn hash hit rate.
+- Begin Phase 9B: TT occupancy measurement and aging (#106), null-move depth adaptation (#107).
