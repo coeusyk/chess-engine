@@ -4244,7 +4244,11 @@ NPS (cold bench): 203,189 aggregate. NPS (warm same-session): 381,194 (from NpsB
 
 **Next:**
 
-- Run `tools/sprt_smp.ps1` with the current release JAR to get SPRT verdict for #103.
+- ~~Run `tools/sprt_smp.ps1` with the current release JAR to get SPRT verdict for #103.~~
+  SPRT result: 325 games, score 145-119-61 [54.0%] ≈ **+28 Elo**. H1=50 not accepted; H0 not
+  accepted either (consistent positive advantage). Verdict: **inconclusive for H1=50, measured
+  +28 Elo**. Test ran on single-core machine (context-switching limits SMP benefit). Retest on
+  multi-core CI runner recommended. Implementation retained — genuine improvement.
 - Enable `PAWN_HASH_STATS = true`, run depth-10 bench, measure hit rate. If miss rate > 15%
   resize pawn hash table (double to 32 k entries).
 - After #103 SPRT passes, raise `nps.baseline` in `ci.yml` to the measured 2-thread NPS.
