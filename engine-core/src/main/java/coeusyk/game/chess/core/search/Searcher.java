@@ -1333,15 +1333,6 @@ public class Searcher {
             return bestScore;
         }
 
-        // Not in check: stalemate guard FIRST — evaluate() would return a large score for the
-        // winning side, but a stalemate position must score 0 regardless of material imbalance.
-        // Without this early check the standPat >= beta cutoff below can return the wrong value
-        // (e.g. +700 cp instead of 0) under tight aspiration/NWS windows.
-        if (board.isStalemate()) {
-            leafNodes++;
-            return 0;
-        }
-
         int standPat = evaluate(board);
         if (standPat >= beta) {
             leafNodes++;

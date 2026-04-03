@@ -55,6 +55,7 @@ public class Evaluator {
     private static final long WHITE_RANK_7 = 0x000000000000FF00L;
     private static final long BLACK_RANK_7 = 0x00FF000000000000L;
     private static final long FILE_MASK_BASE = 0x0101010101010101L;
+    private static final int HANGING_PENALTY = 50;
 
     static {
         PHASE_WEIGHTS[Piece.Knight] = 1;
@@ -197,41 +198,31 @@ public class Evaluator {
     }
 
     /**
-     * Penalty for non-king pieces that are genuinely hanging, evaluated via SEE.
-     * SEE correctly handles king-as-sole-defender: a bishop on d5 defended only by a king on c4
-     * is NOT flagged as hanging because the king recapture makes the exchange unprofitable for
-     * the attacker (SEE returns 0).  The old isSquareAttackedBy check could not distinguish this.
+     * Penalty for non-king pieces that are attacked and not defended (cheap bitboard-only form).
      * Returns a white-positive score: negative if white has hanging pieces, positive if black does.
      */
     private int hangingPenalty(Board board) {
         int penalty = 0;
-        // White non-king pieces: penalise if Black can profitably capture (SEE gain > 0 for Black).
-        // Penalty = SEE_gain / 4: a 25% forward-look bonus detects genuinely hanging pieces without
-        // making the static eval of "piece still on board" equal to "piece already captured" (which
-        // would make the engine indifferent to actually capturing hanging pieces at shallow depths).
+        // White non-king pieces: penalise if attacked by Black and not defended by any White piece
         long whites = board.getWhiteOccupancy() & ~board.getWhiteKing();
         long temp = whites;
         while (temp != 0) {
             int sq = Long.numberOfTrailingZeros(temp);
             temp &= temp - 1;
-            if (board.isSquareAttackedBy(sq, Piece.Black)) {
-                int gain = see.captureGainFor(board, sq, Piece.Black);
-                if (gain > 0) {
-                    penalty -= gain / 4;
-                }
+            if (board.isSquareAttackedBy(sq, Piece.Black)
+                    && !board.isSquareAttackedBy(sq, Piece.White)) {
+                penalty -= HANGING_PENALTY;
             }
         }
-        // Black non-king pieces: bonus if White can profitably capture (SEE gain > 0 for White)
+        // Black non-king pieces: bonus if attacked by White and not defended by any Black piece
         long blacks = board.getBlackOccupancy() & ~board.getBlackKing();
         temp = blacks;
         while (temp != 0) {
             int sq = Long.numberOfTrailingZeros(temp);
             temp &= temp - 1;
-            if (board.isSquareAttackedBy(sq, Piece.White)) {
-                int gain = see.captureGainFor(board, sq, Piece.White);
-                if (gain > 0) {
-                    penalty += gain / 4;
-                }
+            if (board.isSquareAttackedBy(sq, Piece.White)
+                    && !board.isSquareAttackedBy(sq, Piece.Black)) {
+                penalty += HANGING_PENALTY;
             }
         }
         return penalty;

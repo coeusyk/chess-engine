@@ -168,7 +168,10 @@ class SearchRegressionTest {
             //     c1c2 (king advance) win; BK cannot cover both pawns. Tuned eval (v0.4.9
             //     Texel run) raises king-support PST weights, shifting preference to c1c2.
             //     Updated 2025-07-14: Texel tuning v0.4.9 shifts preference to c1c2.
-            Arguments.of("P5",  P5_FEN,  "c1c2"),
+            //     Updated 2026-04-03: cheap bitboard hanging-piece penalty (isSquareAttackedBy,
+            //     50 cp fixed) slightly reweights pawn-advance paths; c4c5 becomes preferred.
+            //     Both c1c2 and c4c5 win; choice is eval-dependent.
+            Arguments.of("P5",  P5_FEN,  "c4c5"),
             Arguments.of("P6",  P6_FEN,  "f4f5"),
             // P7: d7d8q (immediate promotion) is objectively superior to d1d2 (delayed king
             //     move). Promoting at once gains K+Q vs K immediately with no benefit to
@@ -184,38 +187,32 @@ class SearchRegressionTest {
             //     key square) and d3e4 (escort pawn) both win. Tuned eval (v0.4.9 Texel
             //     run) shifts preference to d3d4 via PST and mobility changes.
             //     Updated 2025-07-14: Texel tuning v0.4.9 shifts preference to d3d4.
-            Arguments.of("P9",  P9_FEN,  "d3d4"),
+            //     Updated 2026-04-03: cheap bitboard hanging-piece penalty (50 cp fixed)
+            //     shifts depth-8 preference to d3e4. Both d3d4 and d3e4 win; equivalent.
+            Arguments.of("P9",  P9_FEN,  "d3e4"),
             // P10: e3d3 and e3f3 are symmetric king moves to break direct e-file opposition.
             //      Both win; choice is eval-dependent (d3/f3 equidistant for central pawn).
-            //      Updated 2026-04-03: SEE-based hanging-piece penalty (Evaluator.hangingPenalty,
-            //      gain/4 weight) applies a ~25 cp forward-look bonus to leaf evals where the white
-            //      pawn on e4 is adjacent to the black king. The 1-cp asymmetry between d3 and f3
-            //      flipped to e3f3 at depth 8. Both e3d3 and e3f3 are provably equivalent; updated
-            //      to reflect new eval calibration.
-            Arguments.of("P10", P10_FEN, "e3f3"),
+            //      Updated 2026-04-03: SEE-based hanging-piece penalty reverted to cheap
+            //      bitboard-only form (50 cp fixed); 1-cp asymmetry reverts to e3d3 at depth 8.
+            //      Both e3d3 and e3f3 are provably equivalent.
+            Arguments.of("P10", P10_FEN, "e3d3"),
             // Endgame
             // E1: 4k3/8/8/8/8/8/8/4KQ2 — KQ vs K. f1f6 (queen to 6th rank, restricts
             //     BK to ranks 7-8) is a textbook technique; f1b5 also wins. Tuned eval
             //     (v0.4.9 Texel run) raises queen mobility+PST, preferring f1f6.
             //     Updated 2025-07-14: Texel tuning v0.4.9 shifts preference to f1f6.
             Arguments.of("E1",  E1_FEN,  "f1f6"),
-            // E2: 4k3/8/8/8/8/8/8/4KR2 — KR vs K.  e1d2 (king activation toward centre) and
-            //     f1f6 (rook-to-6th restriction) both win; this is a known theoretical
-            //     equivalence — the move order doesn't matter in K+R vs lone king.  The
-            //     SEE-based hanging-penalty (v0.4.10 Evaluator change) applies a small bonus
-            //     for rook positions NOT on the same file as the black king, making king
-            //     centralisation scores fractionally higher at depth 8.  Both moves end in
-            //     checkmate within the 50-move window; bestmove updated to reflect new eval.
-            //     Updated 2026-04-03: SEE hanging-penalty gain/4 weight shifts depth-8 preference
-            //     from f1f6 to e1d2.
-            Arguments.of("E2",  E2_FEN,  "e1d2"),
+            // E2: 4k3/8/8/8/8/8/8/4KR2 — KR vs K.  f1f6 (rook-to-6th restriction) and
+            //     e1d2 (king activation toward centre) both win; known theoretical equivalence.
+            //     Updated 2026-04-03: cheap bitboard hanging-penalty (replacing SEE-based form)
+            //     reverts depth-8 preference to f1f6.
+            Arguments.of("E2",  E2_FEN,  "f1f6"),
             Arguments.of("E3",  E3_FEN,  "f4f5"),
             // E4: e4d4 and e4f4 are symmetric king moves to break e-file direct opposition.
             //     Both win; equivalent by symmetry for a central pawn.
-            //     Updated 2026-04-03: SEE-based hanging-piece penalty (gain/4) applies a tiny
-            //     bonus to paths where the pawn on e3 is further from the black king; the 1-cp
-            //     asymmetry flipped to e4f4 at depth 8. Equivalent by symmetry; updated.
-            Arguments.of("E4",  E4_FEN,  "e4f4"),
+            //     Updated 2026-04-03: cheap bitboard hanging-penalty (replacing SEE-based form)
+            //     reverts depth-8 preference to e4d4. Equivalent by symmetry.
+            Arguments.of("E4",  E4_FEN,  "e4d4"),
             Arguments.of("E5",  E5_FEN,  "a2e2"),
             // E6: 8/8/8/5k2/1PP5/8/2K5/8 — Kc2+Pb4c4 vs Kf5. Both b4b5 and c4c5 advance
             //     connected pawns; BK on f5 is far from both.
