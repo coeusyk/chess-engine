@@ -4134,3 +4134,43 @@ the bitboard-only check).
 - Run `NpsBenchmarkTest` post-revert to record Phase 8 final aggregate NPS.
 - Commit revert, close issue #91, tag `v0.4.10`, create PR → develop.
 - Create `phase/9a-performance`, start issue #100 (profiler baseline gate).
+
+---
+
+### [2026-04-03] Phase 9A — Branch Setup + Profiler Baseline (#100)
+
+**Branch Created:** `phase/9a-performance` (rebased on `phase/8-texel-tuning` tip; includes
+stalemate guard, NpsBenchmarkTest, and reverted HANGING_PENALTY = 50).
+
+**Profiler Baseline (`/bench/profiler-baseline.md`):**
+
+Method | Samples | % CPU
+`Board.makeMove(int)` | 109 | 22.6%
+`Evaluator.hangingPenalty(Board)` | 49 | 10.1%
+`Board.unmakeMove()` | 47 | 9.7%
+`MoveOrderer.orderMoves(...)` | 43 | 8.9%
+`Evaluator.pieceMobilityPacked(...)` | 34 | 7.0%
+
+Profiler: JFR `profile` settings, bench depth 10, 483 samples (10 ms interval).
+NPS (cold bench): 203,189 aggregate. NPS (warm same-session): 381,194 (from NpsBenchmarkTest).
+
+**Gate lifted:** Issue #100 closed. Phase 9A perf work can begin.
+- Next: Issue #101 (incremental attacked-squares bitboard) → targets hangingPenalty 10.1%
+- Next: Issue #102 (staged capture generation) → targets Q-search ordering 8.9%
+- Next: Issue #103 (Lazy SMP) → requires SPRT H0=0, H1=30 before close
+
+**Measurements:**
+- `hangingPenalty` at 10.1% leaf CPU confirms Issue #101 incremental-attacked-squares
+  is the highest-return single change: eliminates ~56 `isSquareAttackedBy()` calls per
+  `evaluate()` call, replacing with 2 bitboard lookups. Expected ≥ 20% NPS gain.
+- Q-ratio 3.3× (77% of all nodes are Q-nodes). Issue #102 staged capture gen targets
+  this path. Expected ≥ 10% NPS gain.
+- `makeMove` + `unmakeMove` combined = 32.3%. This is the irreducible search cost.
+  Optimizing involves reducing node count (pruning) or reducing per-move work.
+
+**Next Phase 9A tasks (dependency order):**
+1. #101 — Incremental attacked-squares bitboard (highest NPS yield)
+2. #102 — Staged capture generation in Q-search
+3. #103 — Lazy SMP 2 helper threads (separate SPRT required post-impl)
+4. #104 — Pawn hash table hit-rate measurement
+5. #105 — NPS CI gate (wire NpsBenchmarkTest into GitHub Actions)
