@@ -4392,6 +4392,30 @@ for Phase 9B). Per-entry generation visibility from UCI `info` (out of scope).
 
 ---
 
+### [2026-04-04] Phase 9B — Issue #116 Aspiration windows: raise activation threshold from depth >= 2 to depth >= 4
+
+**Branch:** `phase/9b-aspiration`
+
+**What changed:**
+- `Searcher.java` iterative deepening loop: `depth >= 2` changed to `depth >= 4` in the aspiration
+  window activation guard.
+  At depths 1–3 the previous iteration's score is too rough to be a reliable window center; full-window
+  search at these depths is both fast and correct. Aspiration kicks in from depth 4 onward where the
+  prior score is more stable, reducing spurious fail-low/fail-high rescans.
+
+**Why:** Phase 9B spec (#116) explicitly sets depth >= 4 as the activation threshold. The prior depth >= 2
+was carried forward from a conservative Phase 3 baseline. Raising the threshold reduces the risk of
+aspiration window failures at low depths wasting time rescanning narrow windows that are not yet stable.
+
+**Tests:** 150 run, 0 failures, 2 skipped. Both aspiration tests still pass (both run depth 5,
+which satisfies depth >= 4). SearchRegressionTest 31/31 unchanged.
+
+**Left out:** Tuning `ASPIRATION_INITIAL_DELTA_CP` (currently 50 cp): SPRT scope.
+Multi-step window widening (currently 2 consecutive failures → full window): already implemented.
+
+**Closes #116**
+**Phase: 9B — Search Improvements**
+
 ### [2026-04-04] Phase 9B — Issue #114 Futility margin depth-1: raise 100 → 150 cp (+) Issue #115 depth-2 already active
 
 **Branch:** `phase/9b-futility-margin`

@@ -345,7 +345,7 @@ public class Searcher {
                 deltaPruningSkips = 0;
                 // pvTable and pvLength are pre-allocated; no per-depth allocation needed.
                 RootResult iteration;
-                if (pvIndex == 0 && aspirationWindowsEnabled && depth >= 2 && previousBestMove != null) {
+                if (pvIndex == 0 && aspirationWindowsEnabled && depth >= 4 && previousBestMove != null) {
                     iteration = searchRootWithAspiration(board, depth, previousBestMove, bestScore, shouldStopHard, maxCheckExtensions, excludedMoves);
                 } else {
                     Move preferred = pvIndex == 0 ? previousBestMove : null;
