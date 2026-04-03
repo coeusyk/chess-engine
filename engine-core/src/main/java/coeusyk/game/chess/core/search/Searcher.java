@@ -1373,6 +1373,17 @@ public class Searcher {
             allQMoves[qCount++] = qm;
         }
         if (qCount == 0) {
+            // Stalemate guard: in endings with few pieces, verify that at least one quiet
+            // move is available before returning stand-pat. Without this, a stalemated side
+            // returns standPat (large negative) instead of 0.
+            // Gate: only pay the full move-generation cost when ≤ 8 total pieces remain.
+            if (Long.bitCount(board.getAllOccupancy()) <= 8) {
+                int allCount = MovesGenerator.generate(board, allQMoves);
+                if (allCount == 0) {
+                    leafNodes++;
+                    return 0; // stalemate
+                }
+            }
             leafNodes++;
             return standPat;
         }

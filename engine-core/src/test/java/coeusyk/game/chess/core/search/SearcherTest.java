@@ -333,34 +333,31 @@ class SearcherTest {
     @Test
     void quiescenceReturnsDrawForStalemate() {
         // Black king on a8, white queen on c7, white king on b6 — Black is stalemated.
-        // NOTE 2026-04-03: board.isStalemate() was removed from the non-check Q-search path
-        // to eliminate a full legal-move generation per Q-node (NPS regression bug).
-        // Main alphaBeta() handles stalemate before entering quiescence. Q-search now returns
-        // standPat (large negative from Black's perspective) for this position, not 0.
-        // The test is updated to assert the new behavior: score equals standPat.
+        // 3 total pieces: piece-count gate (≤ 8) fires, generateCaptures returns 0,
+        // then generate() returns 0 (stalemate) → Q-search returns 0 (draw score).
         Board stalemateBoard = new Board("k7/2Q5/1K6/8/8/8/8/8 b - - 0 1");
         Searcher searcher = new Searcher();
         Evaluator eval = new Evaluator();
         int standPat = eval.evaluate(stalemateBoard);
         assertTrue(standPat < 0, "Stalemate position should evaluate as large negative for Black to move");
         int score = searcher.quiescenceForTesting(stalemateBoard, -10000, 10000, 0);
-        assertEquals(standPat, score, "Q-search returns standPat for stalemate (stalemate guard removed from Q-search)");
+        assertEquals(0, score, "Q-search returns 0 (draw) for stalemate — piece-count gate fires and generate() confirms no legal moves");
     }
 
     @Test
     void quiescenceReturnsDrawForStalemateUnderTightWindow() {
-        // NOTE 2026-04-03: board.isStalemate() was removed from the non-check Q-search path.
-        // The original test verified that isStalemate() ran BEFORE evaluate() so tight windows
-        // didn't return a wrong standPat. That guard no longer exists. Q-search now returns
-        // standPat for stalemate under a tight window (the beta-cutoff fires: standPat >= beta).
+        // NOTE 2026-04-03: With a tight window beta == standPat, the stand-pat beta-cutoff
+        // fires at line `if (standPat >= beta) return standPat` — BEFORE the stalemate guard.
+        // Stalemate guard (piece-count gate + generate()) is only reached when no beta-cutoff
+        // fires. Under this window Q-search still returns standPat, not 0.
         Board stalemateBoard = new Board("k7/2Q5/1K6/8/8/8/8/8 b - - 0 1");
         Searcher searcher = new Searcher();
         Evaluator eval = new Evaluator();
         int standPat = eval.evaluate(stalemateBoard);
         assertTrue(standPat < 0, "Stalemate position should evaluate as large negative for Black to move");
-        // beta == standPat: standPat >= standPat fires, returning standPat (not 0).
+        // beta == standPat: standPat >= standPat fires, returning standPat before the stalemate guard.
         int score = searcher.quiescenceForTesting(stalemateBoard, standPat - 100, standPat, 0);
-        assertEquals(standPat, score, "Q-search returns standPat under tight window for stalemate (stalemate guard removed)");
+        assertEquals(standPat, score, "Q-search returns standPat under tight window (beta-cutoff fires before stalemate guard)");
     }
 
     @Test

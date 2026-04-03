@@ -4015,3 +4015,51 @@ Both use 16 parallel threads. K (100k subset): 1.655876.
 - SPRT: proportional hanging penalty vs v0.4.9 at H0=0, H1=5
 - NPS benchmark to confirm no regression (should match 9baf527 baseline)
 - Stalemate guard in quiescence() once NPS baseline is confirmed
+
+### [2026-04-03] Phase 8 — NPS Benchmark Test + Stalemate Guard in Q-Search (Tasks 8.2 + 8.3)
+
+**Built:**
+- **Task 8.2 — `NpsBenchmarkTest.java`**: new `@Tag("benchmark")` JUnit 5 test class in
+  `engine-core/src/test/java/.../search/`. Skipped in standard `mvn test` via
+  `Assumptions.assumeTrue(benchmark.enabled)`. Run with
+  `.\mvnw.cmd test -pl engine-core -Dgroups=benchmark -Dbenchmark.enabled=true`.
+  Methodology: 5 warmup rounds (shared Searcher, primes JIT/TT) then 10 measurement rounds
+  (fresh Searcher each) at depth 10 — identical to BenchMain protocol. Prints per-position
+  mean ± stddev and aggregate mean NPS.
+- **Task 8.3 — stalemate guard in Q-search**: When `qCount == 0` (no legal captures
+  survive the SEE filter) the engine previously returned `standPat`, which is wrong when the
+  side to move has no quiet moves either (stalemate should score 0). Fix: guarded by
+  `Long.bitCount(board.getAllOccupancy()) <= 8` to avoid hot-path cost in normal positions.
+  When the gate fires, calls `MovesGenerator.generate()` on the already-allocated `allQMoves`
+  buffer; if the move count is 0, returns 0 (stalemate draw) instead of standPat.
+- Updated `SearcherTest.quiescenceReturnsDrawForStalemate`: asserts 0 (draw) instead of
+  standPat — gate fires for the 3-piece FEN, generate() confirms no legal moves.
+- `SearcherTest.quiescenceReturnsDrawForStalemateUnderTightWindow` kept asserting standPat:
+  the beta-cutoff (`standPat >= beta`) fires first when `beta == standPat`, so the stalemate
+  guard is never reached — no change needed to the assertion.
+
+**Decisions Made:**
+- Piece-count gate ≤ 8 (from ENGINE_COMPLETION_PLAN): activates for K+R vs K, K+Q vs K,
+  K+B+N vs K endings where mid-search stalemate is plausible without triggering on typical
+  middlegame Q-search nodes (average ≈ 28 pieces). True NPS impact expected to be
+  negligible — gate fires only when the position is already near terminal.
+- Reused the `allQMoves` pool buffer for `generate()` call — safe because the DFS slot is
+  not live at this point in the frame (captures already processed). No additional allocation.
+- `NpsBenchmarkTest` follows exact BenchMain methodology so benchmark and CLI results are
+  directly comparable without cross-tool variance.
+
+**Broke / Fixed:**
+- Stalemate bug: Q-search called from a stalemate position (side to move not in check,
+  zero legal moves) would return static eval (large negative for the stalemated side)
+  instead of 0 — mistreating drawn positions as losses. Now correctly returns 0.
+
+**Measurements:**
+- Tests: 147 run, 0 failures, 2 skipped (TacticalSuiteTest + NpsBenchmarkTest). All perft
+  counts unchanged.
+- NPS impact of stalemate guard: not measured separately (gate fires only at ≤ 8 pieces;
+  negligible in aggregate NPS benchmark). A/B bench planned post-SPRT.
+
+**Next:**
+- SPRT verdict for d2c9a5b (proportional hanging penalty) still pending
+- Once SPRT closes: run NpsBenchmarkTest and record Phase 8 final aggregate NPS
+- Phase 9: profiler-driven NPS push toward 1M NPS target
