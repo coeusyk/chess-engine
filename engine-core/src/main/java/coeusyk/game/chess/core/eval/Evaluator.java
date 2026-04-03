@@ -21,8 +21,11 @@ public class Evaluator {
     private static final int[] EG_MATERIAL = new int[7];
     /** Fixed penalty (cp) applied per undefended attacked non-king piece. */
     private static final int HANGING_PENALTY = 50;
-    /** Set true to collect pawn-hash hit/miss statistics. Must stay false in production. */
-    private static final boolean PAWN_HASH_STATS = false;
+    /**
+     * Enable pawn-hash hit/miss statistics collection. Off by default (zero overhead);
+     * enabled in NpsBenchmarkTest and similar diagnostic callers.
+     */
+    private boolean pawnHashStatsEnabled = false;
     private long pawnTableHits, pawnTableMisses;
 
     // Mobility bonus per safe square (centipawns)
@@ -108,13 +111,20 @@ public class Evaluator {
         this.see = new StaticExchangeEvaluator();
     }
 
-    /** Returns the pawn-hash hit rate [0.0, 1.0]. Meaningful only when PAWN_HASH_STATS=true. */
+    /** Enable pawn-hash statistics tracking (hits and misses). Resets counters to zero. */
+    void enablePawnHashStats() {
+        this.pawnHashStatsEnabled = true;
+        this.pawnTableHits = 0;
+        this.pawnTableMisses = 0;
+    }
+
+    /** Returns the pawn-hash hit rate [0.0, 1.0]. Meaningful only when stats are enabled. */
     public double getPawnHashHitRate() {
         long total = pawnTableHits + pawnTableMisses;
         return total == 0 ? 0.0 : (double) pawnTableHits / total;
     }
 
-    /** Returns raw miss count. Meaningful only when PAWN_HASH_STATS=true. */
+    /** Returns raw miss count. Meaningful only when stats are enabled. */
     public long getPawnHashMisses() { return pawnTableMisses; }
 
     /** Returns the pawn hash table capacity. */
@@ -139,11 +149,11 @@ public class Evaluator {
         long pawnKey = board.getPawnZobristHash();
         int pawnIdx = (int) (pawnKey & PAWN_TABLE_MASK);
         if (pawnTableKeys[pawnIdx] == pawnKey) {
-            if (PAWN_HASH_STATS) pawnTableHits++;
+            if (pawnHashStatsEnabled) pawnTableHits++;
             pawnMg = pawnTableMg[pawnIdx];
             pawnEg = pawnTableEg[pawnIdx];
         } else {
-            if (PAWN_HASH_STATS) pawnTableMisses++;
+            if (pawnHashStatsEnabled) pawnTableMisses++;
             int[] pawnStructure = PawnStructure.evaluate(board.getWhitePawns(), board.getBlackPawns());
             pawnMg = pawnStructure[0];
             pawnEg = pawnStructure[1];

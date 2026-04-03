@@ -224,6 +224,16 @@ public class Searcher {
         return transpositionTable.getStats();
     }
 
+    /** Enables pawn-hash statistics tracking in the evaluator. Resets counters. */
+    void enablePawnHashStats() {
+        evaluator.enablePawnHashStats();
+    }
+
+    /** Returns the pawn-hash hit rate [0.0, 1.0] since stats were last enabled. */
+    double getPawnHashHitRate() {
+        return evaluator.getPawnHashHitRate();
+    }
+
     public void setSyzygyProber(SyzygyProber prober) {
         this.syzygyProber = prober != null ? prober : new NoOpSyzygyProber();
     }

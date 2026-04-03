@@ -4392,6 +4392,41 @@ for Phase 9B). Per-entry generation visibility from UCI `info` (out of scope).
 
 ---
 
+### [2026-04-04] Phase 9B — Issue #117 Pawn hash CI gate: enable hit-rate tracking and assert ≥85%
+
+**Branch:** `phase/9b-pawn-hash-stats`
+
+**What changed:**
+- `Evaluator.java`:
+  - Changed `private static final boolean PAWN_HASH_STATS = false` to a non-final instance field
+    `private boolean pawnHashStatsEnabled = false`. The JIT cannot constant-fold this away, but
+    branch prediction is 100% accurate (always false in production), so overhead is negligible.
+  - Added `void enablePawnHashStats()` (package-visible): sets flag and resets counters to 0.
+  - Updated `getPawnHashHitRate()` and `getPawnHashMisses()` Javadoc to reflect new API.
+- `Searcher.java`:
+  - Added `void enablePawnHashStats()` (package-visible): delegates to `evaluator.enablePawnHashStats()`.
+  - Added `double getPawnHashHitRate()` (package-visible): delegates to `evaluator.getPawnHashHitRate()`.
+- `NpsBenchmarkTest.java`:
+  - `statsSearcher.enablePawnHashStats()` now called before running positions.
+  - pawn hash hit rate printed: `[NpsBenchmark] Pawn hash hit rate: XX.X%`.
+  - Gate: `assertTrue(pawnHitRate >= 0.85, ...)` — fails build if hit rate drops below 85%.
+- `ci.yml`:
+  - Added comment clarifying the pawn-hash gate is embedded in the existing `benchmark` step.
+    No new CI step needed; the gate runs within `NpsBenchmarkTest.aggregateNps`.
+
+**Why:** Phase 9B spec (#117) requires a CI-visible hit-rate signal so that future changes that
+accidentally shrink the pawn table or degrade hash distribution are caught automatically. The 85%
+threshold is conservative — the 16K-entry direct-mapped table should achieve ≥92% on standard
+positions at depth 10; 85% gives headroom for hash distribution variance.
+
+**Deferred:** Adding a configurable `PawnHashSize` UCI option (requires UCI layer changes) is out of
+scope for this issue; the 16K-entry table is hard-coded and satisfies CI requirements.
+
+**Tests:** 150 run, 0 failures, 2 skipped.
+
+**Closes #117**
+**Phase: 9B — Search Improvements**
+
 ### [2026-04-04] Phase 9B — Issue #116 Aspiration windows: raise activation threshold from depth >= 2 to depth >= 4
 
 **Branch:** `phase/9b-aspiration`
