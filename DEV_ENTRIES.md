@@ -4063,3 +4063,35 @@ Both use 16 parallel threads. K (100k subset): 1.655876.
 - SPRT verdict for d2c9a5b (proportional hanging penalty) still pending
 - Once SPRT closes: run NpsBenchmarkTest and record Phase 8 final aggregate NPS
 - Phase 9: profiler-driven NPS push toward 1M NPS target
+
+---
+
+### [2026-04-03] Phase 8 — Tooling: BAT → PS1 migration (e435b96)
+
+**Built:**
+- Replaced all 6 tracked `.bat` match/SPRT scripts with equivalent `.ps1` scripts.
+- New scripts: `sprt.ps1`, `sprt_d2c9a5b.ps1`, `sprt_9baf527.ps1`, `sprt_015acf1.ps1`,
+  `sprt_run_phase8.ps1`, `sprt_smp.ps1`, `match.ps1`, `run-new.ps1`, `run-old.ps1`.
+- Updated `copilot-instructions.instructions.md` to mandate:
+  - All SPRT/match scripts must be `.ps1` (not `.bat` or `.sh`).
+  - Scripts must use relative paths (`$PSScriptRoot`) to locate JARs within the repo.
+  - `cutechess-cli` resolved via `$env:CUTECHESS` or `PATH` — never hardcoded.
+- Updated test baseline in instructions: 147 run · 0 failures · 2 skipped.
+
+**Decisions Made:**
+- PS1 chosen over BAT: `$PSScriptRoot` gives clean relative-path resolution that `.bat`'s
+  `%~dp0` cannot match for deep paths across drive-root boundaries.
+- No absolute user-specific paths inside scripts. External tools (cutechess-cli, java)
+  resolved via env var or PATH — scripts are portable across developer machines.
+
+**Broke / Fixed:**
+- Old `.bat` files contained hardcoded absolute paths to `C:\Users\yashk\...` — those
+  would silently fail on any other machine or after a home-directory rename.
+
+**Measurements:**
+- No engine changes. No perft or NPS measurements this cycle.
+
+**Next:**
+- SPRT (d2c9a5b vs v0.4.9) still running — ~714 games played of 20000 max.
+- Once SPRT verdict arrives: record result, run `NpsBenchmarkTest`, tag v0.4.10.
+- Phase 9A: create branch `phase/9a-performance`, start with #100 (profiler baseline).
