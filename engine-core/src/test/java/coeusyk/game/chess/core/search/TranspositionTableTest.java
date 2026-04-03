@@ -10,7 +10,7 @@ class TranspositionTableTest {
     @Test
     void storesAndRetrievesByZobristKey() {
         TranspositionTable table = new TranspositionTable(1);
-        Move best = new Move(12, 28);
+        int best = Move.of(12, 28);
 
         table.store(12345L, best, 5, 37, TTBound.EXACT);
         TranspositionTable.Entry entry = table.probe(12345L);
@@ -20,9 +20,8 @@ class TranspositionTableTest {
         assertEquals(5, entry.depth());
         assertEquals(37, entry.score());
         assertEquals(TTBound.EXACT, entry.bound());
-        assertNotSame(best, entry.bestMove());
-        assertEquals(best.startSquare, entry.bestMove().startSquare);
-        assertEquals(best.targetSquare, entry.bestMove().targetSquare);
+        assertEquals(Move.from(best), Move.from(entry.bestMove()));
+        assertEquals(Move.to(best), Move.to(entry.bestMove()));
     }
 
     @Test
@@ -30,15 +29,15 @@ class TranspositionTableTest {
         TranspositionTable table = new TranspositionTable(1);
         long key = 777L;
 
-        table.store(key, new Move(10, 18), 3, 10, TTBound.EXACT);
-        table.store(key, new Move(11, 19), 2, 20, TTBound.LOWER_BOUND);
+        table.store(key, Move.of(10, 18), 3, 10, TTBound.EXACT);
+        table.store(key, Move.of(11, 19), 2, 20, TTBound.LOWER_BOUND);
 
         TranspositionTable.Entry entry = table.probe(key);
         assertNotNull(entry);
         assertEquals(3, entry.depth());
         assertEquals(10, entry.score());
 
-        table.store(key, new Move(12, 20), 5, 30, TTBound.UPPER_BOUND);
+        table.store(key, Move.of(12, 20), 5, 30, TTBound.UPPER_BOUND);
         entry = table.probe(key);
         assertNotNull(entry);
         assertEquals(5, entry.depth());
@@ -64,8 +63,8 @@ class TranspositionTableTest {
         long keyA = 1L;
         long keyB = 1L << 32;
 
-        table.store(keyA, new Move(10, 18), 8, 50, TTBound.EXACT);
-        table.store(keyB, new Move(12, 20), 1, 25, TTBound.LOWER_BOUND);
+        table.store(keyA, Move.of(10, 18), 8, 50, TTBound.EXACT);
+        table.store(keyB, Move.of(12, 20), 1, 25, TTBound.LOWER_BOUND);
 
         assertNull(table.probe(keyA));
         TranspositionTable.Entry entryB = table.probe(keyB);

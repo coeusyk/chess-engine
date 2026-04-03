@@ -1,5 +1,8 @@
 package coeusyk.game.chess.tuner;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.List;
 
 /**
@@ -17,6 +20,8 @@ import java.util.List;
  * dramatically during coordinate descent on a well-balanced eval.
  */
 public final class KFinder {
+
+    private static final Logger LOG = LoggerFactory.getLogger(KFinder.class);
 
     /** Lower bound of the K search range. */
     public static final double K_MIN = 0.5;
@@ -55,8 +60,43 @@ public final class KFinder {
         }
 
         double best = (lo + hi) / 2.0;
-        System.out.printf("[KFinder] K = %.6f  (MSE = %.8f)%n",
-                best, TunerEvaluator.computeMse(positions, params, best));
+        LOG.info(String.format("[KFinder] K = %.6f  (MSE = %.8f)",
+                best, TunerEvaluator.computeMse(positions, params, best)));
+        return best;
+    }
+
+    /**
+     * Finds the K that minimises MSE using precomputed {@link PositionFeatures}.
+     *
+     * <p>Uses the same ternary search as the positions-based overload but
+     * evaluates each position via its feature dot product rather than a full
+     * static eval — significantly faster when features are already built.
+     *
+     * @param features precomputed feature list
+     * @param params   evaluation parameter array (held fixed during K search)
+     * @return optimal K ∈ [K_MIN, K_MAX]
+     */
+    public static double findKFromFeatures(List<PositionFeatures> features, double[] params) {
+        double lo = K_MIN;
+        double hi = K_MAX;
+
+        while (hi - lo > TOLERANCE) {
+            double m1 = lo + (hi - lo) / 3.0;
+            double m2 = hi - (hi - lo) / 3.0;
+
+            double mse1 = TunerEvaluator.computeMseFromFeatures(features, params, m1);
+            double mse2 = TunerEvaluator.computeMseFromFeatures(features, params, m2);
+
+            if (mse1 < mse2) {
+                hi = m2;
+            } else {
+                lo = m1;
+            }
+        }
+
+        double best = (lo + hi) / 2.0;
+        LOG.info(String.format("[KFinder/fast] K = %.6f  (MSE = %.8f)",
+                best, TunerEvaluator.computeMseFromFeatures(features, params, best)));
         return best;
     }
 }

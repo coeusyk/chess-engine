@@ -1,0 +1,128 @@
+package coeusyk.game.chess.core.search;
+
+import coeusyk.game.chess.core.models.Board;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.Test;
+
+import java.util.Locale;
+
+/**
+ * Fixed-depth NPS benchmark.
+ *
+ * <p>Excluded from the standard test suite — skips unless {@code -Dbenchmark.enabled=true}.
+ * Run with:
+ * <pre>
+ *   .\mvnw.cmd test -pl engine-core -Dgroups=benchmark -Dbenchmark.enabled=true
+ * </pre>
+ *
+ * <p>Methodology: 5 warmup rounds (shared Searcher) per position to prime JIT and TT,
+ * then 10 measurement rounds (fresh Searcher each) to exclude TT/killer carry-over.
+ * Matches the BenchMain protocol in engine-uci so numbers are directly comparable.
+ *
+ * <p>Baseline (Phase 8, post-Fix #5, depth 10):
+ * <ul>
+ *   <li>startpos:  402,750 ± 19,976 NPS</li>
+ *   <li>kiwipete:  246,066 ± 13,767 NPS</li>
+ *   <li>cpw-pos3:  601,293 ± 40,037 NPS</li>
+ *   <li>cpw-pos4:  279,393 ± 16,894 NPS</li>
+ *   <li>Aggregate: 381,194 NPS</li>
+ * </ul>
+ */
+@Tag("benchmark")
+class NpsBenchmarkTest {
+
+    private static final int    BENCH_DEPTH    = 10;
+    private static final int    WARMUP_ROUNDS  = 5;
+    private static final int    MEASURE_ROUNDS = 10;
+    private static final int    BENCH_HASH_MB  = 16;
+
+    private static final String[] POSITION_NAMES = {
+        "startpos",
+        "kiwipete",
+        "cpw-pos3",
+        "cpw-pos4"
+    };
+
+    private static final String[] POSITION_FENS = {
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+        "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+        "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1"
+    };
+
+    @Test
+    void aggregateNps() {
+        Assumptions.assumeTrue(
+            Boolean.getBoolean("benchmark.enabled"),
+            "Set -Dbenchmark.enabled=true to run NPS benchmark"
+        );
+
+        System.out.printf(Locale.US,
+            "[NpsBenchmark] depth=%d  warmup=%d  rounds=%d%n",
+            BENCH_DEPTH, WARMUP_ROUNDS, MEASURE_ROUNDS);
+        System.out.println();
+        System.out.printf(Locale.US, "%-12s | %5s | %12s | %9s | %15s%n",
+            "Position", "Round", "Nodes", "Time(ms)", "NPS");
+        System.out.println("-------------|-------|--------------|-----------|----------------");
+
+        long[] positionMeanNps = new long[POSITION_FENS.length];
+
+        for (int p = 0; p < POSITION_FENS.length; p++) {
+            String posName = POSITION_NAMES[p];
+            String fen     = POSITION_FENS[p];
+
+            // Warmup: shared Searcher primes JIT and TT — discarded
+            Searcher warmupSearcher = new Searcher();
+            warmupSearcher.setTranspositionTableSizeMb(BENCH_HASH_MB);
+            for (int w = 0; w < WARMUP_ROUNDS; w++) {
+                Board b = new Board(fen);
+                b.setSearchMode(true);
+                warmupSearcher.searchDepth(b, BENCH_DEPTH);
+            }
+
+            // Measurement: fresh Searcher each round (zero TT/killers/history carry-over)
+            long[] roundNps = new long[MEASURE_ROUNDS];
+            for (int r = 0; r < MEASURE_ROUNDS; r++) {
+                Searcher searcher = new Searcher();
+                searcher.setTranspositionTableSizeMb(BENCH_HASH_MB);
+                Board board = new Board(fen);
+                board.setSearchMode(true);
+
+                long t0     = System.nanoTime();
+                SearchResult result = searcher.searchDepth(board, BENCH_DEPTH);
+                long ms     = Math.max(1L, (System.nanoTime() - t0) / 1_000_000L);
+                long nodes  = result.nodesVisited();
+                long nps    = nodes * 1_000L / ms;
+
+                roundNps[r] = nps;
+                System.out.printf(Locale.US, "%-12s | %5d | %12d | %9d | %,15d%n",
+                    posName, r + 1, nodes, ms, nps);
+            }
+
+            // Per-position mean and stddev
+            long sum = 0;
+            for (long v : roundNps) sum += v;
+            long mean = sum / MEASURE_ROUNDS;
+            long sumSq = 0;
+            for (long v : roundNps) { long d = v - mean; sumSq += d * d; }
+            long stddev = (long) Math.sqrt((double) sumSq / MEASURE_ROUNDS);
+
+            positionMeanNps[p] = mean;
+            System.out.printf(Locale.US, "%-12s | %-5s |              |           | %,15d +/- %,d%n",
+                posName, "MEAN", mean, stddev);
+            System.out.println();
+        }
+
+        // Aggregate across all positions
+        long aggSum = 0;
+        for (long m : positionMeanNps) aggSum += m;
+        long aggMean = aggSum / POSITION_FENS.length;
+        long aggSumSq = 0;
+        for (long m : positionMeanNps) { long d = m - aggMean; aggSumSq += d * d; }
+        long aggStddev = (long) Math.sqrt((double) aggSumSq / POSITION_FENS.length);
+
+        System.out.printf(Locale.US,
+            "[NpsBenchmark] AGGREGATE MEAN NPS: %,d  +/- %,d%n", aggMean, aggStddev);
+    }
+}

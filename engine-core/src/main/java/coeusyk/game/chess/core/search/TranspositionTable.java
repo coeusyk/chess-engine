@@ -1,7 +1,5 @@
 package coeusyk.game.chess.core.search;
 
-import coeusyk.game.chess.core.models.Move;
-
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReferenceArray;
@@ -35,6 +33,12 @@ public class TranspositionTable {
     private final AtomicInteger occupiedCount = new AtomicInteger(0);
     private final AtomicLong probes = new AtomicLong(0);
     private final AtomicLong hits   = new AtomicLong(0);
+
+    // Per-search generation counter.  Incremented once at the start of each
+    // new move's search.  Old-generation entries are always evicted on store,
+    // regardless of depth, preventing the table from filling up with deep
+    // entries from previous moves that can never be replaced.
+    private volatile byte currentGeneration = 0;
 
     public TranspositionTable() {
         this(DEFAULT_SIZE_MB);
@@ -75,22 +79,37 @@ public class TranspositionTable {
     }
 
     /**
-     * Stores an entry using a depth-preferred replacement scheme.
-     * A slot is overwritten when:
+     * Increments the generation counter.  Call once at the start of each new
+     * move's search so that entries written in previous searches are treated as
+     * old-generation and can be freely evicted by shallower entries in the
+     * current search.
+     */
+    public void incrementGeneration() {
+        currentGeneration = (byte) (currentGeneration + 1);
+    }
+
+    /**
+     * Stores an entry using a generation-aware depth-preferred replacement
+     * scheme.  A slot is overwritten when:
      * <ul>
      *   <li>the slot is empty, or</li>
      *   <li>it belongs to a different position (key mismatch), or</li>
-     *   <li>the new depth is ≥ the stored depth (prefer deeper analysis).</li>
+     *   <li>the stored entry is from an older generation (stale — always evict), or</li>
+     *   <li>same generation and the new depth is ≥ the stored depth.</li>
      * </ul>
      */
-    public void store(long key, Move bestMove, int depth, int score, TTBound bound) {
+    public void store(long key, int bestMove, int depth, int score, TTBound bound) {
         int index = indexFor(key);
         Entry existing = table.get(index);
-        if (existing == null || existing.key() != key || depth >= existing.depth()) {
+        boolean replace = existing == null
+                || existing.key() != key
+                || existing.generation() != currentGeneration
+                || depth >= existing.depth();
+        if (replace) {
             if (existing == null) {
                 occupiedCount.incrementAndGet();
             }
-            table.set(index, new Entry(key, copyMove(bestMove), depth, score, bound));
+            table.set(index, new Entry(key, bestMove, depth, score, bound, currentGeneration));
         }
     }
 
@@ -141,13 +160,10 @@ public class TranspositionTable {
         return (int) (key ^ (key >>> 32)) & mask;
     }
 
-    private Move copyMove(Move move) {
-        if (move == null) {
-            return null;
-        }
-        return new Move(move.startSquare, move.targetSquare, move.reaction);
-    }
-
-    public record Entry(long key, Move bestMove, int depth, int score, TTBound bound) {
+    /**
+     * Packed-int best move, or {@link coeusyk.game.chess.core.models.Move#NONE} if none.
+     * Encoding: bits 0-5 = from, bits 6-11 = to, bits 12-15 = flag.
+     */
+    public record Entry(long key, int bestMove, int depth, int score, TTBound bound, byte generation) {
     }
 }

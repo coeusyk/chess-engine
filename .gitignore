@@ -38,3 +38,13 @@ build/
 
 .mvn/
 dependency-reduced-pom.xml
+
+### Tools runtime output ###
+tools/*.log
+tools/*.epd
+tools/selfplay*.pgn
+tools/results/*.pgn
+tools/results/*.txt
+
+### Logs ###
+*.log

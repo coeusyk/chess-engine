@@ -1,0 +1,16 @@
+<configuration>
+    <!-- UCI protocol output stays on System.out (raw, no logger).
+         All logger output routes to stderr so it never pollutes the UCI
+         stdout channel. Pattern is message-only to match the existing
+         prefix style used in the engine ([TIME], [SMP], etc.). -->
+    <appender name="STDERR" class="ch.qos.logback.core.ConsoleAppender">
+        <target>System.err</target>
+        <encoder>
+            <pattern>%msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="STDERR"/>
+    </root>
+</configuration>

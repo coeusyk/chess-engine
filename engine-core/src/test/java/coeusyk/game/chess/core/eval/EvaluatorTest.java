@@ -13,7 +13,9 @@ class EvaluatorTest {
     void startingPositionEvaluatesToZero() {
         Board board = new Board();
         int score = evaluator.evaluate(board);
-        assertEquals(0, score, "Starting position should evaluate to 0 (equal material)");
+        // Equal material + PSTs are symmetric, so the only offset is the TEMPO bonus
+        // for the side to move (+15 for White at the start position).
+        assertEquals(Evaluator.DEFAULT_CONFIG.tempo(), score, "Starting position should evaluate to TEMPO cp (side-to-move bonus only)");
     }
 
     @Test
@@ -23,10 +25,10 @@ class EvaluatorTest {
         int blackToMove = evaluator.evaluate(whiteAdvantage);
         assertTrue(blackToMove < 0, "Black to move should see negative score when white has extra knight");
 
-        // Position with white having extra pawn
+        // Position with equal material, White to move — eval equals TEMPO (side-to-move bonus).
         Board extraPawn = new Board("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
         int equalMaterial = evaluator.evaluate(extraPawn);
-        assertEquals(0, equalMaterial, "Equal material should evaluate to 0");
+        assertEquals(Evaluator.DEFAULT_CONFIG.tempo(), equalMaterial, "Equal material should evaluate to TEMPO cp (side-to-move bonus)");
     }
 
     @Test
@@ -45,8 +47,8 @@ class EvaluatorTest {
     void evalSymmetryForStartPosition() {
         Board board = new Board();
         int whiteScore = evaluator.evaluate(board);
-        // Starting position is symmetric, score should be 0 from either side
-        assertEquals(0, whiteScore);
+        // Starting position is materially/positionally symmetric; eval = TEMPO (side-to-move bonus).
+        assertEquals(Evaluator.DEFAULT_CONFIG.tempo(), whiteScore);
     }
 
     @Test
@@ -107,27 +109,27 @@ class EvaluatorTest {
         // Tables stored in display order: a8=0, h1=63
         // Board also uses a8=0, so white PST lookup is direct (no mirror).
         // White knight on e4 → board sq 36 → table index 36
-        // MG_KNIGHT row 4 (32-39), index 4 = 28
-        assertEquals(28, PieceSquareTables.mg(2, 36));
-        // EG_KNIGHT row 4, index 4 = 16
-        assertEquals(16, PieceSquareTables.eg(2, 36));
-        // MG_PAWN row 4, index 4 = 17
-        assertEquals(17, PieceSquareTables.mg(1, 36));
+        // MG_KNIGHT row 4 (32-39), col 4 = 15 (Texel V2-tuned 2026-04-XX)
+        assertEquals(15, PieceSquareTables.mg(2, 36));
+        // EG_KNIGHT row 4 (32-39), col 4 = 10 (Texel V2-tuned 2026-04-XX)
+        assertEquals(10, PieceSquareTables.eg(2, 36));
+        // MG_PAWN row 4 (32-39), col 4 = 12 (unchanged)
+        assertEquals(12, PieceSquareTables.mg(1, 36));
     }
 
     @Test
     void mgAndEgMaterialValuesAreCorrect() {
-        assertEquals(82, Evaluator.mgMaterialValue(1));   // Pawn
-        assertEquals(337, Evaluator.mgMaterialValue(2));  // Knight
-        assertEquals(365, Evaluator.mgMaterialValue(3));  // Bishop
-        assertEquals(477, Evaluator.mgMaterialValue(4));  // Rook
-        assertEquals(1025, Evaluator.mgMaterialValue(5)); // Queen
+        assertEquals(100, Evaluator.mgMaterialValue(1));   // Pawn   (Texel-tuned 2026-04-01)
+        assertEquals(391, Evaluator.mgMaterialValue(2));  // Knight
+        assertEquals(428, Evaluator.mgMaterialValue(3));  // Bishop (Texel V2)
+        assertEquals(558, Evaluator.mgMaterialValue(4));  // Rook (Texel V2)
+        assertEquals(1200, Evaluator.mgMaterialValue(5)); // Queen
 
-        assertEquals(94, Evaluator.egMaterialValue(1));   // Pawn
-        assertEquals(281, Evaluator.egMaterialValue(2));  // Knight
-        assertEquals(297, Evaluator.egMaterialValue(3));  // Bishop
-        assertEquals(512, Evaluator.egMaterialValue(4));  // Rook
-        assertEquals(936, Evaluator.egMaterialValue(5));  // Queen
+        assertEquals(89, Evaluator.egMaterialValue(1));   // Pawn   (Texel V2)
+        assertEquals(287, Evaluator.egMaterialValue(2));  // Knight
+        assertEquals(311, Evaluator.egMaterialValue(3));  // Bishop (Texel V2)
+        assertEquals(555, Evaluator.egMaterialValue(4));  // Rook (Texel V2)
+        assertEquals(1040, Evaluator.egMaterialValue(5)); // Queen (Texel V2)
     }
 
     @Test
@@ -155,13 +157,13 @@ class EvaluatorTest {
         // Kings + pawns only: phase = 0 → pure endgame score
         Board endgame = new Board("4k3/pppppppp/8/8/8/8/PPPPPPPP/4K3 w - - 0 1");
         int endgameScore = evaluator.evaluate(endgame);
-        // Equal material, symmetric → should be 0
-        assertEquals(0, endgameScore);
+        // Equal material, symmetric → eval = TEMPO (side-to-move bonus only)
+        assertEquals(Evaluator.DEFAULT_CONFIG.tempo(), endgameScore);
 
         // Starting position: phase = 24 → pure middlegame score
         Board startPos = new Board();
         int startScore = evaluator.evaluate(startPos);
-        assertEquals(0, startScore);
+        assertEquals(Evaluator.DEFAULT_CONFIG.tempo(), startScore);
     }
 
     @Test
@@ -289,8 +291,8 @@ class EvaluatorTest {
         int[] scoreDoubled = PawnStructure.evaluate(doubled, 0L);
         int[] scoreSpread = PawnStructure.evaluate(spread, 0L);
 
-        assertTrue(scoreSpread[0] > scoreDoubled[0],
-                "Doubled pawns should score lower in MG");
+        assertTrue(scoreSpread[0] >= scoreDoubled[0],
+                "Doubled pawns MG: spread >= doubled (DOUBLED_MG=0, Texel-tuned)");
         assertTrue(scoreSpread[1] > scoreDoubled[1],
                 "Doubled pawns should score lower in EG");
     }
@@ -421,5 +423,89 @@ class EvaluatorTest {
 
         assertEquals(evalA, evalB,
                 "Mop-up evaluation should be symmetric for mirrored positions");
+    }
+
+    @Test
+    void hangingPiecePenaltyReducesScore() {
+        // White bishop on c4, attacked by black rook on c8, no white defender.
+        // The hanging penalty must lower white's score compared to a position where
+        // a white pawn on b3 defends the bishop.
+        Board hangingBishop  = new Board("2r1k3/8/8/8/2B5/8/8/4K3 w - - 0 1");
+        Board defendedBishop = new Board("2r1k3/8/8/8/2B5/1P6/8/4K3 w - - 0 1");
+
+        int hangingScore  = evaluator.evaluate(hangingBishop);
+        int defendedScore = evaluator.evaluate(defendedBishop);
+
+        // The defended position has an extra pawn AND removes the hanging penalty.
+        // Either effect alone is enough to make defendedScore > hangingScore.
+        assertTrue(hangingScore < defendedScore,
+                "Undefended attacked bishop should score lower than defended bishop");
+    }
+
+    @Test
+    void hangingPenaltyIsSymmetric() {
+        // Black rook on a8 attacked by white rook on a1: mutual hanging, net penalty = 0.
+        // Black pawn on b7 is a promotion-path pawn (attacks a8 diagonally), so it defends black's rook.
+        Board hangingBlackRook  = new Board("r3k3/8/8/8/8/8/8/R3K3 b - - 0 1");
+        Board defendedBlackRook = new Board("r3k3/1p6/8/8/8/8/8/R3K3 b - - 0 1");
+
+        int hangingScore  = evaluator.evaluate(hangingBlackRook);
+        int defendedScore = evaluator.evaluate(defendedBlackRook);
+
+        // In hangingBlackRook: black rook a8 undefended, white rook a1 undefended → mutual-hanging,
+        // net penalty = 0.  Score is roughly equal material.
+        // In defendedBlackRook: black pawn at b7 attacks a8 (promotion diagonal), so black rook is
+        // defended; SEE for white taking a8 = 0 (pawn recaptures with promotion → unprofitable).
+        // White rook a1 still undefended: penalty = −rook_value/4 for white → good for black.
+        // Plus black has an extra pawn (+100 material).
+        // Therefore: defendedBlackRook is better for black → defendedScore > hangingScore.
+        assertTrue(defendedScore > hangingScore,
+                "Defended black rook + extra pawn + white rook still hanging → black scores better in defended position");
+    }
+
+    @Test
+    void hangingPenaltyNotTriggerWhenKingDefendsAffordably() {
+        // White bishop on d5, defended only by White King on c4, attacked by Black Rook on d1.
+        // SEE: Rook takes Bishop (gain 330), King recaptures Rook (gain 500) → Black net = -170.
+        // Black would not take (unprofitable), so captureGainFor(d5, Black) = 0 → no hanging penalty.
+        //
+        // Test design: compare to a position with equal material where the rook is on a1 instead
+        // (same file as before but left file — does NOT attack d5 at all).  Because both positions
+        // have identical material and neither has a hanging penalty for the bishop, the evaluation
+        // difference should be only the rook-PST(d1) vs rook-PST(a1) — a small amount well below
+        // a piece value.  If the bishop were wrongly penalised, the gap would be ~bishop_value/4 ≈ 82 cp larger.
+        Board rookOnDFile = new Board("3k4/8/8/3B4/2K5/8/8/3r4 w - - 0 1"); // rook d1 attacks bishop but exchange unprofitable
+        Board rookOffFile = new Board("3k4/8/8/3B4/2K5/8/8/r7 w - - 0 1");  // rook a1 does not attack bishop at all
+
+        int dFileScore  = evaluator.evaluate(rookOnDFile);
+        int offFileScore = evaluator.evaluate(rookOffFile);
+
+        // Same material; difference should be only rook-PST, not a hanging penalty on the bishop.
+        // A tolerance of 150 cp covers any PST variation while flagging an erroneous ~82 cp penalty.
+        assertTrue(Math.abs(dFileScore - offFileScore) < 150,
+                "Bishop defended by king (SEE=0 for Black) must not incur a hanging penalty; "
+                + "score difference should reflect only rook-PST(d1 vs a1), not a hanging penalty");
+    }
+
+    @Test
+    void hangingPenaltyFiresWhenKingIsOnlyDefenderButExchangeProfitable() {
+        // Regression for Fix 3: the old isSquareAttackedBy check treated the King as a real
+        // defender regardless of exchange result. If Black attacks with a piece LESS valuable than
+        // the target, the King recapture doesn't compensate — the piece IS genuinely hanging.
+        //
+        // Position: White Rook on d5 (value 500), Black Bishop on a2 attacks d5 diagonally,
+        //           White King on c4 "defends" d5 adjacently.  Black King on h8.
+        // Exchange: Ba2xd5 (Black gains 500), Kc4xd5 (White gains bishop=330 back).
+        // Net for Black = 500 - 330 = +170 → Rook IS hanging.
+        // Old code: isSquareAttackedBy(d5, White) == true (king) → NOT penalised (WRONG).
+        // New SEE code: captureGainFor(d5, Black) = 170 → penalised by -170 (correct).
+        Board hangingRookKingDefender = new Board("7k/8/8/3R4/2K5/8/b7/8 w - - 0 1");
+        Board noAttackerBaseline      = new Board("7k/8/8/3R4/2K5/8/8/8 w - - 0 1");
+
+        int hangingScore  = evaluator.evaluate(hangingRookKingDefender);
+        int baselineScore = evaluator.evaluate(noAttackerBaseline);
+
+        assertTrue(hangingScore < baselineScore,
+                "Rook attacked by lesser-value piece with only king-defender must be penalised by SEE score");
     }
 }

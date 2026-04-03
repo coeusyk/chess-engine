@@ -2,7 +2,11 @@ package coeusyk.game.chess.core.search;
 
 import coeusyk.game.chess.core.models.Piece;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public class TimeManager {
+    private static final Logger LOG = LoggerFactory.getLogger(TimeManager.class);
     private long moveOverheadMs = 30;
     private long softLimitMs = 1;
     private long hardLimitMs = 1;
@@ -35,12 +39,16 @@ public class TimeManager {
         long overhead = moveOverheadMs;
 
         long soft = (remaining / 20) + (increment * 3 / 4) - overhead;
-        long hard = Math.min(remaining / 4, soft * 4) - overhead;
+        // Hard limit is capped at 2.5× soft to prevent a single deep iteration
+        // from consuming an unreasonable fraction of the remaining clock time.
+        // Previously 4×, which allowed single depths to run 75–116 s on
+        // long time controls.
+        long hard = Math.min(remaining / 3, soft * 5 / 2) - overhead;
 
         softLimitMs = Math.max(soft, 50);
         hardLimitMs = Math.max(hard, softLimitMs + 50);
 
-        System.err.printf("[TIME] allocated soft=%dms hard=%dms%n", softLimitMs, hardLimitMs);
+        LOG.debug(String.format("[TIME] allocated soft=%dms hard=%dms", softLimitMs, hardLimitMs));
     }
 
     public void startNow() {
