@@ -19,9 +19,8 @@ public class Evaluator {
     private static final int[] PHASE_WEIGHTS = new int[7];
     private static final int[] MG_MATERIAL = new int[7];
     private static final int[] EG_MATERIAL = new int[7];
-    // Precomputed hanging penalty per piece type: MG_MATERIAL[type] / 4
-    // Eliminates division and chained MG_MATERIAL lookup in hangingPenalty() hot loop.
-    private static final int[] HANGING_PENALTY = new int[7];
+    /** Fixed penalty (cp) applied per undefended attacked non-king piece. */
+    private static final int HANGING_PENALTY = 50;
 
     // Mobility bonus per safe square (centipawns)
     private static final int[] MG_MOBILITY = new int[7];
@@ -71,10 +70,6 @@ public class Evaluator {
         MG_MATERIAL[Piece.Rook]   = 558;
         MG_MATERIAL[Piece.Queen]  = 1200;
         MG_MATERIAL[Piece.King]   = 0;
-
-        for (int t = 0; t < HANGING_PENALTY.length; t++) {
-            HANGING_PENALTY[t] = MG_MATERIAL[t] / 4;
-        }
 
         EG_MATERIAL[Piece.Pawn]   = 89;
         EG_MATERIAL[Piece.Knight] = 287;
@@ -217,7 +212,7 @@ public class Evaluator {
             temp &= temp - 1;
             if (board.isSquareAttackedBy(sq, Piece.Black)
                     && !board.isSquareAttackedBy(sq, Piece.White)) {
-                penalty -= HANGING_PENALTY[Piece.type(board.getPiece(sq))];
+                penalty -= HANGING_PENALTY;
             }
         }
         // Black non-king pieces: bonus if attacked by White and not defended by any Black piece
@@ -228,7 +223,7 @@ public class Evaluator {
             temp &= temp - 1;
             if (board.isSquareAttackedBy(sq, Piece.White)
                     && !board.isSquareAttackedBy(sq, Piece.Black)) {
-                penalty += HANGING_PENALTY[Piece.type(board.getPiece(sq))];
+                penalty += HANGING_PENALTY;
             }
         }
         return penalty;

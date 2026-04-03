@@ -4095,3 +4095,42 @@ Both use 16 parallel threads. K (100k subset): 1.655876.
 - SPRT (d2c9a5b vs v0.4.9) still running — ~714 games played of 20000 max.
 - Once SPRT verdict arrives: record result, run `NpsBenchmarkTest`, tag v0.4.10.
 - Phase 9A: create branch `phase/9a-performance`, start with #100 (profiler baseline).
+
+---
+
+### [2026-04-03] Phase 8 — SPRT Verdict: REGRESSION + Revert d2c9a5b
+
+**SPRT Result (d2c9a5b proportional hanging penalty vs v0.4.9):**
+- Score: Vex-new 243 – Vex-old 331 – Draws 633  \[0.464\]  1207 games
+- Elo: −25.4 ± 13.5 cp  |  LOS: 0.0%  |  TC: 10+0.1
+- Verdict: **REGRESSION confirmed.** H0 accepted. H1 rejected.
+
+**Root Cause:**
+The proportional values (25 cp for pawns, ~98 cp for knights/bishops, ~140 cp for rooks,
+~300 cp for queens) represent a dramatic eval signal change — not a pure speed fix.
+The constant 50 cp applied uniform pressure; the proportional form over-penalised major
+pieces (knights/rooks/queens are not more "hanging" than pawns in relative terms within
+the bitboard-only check).
+
+**Revert Applied (per decision matrix):**
+- Removed `int[] HANGING_PENALTY = new int[7]` array and static init loop.
+- Restored: `private static final int HANGING_PENALTY = 50;` (constant).
+- Updated `hangingPenalty()` usages from `HANGING_PENALTY[Piece.type(...)]` → `HANGING_PENALTY`.
+- Updated `SearchRegressionTest.java`: P5 (c1d2 → c4c5) and P9 (e3e4 → d3e4) expected
+  moves restored to 50 cp constant form.
+
+**What Stays (not reverted):**
+- Task 8.2: `NpsBenchmarkTest.java` — benchmark infrastructure, valid CI asset.
+- Task 8.3: Stalemate guard in Q-search — correctness fix, zero normal-position impact.
+- BAT → PS1 migration — tooling improvement.
+
+**Decisions Made:**
+- Decision matrix (regression branch): "Revert proportional penalty to constant
+  `HANGING_PENALTY = 50`. Investigate eval signal." → executed as specified.
+- Eval signal investigation deferred to Phase 9 or a dedicated eval tuning session.
+  The constant 50 cp is consistent with the v0.4.9 SPRT-validated baseline.
+
+**Next:**
+- Run `NpsBenchmarkTest` post-revert to record Phase 8 final aggregate NPS.
+- Commit revert, close issue #91, tag `v0.4.10`, create PR → develop.
+- Create `phase/9a-performance`, start issue #100 (profiler baseline gate).
