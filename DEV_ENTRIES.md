@@ -3959,3 +3959,30 @@ Both use 16 parallel threads. K (100k subset): 1.655876.
 - Run SPRT to validate Elo neutrality or gain of in-check evasion fix.
 - If SPRT passes, batch next 2–3 optimizations (SEE pruning + JVM flags + aspiration windows).
 - Continue Phase 8 NPS work targeting 1,000,000 aggregate via remaining leverage points.
+---
+
+### [2026-04-03] Phase 8 — Q-Search Stability + Endgame Eval Fixes
+
+**Built:**
+- Bounded in-check Q-search extension: MAX_Q_CHECK_EXTENSION = 3; cap at qPly >= 9 when in-check (was unbounded)
+- Stalemate guard in quiescence() moved before stand-pat cutoff: stalemate returns 0 instead of +700 cp
+- SEE-based hanging-piece penalty via `see.captureGainFor(board, sq, color)`; `captureGainFor()` added to StaticExchangeEvaluator
+
+**Decisions Made:**
+- MAX_Q_CHECK_EXTENSION = 3 chosen as conservative bound (max 512 extra Q-nodes per root on check chains)
+- Stalemate guard before evaluate() call prevents beta-cutoff returning wrong score under narrow aspiration windows
+- SEE gain used for hanging penalty to correctly handle king-as-sole-defender scenario (Kc4 -> d5 bishop)
+
+**Broke / Fixed:**
+- cc07728 SPRT regression: unconditionally-unbounded in-check Q-search -> -13.6 Elo, LOS 29.3% -> bounded to qPly >= 9
+- Stalemate steering bug (Kb6, game 1027954763): Q-search returned large positive for stalemate positions -> fixed
+- Hanging piece bug (Kc4??, game 1027954763): king-defended pieces flagged as safe -> SEE correctly penalises them
+
+**Measurements:**
+- Perft depth 5 (startpos): 4,865,609 (unchanged — confirmed by test suite)
+- Nodes/sec: not measured this cycle (pending SPRT gate)
+- Elo vs. baseline: pending SPRT re-run vs v0.4.9
+
+**Next:**
+- SPRT: all three fixes vs v0.4.9 at TC 10+0.1
+- NPS benchmark depth 10 after SPRT passes
