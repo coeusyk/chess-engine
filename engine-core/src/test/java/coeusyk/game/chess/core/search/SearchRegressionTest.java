@@ -171,7 +171,10 @@ class SearchRegressionTest {
             //     Updated 2026-04-03: cheap bitboard hanging-piece penalty (isSquareAttackedBy,
             //     50 cp fixed) slightly reweights pawn-advance paths; c4c5 becomes preferred.
             //     Both c1c2 and c4c5 win; choice is eval-dependent.
-            Arguments.of("P5",  P5_FEN,  "c4c5"),
+            //     Updated 2026-04-03: proportional hanging penalty (MG_MATERIAL/4 per piece)
+            //     halves pawn penalty to 25 cp; depth-8 preference shifts to c1d2 (king advance).
+            //     Both c1d2 and c4c5 win; choice is eval-dependent.
+            Arguments.of("P5",  P5_FEN,  "c1d2"),
             Arguments.of("P6",  P6_FEN,  "f4f5"),
             // P7: d7d8q (immediate promotion) is objectively superior to d1d2 (delayed king
             //     move). Promoting at once gains K+Q vs K immediately with no benefit to
@@ -189,7 +192,10 @@ class SearchRegressionTest {
             //     Updated 2025-07-14: Texel tuning v0.4.9 shifts preference to d3d4.
             //     Updated 2026-04-03: cheap bitboard hanging-piece penalty (50 cp fixed)
             //     shifts depth-8 preference to d3e4. Both d3d4 and d3e4 win; equivalent.
-            Arguments.of("P9",  P9_FEN,  "d3e4"),
+            //     Updated 2026-04-03: proportional hanging penalty (MG_MATERIAL/4 per piece)
+            //     halves pawn penalty to 25 cp; depth-8 preference shifts to e3e4 (pawn advance).
+            //     Both d3e4 and e3e4 win; White king + pawn vs lone king is a forced win.
+            Arguments.of("P9",  P9_FEN,  "e3e4"),
             // P10: e3d3 and e3f3 are symmetric king moves to break direct e-file opposition.
             //      Both win; choice is eval-dependent (d3/f3 equidistant for central pawn).
             //      Updated 2026-04-03: SEE-based hanging-piece penalty reverted to cheap

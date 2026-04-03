@@ -55,7 +55,6 @@ public class Evaluator {
     private static final long WHITE_RANK_7 = 0x000000000000FF00L;
     private static final long BLACK_RANK_7 = 0x00FF000000000000L;
     private static final long FILE_MASK_BASE = 0x0101010101010101L;
-    private static final int HANGING_PENALTY = 50;
 
     static {
         PHASE_WEIGHTS[Piece.Knight] = 1;
@@ -211,7 +210,7 @@ public class Evaluator {
             temp &= temp - 1;
             if (board.isSquareAttackedBy(sq, Piece.Black)
                     && !board.isSquareAttackedBy(sq, Piece.White)) {
-                penalty -= HANGING_PENALTY;
+                penalty -= MG_MATERIAL[Piece.type(board.getPiece(sq))] / 4;
             }
         }
         // Black non-king pieces: bonus if attacked by White and not defended by any Black piece
@@ -222,7 +221,7 @@ public class Evaluator {
             temp &= temp - 1;
             if (board.isSquareAttackedBy(sq, Piece.White)
                     && !board.isSquareAttackedBy(sq, Piece.Black)) {
-                penalty += HANGING_PENALTY;
+                penalty += MG_MATERIAL[Piece.type(board.getPiece(sq))] / 4;
             }
         }
         return penalty;

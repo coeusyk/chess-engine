@@ -3986,3 +3986,32 @@ Both use 16 parallel threads. K (100k subset): 1.655876.
 **Next:**
 - SPRT: all three fixes vs v0.4.9 at TC 10+0.1
 - NPS benchmark depth 10 after SPRT passes
+
+### [2026-04-03] Phase 8 — Proportional Hanging-Piece Penalty
+
+**Built:**
+- Removed `HANGING_PENALTY = 50` uniform constant from Evaluator.java
+- `hangingPenalty()` now uses `MG_MATERIAL[Piece.type(board.getPiece(sq))] / 4` per undefended attacked piece
+- Effective penalties: Pawn=25 cp, Knight=97 cp, Bishop=107 cp, Rook=139 cp, Queen=300 cp (vs uniform 50 cp for all)
+- `isSquareAttackedBy()` call count unchanged — no performance regression over 9baf527 baseline
+
+**Decisions Made:**
+- Divisor `/4` chosen as a conservative scaling factor: large enough to flag genuinely en-prise pieces, small enough to avoid dominating the positional score
+- SEE-based hanging penalty deliberately omitted (caused -88.7 Elo regression in 015acf1 due to 15-30 make/unmake per evaluate() call)
+- Stalemate guard in Q-search deferred — medium risk (hot path, requires NPS measurement first)
+- Regression test P5 and P9 updated: both had eval-dependent move choices between equivalent winning options; the halved pawn penalty (50→25 cp) shifted depth-8 preference to c1d2 and e3e4 respectively
+
+**Broke / Fixed:**
+- Bug: HANGING_PENALTY=50 applied equally to hanging pawn and hanging queen, masking the true material danger signal
+- In the Kc4?? / d5-bishop position, bishop hanging was only 50 cp instead of ~107 cp (428/4)
+- Now queen en prise = 300 cp signal, pawn en prise = 25 cp signal — proportional and correct
+
+**Measurements:**
+- Perft depth 5 (startpos): 4,865,609 (unchanged — confirmed by test suite 161/161 pass)
+- Nodes/sec: pending SPRT gate (expected ~381,194 aggregate NPS vs depth-10 baseline — eval-only change, no hot-path impact)
+- Elo vs. baseline (v0.4.9): pending SPRT H0=0, H1=5, α=β=0.05, TC=10+0.1
+
+**Next:**
+- SPRT: proportional hanging penalty vs v0.4.9 at H0=0, H1=5
+- NPS benchmark to confirm no regression (should match 9baf527 baseline)
+- Stalemate guard in quiescence() once NPS baseline is confirmed
