@@ -1358,13 +1358,14 @@ public class Searcher {
 
         int poolIdxQq = Math.min(ply, MOVE_LIST_POOL_SIZE - 1);
         int[] allQMoves = moveListPool[poolIdxQq];
-        // Generate only captures and queen promotions — avoids producing and discarding
-        // the ~80% of quiet moves that generate() would return and shouldIncludeInQuiescence
-        // would filter out.
-        int allQCount = MovesGenerator.generateCaptures(board, allQMoves);
+
+        // ---- Stage 1: non-pawn captures and knight/rook/bishop/queen captures ----
+        // Pawn captures are deferred to stage 2 so we can skip them entirely if a
+        // beta cutoff fires here (saving ~10% Q-node cost in piece-rich positions).
+        int stage1Raw = MovesGenerator.generateNonPawnCaptures(board, allQMoves);
         // Apply SEE filter: remove losing captures; always keep queen promotions.
         int qCount = 0;
-        for (int i = 0; i < allQCount; i++) {
+        for (int i = 0; i < stage1Raw; i++) {
             int qm = allQMoves[i];
             if (seeEnabled && moveOrderer.isCapture(board, qm)
                     && staticExchangeEvaluator.evaluate(board, qm) < 0) {
@@ -1372,7 +1373,55 @@ public class Searcher {
             }
             allQMoves[qCount++] = qm;
         }
-        if (qCount == 0) {
+
+        int bestScore = standPat;
+        for (int qi = 0; qi < qCount; qi++) {
+            int move = allQMoves[qi];
+            // Per-move delta pruning: skip non-promotion captures whose material gain
+            // plus the safety margin still cannot raise alpha.
+            if (deltaPruningAllowed && !Move.isPromotion(move)) {
+                int captureGain = capturedPieceValueForDelta(board, move);
+                if (standPat + captureGain + DELTA_MARGIN <= alpha) {
+                    deltaPruningSkips++;
+                    continue;
+                }
+            }
+
+            board.makeMove(move);
+            int score = -quiescence(board, -beta, -alpha, ply + 1, qPly + 1, shouldStopHard);
+            board.unmakeMove();
+
+            if (aborted) {
+                return bestScore;
+            }
+            if (score > bestScore) {
+                bestScore = score;
+            }
+            if (score > alpha) {
+                alpha = score;
+            }
+            if (alpha >= beta) {
+                // Beta cutoff from non-pawn captures: skip pawn capture generation entirely.
+                return bestScore;
+            }
+        }
+
+        // ---- Stage 2: pawn captures and quiet pawn promotions ----
+        // Only reached when stage 1 didn't produce a beta cutoff.
+        int pawnStart = qCount;
+        int pawnEnd   = MovesGenerator.appendPawnCaptures(board, allQMoves, pawnStart);
+        // SEE filter: pawn captures in allQMoves[pawnStart..pawnEnd) written back in-place.
+        int totalCount = pawnStart;
+        for (int i = pawnStart; i < pawnEnd; i++) {
+            int qm = allQMoves[i];
+            if (seeEnabled && moveOrderer.isCapture(board, qm)
+                    && staticExchangeEvaluator.evaluate(board, qm) < 0) {
+                continue;
+            }
+            allQMoves[totalCount++] = qm;
+        }
+
+        if (totalCount == 0) {
             // Stalemate guard: in endings with few pieces, verify that at least one quiet
             // move is available before returning stand-pat. Without this, a stalemated side
             // returns standPat (large negative) instead of 0.
@@ -1388,11 +1437,8 @@ public class Searcher {
             return standPat;
         }
 
-        int bestScore = standPat;
-        for (int qi = 0; qi < qCount; qi++) {
+        for (int qi = pawnStart; qi < totalCount; qi++) {
             int move = allQMoves[qi];
-            // Per-move delta pruning: skip non-promotion captures whose material gain
-            // plus the safety margin still cannot raise alpha.
             if (deltaPruningAllowed && !Move.isPromotion(move)) {
                 int captureGain = capturedPieceValueForDelta(board, move);
                 if (standPat + captureGain + DELTA_MARGIN <= alpha) {

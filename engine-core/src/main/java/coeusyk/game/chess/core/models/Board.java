@@ -84,6 +84,12 @@ public class Board {
     // Occupancy masks
     private long whiteOccupancy, blackOccupancy, allOccupancy;
 
+    // Attacked-squares bitboards: all squares attacked by each side.
+    // Computed lazily on first access after a make/unmake — never during the hot make/unmake call.
+    // Eliminates repeated isSquareAttackedBy() calls in hangingPenalty() (~56/eval → bitboard ops).
+    private long attackedByWhite, attackedByBlack;
+    private boolean attackedSquaresValid = false;
+
     static final String STARTING_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 //    static final String STARTING_FEN = "8/8/5k2/8/p7/P1B5/4K3/8 b - - 0 1";
 
@@ -267,6 +273,7 @@ public class Board {
 
         // Initialize incremental material+PST scores from the FEN position
         recomputeIncrementalScores();
+        // Attacked-squares are computed lazily on first access; no init call needed.
     }
 
     // Function for obtaining the FEN string of the current position (for storing states of the board):
@@ -384,6 +391,49 @@ public class Board {
         whiteOccupancy = whitePawns | whiteKnights | whiteBishops | whiteRooks | whiteQueens | whiteKing;
         blackOccupancy = blackPawns | blackKnights | blackBishops | blackRooks | blackQueens | blackKing;
         allOccupancy = whiteOccupancy | blackOccupancy;
+    }
+
+    /**
+     * Computes attacked-squares bitboards from scratch using current occupancy.
+     * Called lazily by getAttackedByWhite()/getAttackedByBlack() — only when evaluate()
+     * actually needs them, not on every make/unmake.
+     */
+    private void recomputeAttackedSquares() {
+        long occ = allOccupancy;
+
+        // White attacks
+        long wa = 0L;
+        long temp = whiteRooks | whiteQueens;
+        while (temp != 0) { int sq = Long.numberOfTrailingZeros(temp); wa |= MagicBitboards.getRookAttacks(sq, occ);   temp &= temp - 1; }
+        temp = whiteBishops | whiteQueens;
+        while (temp != 0) { int sq = Long.numberOfTrailingZeros(temp); wa |= MagicBitboards.getBishopAttacks(sq, occ); temp &= temp - 1; }
+        temp = whiteKnights;
+        while (temp != 0) { int sq = Long.numberOfTrailingZeros(temp); wa |= AttackTables.KNIGHT_ATTACKS[sq];          temp &= temp - 1; }
+        if (whiteKing != 0L) wa |= AttackTables.KING_ATTACKS[Long.numberOfTrailingZeros(whiteKing)];
+        wa |= ((whitePawns & ~FILE_A) >> 9) | ((whitePawns & ~FILE_H) >> 7);
+        attackedByWhite = wa;
+
+        // Black attacks
+        long ba = 0L;
+        temp = blackRooks | blackQueens;
+        while (temp != 0) { int sq = Long.numberOfTrailingZeros(temp); ba |= MagicBitboards.getRookAttacks(sq, occ);   temp &= temp - 1; }
+        temp = blackBishops | blackQueens;
+        while (temp != 0) { int sq = Long.numberOfTrailingZeros(temp); ba |= MagicBitboards.getBishopAttacks(sq, occ); temp &= temp - 1; }
+        temp = blackKnights;
+        while (temp != 0) { int sq = Long.numberOfTrailingZeros(temp); ba |= AttackTables.KNIGHT_ATTACKS[sq];          temp &= temp - 1; }
+        if (blackKing != 0L) ba |= AttackTables.KING_ATTACKS[Long.numberOfTrailingZeros(blackKing)];
+        ba |= ((blackPawns & ~FILE_A) << 7) | ((blackPawns & ~FILE_H) << 9);
+        attackedByBlack = ba;
+        attackedSquaresValid = true;
+    }
+
+    public long getAttackedByWhite() {
+        if (!attackedSquaresValid) recomputeAttackedSquares();
+        return attackedByWhite;
+    }
+    public long getAttackedByBlack() {
+        if (!attackedSquaresValid) recomputeAttackedSquares();
+        return attackedByBlack;
     }
 
     /**
@@ -708,8 +758,9 @@ public class Board {
             zobristHash ^= ZobristHash.getKeyForCastlingRights(newCastlingRights);
         }
 
-        // Update occupancy masks
+        // Update occupancy masks; invalidate lazy attacked-squares cache.
         recomputeOccupancies();
+        attackedSquaresValid = false;
 
         if (!searchMode) {
             movesPlayed.add(new Move(startSquare, targetSquare, Move.reactionOf(packed)));
@@ -774,9 +825,10 @@ public class Board {
         fullMoves = undoInfo.previousFullMoves;
         System.arraycopy(undoInfo.previousCastlingRights, 0, castlingAvailability, 0, 4);
         
-        // Update occupancy masks
+        // Update occupancy masks; invalidate lazy attacked-squares cache.
         recomputeOccupancies();
-        
+        attackedSquaresValid = false;
+
         // Restore Zobrist hash in O(1) from history instead of full recomputation.
         // zobristStack[zobristSP-1] is the hash we just popped; [zobristSP-2] is the prior position.
         if (zobristSP >= 2) {
