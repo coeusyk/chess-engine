@@ -259,10 +259,6 @@ public class Searcher {
     ) {
         timeManager.startNow();
         this.timeManager = timeManager;
-        // Invalidate old-generation TT entries from previous moves so that
-        // depth-preferred replacement doesn't get stuck behind deep entries
-        // that were written during earlier positions and can never be evicted.
-        transpositionTable.incrementGeneration();
         BooleanSupplier softStop = () -> externalStop.getAsBoolean() || timeManager.shouldStopSoft();
         BooleanSupplier hardStop = () -> externalStop.getAsBoolean() || timeManager.shouldStopHard();
         return iterativeDeepening(board, maxDepth, softStop, hardStop, listener);

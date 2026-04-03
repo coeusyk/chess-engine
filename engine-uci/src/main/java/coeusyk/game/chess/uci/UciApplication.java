@@ -359,6 +359,12 @@ public class UciApplication {
             // to prevent helpers from stealing CPU from the main search thread
             // on single-core or heavily-loaded machines.
             int effectiveHelpers = Math.min(threads - 1, AVAILABLE_CORES - 1);
+            // Bump the generation counter before any thread (main or helper) starts
+            // writing to the shared TT for this position.  If this were called inside
+            // searchWithTimeManager() instead, helpers submitted just before would
+            // already be running at generation N while the main thread bumps to N+1,
+            // immediately evicting any shallow entries deposited by the helpers.
+            sharedTT.incrementGeneration();
             if (effectiveHelpers > 0) {
                 // Snapshot the current position string from the board so each
                 // helper can create an independent Board without sharing state.
