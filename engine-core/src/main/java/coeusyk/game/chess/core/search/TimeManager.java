@@ -48,6 +48,14 @@ public class TimeManager {
         softLimitMs = Math.max(soft, 50);
         hardLimitMs = Math.max(hard, softLimitMs + 50);
 
+        // Safety cap: never spend more than half of remaining clock on a single move.
+        // When remaining < ~250 ms the floor above can push hardLimitMs above the
+        // available budget, causing certain time-loss in Lazy-SMP mode where helpers
+        // seed the TT and push the main search to deeper depths than at 1T.
+        long safetyMax = Math.max(1L, (remaining - overhead) / 2);
+        softLimitMs = Math.min(softLimitMs, safetyMax);
+        hardLimitMs = Math.min(hardLimitMs, safetyMax);
+
         LOG.debug(String.format("[TIME] allocated soft=%dms hard=%dms", softLimitMs, hardLimitMs));
     }
 
