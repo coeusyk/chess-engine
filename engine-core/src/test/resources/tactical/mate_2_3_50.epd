@@ -1,0 +1,55 @@
+# 50-position mate-in-2/3 tactical suite
+# Sources: https://github.com/vondele/matetrack (ChestUCI_23102018.epd, mates2000.epd).
+# Includes horizontally mirrored variants to reach 50 unique FENs.
+# Format: <fen-4-fields> bm #2|#3; id "...";
+
+2brrb2/8/p7/7Q/1p1kpPp1/1P1pN1K1/3P4/8 w - - bm #2; id "src-1-ChestUCI_23102018.epd-L5";
+2N2B2/2N1r3/8/3nQ2R/1k6/8/2B5/R3K3 w Q - bm #2; id "src-2-ChestUCI_23102018.epd-L6";
+3N3K/B2bRB2/1Qp4p/1R1pppp1/1P2k3/r3pNP1/2P1P3/b2r3q w - - bm #2; id "src-3-ChestUCI_23102018.epd-L7";
+3R4/8/8/2p3K1/2p5/5B2/R1pPNB2/1b1k4 w - - bm #2; id "src-4-ChestUCI_23102018.epd-L8";
+5R2/1N3p2/3pk3/6PR/3Q4/B3K3/8/8 w - - bm #2; id "src-5-ChestUCI_23102018.epd-L9";
+6rk/PP1PPPnp/1N1BN2P/7R/4B3/2Q5/P3KP2/6R1 w - - bm #2; id "src-6-ChestUCI_23102018.epd-L10";
+7B/5R2/3p3N/3P4/1K2k2r/4N3/4Q3/8 w - - bm #2; id "src-7-ChestUCI_23102018.epd-L11";
+8/3R4/b2p3p/2p3nk/1p2N1p1/p2BP3/r2PN1P1/3K4 w - - bm #2; id "src-8-ChestUCI_23102018.epd-L12";
+8/5R2/2K1P3/4k3/8/b1PPpp1B/5p2/8 w - - bm #2; id "src-9-ChestUCI_23102018.epd-L13";
+8/7B/2R5/4Nr1p/4kb1Q/8/1B6/4K2R w K - bm #2; id "src-10-ChestUCI_23102018.epd-L14";
+8/8/8/2p1R3/1p3p2/1p1k1p2/1B5p/1K2Q3 w - - bm #2; id "src-11-ChestUCI_23102018.epd-L15";
+8/8/8/8/8/8/4QRb1/R3K2k w Q - bm #2; id "src-12-ChestUCI_23102018.epd-L16";
+8/p4P1K/rb1N2Bp/p3P3/N3R1P1/1P1k1P2/1Pbrnp2/2R2Q2 w - - bm #2; id "src-13-ChestUCI_23102018.epd-L17";
+n1N3br/2p1Bpkr/1pP2R1b/pP3Pp1/P5P1/1P1p4/p2P4/K7 w - - bm #2; id "src-14-ChestUCI_23102018.epd-L18";
+n7/2r5/1r4R1/4n3/2R1Q1P1/3P1pK1/4N3/7k w - - bm #2; id "src-15-ChestUCI_23102018.epd-L19";
+r5r1/1R4b1/1Q6/4nk1p/2p1R3/2P3PK/2BB4/q7 w - - bm #2; id "src-16-ChestUCI_23102018.epd-L20";
+rn2N3/8/4R2b/B3R3/3kP1N1/K2n4/8/1q6 w - - bm #2; id "src-17-ChestUCI_23102018.epd-L21";
+1K3RQ1/ppn3p1/r3N1pq/2pN4/2b1kPB1/b5r1/8/2BR4 w - - bm #3; id "src-18-ChestUCI_23102018.epd-L22";
+1N3B2/5p2/2R2p2/1p1kpp2/1P2rp2/2P1pB2/2P1P1K1/8 w - - bm #3; id "src-19-ChestUCI_23102018.epd-L23";
+1r4k1/8/5PP1/K7/6NR/7B/1r6/7R w - - bm #3; id "src-20-ChestUCI_23102018.epd-L24";
+1r5k/4NP1b/7K/8/6R1/8/8/8 w - - bm #3; id "src-21-ChestUCI_23102018.epd-L25";
+2K4N/3PP1k1/5N2/6n1/8/8/8/8 w - - bm #3; id "src-22-ChestUCI_23102018.epd-L26";
+2k5/2N5/1PKP4/2P5/8/8/8/8 w - - bm #3; id "src-23-ChestUCI_23102018.epd-L27";
+2q5/4B2p/7n/4p1pk/P2n1b2/R3P2P/2r3P1/1Q3R1K b - - bm #3; id "src-24-ChestUCI_23102018.epd-L28";
+2rB4/1b1n1pp1/pn4Rp/1Q2NB2/2pK1k1r/3RN1pr/4P3/8 w - - bm #3; id "src-25-ChestUCI_23102018.epd-L29";
+3K4/pp3B2/qrk5/bp2B3/1p1P4/1P6/5P2/8 w - - bm #3; id "src-26-ChestUCI_23102018.epd-L30";
+4R3/1k6/bp6/1p1P4/1K6/8/1B6/3Q4 w - - bm #3; id "src-27-ChestUCI_23102018.epd-L31";
+5n2/KR2p3/2pp4/k2p4/P7/pPpN2Bb/5pp1/5rq1 w - - bm #3; id "src-28-ChestUCI_23102018.epd-L32";
+8/1B6/8/5p2/8/8/5Qrq/1K1R2bk w - - bm #3; id "src-29-ChestUCI_23102018.epd-L33";
+8/3K2p1/p7/2pkpB1p/2pbNp2/2p4r/2n1P3/3Qq1n1 w - - bm #3; id "src-30-ChestUCI_23102018.epd-L34";
+8/3P2P1/3N4/3k4/4N3/4K3/8/8 w - - bm #3; id "src-31-ChestUCI_23102018.epd-L35";
+8/4p3/7R/n7/rp6/kp5Q/8/1K6 w - - bm #3; id "src-32-ChestUCI_23102018.epd-L36";
+8/5p2/3N4/1BPp1P2/1Bpk1Pp1/2p2pP1/2p2K2/2N5 w - - bm #3; id "src-33-ChestUCI_23102018.epd-L37";
+8/8/2p5/8/2P1p1Pp/1P2Pk1P/rpB1bP2/b2Q2K1 w - - bm #3; id "src-34-ChestUCI_23102018.epd-L38";
+8/B3p3/2K1p1p1/4Pkpb/5pn1/2P2N1B/4PP2/6R1 w - - bm #3; id "src-35-ChestUCI_23102018.epd-L39";
+k1B5/2p5/NbN5/8/P2p4/P2p4/P1prp3/2RbK3 w - - bm #3; id "src-36-ChestUCI_23102018.epd-L40";
+K1R5/1P1r1n2/1pR3N1/2p1p2r/1BpkBp1N/1bp2Q2/2P2P2/1n2b3 w - - bm #3; id "src-37-ChestUCI_23102018.epd-L41";
+k7/1pR2R2/p6r/8/1N6/2K5/3P4/4B3 w - - bm #3; id "src-38-ChestUCI_23102018.epd-L42";
+k7/1pRN1p2/p3r2p/Q2N2p1/3PPP2/8/5P1P/R5K1 w - - bm #3; id "src-39-ChestUCI_23102018.epd-L43";
+n3b3/Npp4R/p1pp4/k7/N7/Kp6/8/R5B1 w - - bm #3; id "src-40-ChestUCI_23102018.epd-L44";
+2brrb2/8/7p/Q7/1pPpk1p1/1K1Np1P1/4P3/8 w - - bm #2; id "mirror-1-of-ChestUCI_23102018.epd-L5";
+2B2N2/3r1N2/8/R2Qn3/6k1/8/5B2/3K3R w Kk - bm #2; id "mirror-2-of-ChestUCI_23102018.epd-L6";
+K3N3/2BRb2B/p4pQ1/1pppp1R1/3k2P1/1PNp3r/3P1P2/q3r2b w - - bm #2; id "mirror-3-of-ChestUCI_23102018.epd-L7";
+4R3/8/8/1K3p2/5p2/2B5/2BNPp1R/4k1b1 w - - bm #2; id "mirror-4-of-ChestUCI_23102018.epd-L8";
+2R5/2p3N1/3kp3/RP6/4Q3/3K3B/8/8 w - - bm #2; id "mirror-5-of-ChestUCI_23102018.epd-L9";
+kr6/pnPPP1PP/P2NB1N1/R7/3B4/5Q2/2PK3P/1R6 w - - bm #2; id "mirror-6-of-ChestUCI_23102018.epd-L10";
+B7/2R5/N3p3/4P3/r2k2K1/3N4/3Q4/8 w - - bm #2; id "mirror-7-of-ChestUCI_23102018.epd-L11";
+8/4R3/p3p2b/kn3p2/1p1N2p1/3PB2p/1P1NP2r/4K3 w - - bm #2; id "mirror-8-of-ChestUCI_23102018.epd-L12";
+8/2R5/3P1K2/3k4/8/B1ppPP1b/2p5/8 w - - bm #2; id "mirror-9-of-ChestUCI_23102018.epd-L13";
+8/B7/5R2/p1rN4/Q1bk4/8/6B1/R2K4 w Qq - bm #2; id "mirror-10-of-ChestUCI_23102018.epd-L14";
