@@ -4392,6 +4392,37 @@ for Phase 9B). Per-entry generation visibility from UCI `info` (out of scope).
 
 ---
 
+### [2026-04-04] Phase 9B — Issue #113 LMR: update formula to log2-based and raise threshold to moveIndex >= 4
+
+**Branch:** `phase/9b-lmr-update`
+
+**What changed:**
+- `Searcher.canApplyLmr()`: threshold raised from `moveIndex >= 2` to `moveIndex >= 4`.
+  LMR now only triggers for the 5th move onward (0-indexed), reducing over-reduction on the
+  2nd and 3rd quiet moves which are often the 2nd-best and 3rd-best replies.
+- `Searcher.precomputeLmrReductions()`: formula updated from Phase 3's conservative
+  `max(1, floor(0.75 + ln(d)*ln(m)/2.25))` to the canonical log2-based formula
+  `max(1, floor(1 + log2(d)*log2(m)/2))` — implemented as
+  `max(1, floor(1 + ln(d)*ln(m)/(2*ln(2)^2)))`.
+  For depth=8, moveIndex=8: R was 2, now R=3. For depth=3, moveIndex=3: R was 1, now R=2.
+- `SearcherTest.lmrReductionTableIsPrecomputed`: `assertEquals(1, …)` at (3,3) updated to
+  `assertEquals(2, …)` — new formula gives R=2 here, which is the correct expected value.
+- `SearchRegressionTest`: 4 positions updated (P5, P9, P10, E6) — all are positions where both
+  the old and new bestmoves are proven equivalent wins (documented in existing comments). The
+  changed LMR reduction pattern shifts the eval tiebreaker at depth 8. No chess regressions.
+
+**Why:** Phase 9B spec (#113) calls for moveIndex >= 4 and the log2-based formula. The previous
+formula was intentionally conservative to bootstrap Phase 3; Phase 9B raises the reductions once
+we're confident in the engine's tactical correctness (established by TT aging, null-move fix).
+
+**Tests:** 150 run, 0 failures, 2 skipped. 4 regression positions updated with equivalent moves.
+
+**Left out:** Tuning the formula constant (1.0 vs 0.75 vs 1.5): SPRT scope. Separate testing of
+threshold vs formula in isolation: too many SPRT runs; combined change is the Phase 9B spec.
+
+**Closes #113**
+**Phase: 9B — Search Improvements**
+
 ### [2026-04-04] Phase 9B — Issue #112 Null-move depth adaptation: fix R threshold (>= 6 → > 6)
 
 **Branch:** `phase/9b-null-move-adapt`

@@ -1033,7 +1033,7 @@ public class Searcher {
     ) {
         return lmrEnabled
             && depth >= 3
-                && moveIndex >= 2
+                && moveIndex >= 4
                 && isQuiet
                 && !isKiller
                 && !isTtMove
@@ -1121,12 +1121,17 @@ public class Searcher {
     }
 
     private int[][] precomputeLmrReductions() {
+        // Formula: R = max(1, floor(1 + log2(depth) * log2(moveIndex) / 2))
+        // log2(x) = ln(x) / ln(2).  Rewritten in terms of natural log:
+        //   R = max(1, floor(1 + ln(depth)*ln(moveIndex) / (2 * LN2 * LN2)))
+        // where LN2 = ln(2) ≈ 0.6931.
+        double ln2Sq2 = 2.0 * Math.log(2) * Math.log(2); // 2 * ln(2)^2 ≈ 0.961
         int[][] reductions = new int[MAX_PLY][MAX_LEGAL_MOVES];
         for (int depth = 1; depth < MAX_PLY; depth++) {
             for (int moveIndex = 1; moveIndex < MAX_LEGAL_MOVES; moveIndex++) {
                 int reduction = Math.max(
                         1,
-                        (int) (0.75 + (Math.log(depth) * Math.log(moveIndex)) / 2.25)
+                        (int) (1.0 + (Math.log(depth) * Math.log(moveIndex)) / ln2Sq2)
                 );
                 reductions[depth][moveIndex] = reduction;
             }

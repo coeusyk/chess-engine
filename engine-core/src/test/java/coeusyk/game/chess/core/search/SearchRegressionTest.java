@@ -173,7 +173,9 @@ class SearchRegressionTest {
             //     Both c1c2 and c4c5 win; choice is eval-dependent.
             //     Updated 2026-04-03: proportional penalty reverted (SPRT: -25.4 Elo, LOS 0.0%);
             //     constant 50 cp restored; depth-8 preference returns to c4c5.
-            Arguments.of("P5",  P5_FEN,  "c4c5"),
+            //     Updated Phase 9B #113: LMR formula update (log2-based, moveIndex >= 4) shifts
+            //     depth-8 reduction pattern; c1c2 becomes preferred. Both c4c5 and c1c2 win.
+            Arguments.of("P5",  P5_FEN,  "c1c2"),
             Arguments.of("P6",  P6_FEN,  "f4f5"),
             // P7: d7d8q (immediate promotion) is objectively superior to d1d2 (delayed king
             //     move). Promoting at once gains K+Q vs K immediately with no benefit to
@@ -193,13 +195,17 @@ class SearchRegressionTest {
             //     shifts depth-8 preference to d3e4. Both d3d4 and d3e4 win; equivalent.
             //     Updated 2026-04-03: proportional penalty reverted (SPRT: -25.4 Elo, LOS 0.0%);
             //     constant 50 cp restored; depth-8 preference returns to d3e4.
-            Arguments.of("P9",  P9_FEN,  "d3e4"),
+            //     Updated Phase 9B #113: LMR formula update (log2-based, moveIndex >= 4) shifts
+            //     depth-8 reduction pattern; d3d4 becomes preferred. Both d3d4 and d3e4 win.
+            Arguments.of("P9",  P9_FEN,  "d3d4"),
             // P10: e3d3 and e3f3 are symmetric king moves to break direct e-file opposition.
             //      Both win; choice is eval-dependent (d3/f3 equidistant for central pawn).
             //      Updated 2026-04-03: SEE-based hanging-piece penalty reverted to cheap
             //      bitboard-only form (50 cp fixed); 1-cp asymmetry reverts to e3d3 at depth 8.
             //      Both e3d3 and e3f3 are provably equivalent.
-            Arguments.of("P10", P10_FEN, "e3d3"),
+            //      Updated Phase 9B #113: LMR formula update (log2-based, moveIndex >= 4) shifts
+            //      depth-8 reduction pattern; e3f3 becomes preferred. Provably equivalent to e3d3.
+            Arguments.of("P10", P10_FEN, "e3f3"),
             // Endgame
             // E1: 4k3/8/8/8/8/8/8/4KQ2 — KQ vs K. f1f6 (queen to 6th rank, restricts
             //     BK to ranks 7-8) is a textbook technique; f1b5 also wins. Tuned eval
@@ -225,7 +231,9 @@ class SearchRegressionTest {
             //     closer to c4 (|Δcol|=2) than b4 (|Δcol|=3), making c4 look fractionally more
             //     "at risk". Advancing c4c5 first removes that minor hanging-piece asymmetry.
             //     Both pawn advances are correct; c4c5 updated as new preferred order.
-            Arguments.of("E6",  E6_FEN,  "c4c5"),
+            //     Updated Phase 9B #113: LMR formula update (log2-based, moveIndex >= 4) shifts
+            //     depth-8 reduction pattern; b4b5 becomes preferred. Both b4b5 and c4c5 win.
+            Arguments.of("E6",  E6_FEN,  "b4b5"),
             // E7: b2c3 (king advance toward enemy king on e5) is also valid KBN vs K
             //     technique. Both b2c3 and d2f3 (knight centralisation) win; move order
             //     is eval-dependent. Updated 2026-04-01: new eval terms prefer king advance.
