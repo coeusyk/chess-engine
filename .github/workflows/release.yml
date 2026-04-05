@@ -51,7 +51,11 @@ jobs:
           
           if [ -n "${{ inputs.version_override }}" ]; then
             RELEASE="${{ inputs.version_override }}"
+          elif [[ "$CURRENT" == *-SNAPSHOT ]]; then
+            # Current is a SNAPSHOT: release it as-is (strip -SNAPSHOT, don't increment)
+            RELEASE="$BASE"
           else
+            # Current is already a release version: increment based on release_type
             IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE"
             case "${{ inputs.release_type }}" in
               major) RELEASE="$((MAJOR+1)).0.0" ;;
