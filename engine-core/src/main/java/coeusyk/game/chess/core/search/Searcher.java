@@ -42,6 +42,12 @@ public class Searcher {
     private static final int TB_WIN_SCORE = MATE_SCORE - 2 * MAX_PLY;
     private static final int TB_LOSS_SCORE = -(MATE_SCORE - 2 * MAX_PLY);
 
+    // Correction history: maps pawn structure to a static-eval bias.
+    // Stored at GRAIN scale; applied as: adjustedEval = rawEval + ch[color][key] / GRAIN.
+    private static final int CORRECTION_HISTORY_SIZE = 1024;
+    private static final int CORRECTION_HISTORY_GRAIN = 256;
+    private static final int CORRECTION_HISTORY_MAX = CORRECTION_HISTORY_GRAIN * 32;
+
     // Delta pruning thresholds used in quiescence search.
     // Values mirror the SEE piece table to keep material reasoning consistent.
     private static final int DELTA_MARGIN = 200;
@@ -88,6 +94,8 @@ public class Searcher {
     private final StaticExchangeEvaluator staticExchangeEvaluator = new StaticExchangeEvaluator();
     private final int[][] killerMoves = initKillerMoves();
     private final int[][] historyHeuristic = new int[7][64];
+    private final int[][] correctionHistory = new int[2][CORRECTION_HISTORY_SIZE];
+    private final int[] staticEvalStack = new int[MAX_PLY + 2];
     // Not final: can be replaced with a shared instance for Lazy SMP multi-threaded search.
     private TranspositionTable transpositionTable = new TranspositionTable();
     private final int[][] lmrReductions = precomputeLmrReductions();
@@ -339,6 +347,7 @@ public class Searcher {
         checkExtensionsApplied = 0;
         searchStartNanos = System.nanoTime();
         transpositionTable.resetStats();
+        java.util.Arrays.fill(staticEvalStack, 0);
 
         for (int depth = effectiveStartDepth; depth <= effectiveMaxDepth; depth++) {
             if (shouldStopSoft.getAsBoolean()) {
@@ -705,6 +714,19 @@ public class Searcher {
 
         int staticEval = evaluate(board);
 
+        // Derive a pawn-structure key for correction history lookup.
+        int colorIdx = Piece.isWhite(board.getActiveColor()) ? 0 : 1;
+        int pawnKey = (int)(((board.getWhitePawns() ^ board.getBlackPawns()) * 0x9E3779B97F4A7C15L) >>> 54);
+        int staticEvalRaw = staticEval;
+        // Apply accumulated correction bias (capped at ±32 cp).
+        staticEval += correctionHistory[colorIdx][pawnKey] / CORRECTION_HISTORY_GRAIN;
+
+        // Improving flag: true when eval is higher than 2 plies ago (same mover).
+        // Used to tighten LMR when the position is declining.
+        boolean improving = ply >= 2 && !sideToMoveInCheck
+                && staticEval > staticEvalStack[ply - 2];
+        staticEvalStack[ply] = staticEval;
+
         if (canApplyRazoring(effectiveDepth, alpha, beta, isPvNode, sideToMoveInCheck, staticEval)) {
             int qScore = quiescence(board, alpha, alpha + 1, ply, 0, shouldStopHard);
             if (aborted) {
@@ -855,6 +877,7 @@ public class Searcher {
             if (canApplyLmr(effectiveDepth, moveIndex, isQuiet, isKiller, isTtMove, sideToMoveInCheck, moveGivesCheck)) {
                 lmrApplications++;
                 int reduction = lmrReductions[Math.min(effectiveDepth, MAX_PLY - 1)][Math.min(moveIndex + 1, MAX_LEGAL_MOVES - 1)];
+                if (!improving) { reduction++; }
                 int reducedDepth = Math.max(1, childDepth - reduction);
 
                 score = -alphaBeta(
@@ -944,6 +967,16 @@ public class Searcher {
         if (!aborted && bestScore != -INF) {
             TTBound bound = resolveBound(bestScore, alphaOrig, beta);
             transpositionTable.store(zobrist, bestMove, effectiveDepth, scoreToTT(bestScore, ply), bound);
+
+            // Update correction history: accumulate how much the search
+            // score diverges from the raw static eval for this pawn structure.
+            if (!inSingularitySearch && !sideToMoveInCheck) {
+                int corrError = bestScore - staticEvalRaw;
+                int weight = CORRECTION_HISTORY_GRAIN / Math.max(1, effectiveDepth);
+                correctionHistory[colorIdx][pawnKey] = Math.max(-CORRECTION_HISTORY_MAX,
+                        Math.min(CORRECTION_HISTORY_MAX,
+                                correctionHistory[colorIdx][pawnKey] + corrError * weight));
+            }
         }
 
         return bestScore;
