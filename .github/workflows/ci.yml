@@ -29,3 +29,7 @@ jobs:
 
       - name: Run search regression suite
         run: mvn -B -pl engine-core -Dgroups=regression test
+
+      - name: NPS benchmark gate
+        run: mvn -B test -pl engine-core -Dgroups=benchmark -Dbenchmark.enabled=true -Dnps.baseline=200000 -Dnps.threshold=0.05
+        # Pawn-hash hit rate ≥85% is checked inside NpsBenchmarkTest.aggregateNps above.

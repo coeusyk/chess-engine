@@ -189,7 +189,9 @@ class SearcherTest {
     void lmrReductionTableIsPrecomputed() {
         Searcher searcher = new Searcher();
 
-        assertEquals(1, searcher.getLmrReductionForTesting(3, 3));
+        // Updated Phase 9B #113: new log2-based formula (R = 1 + log2(d)*log2(m)/2) gives R=2
+        // at depth=3/moveIndex=3; both R=1 and R=2 are correct reductions (R=2 is more aggressive).
+        assertEquals(2, searcher.getLmrReductionForTesting(3, 3));
         assertTrue(searcher.getLmrReductionForTesting(8, 8) >= 1);
         assertTrue(searcher.getLmrReductionForTesting(12, 24) >= searcher.getLmrReductionForTesting(4, 4));
     }
@@ -225,7 +227,7 @@ class SearcherTest {
     void futilityAndRazorMarginsAreDefinedAsConstants() {
         Searcher searcher = new Searcher();
 
-        assertEquals(100, searcher.getFutilityMarginForTesting(1));
+        assertEquals(150, searcher.getFutilityMarginForTesting(1));  // Phase 9B #114: raised 100 → 150
         assertEquals(300, searcher.getFutilityMarginForTesting(2));
         assertEquals(0, searcher.getFutilityMarginForTesting(3));
         assertEquals(300, searcher.getRazorMarginForTesting());

@@ -9,18 +9,27 @@ public class Evaluator {
     private static final int TOTAL_PHASE = 24;
 
     // Pawn hash table: caches PawnStructure.evaluate() results keyed by pawn Zobrist hash.
-    // 16K entries at 2 ints each = ~128KB. Pawn structure rarely changes between sibling nodes.
-    private static final int PAWN_TABLE_SIZE = 1 << 14; // 16384 entries
-    private static final int PAWN_TABLE_MASK = PAWN_TABLE_SIZE - 1;
-    private final long[] pawnTableKeys   = new long[PAWN_TABLE_SIZE];
-    private final int[]  pawnTableMg     = new int[PAWN_TABLE_SIZE];
-    private final int[]  pawnTableEg     = new int[PAWN_TABLE_SIZE];
+    // Default 1 MB = 65536 entries. Configurable via UCI option PawnHashSize.
+    // Each entry: 8 bytes (key) + 4 (mg) + 4 (eg) = 16 bytes → 1 MB ≈ 65536 entries.
+    private static final int APPROX_PAWN_ENTRY_BYTES = 16;
+    private static final int DEFAULT_PAWN_HASH_MB = 1;
+    private int pawnTableSize;
+    private int pawnTableMask;
+    private long[] pawnTableKeys;
+    private int[]  pawnTableMg;
+    private int[]  pawnTableEg;
 
     private static final int[] PHASE_WEIGHTS = new int[7];
     private static final int[] MG_MATERIAL = new int[7];
     private static final int[] EG_MATERIAL = new int[7];
     /** Fixed penalty (cp) applied per undefended attacked non-king piece. */
     private static final int HANGING_PENALTY = 50;
+    /**
+     * Enable pawn-hash hit/miss statistics collection. Off by default (zero overhead);
+     * enabled in NpsBenchmarkTest and similar diagnostic callers.
+     */
+    private boolean pawnHashStatsEnabled = false;
+    private long pawnTableHits, pawnTableMisses;
 
     // Mobility bonus per safe square (centipawns)
     private static final int[] MG_MOBILITY = new int[7];
@@ -103,7 +112,48 @@ public class Evaluator {
     public Evaluator(EvalConfig config) {
         this.config = config;
         this.see = new StaticExchangeEvaluator();
+        setPawnHashSizeMb(DEFAULT_PAWN_HASH_MB);
     }
+
+    /**
+     * Resizes the pawn hash table. Entry count is the largest power-of-two that
+     * fits in {@code mb} megabytes. Clears the table and resets all stat counters.
+     *
+     * @param mb size in megabytes; clamped to [1, 256]
+     */
+    public void setPawnHashSizeMb(int mb) {
+        int clampedMb = Math.max(1, Math.min(256, mb));
+        long bytes = (long) clampedMb * 1024L * 1024L;
+        int desiredEntries = (int) Math.min(bytes / APPROX_PAWN_ENTRY_BYTES, 1L << 24);
+        int entryCount = 1;
+        while (entryCount < desiredEntries) entryCount <<= 1;
+        this.pawnTableSize = entryCount;
+        this.pawnTableMask = entryCount - 1;
+        this.pawnTableKeys = new long[entryCount];
+        this.pawnTableMg   = new int[entryCount];
+        this.pawnTableEg   = new int[entryCount];
+        this.pawnTableHits = 0;
+        this.pawnTableMisses = 0;
+    }
+
+    /** Enable pawn-hash statistics tracking (hits and misses). Resets counters to zero. */
+    public void enablePawnHashStats() {
+        this.pawnHashStatsEnabled = true;
+        this.pawnTableHits = 0;
+        this.pawnTableMisses = 0;
+    }
+
+    /** Returns the pawn-hash hit rate [0.0, 1.0]. Meaningful only when stats are enabled. */
+    public double getPawnHashHitRate() {
+        long total = pawnTableHits + pawnTableMisses;
+        return total == 0 ? 0.0 : (double) pawnTableHits / total;
+    }
+
+    /** Returns raw miss count. Meaningful only when stats are enabled. */
+    public long getPawnHashMisses() { return pawnTableMisses; }
+
+    /** Returns the pawn hash table capacity (entry count). */
+    public int getPawnTableSize() { return pawnTableSize; }
 
     public int evaluate(Board board) {
         // Material + PST scores are maintained incrementally in Board; read the cached values.
@@ -122,11 +172,13 @@ public class Evaluator {
 
         int pawnMg, pawnEg;
         long pawnKey = board.getPawnZobristHash();
-        int pawnIdx = (int) (pawnKey & PAWN_TABLE_MASK);
+        int pawnIdx = (int) (pawnKey & pawnTableMask);
         if (pawnTableKeys[pawnIdx] == pawnKey) {
+            if (pawnHashStatsEnabled) pawnTableHits++;
             pawnMg = pawnTableMg[pawnIdx];
             pawnEg = pawnTableEg[pawnIdx];
         } else {
+            if (pawnHashStatsEnabled) pawnTableMisses++;
             int[] pawnStructure = PawnStructure.evaluate(board.getWhitePawns(), board.getBlackPawns());
             pawnMg = pawnStructure[0];
             pawnEg = pawnStructure[1];
@@ -199,34 +251,17 @@ public class Evaluator {
     }
 
     /**
-     * Penalty for non-king pieces that are attacked and not defended (cheap bitboard-only form).
+     * Penalty for non-king pieces that are attacked and not defended (bitboard form).
+     * Uses the Board's cached attackedByWhite/Black bitboards — O(1) instead of ~56
+     * isSquareAttackedBy() calls per evaluate() call (~10% CPU eliminated).
      * Returns a white-positive score: negative if white has hanging pieces, positive if black does.
      */
     private int hangingPenalty(Board board) {
-        int penalty = 0;
-        // White non-king pieces: penalise if attacked by Black and not defended by any White piece
-        long whites = board.getWhiteOccupancy() & ~board.getWhiteKing();
-        long temp = whites;
-        while (temp != 0) {
-            int sq = Long.numberOfTrailingZeros(temp);
-            temp &= temp - 1;
-            if (board.isSquareAttackedBy(sq, Piece.Black)
-                    && !board.isSquareAttackedBy(sq, Piece.White)) {
-                penalty -= HANGING_PENALTY;
-            }
-        }
-        // Black non-king pieces: bonus if attacked by White and not defended by any Black piece
-        long blacks = board.getBlackOccupancy() & ~board.getBlackKing();
-        temp = blacks;
-        while (temp != 0) {
-            int sq = Long.numberOfTrailingZeros(temp);
-            temp &= temp - 1;
-            if (board.isSquareAttackedBy(sq, Piece.White)
-                    && !board.isSquareAttackedBy(sq, Piece.Black)) {
-                penalty += HANGING_PENALTY;
-            }
-        }
-        return penalty;
+        long whiteNonKing = board.getWhiteOccupancy() & ~board.getWhiteKing();
+        long blackNonKing = board.getBlackOccupancy() & ~board.getBlackKing();
+        long whiteHanging = whiteNonKing & board.getAttackedByBlack() & ~board.getAttackedByWhite();
+        long blackHanging = blackNonKing & board.getAttackedByWhite() & ~board.getAttackedByBlack();
+        return (Long.bitCount(blackHanging) - Long.bitCount(whiteHanging)) * HANGING_PENALTY;
     }
 
     /**

@@ -644,6 +644,104 @@ public class MovesGenerator {
         return filterLegal(board, dest, count, activeColor);
     }
 
+    /**
+     * Staged capture generation, stage 1: generates non-pawn tactical captures (bishop, rook,
+     * queen, knight, king). Pawn captures are intentionally omitted so that quiescence search
+     * can skip them entirely when a beta cutoff fires from larger captures.
+     *
+     * <p>Caller: invoke this first, process the returned list, and call
+     * {@link #appendPawnCaptures} only if no beta cutoff occurred.
+     */
+    public static int generateNonPawnCaptures(Board board, int[] dest) {
+        int count = 0;
+        boolean isWhite = board.getActiveColor() == Piece.White;
+        int activeColor = isWhite ? Piece.White : Piece.Black;
+        long enemyBB = isWhite ? board.getBlackOccupancy() : board.getWhiteOccupancy();
+        long occupied = board.getAllOccupancy();
+
+        long bishops = isWhite ? board.getWhiteBishops() : board.getBlackBishops();
+        while (bishops != 0) {
+            int sq = Long.numberOfTrailingZeros(bishops);
+            long attacks = MagicBitboards.getBishopAttacks(sq, occupied) & enemyBB;
+            while (attacks != 0) { int target = Long.numberOfTrailingZeros(attacks); dest[count++] = Move.of(sq, target); attacks &= attacks - 1; }
+            bishops &= bishops - 1;
+        }
+        long rooks = isWhite ? board.getWhiteRooks() : board.getBlackRooks();
+        while (rooks != 0) {
+            int sq = Long.numberOfTrailingZeros(rooks);
+            long attacks = MagicBitboards.getRookAttacks(sq, occupied) & enemyBB;
+            while (attacks != 0) { int target = Long.numberOfTrailingZeros(attacks); dest[count++] = Move.of(sq, target); attacks &= attacks - 1; }
+            rooks &= rooks - 1;
+        }
+        long queens = isWhite ? board.getWhiteQueens() : board.getBlackQueens();
+        while (queens != 0) {
+            int sq = Long.numberOfTrailingZeros(queens);
+            long attacks = MagicBitboards.getQueenAttacks(sq, occupied) & enemyBB;
+            while (attacks != 0) { int target = Long.numberOfTrailingZeros(attacks); dest[count++] = Move.of(sq, target); attacks &= attacks - 1; }
+            queens &= queens - 1;
+        }
+        int knightPiece = activeColor | Piece.Knight;
+        int kingPiece   = activeColor | Piece.King;
+        long knights = isWhite ? board.getWhiteKnights() : board.getBlackKnights();
+        while (knights != 0) { int sq = Long.numberOfTrailingZeros(knights); count = genKnightCaptures(board, dest, count, sq, knightPiece, enemyBB); knights &= knights - 1; }
+        long king = isWhite ? board.getWhiteKing() : board.getBlackKing();
+        if (king != 0) { int sq = Long.numberOfTrailingZeros(king); count = genKingCaptures(board, dest, count, sq, kingPiece, enemyBB); }
+
+        return filterLegal(board, dest, count, activeColor);
+    }
+
+    /**
+     * Staged capture generation, stage 2: appends legal pawn captures and quiet pawn
+     * promotions to {@code dest} starting at {@code startIdx}. Filters for legality
+     * in-place over the appended range only. Returns new total count.
+     *
+     * <p>Call this only when no beta cutoff was found after processing
+     * {@link #generateNonPawnCaptures} results.
+     */
+    public static int appendPawnCaptures(Board board, int[] dest, int startIdx) {
+        boolean isWhite = board.getActiveColor() == Piece.White;
+        int activeColor = isWhite ? Piece.White : Piece.Black;
+        int pawnPiece = activeColor | Piece.Pawn;
+        long pawns   = isWhite ? board.getWhitePawns()    : board.getBlackPawns();
+        long enemyBB = isWhite ? board.getBlackOccupancy() : board.getWhiteOccupancy();
+
+        int rawEnd = startIdx;
+        while (pawns != 0) {
+            int sq = Long.numberOfTrailingZeros(pawns);
+            rawEnd = genPawnTactical(board, dest, rawEnd, sq, pawnPiece, enemyBB);
+            pawns &= pawns - 1;
+        }
+        if (rawEnd == startIdx) return startIdx; // no pawn tacticals generated
+
+        // Legality filter over appended range only (dest[startIdx..rawEnd)).
+        int kingSq = board.getKingSquare(activeColor);
+        boolean inCheck = board.isColorKingInCheck(activeColor);
+        long pinnedBB = inCheck ? 0L : computePinnedPiecesBBStatic(board, activeColor);
+
+        int legal = startIdx;
+        for (int i = startIdx; i < rawEnd; i++) {
+            int packed = dest[i];
+            int from   = Move.from(packed);
+            int flag   = Move.flag(packed);
+            boolean isKingMove = (from == kingSq);
+            boolean isSpecial  = flag == Move.FLAG_EN_PASSANT
+                    || flag == Move.FLAG_CASTLING_K
+                    || flag == Move.FLAG_CASTLING_Q;
+            boolean isPinned = (pinnedBB & (1L << from)) != 0L;
+
+            if (!inCheck && !isKingMove && !isSpecial && !isPinned) {
+                dest[legal++] = packed;
+                continue;
+            }
+            board.makeMove(packed);
+            if (!board.isColorKingInCheck(activeColor)) {
+                dest[legal++] = packed;
+            }
+            board.unmakeMove();
+        }
+        return legal;
+    }
+
     /** Pawn tactical moves: diagonal captures (incl. en passant), capture-promotions (queen only),
      *  and quiet pushes to the promotion rank (queen only). */
     private static int genPawnTactical(Board board, int[] dest, int count,

@@ -32,7 +32,7 @@ public class Searcher {
     private static final int ASPIRATION_INITIAL_DELTA_CP = 50;
     private static final int NULL_MOVE_DEPTH_THRESHOLD = 3;
     private static final int MAX_LEGAL_MOVES = 256;
-    private static final int FUTILITY_MARGIN_DEPTH_1 = 100;
+    private static final int FUTILITY_MARGIN_DEPTH_1 = 150;
     private static final int FUTILITY_MARGIN_DEPTH_2 = 300;
     private static final int RAZOR_MARGIN_DEPTH_1 = 300;
     private static final int RAZOR_MARGIN_DEPTH_2 = 600;
@@ -220,6 +220,25 @@ public class Searcher {
         return transpositionTable.getHitRate();
     }
 
+    public TranspositionTable.TTStats getTranspositionTableStats() {
+        return transpositionTable.getStats();
+    }
+
+    /** Enables pawn-hash statistics tracking in the evaluator. Resets counters. */
+    void enablePawnHashStats() {
+        evaluator.enablePawnHashStats();
+    }
+
+    /** Returns the pawn-hash hit rate [0.0, 1.0] since stats were last enabled. */
+    double getPawnHashHitRate() {
+        return evaluator.getPawnHashHitRate();
+    }
+
+    /** Resizes the pawn hash table in the evaluator. See {@link Evaluator#setPawnHashSizeMb}. */
+    public void setPawnHashSizeMb(int mb) {
+        evaluator.setPawnHashSizeMb(mb);
+    }
+
     public void setSyzygyProber(SyzygyProber prober) {
         this.syzygyProber = prober != null ? prober : new NoOpSyzygyProber();
     }
@@ -259,10 +278,6 @@ public class Searcher {
     ) {
         timeManager.startNow();
         this.timeManager = timeManager;
-        // Invalidate old-generation TT entries from previous moves so that
-        // depth-preferred replacement doesn't get stuck behind deep entries
-        // that were written during earlier positions and can never be evicted.
-        transpositionTable.incrementGeneration();
         BooleanSupplier softStop = () -> externalStop.getAsBoolean() || timeManager.shouldStopSoft();
         BooleanSupplier hardStop = () -> externalStop.getAsBoolean() || timeManager.shouldStopHard();
         return iterativeDeepening(board, maxDepth, softStop, hardStop, listener);
@@ -345,7 +360,7 @@ public class Searcher {
                 deltaPruningSkips = 0;
                 // pvTable and pvLength are pre-allocated; no per-depth allocation needed.
                 RootResult iteration;
-                if (pvIndex == 0 && aspirationWindowsEnabled && depth >= 2 && previousBestMove != null) {
+                if (pvIndex == 0 && aspirationWindowsEnabled && depth >= 4 && previousBestMove != null) {
                     iteration = searchRootWithAspiration(board, depth, previousBestMove, bestScore, shouldStopHard, maxCheckExtensions, excludedMoves);
                 } else {
                     Move preferred = pvIndex == 0 ? previousBestMove : null;
@@ -698,7 +713,7 @@ public class Searcher {
 
         if (nullMovePruningEnabled && canApplyNullMove(board, effectiveDepth, previousMoveWasNull, beta,
                 sideToMoveInCheck, staticEval)) {
-            int nullReduction = effectiveDepth >= 6 ? 3 : 2;
+            int nullReduction = effectiveDepth > 6 ? 3 : 2;
             Board.NullMoveState nullMoveState = board.makeNullMove();
             int nullScore = -alphaBeta(
                     board,
@@ -1033,7 +1048,7 @@ public class Searcher {
     ) {
         return lmrEnabled
             && depth >= 3
-                && moveIndex >= 2
+                && moveIndex >= 4
                 && isQuiet
                 && !isKiller
                 && !isTtMove
@@ -1121,12 +1136,17 @@ public class Searcher {
     }
 
     private int[][] precomputeLmrReductions() {
+        // Formula: R = max(1, floor(1 + log2(depth) * log2(moveIndex) / 2))
+        // log2(x) = ln(x) / ln(2).  Rewritten in terms of natural log:
+        //   R = max(1, floor(1 + ln(depth)*ln(moveIndex) / (2 * LN2 * LN2)))
+        // where LN2 = ln(2) ≈ 0.6931.
+        double ln2Sq2 = 2.0 * Math.log(2) * Math.log(2); // 2 * ln(2)^2 ≈ 0.961
         int[][] reductions = new int[MAX_PLY][MAX_LEGAL_MOVES];
         for (int depth = 1; depth < MAX_PLY; depth++) {
             for (int moveIndex = 1; moveIndex < MAX_LEGAL_MOVES; moveIndex++) {
                 int reduction = Math.max(
                         1,
-                        (int) (0.75 + (Math.log(depth) * Math.log(moveIndex)) / 2.25)
+                        (int) (1.0 + (Math.log(depth) * Math.log(moveIndex)) / ln2Sq2)
                 );
                 reductions[depth][moveIndex] = reduction;
             }
@@ -1358,13 +1378,14 @@ public class Searcher {
 
         int poolIdxQq = Math.min(ply, MOVE_LIST_POOL_SIZE - 1);
         int[] allQMoves = moveListPool[poolIdxQq];
-        // Generate only captures and queen promotions — avoids producing and discarding
-        // the ~80% of quiet moves that generate() would return and shouldIncludeInQuiescence
-        // would filter out.
-        int allQCount = MovesGenerator.generateCaptures(board, allQMoves);
+
+        // ---- Stage 1: non-pawn captures and knight/rook/bishop/queen captures ----
+        // Pawn captures are deferred to stage 2 so we can skip them entirely if a
+        // beta cutoff fires here (saving ~10% Q-node cost in piece-rich positions).
+        int stage1Raw = MovesGenerator.generateNonPawnCaptures(board, allQMoves);
         // Apply SEE filter: remove losing captures; always keep queen promotions.
         int qCount = 0;
-        for (int i = 0; i < allQCount; i++) {
+        for (int i = 0; i < stage1Raw; i++) {
             int qm = allQMoves[i];
             if (seeEnabled && moveOrderer.isCapture(board, qm)
                     && staticExchangeEvaluator.evaluate(board, qm) < 0) {
@@ -1372,7 +1393,55 @@ public class Searcher {
             }
             allQMoves[qCount++] = qm;
         }
-        if (qCount == 0) {
+
+        int bestScore = standPat;
+        for (int qi = 0; qi < qCount; qi++) {
+            int move = allQMoves[qi];
+            // Per-move delta pruning: skip non-promotion captures whose material gain
+            // plus the safety margin still cannot raise alpha.
+            if (deltaPruningAllowed && !Move.isPromotion(move)) {
+                int captureGain = capturedPieceValueForDelta(board, move);
+                if (standPat + captureGain + DELTA_MARGIN <= alpha) {
+                    deltaPruningSkips++;
+                    continue;
+                }
+            }
+
+            board.makeMove(move);
+            int score = -quiescence(board, -beta, -alpha, ply + 1, qPly + 1, shouldStopHard);
+            board.unmakeMove();
+
+            if (aborted) {
+                return bestScore;
+            }
+            if (score > bestScore) {
+                bestScore = score;
+            }
+            if (score > alpha) {
+                alpha = score;
+            }
+            if (alpha >= beta) {
+                // Beta cutoff from non-pawn captures: skip pawn capture generation entirely.
+                return bestScore;
+            }
+        }
+
+        // ---- Stage 2: pawn captures and quiet pawn promotions ----
+        // Only reached when stage 1 didn't produce a beta cutoff.
+        int pawnStart = qCount;
+        int pawnEnd   = MovesGenerator.appendPawnCaptures(board, allQMoves, pawnStart);
+        // SEE filter: pawn captures in allQMoves[pawnStart..pawnEnd) written back in-place.
+        int totalCount = pawnStart;
+        for (int i = pawnStart; i < pawnEnd; i++) {
+            int qm = allQMoves[i];
+            if (seeEnabled && moveOrderer.isCapture(board, qm)
+                    && staticExchangeEvaluator.evaluate(board, qm) < 0) {
+                continue;
+            }
+            allQMoves[totalCount++] = qm;
+        }
+
+        if (totalCount == 0) {
             // Stalemate guard: in endings with few pieces, verify that at least one quiet
             // move is available before returning stand-pat. Without this, a stalemated side
             // returns standPat (large negative) instead of 0.
@@ -1388,11 +1457,8 @@ public class Searcher {
             return standPat;
         }
 
-        int bestScore = standPat;
-        for (int qi = 0; qi < qCount; qi++) {
+        for (int qi = pawnStart; qi < totalCount; qi++) {
             int move = allQMoves[qi];
-            // Per-move delta pruning: skip non-promotion captures whose material gain
-            // plus the safety margin still cannot raise alpha.
             if (deltaPruningAllowed && !Move.isPromotion(move)) {
                 int captureGain = capturedPieceValueForDelta(board, move);
                 if (standPat + captureGain + DELTA_MARGIN <= alpha) {

@@ -112,41 +112,44 @@ public class AnalysisService {
     @SuppressWarnings("null")
     private void sendInfoEvent(SseEmitter emitter, IterationInfo info, AtomicBoolean cancelled, String fen) {
         if (cancelled.get()) return;
-        try {
-            int scoreCp = info.scoreCp();
-            boolean isMate = Math.abs(scoreCp) >= MATE_THRESHOLD;
+        synchronized (emitter) {
+            if (cancelled.get()) return;
+            try {
+                int scoreCp = info.scoreCp();
+                boolean isMate = Math.abs(scoreCp) >= MATE_THRESHOLD;
 
-            Map<String, Object> scoreMap;
-            if (isMate) {
-                int mateInMoves = scoreCp > 0
-                        ? (MATE_SCORE - scoreCp + 1) / 2
-                        : -((MATE_SCORE + scoreCp + 1) / 2);
-                scoreMap = Map.of("type", "mate", "value", mateInMoves);
-            } else {
-                scoreMap = Map.of("type", "cp", "value", scoreCp);
+                Map<String, Object> scoreMap;
+                if (isMate) {
+                    int mateInMoves = scoreCp > 0
+                            ? (MATE_SCORE - scoreCp + 1) / 2
+                            : -((MATE_SCORE + scoreCp + 1) / 2);
+                    scoreMap = Map.of("type", "mate", "value", mateInMoves);
+                } else {
+                    scoreMap = Map.of("type", "cp", "value", scoreCp);
+                }
+
+                long timeMs = info.timeMs();
+                long nps = timeMs > 0 ? (info.nodes() * 1000L) / timeMs : 0;
+
+                List<MoveDto> pvDtos = pvToMoveDtos(info.pv(), fen);
+
+                Map<String, Object> infoEvent = Map.of(
+                        "type", "info",
+                        "depth", info.depth(),
+                        "seldepth", info.seldepth(),
+                        "multiPv", info.multipv(),
+                        "score", scoreMap,
+                        "nodes", info.nodes(),
+                        "nps", nps,
+                        "time", timeMs,
+                        "hashfull", info.hashfull(),
+                        "pv", pvDtos
+                );
+
+                emitter.send(SseEmitter.event().name("info").data(infoEvent));
+            } catch (IOException e) {
+                cancelled.set(true);
             }
-
-            long timeMs = info.timeMs();
-            long nps = timeMs > 0 ? (info.nodes() * 1000L) / timeMs : 0;
-
-            List<MoveDto> pvDtos = pvToMoveDtos(info.pv(), fen);
-
-            Map<String, Object> infoEvent = Map.of(
-                    "type", "info",
-                    "depth", info.depth(),
-                    "seldepth", info.seldepth(),
-                    "multiPv", info.multipv(),
-                    "score", scoreMap,
-                    "nodes", info.nodes(),
-                    "nps", nps,
-                    "time", timeMs,
-                    "hashfull", info.hashfull(),
-                    "pv", pvDtos
-            );
-
-            emitter.send(SseEmitter.event().name("info").data(infoEvent));
-        } catch (IOException e) {
-            cancelled.set(true);
         }
     }
 
