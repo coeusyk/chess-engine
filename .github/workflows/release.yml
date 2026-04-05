@@ -24,10 +24,10 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout develop
+      - name: Checkout master
         uses: actions/checkout@v4
         with:
-          ref: develop
+          ref: master
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -51,7 +51,11 @@ jobs:
           
           if [ -n "${{ inputs.version_override }}" ]; then
             RELEASE="${{ inputs.version_override }}"
+          elif [[ "$CURRENT" == *-SNAPSHOT ]]; then
+            # Current is a SNAPSHOT: release it as-is (strip -SNAPSHOT, don't increment)
+            RELEASE="$BASE"
           else
+            # Current is already a release version: increment based on release_type
             IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE"
             case "${{ inputs.release_type }}" in
               major) RELEASE="$((MAJOR+1)).0.0" ;;
@@ -95,7 +99,7 @@ jobs:
           git commit -m "chore(release): bump to ${{ steps.versions.outputs.next }}"
 
       - name: Push commits and tag
-        run: git push origin develop --follow-tags
+        run: git push origin master --follow-tags
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -103,18 +107,23 @@ jobs:
           tag_name: ${{ steps.versions.outputs.tag }}
           name: "v${{ steps.versions.outputs.release }}"
           body: |
-            ## Vex Chess Engine ${{ steps.versions.outputs.release }}
+            # Vex Chess Engine ${{ steps.versions.outputs.release }}
 
-            ### Assets
-            - `${{ steps.jar.outputs.name }}` — UCI-compatible fat JAR (Java 21)
+            ## Engine binary
+            - **`${{ steps.jar.outputs.name }}`** — UCI-compatible fat JAR (Java 21+)
 
-            ### Usage
+            ## Quick Start
+            ```bash
+            java -jar ${{ steps.jar.outputs.name }} < input.uci
             ```
-            java -jar ${{ steps.jar.outputs.name }}
-            ```
 
-            ### What's Changed
-            See [DEV_ENTRIES.md](https://github.com/coeusyk/chess-engine/blob/develop/DEV_ENTRIES.md) for full development history.
+            ## Changes in This Release
+            See [DEV_ENTRIES.md](https://github.com/coeusyk/chess-engine/blob/master/DEV_ENTRIES.md) for:
+            - Full list of issues closed
+            - SPRT results for each validated change
+            - NPS baseline changes (if any)
+            - New UCI options and behaviours
+            - Detailed development notes
           files: ${{ steps.jar.outputs.path }}
           draft: false
           prerelease: false
