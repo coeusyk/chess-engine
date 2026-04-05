@@ -33,6 +33,7 @@ public class UciApplication {
     private Board board = new Board();
     private int multiPV = 1;
     private int hashSizeMb = 64;
+    private int pawnHashSizeMb = 1;
     private int threads = 1;
     private long moveOverheadMs = 30;
     private String syzygyPath = "";
@@ -113,6 +114,7 @@ public class UciApplication {
                 System.out.println("id name " + ENGINE_NAME);
                 System.out.println("id author " + ENGINE_AUTHOR);
                 System.out.println("option name Hash type spin default 64 min 1 max 65536");
+                System.out.println("option name PawnHashSize type spin default 1 min 1 max 256");
                 System.out.println("option name MultiPV type spin default 1 min 1 max 500");
                 System.out.println("option name MoveOverhead type spin default 30 min 0 max 5000");
                 System.out.println("option name Threads type spin default 1 min 1 max 512");
@@ -284,6 +286,12 @@ public class UciApplication {
                 threads = Math.max(1, Math.min(512, value));
             } catch (NumberFormatException ignored) {
             }
+        } else if ("pawnhashsize".equals(optionNameLower)) {
+            try {
+                int value = Integer.parseInt(valuePart);
+                pawnHashSizeMb = Math.max(1, Math.min(256, value));
+            } catch (NumberFormatException ignored) {
+            }
         }
         // Unknown options are silently ignored per UCI spec.
     }
@@ -380,6 +388,7 @@ public class UciApplication {
                         try {
                             Searcher helper = new Searcher();
                             helper.setSharedTranspositionTable(sharedTT);
+                            helper.setPawnHashSizeMb(pawnHashSizeMb);
                             Board helperBoard = new Board(positionFen);
                             helperBoard.setSearchMode(true);
                             helper.iterativeDeepening(
@@ -401,6 +410,7 @@ public class UciApplication {
             String[] parts = command.split("\\s+");
             Searcher searcher = new Searcher();
             searcher.setSharedTranspositionTable(sharedTT);
+            searcher.setPawnHashSizeMb(pawnHashSizeMb);
             if (multiPV > 1) {
                 searcher.setMultiPV(multiPV);
             }

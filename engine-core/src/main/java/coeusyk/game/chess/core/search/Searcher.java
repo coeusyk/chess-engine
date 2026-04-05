@@ -234,6 +234,11 @@ public class Searcher {
         return evaluator.getPawnHashHitRate();
     }
 
+    /** Resizes the pawn hash table in the evaluator. See {@link Evaluator#setPawnHashSizeMb}. */
+    public void setPawnHashSizeMb(int mb) {
+        evaluator.setPawnHashSizeMb(mb);
+    }
+
     public void setSyzygyProber(SyzygyProber prober) {
         this.syzygyProber = prober != null ? prober : new NoOpSyzygyProber();
     }

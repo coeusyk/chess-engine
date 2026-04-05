@@ -9,12 +9,15 @@ public class Evaluator {
     private static final int TOTAL_PHASE = 24;
 
     // Pawn hash table: caches PawnStructure.evaluate() results keyed by pawn Zobrist hash.
-    // 16K entries at 2 ints each = ~128KB. Pawn structure rarely changes between sibling nodes.
-    private static final int PAWN_TABLE_SIZE = 1 << 14; // 16384 entries
-    private static final int PAWN_TABLE_MASK = PAWN_TABLE_SIZE - 1;
-    private final long[] pawnTableKeys   = new long[PAWN_TABLE_SIZE];
-    private final int[]  pawnTableMg     = new int[PAWN_TABLE_SIZE];
-    private final int[]  pawnTableEg     = new int[PAWN_TABLE_SIZE];
+    // Default 1 MB = 65536 entries. Configurable via UCI option PawnHashSize.
+    // Each entry: 8 bytes (key) + 4 (mg) + 4 (eg) = 16 bytes → 1 MB ≈ 65536 entries.
+    private static final int APPROX_PAWN_ENTRY_BYTES = 16;
+    private static final int DEFAULT_PAWN_HASH_MB = 1;
+    private int pawnTableSize;
+    private int pawnTableMask;
+    private long[] pawnTableKeys;
+    private int[]  pawnTableMg;
+    private int[]  pawnTableEg;
 
     private static final int[] PHASE_WEIGHTS = new int[7];
     private static final int[] MG_MATERIAL = new int[7];
@@ -109,6 +112,28 @@ public class Evaluator {
     public Evaluator(EvalConfig config) {
         this.config = config;
         this.see = new StaticExchangeEvaluator();
+        setPawnHashSizeMb(DEFAULT_PAWN_HASH_MB);
+    }
+
+    /**
+     * Resizes the pawn hash table. Entry count is the largest power-of-two that
+     * fits in {@code mb} megabytes. Clears the table and resets all stat counters.
+     *
+     * @param mb size in megabytes; clamped to [1, 256]
+     */
+    public void setPawnHashSizeMb(int mb) {
+        int clampedMb = Math.max(1, Math.min(256, mb));
+        long bytes = (long) clampedMb * 1024L * 1024L;
+        int desiredEntries = (int) Math.min(bytes / APPROX_PAWN_ENTRY_BYTES, 1L << 24);
+        int entryCount = 1;
+        while (entryCount < desiredEntries) entryCount <<= 1;
+        this.pawnTableSize = entryCount;
+        this.pawnTableMask = entryCount - 1;
+        this.pawnTableKeys = new long[entryCount];
+        this.pawnTableMg   = new int[entryCount];
+        this.pawnTableEg   = new int[entryCount];
+        this.pawnTableHits = 0;
+        this.pawnTableMisses = 0;
     }
 
     /** Enable pawn-hash statistics tracking (hits and misses). Resets counters to zero. */
@@ -127,8 +152,8 @@ public class Evaluator {
     /** Returns raw miss count. Meaningful only when stats are enabled. */
     public long getPawnHashMisses() { return pawnTableMisses; }
 
-    /** Returns the pawn hash table capacity. */
-    public int getPawnTableSize() { return PAWN_TABLE_SIZE; }
+    /** Returns the pawn hash table capacity (entry count). */
+    public int getPawnTableSize() { return pawnTableSize; }
 
     public int evaluate(Board board) {
         // Material + PST scores are maintained incrementally in Board; read the cached values.
@@ -147,7 +172,7 @@ public class Evaluator {
 
         int pawnMg, pawnEg;
         long pawnKey = board.getPawnZobristHash();
-        int pawnIdx = (int) (pawnKey & PAWN_TABLE_MASK);
+        int pawnIdx = (int) (pawnKey & pawnTableMask);
         if (pawnTableKeys[pawnIdx] == pawnKey) {
             if (pawnHashStatsEnabled) pawnTableHits++;
             pawnMg = pawnTableMg[pawnIdx];
