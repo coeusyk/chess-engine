@@ -4,6 +4,7 @@ import coeusyk.game.chess.core.bitboard.AttackTables;
 import coeusyk.game.chess.core.bitboard.BitboardPosition;
 import coeusyk.game.chess.core.bitboard.MagicBitboards;
 import coeusyk.game.chess.core.bitboard.ZobristHash;
+import coeusyk.game.chess.core.eval.PieceSquareTables;
 import coeusyk.game.chess.core.movegen.MovesGenerator;
 
 import java.util.*;
@@ -19,22 +20,62 @@ public class Board {
         int capturedPiece;              // Piece captured on target square (Piece.None if none)
         int capturedEPPiece;            // For en passant: piece captured on EP square
         int previousEpTargetSquare;     // En passant target square before the move
-        boolean[] previousCastlingRights; // Castling availability before the move
+        final boolean[] previousCastlingRights = new boolean[4]; // pre-allocated, filled via arraycopy
         int previousHalfmoveClock;      // Halfmove clock before the move
         int previousFullMoves;          // Full move counter before the move
-        Move move;                      // The move that was made
+        int packedMove;                 // The move encoded as a packed int (Move.of)
+        int previousMgScore;            // Incremental material+PST MG score before the move
+        int previousEgScore;            // Incremental material+PST EG score before the move
 
-        UnmakeInfo(Move move, int capturedPiece, int capturedEPPiece, int prevEP, 
-                   boolean[] prevCastling, int prevHalf, int prevFull) {
-            this.move = move;
+        /** Pool constructor — fields are set via set() before first use. */
+        UnmakeInfo() {}
+
+        void set(int packed, int capturedPiece, int capturedEPPiece, int prevEP,
+                 boolean[] prevCastling, int prevHalf, int prevFull, int prevMg, int prevEg) {
+            this.packedMove = packed;
             this.capturedPiece = capturedPiece;
             this.capturedEPPiece = capturedEPPiece;
             this.previousEpTargetSquare = prevEP;
-            this.previousCastlingRights = prevCastling.clone();
+            System.arraycopy(prevCastling, 0, this.previousCastlingRights, 0, 4);
             this.previousHalfmoveClock = prevHalf;
             this.previousFullMoves = prevFull;
+            this.previousMgScore = prevMg;
+            this.previousEgScore = prevEg;
         }
     }
+
+    /** Valid move reactions. Checked as a Set to avoid per-call ArrayList allocation. */
+    private static final Set<String> VALID_REACTIONS = Set.of(
+        "castle-k", "castle-q", "en-passant", "ep-target",
+        "promote-q", "promote-r", "promote-b", "promote-n"
+    );
+
+    /**
+     * Maximum depth of the unmake stack: max search ply (128) + max game length (512)
+     * plus a safety margin. Pooled to avoid per-node GC pressure.
+     */
+    private static final int UNMAKE_POOL_SIZE = 768;
+
+    /**
+     * When {@code true}, {@link #makeMove} and {@link #unmakeMove} skip recording
+     * {@link #movesPlayed} and {@link #boardStates} (expensive FEN generation).
+     * Set this before handing the board to the search and restore afterward.
+     */
+    private boolean searchMode = false;
+
+    public void setSearchMode(boolean enabled) {
+        this.searchMode = enabled;
+    }
+
+    // Material values mirroring Evaluator.MG_MATERIAL / EG_MATERIAL — keep in sync.
+    // Indexed by Piece type constants (Piece.Pawn=1 .. Piece.King=6).
+    private static final int[] INC_MG_MATERIAL = { 0, 100, 391, 428,  558, 1200, 0 };
+    private static final int[] INC_EG_MATERIAL = { 0,  89, 287, 311,  555, 1040, 0 };
+
+    // Incrementally maintained material+PST score (white minus black, before tapering).
+    // Updated in makeMove, restored in unmakeMove, initialised in recomputeIncrementalScores().
+    private int incMgScore = 0;
+    private int incEgScore = 0;
 
     // Bitboard representation (12 piece types: 6 per color)
     private long whitePawns, whiteKnights, whiteBishops, whiteRooks, whiteQueens, whiteKing;
@@ -42,6 +83,12 @@ public class Board {
     
     // Occupancy masks
     private long whiteOccupancy, blackOccupancy, allOccupancy;
+
+    // Attacked-squares bitboards: all squares attacked by each side.
+    // Computed lazily on first access after a make/unmake — never during the hot make/unmake call.
+    // Eliminates repeated isSquareAttackedBy() calls in hangingPenalty() (~56/eval → bitboard ops).
+    private long attackedByWhite, attackedByBlack;
+    private boolean attackedSquaresValid = false;
 
     static final String STARTING_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 //    static final String STARTING_FEN = "8/8/5k2/8/p7/P1B5/4K3/8 b - - 0 1";
@@ -62,21 +109,21 @@ public class Board {
     // Zobrist hash for the current position
     private long zobristHash;
 
-    // Possible Move Reactions:
-    private final String[] reactionIds = {
-        "castle-k", "castle-q", "en-passant", "ep-target",
-        "promote-q", "promote-r", "promote-b", "promote-n"
-    };
-
     // Moves made until current position:
     public ArrayList<Move> movesPlayed = new ArrayList<>();
     public ArrayList<String> boardStates = new ArrayList<>();  // Storing the states of the board
-    private final ArrayList<Long> zobristHistory = new ArrayList<>();
-    
-    // Stack of move undo information for efficient unmake without FEN parsing
-    private Stack<UnmakeInfo> unmakeStack = new Stack<>();
+    // Zobrist hash history — long[] stack to avoid autoboxing overhead of ArrayList<Long>.
+    // Size matches UNMAKE_POOL_SIZE: one entry per make, cleared on initWithFEN.
+    private final long[] zobristStack = new long[UNMAKE_POOL_SIZE];
+    private int zobristSP = 0;
+
+    // Pre-allocated pool of UnmakeInfo objects — reused per make/unmake to avoid GC pressure.
+    // unmakeSP is the next-free index (stack pointer). Pool entries are filled via set().
+    private final UnmakeInfo[] unmakePool = new UnmakeInfo[UNMAKE_POOL_SIZE];
+    private int unmakeSP = 0;
 
     public Board() {
+        initUnmakePool();
         initWithFEN(STARTING_FEN);
 
         if (!boardStates.contains(STARTING_FEN)) {
@@ -85,10 +132,17 @@ public class Board {
     }
 
     public Board(String fenString) {
+        initUnmakePool();
         initWithFEN(fenString);
 
         if (!boardStates.contains(fenString)) {
             boardStates.add(fenString);
+        }
+    }
+
+    private void initUnmakePool() {
+        for (int i = 0; i < UNMAKE_POOL_SIZE; i++) {
+            unmakePool[i] = new UnmakeInfo();
         }
     }
 
@@ -98,7 +152,7 @@ public class Board {
         whitePawns = whiteKnights = whiteBishops = whiteRooks = whiteQueens = whiteKing = 0L;
         blackPawns = blackKnights = blackBishops = blackRooks = blackQueens = blackKing = 0L;
         whiteOccupancy = blackOccupancy = allOccupancy = 0L;
-        zobristHistory.clear();
+        zobristSP = 0;
 
         String[] fenFields = fenString.split(" ");
 
@@ -215,7 +269,11 @@ public class Board {
         
         // Compute Zobrist hash for the initial position
         zobristHash = recomputeZobristHash();
-        zobristHistory.add(zobristHash);
+        zobristStack[zobristSP++] = zobristHash;
+
+        // Initialize incremental material+PST scores from the FEN position
+        recomputeIncrementalScores();
+        // Attacked-squares are computed lazily on first access; no init call needed.
     }
 
     // Function for obtaining the FEN string of the current position (for storing states of the board):
@@ -333,6 +391,95 @@ public class Board {
         whiteOccupancy = whitePawns | whiteKnights | whiteBishops | whiteRooks | whiteQueens | whiteKing;
         blackOccupancy = blackPawns | blackKnights | blackBishops | blackRooks | blackQueens | blackKing;
         allOccupancy = whiteOccupancy | blackOccupancy;
+    }
+
+    /**
+     * Computes attacked-squares bitboards from scratch using current occupancy.
+     * Called lazily by getAttackedByWhite()/getAttackedByBlack() — only when evaluate()
+     * actually needs them, not on every make/unmake.
+     */
+    private void recomputeAttackedSquares() {
+        long occ = allOccupancy;
+
+        // White attacks
+        long wa = 0L;
+        long temp = whiteRooks | whiteQueens;
+        while (temp != 0) { int sq = Long.numberOfTrailingZeros(temp); wa |= MagicBitboards.getRookAttacks(sq, occ);   temp &= temp - 1; }
+        temp = whiteBishops | whiteQueens;
+        while (temp != 0) { int sq = Long.numberOfTrailingZeros(temp); wa |= MagicBitboards.getBishopAttacks(sq, occ); temp &= temp - 1; }
+        temp = whiteKnights;
+        while (temp != 0) { int sq = Long.numberOfTrailingZeros(temp); wa |= AttackTables.KNIGHT_ATTACKS[sq];          temp &= temp - 1; }
+        if (whiteKing != 0L) wa |= AttackTables.KING_ATTACKS[Long.numberOfTrailingZeros(whiteKing)];
+        wa |= ((whitePawns & ~FILE_A) >> 9) | ((whitePawns & ~FILE_H) >> 7);
+        attackedByWhite = wa;
+
+        // Black attacks
+        long ba = 0L;
+        temp = blackRooks | blackQueens;
+        while (temp != 0) { int sq = Long.numberOfTrailingZeros(temp); ba |= MagicBitboards.getRookAttacks(sq, occ);   temp &= temp - 1; }
+        temp = blackBishops | blackQueens;
+        while (temp != 0) { int sq = Long.numberOfTrailingZeros(temp); ba |= MagicBitboards.getBishopAttacks(sq, occ); temp &= temp - 1; }
+        temp = blackKnights;
+        while (temp != 0) { int sq = Long.numberOfTrailingZeros(temp); ba |= AttackTables.KNIGHT_ATTACKS[sq];          temp &= temp - 1; }
+        if (blackKing != 0L) ba |= AttackTables.KING_ATTACKS[Long.numberOfTrailingZeros(blackKing)];
+        ba |= ((blackPawns & ~FILE_A) << 7) | ((blackPawns & ~FILE_H) << 9);
+        attackedByBlack = ba;
+        attackedSquaresValid = true;
+    }
+
+    public long getAttackedByWhite() {
+        if (!attackedSquaresValid) recomputeAttackedSquares();
+        return attackedByWhite;
+    }
+    public long getAttackedByBlack() {
+        if (!attackedSquaresValid) recomputeAttackedSquares();
+        return attackedByBlack;
+    }
+
+    /**
+     * Adjusts the incremental material+PST scores when a piece is added (delta=+1) or
+     * removed (delta=-1) from the given square. White pieces contribute positively;
+     * black pieces contribute negatively (scores are from White's perspective).
+     */
+    private void incAdjust(int piece, int square, int delta) {
+        int type = Piece.type(piece);
+        boolean white = Piece.isWhite(piece);
+        int pstSq = white ? square : (square ^ 56);
+        int mg = INC_MG_MATERIAL[type] + PieceSquareTables.mg(type, pstSq);
+        int eg = INC_EG_MATERIAL[type] + PieceSquareTables.eg(type, pstSq);
+        if (white) {
+            incMgScore += delta * mg;
+            incEgScore += delta * eg;
+        } else {
+            incMgScore -= delta * mg;
+            incEgScore -= delta * eg;
+        }
+    }
+
+    /** Recomputes incMgScore/incEgScore from scratch by iterating all 12 bitboards. */
+    private void recomputeIncrementalScores() {
+        incMgScore = 0;
+        incEgScore = 0;
+        accumBitboard(whitePawns,   Piece.White | Piece.Pawn);
+        accumBitboard(whiteKnights, Piece.White | Piece.Knight);
+        accumBitboard(whiteBishops, Piece.White | Piece.Bishop);
+        accumBitboard(whiteRooks,   Piece.White | Piece.Rook);
+        accumBitboard(whiteQueens,  Piece.White | Piece.Queen);
+        accumBitboard(whiteKing,    Piece.White | Piece.King);
+        accumBitboard(blackPawns,   Piece.Black | Piece.Pawn);
+        accumBitboard(blackKnights, Piece.Black | Piece.Knight);
+        accumBitboard(blackBishops, Piece.Black | Piece.Bishop);
+        accumBitboard(blackRooks,   Piece.Black | Piece.Rook);
+        accumBitboard(blackQueens,  Piece.Black | Piece.Queen);
+        accumBitboard(blackKing,    Piece.Black | Piece.King);
+    }
+
+    private void accumBitboard(long bb, int piece) {
+        while (bb != 0) {
+            int sq = Long.numberOfTrailingZeros(bb);
+            incAdjust(piece, sq, +1);
+            bb &= bb - 1;
+        }
     }
     
     private long recomputeZobristHash() {
@@ -487,89 +634,84 @@ public class Board {
 
     // Move to make after list of moves are sent to the client and the move made is reported back to the server:
     public void makeMove(Move move) {
-        int movingPiece = getPiece(move.startSquare);
-        int capturedPiece = getPiece(move.targetSquare);
+        // Preserve the old validation contract before delegating to the int path.
+        if (move.reaction != null && !VALID_REACTIONS.contains(move.reaction)) {
+            throw new IllegalArgumentException("invalid move reaction : does not exist");
+        }
+        makeMove(move.pack());
+    }
+
+    /**
+     * Primary make-move implementation using a packed int move encoding (no heap allocation).
+     * The encoding is: bits 0-5 = from, bits 6-11 = to, bits 12-15 = flag (Move.FLAG_*).
+     * Called by the search hot path and by the legacy makeMove(Move) delegate.
+     */
+    public void makeMove(int packed) {
+        int startSquare = Move.from(packed);
+        int targetSquare = Move.to(packed);
+        int flag = Move.flag(packed);
+
+        int movingPiece = getPiece(startSquare);
+        int capturedPiece = getPiece(targetSquare);
         int capturedEPPiece = Piece.None;
         boolean isCapture = capturedPiece != Piece.None;
         int newEpTargetSquare = -1;
         int pieceOnTarget = movingPiece;
-        
-        // Validate reaction before any state/hash mutations to avoid partial corruption on error
-        if (move.reaction != null && !Arrays.asList(reactionIds).contains(move.reaction)) {
-            throw new IllegalArgumentException("invalid move reaction : does not exist");
-        }
-        
-        // Save undo information before modifying the board
-        UnmakeInfo unmakeInfo = new UnmakeInfo(move, capturedPiece, capturedEPPiece, 
-                epTargetSquare, castlingAvailability, halfmoveClock, fullMoves);
-        
+
+        // Save undo information before modifying the board (reuse pooled object — no allocation)
+        UnmakeInfo unmakeInfo = unmakePool[unmakeSP++];
+        unmakeInfo.set(packed, capturedPiece, capturedEPPiece,
+                epTargetSquare, castlingAvailability, halfmoveClock, fullMoves,
+                incMgScore, incEgScore);
+
         // Update Zobrist hash for side-to-move
         zobristHash ^= ZobristHash.getKeyForBlackToMove();
-        
+
         // Save old castling rights for hash
         int oldCastlingRights = castlingAvailabilityToInt();
-        
-        if (move.reaction != null) {
-            switch (move.reaction) {
-                    case "castle-k" -> {
-                        // Update hash for rook on start and end position
-                        int rookSquare = move.startSquare + 3;
-                        int rookPiece = getPiece(rookSquare);
-                        zobristHash ^= ZobristHash.getKeyForPieceSquare(rookPiece, rookSquare);
-                        
-                        castlingReaction(rookSquare, false);
-                        
-                        // Update hash for rook on new position
-                        zobristHash ^= ZobristHash.getKeyForPieceSquare(rookPiece, rookSquare - 2);
-                        
-                    }
 
-                    case "castle-q" -> {
-                        // Update hash for rook on start and end position
-                        int rookSquare = move.startSquare - 4;
-                        int rookPiece = getPiece(rookSquare);
-                        zobristHash ^= ZobristHash.getKeyForPieceSquare(rookPiece, rookSquare);
-                        
-                        castlingReaction(rookSquare, false);
-                        
-                        // Update hash for rook on new position
-                        zobristHash ^= ZobristHash.getKeyForPieceSquare(rookPiece, rookSquare + 3);
-                        
-                    }
-
-                    case "en-passant" -> {
-                        int captureSquare = Piece.isWhite(movingPiece) ? move.targetSquare + 8 : move.targetSquare - 8;
-                        capturedEPPiece = getPiece(captureSquare);
-                        unmakeInfo.capturedEPPiece = capturedEPPiece;
-                        
-                        // Update hash for captured pawn
-                        zobristHash ^= ZobristHash.getKeyForPieceSquare(capturedEPPiece, captureSquare);
-                        
-                        clearBit(captureSquare, capturedEPPiece);
-                        isCapture = true;  // Mark as capture for halfmove clock
-                    }
-
-                    case "ep-target" -> {
-                        if (Piece.isWhite(movingPiece)) {
-                            newEpTargetSquare = move.targetSquare + 8;
-                        } else {
-                            newEpTargetSquare = move.targetSquare - 8;
-                        }
-                    }
-
-                    case "promote-q", "promote-r", "promote-b", "promote-n" ->
-                            pieceOnTarget = getPromotionPieceForReaction(movingPiece, move.reaction);
-                }
+        switch (flag) {
+            case Move.FLAG_CASTLING_K -> {
+                int rookSquare = startSquare + 3;
+                int rookPiece = getPiece(rookSquare);
+                zobristHash ^= ZobristHash.getKeyForPieceSquare(rookPiece, rookSquare);
+                incAdjust(rookPiece, rookSquare, -1);       // rook leaves source
+                castlingReaction(rookSquare, false);
+                zobristHash ^= ZobristHash.getKeyForPieceSquare(rookPiece, rookSquare - 2);
+                incAdjust(rookPiece, rookSquare - 2, +1);   // rook arrives at destination
+            }
+            case Move.FLAG_CASTLING_Q -> {
+                int rookSquare = startSquare - 4;
+                int rookPiece = getPiece(rookSquare);
+                zobristHash ^= ZobristHash.getKeyForPieceSquare(rookPiece, rookSquare);
+                incAdjust(rookPiece, rookSquare, -1);       // rook leaves source
+                castlingReaction(rookSquare, false);
+                zobristHash ^= ZobristHash.getKeyForPieceSquare(rookPiece, rookSquare + 3);
+                incAdjust(rookPiece, rookSquare + 3, +1);   // rook arrives at destination
+            }
+            case Move.FLAG_EN_PASSANT -> {
+                int captureSquare = Piece.isWhite(movingPiece) ? targetSquare + 8 : targetSquare - 8;
+                capturedEPPiece = getPiece(captureSquare);
+                unmakeInfo.capturedEPPiece = capturedEPPiece;
+                zobristHash ^= ZobristHash.getKeyForPieceSquare(capturedEPPiece, captureSquare);
+                clearBit(captureSquare, capturedEPPiece);
+                incAdjust(capturedEPPiece, captureSquare, -1); // captured EP pawn removed
+                isCapture = true;
+            }
+            case Move.FLAG_EP_TARGET -> {
+                newEpTargetSquare = Piece.isWhite(movingPiece) ? targetSquare + 8 : targetSquare - 8;
+            }
+            case Move.FLAG_PROMO_Q -> pieceOnTarget = Piece.color(movingPiece) | Piece.Queen;
+            case Move.FLAG_PROMO_R -> pieceOnTarget = Piece.color(movingPiece) | Piece.Rook;
+            case Move.FLAG_PROMO_B -> pieceOnTarget = Piece.color(movingPiece) | Piece.Bishop;
+            case Move.FLAG_PROMO_N -> pieceOnTarget = Piece.color(movingPiece) | Piece.Knight;
         }
-        
+
         // Update hash for en passant file.
-        // Only include EP in the hash when a capture is actually legal (FIDE rule for position identity).
-        // Remove old EP hash contribution if one was present and capturable.
         if (epTargetSquare >= 0 && isEnPassantCapturePossible(activeColor)) {
             zobristHash ^= ZobristHash.getKeyForEnPassantFile(epTargetSquare % 8);
         }
         epTargetSquare = newEpTargetSquare;
-        // Add new EP hash contribution only if the opponent can actually capture.
         int opponentColor = Piece.isWhite(activeColor) ? Piece.Black : Piece.White;
         if (newEpTargetSquare >= 0 && isEnPassantCapturePossible(opponentColor)) {
             zobristHash ^= ZobristHash.getKeyForEnPassantFile(newEpTargetSquare % 8);
@@ -577,19 +719,22 @@ public class Board {
 
         // Clear captured piece if any
         if (capturedPiece != Piece.None) {
-            zobristHash ^= ZobristHash.getKeyForPieceSquare(capturedPiece, move.targetSquare);
-            clearBit(move.targetSquare, capturedPiece);
+            zobristHash ^= ZobristHash.getKeyForPieceSquare(capturedPiece, targetSquare);
+            clearBit(targetSquare, capturedPiece);
+            incAdjust(capturedPiece, targetSquare, -1);  // captured piece removed
         }
-        
-        // Remove piece from source square
-        zobristHash ^= ZobristHash.getKeyForPieceSquare(movingPiece, move.startSquare);
-        clearBit(move.startSquare, movingPiece);
-        
-        // Place piece at target square (promotion can change piece type)
-        zobristHash ^= ZobristHash.getKeyForPieceSquare(pieceOnTarget, move.targetSquare);
-        setBit(move.targetSquare, pieceOnTarget);
 
-        updateCastlingAvailabilityForMove(movingPiece, move.startSquare, capturedPiece, move.targetSquare);
+        // Remove piece from source square
+        zobristHash ^= ZobristHash.getKeyForPieceSquare(movingPiece, startSquare);
+        clearBit(startSquare, movingPiece);
+        incAdjust(movingPiece, startSquare, -1);         // moving piece vacates source
+
+        // Place piece at target square (promotion can change piece type)
+        zobristHash ^= ZobristHash.getKeyForPieceSquare(pieceOnTarget, targetSquare);
+        setBit(targetSquare, pieceOnTarget);
+        incAdjust(pieceOnTarget, targetSquare, +1);      // piece appears at target
+
+        updateCastlingAvailabilityForMove(movingPiece, startSquare, capturedPiece, targetSquare);
 
         // Changing the active color after the move is made:
         if (Piece.isWhite(activeColor)) {
@@ -605,7 +750,7 @@ public class Board {
         } else {
             halfmoveClock++;
         }
-        
+
         // Update hash for castling rights if they changed
         int newCastlingRights = castlingAvailabilityToInt();
         if (oldCastlingRights != newCastlingRights) {
@@ -613,63 +758,64 @@ public class Board {
             zobristHash ^= ZobristHash.getKeyForCastlingRights(newCastlingRights);
         }
 
-        // Update occupancy masks
+        // Update occupancy masks; invalidate lazy attacked-squares cache.
         recomputeOccupancies();
-        
-        // Push undo information
-        unmakeStack.push(unmakeInfo);
-        
-        movesPlayed.add(move);
-        boardStates.add(getCurrentFEN());
-        zobristHistory.add(zobristHash);
+        attackedSquaresValid = false;
+
+        if (!searchMode) {
+            movesPlayed.add(new Move(startSquare, targetSquare, Move.reactionOf(packed)));
+            boardStates.add(getCurrentFEN());
+        }
+        zobristStack[zobristSP++] = zobristHash;
     }
 
     // Reversing the latest move made using efficient bitboard operations:
     public void unmakeMove() {
-        if (movesPlayed.isEmpty() || unmakeStack.isEmpty()) {
+        if (unmakeSP == 0) {
             throw new IllegalStateException("tried to unmake move when no move was made yet");
         }
 
-        UnmakeInfo undoInfo = unmakeStack.pop();
-        Move move = undoInfo.move;
-        int movingPiece = getPiece(move.targetSquare);
-        int pieceAtStartAfterUnmake = isPromotionReaction(move.reaction)
+        UnmakeInfo undoInfo = unmakePool[--unmakeSP];
+
+        // Restore incremental material+PST scores before any bitboard changes
+        incMgScore = undoInfo.previousMgScore;
+        incEgScore = undoInfo.previousEgScore;
+        int packed = undoInfo.packedMove;
+        int startSquare = Move.from(packed);
+        int targetSquare = Move.to(packed);
+        int flag = Move.flag(packed);
+
+        int movingPiece = getPiece(targetSquare);
+        int pieceAtStartAfterUnmake = Move.isPromotion(packed)
             ? (Piece.color(movingPiece) | Piece.Pawn)
             : movingPiece;
-        
+
         // Remove piece from target square
-        clearBit(move.targetSquare, movingPiece);
-        
+        clearBit(targetSquare, movingPiece);
+
         // Place piece back at source square
-        setBit(move.startSquare, pieceAtStartAfterUnmake);
-        
+        setBit(startSquare, pieceAtStartAfterUnmake);
+
         // Restore captured piece if any
         if (undoInfo.capturedPiece != Piece.None) {
-            setBit(move.targetSquare, undoInfo.capturedPiece);
+            setBit(targetSquare, undoInfo.capturedPiece);
         }
-        
+
         // Handle special moves
-        if (move.reaction != null) {
-            switch (move.reaction) {
-                case "castle-k" -> {
-                    castlingReaction(move.startSquare + 3, true);
-                    castlingAvailability[Piece.isWhite(movingPiece) ? 0 : 2] = true;
-                }
-                
-                case "castle-q" -> {
-                    castlingReaction(move.startSquare - 4, true);
-                    castlingAvailability[Piece.isWhite(movingPiece) ? 1 : 3] = true;
-                }
-                
-                case "en-passant" -> {
-                    int captureSquare = Piece.isWhite(movingPiece) ? move.targetSquare + 8 : move.targetSquare - 8;
-                    setBit(captureSquare, undoInfo.capturedEPPiece);
-                }
-                
-                case "ep-target" -> {
-                    // Just restore the previous ep square (already handled below)
-                }
+        switch (flag) {
+            case Move.FLAG_CASTLING_K -> {
+                castlingReaction(startSquare + 3, true);
+                castlingAvailability[Piece.isWhite(movingPiece) ? 0 : 2] = true;
             }
+            case Move.FLAG_CASTLING_Q -> {
+                castlingReaction(startSquare - 4, true);
+                castlingAvailability[Piece.isWhite(movingPiece) ? 1 : 3] = true;
+            }
+            case Move.FLAG_EN_PASSANT -> {
+                int captureSquare = Piece.isWhite(movingPiece) ? targetSquare + 8 : targetSquare - 8;
+                setBit(captureSquare, undoInfo.capturedEPPiece);
+            }
+            // FLAG_EP_TARGET, FLAG_NORMAL, FLAG_PROMO_*: no special bitboard work; state restored below.
         }
         
         // Restore game state
@@ -679,23 +825,25 @@ public class Board {
         fullMoves = undoInfo.previousFullMoves;
         System.arraycopy(undoInfo.previousCastlingRights, 0, castlingAvailability, 0, 4);
         
-        // Update occupancy masks
+        // Update occupancy masks; invalidate lazy attacked-squares cache.
         recomputeOccupancies();
-        
+        attackedSquaresValid = false;
+
         // Restore Zobrist hash in O(1) from history instead of full recomputation.
-        // zobristHistory contains the hash after each move; the second-to-last entry is
-        // the hash for the position we are restoring to.
-        if (zobristHistory.size() >= 2) {
-            zobristHash = zobristHistory.get(zobristHistory.size() - 2);
+        // zobristStack[zobristSP-1] is the hash we just popped; [zobristSP-2] is the prior position.
+        if (zobristSP >= 2) {
+            zobristHash = zobristStack[zobristSP - 2];
         } else {
             // Edge case (unmaking the very first move): fall back to full recomputation.
             zobristHash = recomputeZobristHash();
         }
         
-        movesPlayed.remove(movesPlayed.size() - 1);
-        boardStates.remove(boardStates.size() - 1);
-        if (!zobristHistory.isEmpty()) {
-            zobristHistory.remove(zobristHistory.size() - 1);
+        if (!searchMode) {
+            movesPlayed.remove(movesPlayed.size() - 1);
+            boardStates.remove(boardStates.size() - 1);
+        }
+        if (zobristSP > 0) {
+            zobristSP--;
         }
     }
     
@@ -757,24 +905,6 @@ public class Board {
         }
     }
 
-    private boolean isPromotionReaction(String reaction) {
-        return "promote-q".equals(reaction)
-                || "promote-r".equals(reaction)
-                || "promote-b".equals(reaction)
-                || "promote-n".equals(reaction);
-    }
-
-    private int getPromotionPieceForReaction(int pawnPiece, String reaction) {
-        int color = Piece.color(pawnPiece);
-        return switch (reaction) {
-            case "promote-q" -> color | Piece.Queen;
-            case "promote-r" -> color | Piece.Rook;
-            case "promote-b" -> color | Piece.Bishop;
-            case "promote-n" -> color | Piece.Knight;
-            default -> pawnPiece;
-        };
-    }
-
     public NullMoveState makeNullMove() {
         NullMoveState state = new NullMoveState(activeColor, epTargetSquare, halfmoveClock, fullMoves, zobristHash);
 
@@ -821,15 +951,10 @@ public class Board {
         return String.format("%s%d", file, rank);
     }
 
-    public int getKingSquare(int activeColor) {
-        for (int sq = 0; sq < 64; sq++) {
-            int piece = getPiece(sq);
-            if ((Piece.type(piece) == Piece.King) && Piece.isColor(piece, activeColor)) {
-                return sq;
-            }
-        }
-
-        throw new IllegalStateException("error: could not find king on board");
+    public int getKingSquare(int color) {
+        long bb = (color == Piece.White) ? whiteKing : blackKing;
+        if (bb == 0L) throw new IllegalStateException("error: could not find king on board");
+        return Long.numberOfTrailingZeros(bb);
     }
 
     public boolean isActiveColorInCheck() {
@@ -885,12 +1010,38 @@ public class Board {
 
     public boolean isThreefoldRepetition() {
         int repetitions = 0;
-        for (long hash : zobristHistory) {
-            if (hash == zobristHash) {
+        for (int i = 0; i < zobristSP; i++) {
+            if (zobristStack[i] == zobristHash) {
                 repetitions++;
             }
         }
         return repetitions >= 3;
+    }
+
+    /**
+     * Returns true if the current position has appeared at least once before in the
+     * current search path (2-fold repetition detection for use inside alphaBeta).
+     *
+     * <p>The look-back window is bounded by {@code halfmoveClock + 1}: positions after
+     * an irreversible move (capture or pawn push) can never be repetitions, so scanning
+     * beyond the halfmove-clock window is both unnecessary and incorrect.
+     *
+     * <p>{@code zobristHistory} always contains the current position as its last element
+     * (added by {@code makeMove()} before returning), so the first match is the "current"
+     * occurrence and a second match indicates a true repetition.
+     */
+    public boolean isRepetitionDraw() {
+        // Repetitions can only occur among same-side-to-move positions, i.e., every 2 plies.
+        // Bound the window by the halfmove clock (reset on any irreversible move).
+        int limit = Math.min(zobristSP, halfmoveClock + 1);
+        int count = 0;
+        for (int i = zobristSP - limit; i < zobristSP; i++) {
+            if (zobristStack[i] == zobristHash) {
+                count++;
+                if (count >= 2) return true;
+            }
+        }
+        return false;
     }
 
     public boolean isFiftyMoveRuleDraw() {
@@ -974,6 +1125,12 @@ public class Board {
     public long getZobristHash() {
         return zobristHash;
     }
+
+    /** Returns the incrementally maintained MG material+PST score (white minus black). */
+    public int getIncMgScore() { return incMgScore; }
+
+    /** Returns the incrementally maintained EG material+PST score (white minus black). */
+    public int getIncEgScore() { return incEgScore; }
 
     /**
      * Compute a Zobrist hash for the pawn structure only (white and black pawns by square).

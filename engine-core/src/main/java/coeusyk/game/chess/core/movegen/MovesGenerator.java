@@ -10,7 +10,7 @@ import java.util.*;
 
 public class MovesGenerator {
     public static final int[] DirectionOffsets = { -8, 1, 8, -1, -9, -7, 9, 7 };
-    public static int[][] SquaresToEdges = new int[64][8];  // Holds the number of squares to each edge from each square (for easier computation)
+    public static final int[][] SquaresToEdges = new int[64][8];  // Holds the number of squares to each edge from each square (for easier computation)
 
     static {
         ComputeMoveData();
@@ -544,5 +544,510 @@ public class MovesGenerator {
         }
 
         return false;
+    }
+
+    // ==================== Static packed-int move generation ====================
+    // These methods generate directly into a caller-supplied int[] buffer without
+    // allocating any Move objects. Used by the search hot path (Searcher.alphaBeta).
+
+    /**
+     * Generates all legal moves for the active side into {@code dest} and returns the count.
+     * No Move objects are created; each element is a packed int (see {@link Move#of}).
+     * The caller must supply a buffer of at least 256 ints (MAX_LEGAL_MOVES).
+     */
+    public static int generate(Board board, int[] dest) {
+        int count = 0;
+        boolean isWhite = board.getActiveColor() == Piece.White;
+        int activeColor = isWhite ? Piece.White : Piece.Black;
+
+        if (isWhite) {
+            long bb;
+            bb = board.getWhitePawns();
+            while (bb != 0) { int sq = Long.numberOfTrailingZeros(bb); count = genPawn(board, dest, count, sq, Piece.White | Piece.Pawn); bb &= bb - 1; }
+            bb = board.getWhiteKnights();
+            while (bb != 0) { int sq = Long.numberOfTrailingZeros(bb); count = genKnight(board, dest, count, sq, Piece.White | Piece.Knight); bb &= bb - 1; }
+            bb = board.getWhiteBishops();
+            while (bb != 0) { int sq = Long.numberOfTrailingZeros(bb); count = genSliding(board, dest, count, sq, Piece.White | Piece.Bishop); bb &= bb - 1; }
+            bb = board.getWhiteRooks();
+            while (bb != 0) { int sq = Long.numberOfTrailingZeros(bb); count = genSliding(board, dest, count, sq, Piece.White | Piece.Rook); bb &= bb - 1; }
+            bb = board.getWhiteQueens();
+            while (bb != 0) { int sq = Long.numberOfTrailingZeros(bb); count = genSliding(board, dest, count, sq, Piece.White | Piece.Queen); bb &= bb - 1; }
+            bb = board.getWhiteKing();
+            if (bb != 0) { int sq = Long.numberOfTrailingZeros(bb); count = genKing(board, dest, count, sq, Piece.White | Piece.King); }
+        } else {
+            long bb;
+            bb = board.getBlackPawns();
+            while (bb != 0) { int sq = Long.numberOfTrailingZeros(bb); count = genPawn(board, dest, count, sq, Piece.Black | Piece.Pawn); bb &= bb - 1; }
+            bb = board.getBlackKnights();
+            while (bb != 0) { int sq = Long.numberOfTrailingZeros(bb); count = genKnight(board, dest, count, sq, Piece.Black | Piece.Knight); bb &= bb - 1; }
+            bb = board.getBlackBishops();
+            while (bb != 0) { int sq = Long.numberOfTrailingZeros(bb); count = genSliding(board, dest, count, sq, Piece.Black | Piece.Bishop); bb &= bb - 1; }
+            bb = board.getBlackRooks();
+            while (bb != 0) { int sq = Long.numberOfTrailingZeros(bb); count = genSliding(board, dest, count, sq, Piece.Black | Piece.Rook); bb &= bb - 1; }
+            bb = board.getBlackQueens();
+            while (bb != 0) { int sq = Long.numberOfTrailingZeros(bb); count = genSliding(board, dest, count, sq, Piece.Black | Piece.Queen); bb &= bb - 1; }
+            bb = board.getBlackKing();
+            if (bb != 0) { int sq = Long.numberOfTrailingZeros(bb); count = genKing(board, dest, count, sq, Piece.Black | Piece.King); }
+        }
+
+        return filterLegal(board, dest, count, activeColor);
+    }
+
+    /**
+     * Generates only tactical moves (captures and quiet queen promotions) for the active side.
+     * Used by the quiescence search (not-in-check path) to avoid generating quiet moves that
+     * are immediately discarded. Returns the count of legal tactical moves.
+     * The caller must supply a buffer of at least 64 ints.
+     */
+    public static int generateCaptures(Board board, int[] dest) {
+        int count = 0;
+        boolean isWhite = board.getActiveColor() == Piece.White;
+        int activeColor = isWhite ? Piece.White : Piece.Black;
+        long enemyBB = isWhite ? board.getBlackOccupancy() : board.getWhiteOccupancy();
+        long occupied = board.getAllOccupancy();
+
+        // Sliding captures — iterate per piece type via bitboard walk
+        long bishops = isWhite ? board.getWhiteBishops() : board.getBlackBishops();
+        while (bishops != 0) {
+            int sq = Long.numberOfTrailingZeros(bishops);
+            long attacks = MagicBitboards.getBishopAttacks(sq, occupied) & enemyBB;
+            while (attacks != 0) { int target = Long.numberOfTrailingZeros(attacks); dest[count++] = Move.of(sq, target); attacks &= attacks - 1; }
+            bishops &= bishops - 1;
+        }
+        long rooks = isWhite ? board.getWhiteRooks() : board.getBlackRooks();
+        while (rooks != 0) {
+            int sq = Long.numberOfTrailingZeros(rooks);
+            long attacks = MagicBitboards.getRookAttacks(sq, occupied) & enemyBB;
+            while (attacks != 0) { int target = Long.numberOfTrailingZeros(attacks); dest[count++] = Move.of(sq, target); attacks &= attacks - 1; }
+            rooks &= rooks - 1;
+        }
+        long queens = isWhite ? board.getWhiteQueens() : board.getBlackQueens();
+        while (queens != 0) {
+            int sq = Long.numberOfTrailingZeros(queens);
+            long attacks = MagicBitboards.getQueenAttacks(sq, occupied) & enemyBB;
+            while (attacks != 0) { int target = Long.numberOfTrailingZeros(attacks); dest[count++] = Move.of(sq, target); attacks &= attacks - 1; }
+            queens &= queens - 1;
+        }
+
+        // Non-sliding captures
+        int pawnPiece   = activeColor | Piece.Pawn;
+        int knightPiece = activeColor | Piece.Knight;
+        int kingPiece   = activeColor | Piece.King;
+        long pawns = isWhite ? board.getWhitePawns() : board.getBlackPawns();
+        while (pawns != 0) { int sq = Long.numberOfTrailingZeros(pawns); count = genPawnTactical(board, dest, count, sq, pawnPiece, enemyBB); pawns &= pawns - 1; }
+        long knights = isWhite ? board.getWhiteKnights() : board.getBlackKnights();
+        while (knights != 0) { int sq = Long.numberOfTrailingZeros(knights); count = genKnightCaptures(board, dest, count, sq, knightPiece, enemyBB); knights &= knights - 1; }
+        long king = isWhite ? board.getWhiteKing() : board.getBlackKing();
+        if (king != 0) { int sq = Long.numberOfTrailingZeros(king); count = genKingCaptures(board, dest, count, sq, kingPiece, enemyBB); }
+
+        return filterLegal(board, dest, count, activeColor);
+    }
+
+    /**
+     * Staged capture generation, stage 1: generates non-pawn tactical captures (bishop, rook,
+     * queen, knight, king). Pawn captures are intentionally omitted so that quiescence search
+     * can skip them entirely when a beta cutoff fires from larger captures.
+     *
+     * <p>Caller: invoke this first, process the returned list, and call
+     * {@link #appendPawnCaptures} only if no beta cutoff occurred.
+     */
+    public static int generateNonPawnCaptures(Board board, int[] dest) {
+        int count = 0;
+        boolean isWhite = board.getActiveColor() == Piece.White;
+        int activeColor = isWhite ? Piece.White : Piece.Black;
+        long enemyBB = isWhite ? board.getBlackOccupancy() : board.getWhiteOccupancy();
+        long occupied = board.getAllOccupancy();
+
+        long bishops = isWhite ? board.getWhiteBishops() : board.getBlackBishops();
+        while (bishops != 0) {
+            int sq = Long.numberOfTrailingZeros(bishops);
+            long attacks = MagicBitboards.getBishopAttacks(sq, occupied) & enemyBB;
+            while (attacks != 0) { int target = Long.numberOfTrailingZeros(attacks); dest[count++] = Move.of(sq, target); attacks &= attacks - 1; }
+            bishops &= bishops - 1;
+        }
+        long rooks = isWhite ? board.getWhiteRooks() : board.getBlackRooks();
+        while (rooks != 0) {
+            int sq = Long.numberOfTrailingZeros(rooks);
+            long attacks = MagicBitboards.getRookAttacks(sq, occupied) & enemyBB;
+            while (attacks != 0) { int target = Long.numberOfTrailingZeros(attacks); dest[count++] = Move.of(sq, target); attacks &= attacks - 1; }
+            rooks &= rooks - 1;
+        }
+        long queens = isWhite ? board.getWhiteQueens() : board.getBlackQueens();
+        while (queens != 0) {
+            int sq = Long.numberOfTrailingZeros(queens);
+            long attacks = MagicBitboards.getQueenAttacks(sq, occupied) & enemyBB;
+            while (attacks != 0) { int target = Long.numberOfTrailingZeros(attacks); dest[count++] = Move.of(sq, target); attacks &= attacks - 1; }
+            queens &= queens - 1;
+        }
+        int knightPiece = activeColor | Piece.Knight;
+        int kingPiece   = activeColor | Piece.King;
+        long knights = isWhite ? board.getWhiteKnights() : board.getBlackKnights();
+        while (knights != 0) { int sq = Long.numberOfTrailingZeros(knights); count = genKnightCaptures(board, dest, count, sq, knightPiece, enemyBB); knights &= knights - 1; }
+        long king = isWhite ? board.getWhiteKing() : board.getBlackKing();
+        if (king != 0) { int sq = Long.numberOfTrailingZeros(king); count = genKingCaptures(board, dest, count, sq, kingPiece, enemyBB); }
+
+        return filterLegal(board, dest, count, activeColor);
+    }
+
+    /**
+     * Staged capture generation, stage 2: appends legal pawn captures and quiet pawn
+     * promotions to {@code dest} starting at {@code startIdx}. Filters for legality
+     * in-place over the appended range only. Returns new total count.
+     *
+     * <p>Call this only when no beta cutoff was found after processing
+     * {@link #generateNonPawnCaptures} results.
+     */
+    public static int appendPawnCaptures(Board board, int[] dest, int startIdx) {
+        boolean isWhite = board.getActiveColor() == Piece.White;
+        int activeColor = isWhite ? Piece.White : Piece.Black;
+        int pawnPiece = activeColor | Piece.Pawn;
+        long pawns   = isWhite ? board.getWhitePawns()    : board.getBlackPawns();
+        long enemyBB = isWhite ? board.getBlackOccupancy() : board.getWhiteOccupancy();
+
+        int rawEnd = startIdx;
+        while (pawns != 0) {
+            int sq = Long.numberOfTrailingZeros(pawns);
+            rawEnd = genPawnTactical(board, dest, rawEnd, sq, pawnPiece, enemyBB);
+            pawns &= pawns - 1;
+        }
+        if (rawEnd == startIdx) return startIdx; // no pawn tacticals generated
+
+        // Legality filter over appended range only (dest[startIdx..rawEnd)).
+        int kingSq = board.getKingSquare(activeColor);
+        boolean inCheck = board.isColorKingInCheck(activeColor);
+        long pinnedBB = inCheck ? 0L : computePinnedPiecesBBStatic(board, activeColor);
+
+        int legal = startIdx;
+        for (int i = startIdx; i < rawEnd; i++) {
+            int packed = dest[i];
+            int from   = Move.from(packed);
+            int flag   = Move.flag(packed);
+            boolean isKingMove = (from == kingSq);
+            boolean isSpecial  = flag == Move.FLAG_EN_PASSANT
+                    || flag == Move.FLAG_CASTLING_K
+                    || flag == Move.FLAG_CASTLING_Q;
+            boolean isPinned = (pinnedBB & (1L << from)) != 0L;
+
+            if (!inCheck && !isKingMove && !isSpecial && !isPinned) {
+                dest[legal++] = packed;
+                continue;
+            }
+            board.makeMove(packed);
+            if (!board.isColorKingInCheck(activeColor)) {
+                dest[legal++] = packed;
+            }
+            board.unmakeMove();
+        }
+        return legal;
+    }
+
+    /** Pawn tactical moves: diagonal captures (incl. en passant), capture-promotions (queen only),
+     *  and quiet pushes to the promotion rank (queen only). */
+    private static int genPawnTactical(Board board, int[] dest, int count,
+                                       int startSquare, int pawn, long enemyBB) {
+        boolean isWhite = Piece.isWhite(pawn);
+        int captureOffset0 = isWhite ? -9 : 7;
+        int captureOffset1 = isWhite ? -7 : 9;
+
+        for (int i = 0; i < 2; i++) {
+            int offset = (i == 0) ? captureOffset0 : captureOffset1;
+            int target = startSquare + offset;
+            if (target < 0 || target > 63) continue;
+            if (Math.abs((startSquare % 8) - (target % 8)) != 1) continue;
+
+            if (target == board.getEpTargetSquare()) {
+                int epPawnSq = isWhite ? target + 8 : target - 8;
+                int epPawn = board.getPiece(epPawnSq);
+                if (Piece.type(epPawn) == Piece.Pawn && !Piece.isColor(epPawn, pawn)) {
+                    dest[count++] = Move.of(startSquare, target, Move.FLAG_EN_PASSANT);
+                }
+            } else if ((enemyBB & (1L << target)) != 0) {
+                if (isPromotionRankStatic(target, pawn)) {
+                    dest[count++] = Move.of(startSquare, target, Move.FLAG_PROMO_Q); // queen only
+                } else {
+                    dest[count++] = Move.of(startSquare, target);
+                }
+            }
+        }
+
+        // Quiet push to promotion rank → include as queen promo (not R/B/N; Q dominates in Q-search).
+        int naturalOffset = isWhite ? -8 : 8;
+        int pushTarget = startSquare + naturalOffset;
+        if (pushTarget >= 0 && pushTarget < 64 && board.getPiece(pushTarget) == Piece.None
+                && isPromotionRankStatic(pushTarget, pawn)) {
+            dest[count++] = Move.of(startSquare, pushTarget, Move.FLAG_PROMO_Q);
+        }
+
+        return count;
+    }
+
+    /** Knight captures only — no quiet moves. */
+    private static int genKnightCaptures(Board board, int[] dest, int count,
+                                         int startSquare, int knight, long enemyBB) {
+        for (int i = 0; i < KNIGHT_OFFSETS.length; i++) {
+            int target = startSquare + KNIGHT_OFFSETS[i];
+            if (Math.abs((startSquare / 8) - (target / 8)) != KNIGHT_RANK_DISTANCE[i]) continue;
+            if (target < 0 || target > 63) continue;
+            if ((enemyBB & (1L << target)) != 0) {
+                dest[count++] = Move.of(startSquare, target);
+            }
+        }
+        return count;
+    }
+
+    /** King captures only — no quiet moves, no castling. */
+    private static int genKingCaptures(Board board, int[] dest, int count,
+                                       int startSquare, int king, long enemyBB) {
+        int[] edgeDists = SquaresToEdges[startSquare];
+        for (int dir = 0; dir < DirectionOffsets.length; dir++) {
+            if (edgeDists[dir] <= 0) continue;
+            int target = startSquare + DirectionOffsets[dir];
+            if (target < 0 || target > 63) continue;
+            if ((enemyBB & (1L << target)) != 0) {
+                dest[count++] = Move.of(startSquare, target);
+            }
+        }
+        return count;
+    }
+
+    private static int genSliding(Board board, int[] dest, int count, int startSquare, int piece) {
+        int pieceType = Piece.type(piece);
+        long occupied = board.getAllOccupancy();
+        long friendlyOccupancy = Piece.isWhite(piece)
+                ? board.getWhiteOccupancy() : board.getBlackOccupancy();
+
+        long attacks;
+        if (pieceType == Piece.Bishop) {
+            attacks = MagicBitboards.getBishopAttacks(startSquare, occupied);
+        } else if (pieceType == Piece.Rook) {
+            attacks = MagicBitboards.getRookAttacks(startSquare, occupied);
+        } else {
+            attacks = MagicBitboards.getQueenAttacks(startSquare, occupied);
+        }
+
+        attacks &= ~friendlyOccupancy;
+        while (attacks != 0) {
+            int target = Long.numberOfTrailingZeros(attacks);
+            dest[count++] = Move.of(startSquare, target);
+            attacks &= attacks - 1;
+        }
+        return count;
+    }
+
+    private static int genPawn(Board board, int[] dest, int count, int startSquare, int pawn) {
+        boolean isWhite = Piece.isWhite(pawn);
+        int naturalOffset = isWhite ? -8 : 8;
+        int numSquares = isWhite ? ((startSquare / 8) == 6 ? 2 : 1)
+                                 : ((startSquare / 8) == 1 ? 2 : 1);
+        int captureOffset0 = isWhite ? -9 : 7;
+        int captureOffset1 = isWhite ? -7 : 9;
+
+        // Natural (non-capturing) moves
+        for (int i = 0; i < numSquares; i++) {
+            int target = startSquare + naturalOffset * (i + 1);
+            if (board.getPiece(target) != Piece.None) break;
+
+            if (i == 0 && isPromotionRankStatic(target, pawn)) {
+                // All four promotion moves
+                dest[count++] = Move.of(startSquare, target, Move.FLAG_PROMO_Q);
+                dest[count++] = Move.of(startSquare, target, Move.FLAG_PROMO_R);
+                dest[count++] = Move.of(startSquare, target, Move.FLAG_PROMO_B);
+                dest[count++] = Move.of(startSquare, target, Move.FLAG_PROMO_N);
+            } else if (i == 0) {
+                dest[count++] = Move.of(startSquare, target);
+            } else {
+                dest[count++] = Move.of(startSquare, target, Move.FLAG_EP_TARGET);
+            }
+        }
+
+        // Capturing moves — unrolled from two-element array to avoid allocation
+        for (int i = 0; i < 2; i++) {
+            int offset = (i == 0) ? captureOffset0 : captureOffset1;
+            int target = startSquare + offset;
+            if (target < 0 || target > 63) continue;
+            if (Math.abs((startSquare % 8) - (target % 8)) != 1) continue;
+
+            if (target == board.getEpTargetSquare()) {
+                int epPawnSq = isWhite ? target + 8 : target - 8;
+                int epPawn = board.getPiece(epPawnSq);
+                if (Piece.type(epPawn) == Piece.Pawn && !Piece.isColor(epPawn, pawn)) {
+                    dest[count++] = Move.of(startSquare, target, Move.FLAG_EN_PASSANT);
+                }
+            } else {
+                int targetPiece = board.getPiece(target);
+                if (targetPiece != Piece.None && !Piece.isColor(pawn, targetPiece)) {
+                    if (isPromotionRankStatic(target, pawn)) {
+                        dest[count++] = Move.of(startSquare, target, Move.FLAG_PROMO_Q);
+                        dest[count++] = Move.of(startSquare, target, Move.FLAG_PROMO_R);
+                        dest[count++] = Move.of(startSquare, target, Move.FLAG_PROMO_B);
+                        dest[count++] = Move.of(startSquare, target, Move.FLAG_PROMO_N);
+                    } else {
+                        dest[count++] = Move.of(startSquare, target);
+                    }
+                }
+            }
+        }
+        return count;
+    }
+
+    private static boolean isPromotionRankStatic(int square, int pawn) {
+        return (Piece.isWhite(pawn) && (square / 8) == 0)
+                || (Piece.isBlack(pawn) && (square / 8) == 7);
+    }
+
+    private static int genKnight(Board board, int[] dest, int count, int startSquare, int knight) {
+        for (int i = 0; i < KNIGHT_OFFSETS.length; i++) {
+            int target = startSquare + KNIGHT_OFFSETS[i];
+            if (Math.abs((startSquare / 8) - (target / 8)) != KNIGHT_RANK_DISTANCE[i]) continue;
+            if (target < 0 || target > 63) continue;
+            int tp = board.getPiece(target);
+            if (!Piece.isColor(knight, tp)) {
+                dest[count++] = Move.of(startSquare, target);
+            }
+        }
+        return count;
+    }
+
+    private static int genKing(Board board, int[] dest, int count, int startSquare, int king) {
+        int[] edgeDists = SquaresToEdges[startSquare];
+        int opponentColor = Piece.isWhite(king) ? Piece.Black : Piece.White;
+
+        // Natural king moves
+        for (int dir = 0; dir < DirectionOffsets.length; dir++) {
+            if (edgeDists[dir] <= 0) continue;
+            int target = startSquare + DirectionOffsets[dir];
+            if (target < 0 || target > 63) continue;
+            int tp = board.getPiece(target);
+            if (!Piece.isColor(king, tp)) {
+                dest[count++] = Move.of(startSquare, target);
+            }
+        }
+
+        // Castling
+        boolean[] ca = board.getCastlingAvailability();
+        boolean ca0 = Piece.isWhite(king) ? ca[0] : ca[2];
+        boolean ca1 = Piece.isWhite(king) ? ca[1] : ca[3];
+        boolean kingHome = (Piece.isWhite(king) && startSquare == 60)
+                || (Piece.isBlack(king) && startSquare == 4);
+
+        if (kingHome && ca0) {
+            int rookSq = startSquare + 3;
+            int throughSq = startSquare + 1;
+            int targetSq = startSquare + 2;
+            int expectedRook = Piece.isWhite(king) ? (Piece.White | Piece.Rook) : (Piece.Black | Piece.Rook);
+            if (board.getPiece(rookSq) == expectedRook
+                    && board.getPiece(throughSq) == Piece.None
+                    && board.getPiece(targetSq) == Piece.None
+                    && !board.isSquareAttackedBy(startSquare, opponentColor)
+                    && !board.isSquareAttackedBy(throughSq, opponentColor)
+                    && !board.isSquareAttackedBy(targetSq, opponentColor)) {
+                dest[count++] = Move.of(startSquare, targetSq, Move.FLAG_CASTLING_K);
+            }
+        }
+
+        if (kingHome && ca1) {
+            int rookSq = startSquare - 4;
+            int throughSq = startSquare - 1;
+            int targetSq = startSquare - 2;
+            int rookSideSq = startSquare - 3;
+            int expectedRook = Piece.isWhite(king) ? (Piece.White | Piece.Rook) : (Piece.Black | Piece.Rook);
+            if (board.getPiece(rookSq) == expectedRook
+                    && board.getPiece(throughSq) == Piece.None
+                    && board.getPiece(targetSq) == Piece.None
+                    && board.getPiece(rookSideSq) == Piece.None
+                    && !board.isSquareAttackedBy(startSquare, opponentColor)
+                    && !board.isSquareAttackedBy(throughSq, opponentColor)
+                    && !board.isSquareAttackedBy(targetSq, opponentColor)) {
+                dest[count++] = Move.of(startSquare, targetSq, Move.FLAG_CASTLING_Q);
+            }
+        }
+
+        return count;
+    }
+
+    /**
+     * Filters the int[] move buffer in-place, retaining only legal moves.
+     * Uses the same fast-path logic as {@link #makeMovesLegal}: only king moves,
+     * special moves, and pinned-piece moves need full make/unmake verification.
+     * Returns the new count of legal moves.
+     */
+    private static int filterLegal(Board board, int[] moves, int count, int activeColor) {
+        int kingSq = board.getKingSquare(activeColor);
+        boolean inCheck = board.isColorKingInCheck(activeColor);
+        long pinnedBB = inCheck ? 0L : computePinnedPiecesBBStatic(board, activeColor);
+
+        int legal = 0;
+        for (int i = 0; i < count; i++) {
+            int packed = moves[i];
+            int from = Move.from(packed);
+            int flag = Move.flag(packed);
+
+            boolean isKingMove = (from == kingSq);
+            boolean isSpecial = flag == Move.FLAG_EN_PASSANT
+                    || flag == Move.FLAG_CASTLING_K
+                    || flag == Move.FLAG_CASTLING_Q;
+            boolean isPinned = (pinnedBB & (1L << from)) != 0L;
+
+            if (!inCheck && !isKingMove && !isSpecial && !isPinned) {
+                moves[legal++] = packed;   // fast path: always legal
+                continue;
+            }
+
+            // Slow path: verify via make/unmake
+            board.makeMove(packed);
+            if (!board.isColorKingInCheck(activeColor)) {
+                moves[legal++] = packed;
+            }
+            board.unmakeMove();
+        }
+        return legal;
+    }
+
+    /** Static version of computePinnedPiecesBB; does not require a MovesGenerator instance. */
+    private static long computePinnedPiecesBBStatic(Board board, int activeColor) {
+        int kingSq = board.getKingSquare(activeColor);
+        long friendlyBB, enemyRooks, enemyBishops, enemyQueens, enemyOccupied;
+
+        if (Piece.isWhite(activeColor)) {
+            friendlyBB   = board.getWhiteOccupancy();
+            enemyRooks   = board.getBlackRooks();
+            enemyBishops = board.getBlackBishops();
+            enemyQueens  = board.getBlackQueens();
+            enemyOccupied = board.getBlackOccupancy();
+        } else {
+            friendlyBB   = board.getBlackOccupancy();
+            enemyRooks   = board.getWhiteRooks();
+            enemyBishops = board.getWhiteBishops();
+            enemyQueens  = board.getWhiteQueens();
+            enemyOccupied = board.getWhiteOccupancy();
+        }
+
+        long pinnedBB = 0L;
+
+        long rookSliders = enemyRooks | enemyQueens;
+        if (rookSliders != 0L) {
+            long potentialPinners = MagicBitboards.getRookAttacks(kingSq, enemyOccupied) & rookSliders;
+            while (potentialPinners != 0L) {
+                int pinnerSq = Long.numberOfTrailingZeros(potentialPinners);
+                long between = getBetween(kingSq, pinnerSq);
+                long friendlyInBetween = between & friendlyBB;
+                if (Long.bitCount(friendlyInBetween) == 1) pinnedBB |= friendlyInBetween;
+                potentialPinners &= potentialPinners - 1L;
+            }
+        }
+
+        long bishopSliders = enemyBishops | enemyQueens;
+        if (bishopSliders != 0L) {
+            long potentialPinners = MagicBitboards.getBishopAttacks(kingSq, enemyOccupied) & bishopSliders;
+            while (potentialPinners != 0L) {
+                int pinnerSq = Long.numberOfTrailingZeros(potentialPinners);
+                long between = getBetween(kingSq, pinnerSq);
+                long friendlyInBetween = between & friendlyBB;
+                if (Long.bitCount(friendlyInBetween) == 1) pinnedBB |= friendlyInBetween;
+                potentialPinners &= potentialPinners - 1L;
+            }
+        }
+
+        return pinnedBB;
     }
 }

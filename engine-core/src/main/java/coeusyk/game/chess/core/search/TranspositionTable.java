@@ -1,7 +1,5 @@
 package coeusyk.game.chess.core.search;
 
-import coeusyk.game.chess.core.models.Move;
-
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReferenceArray;
@@ -36,6 +34,22 @@ public class TranspositionTable {
     private final AtomicLong probes = new AtomicLong(0);
     private final AtomicLong hits   = new AtomicLong(0);
 
+    // Stats are off by default — AtomicLong CAS on every probe measurably impacts NPS.
+    // Call enableStats() before a dedicated stats pass; never during search.
+    private volatile boolean statsEnabled = false;
+
+    // Threshold (in generation ticks) beyond which a stored entry is considered
+    // stale and always evicted on the next store() collision, regardless of depth.
+    // Byte arithmetic wraps correctly: (byte)(currentGeneration - e.generation())
+    // returns the age in the range [0, 127] for entries up to 127 moves old.
+    // Default 4 means entries from the last 3 moves are preserved by depth-preference;
+    // entries 4 or more moves old are freely replaced by any new entry.
+    static final byte AGE_THRESHOLD = 4;
+
+    // Per-search generation counter.  Incremented once at the start of each
+    // new move's search.
+    private volatile byte currentGeneration = 0;
+
     public TranspositionTable() {
         this(DEFAULT_SIZE_MB);
     }
@@ -65,32 +79,70 @@ public class TranspositionTable {
     }
 
     public Entry probe(long key) {
-        probes.incrementAndGet();
         Entry entry = table.get(indexFor(key));
+        if (statsEnabled) {
+            probes.incrementAndGet();
+            if (entry != null && entry.key() == key) {
+                hits.incrementAndGet();
+                return entry;
+            }
+            return null;
+        }
         if (entry != null && entry.key() == key) {
-            hits.incrementAndGet();
             return entry;
         }
         return null;
     }
 
     /**
-     * Stores an entry using a depth-preferred replacement scheme.
-     * A slot is overwritten when:
-     * <ul>
-     *   <li>the slot is empty, or</li>
-     *   <li>it belongs to a different position (key mismatch), or</li>
-     *   <li>the new depth is ≥ the stored depth (prefer deeper analysis).</li>
-     * </ul>
+     * Enables probe/hit statistics tracking. Off by default to avoid
+     * AtomicLong CAS overhead on the hot search path. Call before a
+     * dedicated stats pass; never during normal search.
      */
-    public void store(long key, Move bestMove, int depth, int score, TTBound bound) {
+    public void enableStats() {
+        statsEnabled = true;
+        resetStats();
+    }
+
+    /**
+     * Increments the generation counter.  Call once at the start of each new
+     * move's search so that entries written in previous searches are treated as
+     * old-generation and can be freely evicted by shallower entries in the
+     * current search.
+     */
+    public void incrementGeneration() {
+        currentGeneration = (byte) (currentGeneration + 1);
+    }
+
+    /**
+     * Stores an entry using a generation-age-aware depth-preferred replacement
+     * scheme.  The eviction priority order is:
+     * <ol>
+     *   <li>Empty slot — always fill.</li>
+     *   <li>Key mismatch — always replace (different position).</li>
+     *   <li>Age ≥ {@link #AGE_THRESHOLD} — always replace (stale regardless of depth).
+     *       Age is computed as {@code (byte)(currentGeneration - existing.generation())}
+     *       which wraps correctly for {@code byte} arithmetic.</li>
+     *   <li>Same key, entry is fresh (age &lt; threshold) — replace only when
+     *       the new depth ≥ existing depth (depth-preferred policy).</li>
+     * </ol>
+     *
+     * <p>Entries from the most recent {@code AGE_THRESHOLD - 1} searches are
+     * preserved by the depth-preference rule, avoiding premature eviction of
+     * deep results from adjacent positions in the game tree.
+     */
+    public void store(long key, int bestMove, int depth, int score, TTBound bound) {
         int index = indexFor(key);
         Entry existing = table.get(index);
-        if (existing == null || existing.key() != key || depth >= existing.depth()) {
+        boolean replace = existing == null
+                || existing.key() != key
+                || (byte)(currentGeneration - existing.generation()) >= AGE_THRESHOLD
+                || depth >= existing.depth();
+        if (replace) {
             if (existing == null) {
                 occupiedCount.incrementAndGet();
             }
-            table.set(index, new Entry(key, copyMove(bestMove), depth, score, bound));
+            table.set(index, new Entry(key, bestMove, depth, score, bound, currentGeneration));
         }
     }
 
@@ -141,13 +193,29 @@ public class TranspositionTable {
         return (int) (key ^ (key >>> 32)) & mask;
     }
 
-    private Move copyMove(Move move) {
-        if (move == null) {
-            return null;
-        }
-        return new Move(move.startSquare, move.targetSquare, move.reaction);
+    /**
+     * Packed-int best move, or {@link coeusyk.game.chess.core.models.Move#NONE} if none.
+     * Encoding: bits 0-5 = from, bits 6-11 = to, bits 12-15 = flag.
+     */
+    public record Entry(long key, int bestMove, int depth, int score, TTBound bound, byte generation) {
     }
 
-    public record Entry(long key, Move bestMove, int depth, int score, TTBound bound) {
+    /**
+     * Snapshot of transposition-table statistics at a point in time.
+     *
+     * @param probes   total probe calls since last {@link #resetStats()} / {@link #clear()}
+     * @param hits     successful probes (key matched) in the same window
+     * @param hashfull occupied entries per mille (0–1000), matching the UCI {@code hashfull} convention
+     */
+    public record TTStats(long probes, long hits, int hashfull) {
+        /** Hit rate in [0.0, 1.0]; returns 0.0 when no probes have been made. */
+        public double hitRate() {
+            return probes == 0 ? 0.0 : (double) hits / probes;
+        }
+    }
+
+    /** Returns a point-in-time snapshot of TT statistics. */
+    public TTStats getStats() {
+        return new TTStats(probes.get(), hits.get(), hashfull());
     }
 }

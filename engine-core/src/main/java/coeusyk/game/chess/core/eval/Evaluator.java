@@ -8,16 +8,27 @@ public class Evaluator {
     private static final int TOTAL_PHASE = 24;
 
     // Pawn hash table: caches PawnStructure.evaluate() results keyed by pawn Zobrist hash.
-    // 16K entries at 2 ints each = ~128KB. Pawn structure rarely changes between sibling nodes.
-    private static final int PAWN_TABLE_SIZE = 1 << 14; // 16384 entries
-    private static final int PAWN_TABLE_MASK = PAWN_TABLE_SIZE - 1;
-    private final long[] pawnTableKeys   = new long[PAWN_TABLE_SIZE];
-    private final int[]  pawnTableMg     = new int[PAWN_TABLE_SIZE];
-    private final int[]  pawnTableEg     = new int[PAWN_TABLE_SIZE];
+    // Default 1 MB = 65536 entries. Configurable via UCI option PawnHashSize.
+    // Each entry: 8 bytes (key) + 4 (mg) + 4 (eg) = 16 bytes → 1 MB ≈ 65536 entries.
+    private static final int APPROX_PAWN_ENTRY_BYTES = 16;
+    private static final int DEFAULT_PAWN_HASH_MB = 1;
+    private int pawnTableSize;
+    private int pawnTableMask;
+    private long[] pawnTableKeys;
+    private int[]  pawnTableMg;
+    private int[]  pawnTableEg;
 
     private static final int[] PHASE_WEIGHTS = new int[7];
     private static final int[] MG_MATERIAL = new int[7];
     private static final int[] EG_MATERIAL = new int[7];
+    /** Fixed penalty (cp) applied per undefended attacked non-king piece. */
+    private static final int HANGING_PENALTY = 50;
+    /**
+     * Enable pawn-hash hit/miss statistics collection. Off by default (zero overhead);
+     * enabled in NpsBenchmarkTest and similar diagnostic callers.
+     */
+    private boolean pawnHashStatsEnabled = false;
+    private long pawnTableHits, pawnTableMisses;
 
     // Mobility bonus per safe square (centipawns)
     private static final int[] MG_MOBILITY = new int[7];
@@ -25,35 +36,64 @@ public class Evaluator {
     // Baseline: subtract this many safe squares before applying bonus
     private static final int[] MOBILITY_BASELINE = new int[7];
 
+    /**
+     * Default immutable eval configuration built from the current tuned constants.
+     * After a Texel tuning run, copy the new values here and commit.
+     * No runtime injection — this is the single live config used by all Evaluator instances.
+     */
+    public static final EvalConfig DEFAULT_CONFIG = new EvalConfig(
+        /* tempo              */ 21,
+        /* bishopPairMg/Eg   */ 29, 52,
+        /* rook7thMg/Eg      */ 0, 32,
+        /* rookOpenMg/Eg     */ 50, 0,
+        /* rookSemiMg/Eg     */ 18, 19,
+        /* knightOutpostMg/Eg*/ 40, 30,
+        /* connectedPawnMg/Eg*/ 9, 4,
+        /* backwardPawnMg/Eg */ 0, 0,
+        /* rookBehindMg/Eg   */ 12, 4
+    );
+
+    private final EvalConfig config;
+
+    // White outpost zone: ranks 4-6 for white (rows 2-4 in a8=0: bits 16-39)
+    // Black outpost zone: ranks 3-5 for black (rows 3-5 in a8=0: bits 24-47)
+    private static final long WHITE_OUTPOST_ZONE = 0x000000FFFFFF0000L;
+    private static final long BLACK_OUTPOST_ZONE = 0x0000FFFFFF000000L;
+
+    // Rank 7 bitboards (a8=0 convention): rank 7 = bits 8-15, rank 2 = bits 48-55
+    private static final long WHITE_RANK_7 = 0x000000000000FF00L;
+    private static final long BLACK_RANK_7 = 0x00FF000000000000L;
+    private static final long FILE_MASK_BASE = 0x0101010101010101L;
+
     static {
         PHASE_WEIGHTS[Piece.Knight] = 1;
         PHASE_WEIGHTS[Piece.Bishop] = 1;
         PHASE_WEIGHTS[Piece.Rook]   = 2;
         PHASE_WEIGHTS[Piece.Queen]  = 4;
 
-        MG_MATERIAL[Piece.Pawn]   = 82;
-        MG_MATERIAL[Piece.Knight] = 337;
-        MG_MATERIAL[Piece.Bishop] = 365;
-        MG_MATERIAL[Piece.Rook]   = 477;
-        MG_MATERIAL[Piece.Queen]  = 1025;
+        MG_MATERIAL[Piece.Pawn]   = 100;
+        MG_MATERIAL[Piece.Knight] = 391;
+        MG_MATERIAL[Piece.Bishop] = 428;
+        MG_MATERIAL[Piece.Rook]   = 558;
+        MG_MATERIAL[Piece.Queen]  = 1200;
         MG_MATERIAL[Piece.King]   = 0;
 
-        EG_MATERIAL[Piece.Pawn]   = 94;
-        EG_MATERIAL[Piece.Knight] = 281;
-        EG_MATERIAL[Piece.Bishop] = 297;
-        EG_MATERIAL[Piece.Rook]   = 512;
-        EG_MATERIAL[Piece.Queen]  = 936;
+        EG_MATERIAL[Piece.Pawn]   = 89;
+        EG_MATERIAL[Piece.Knight] = 287;
+        EG_MATERIAL[Piece.Bishop] = 311;
+        EG_MATERIAL[Piece.Rook]   = 555;
+        EG_MATERIAL[Piece.Queen]  = 1040;
         EG_MATERIAL[Piece.King]   = 0;
 
-        MG_MOBILITY[Piece.Knight] = 4;
-        MG_MOBILITY[Piece.Bishop] = 3;
-        MG_MOBILITY[Piece.Rook]   = 2;
-        MG_MOBILITY[Piece.Queen]  = 1;
+        MG_MOBILITY[Piece.Knight] = 7;
+        MG_MOBILITY[Piece.Bishop] = 8;
+        MG_MOBILITY[Piece.Rook]   = 7;
+        MG_MOBILITY[Piece.Queen]  = 2;
 
-        EG_MOBILITY[Piece.Knight] = 4;
+        EG_MOBILITY[Piece.Knight] = 1;
         EG_MOBILITY[Piece.Bishop] = 3;
-        EG_MOBILITY[Piece.Rook]   = 1;
-        EG_MOBILITY[Piece.Queen]  = 2;
+        EG_MOBILITY[Piece.Rook]   = 2;
+        EG_MOBILITY[Piece.Queen]  = 6;
 
         MOBILITY_BASELINE[Piece.Knight] = 4;
         MOBILITY_BASELINE[Piece.Bishop] = 7;
@@ -61,30 +101,81 @@ public class Evaluator {
         MOBILITY_BASELINE[Piece.Queen]  = 14;
     }
 
-    public int evaluate(Board board) {
-        int mgScore = 0;
-        int egScore = 0;
+    /** Creates an Evaluator using the default tuned configuration. */
+    public Evaluator() {
+        this(DEFAULT_CONFIG);
+    }
 
-        mgScore += computeMaterialAndPst(board, true, true) - computeMaterialAndPst(board, false, true);
-        egScore += computeMaterialAndPst(board, true, false) - computeMaterialAndPst(board, false, false);
+    /** Creates an Evaluator using a custom configuration (for testing only). */
+    public Evaluator(EvalConfig config) {
+        this.config = config;
+        setPawnHashSizeMb(DEFAULT_PAWN_HASH_MB);
+    }
+
+    /**
+     * Resizes the pawn hash table. Entry count is the largest power-of-two that
+     * fits in {@code mb} megabytes. Clears the table and resets all stat counters.
+     *
+     * @param mb size in megabytes; clamped to [1, 256]
+     */
+    public void setPawnHashSizeMb(int mb) {
+        int clampedMb = Math.max(1, Math.min(256, mb));
+        long bytes = (long) clampedMb * 1024L * 1024L;
+        int desiredEntries = (int) Math.min(bytes / APPROX_PAWN_ENTRY_BYTES, 1L << 24);
+        int entryCount = 1;
+        while (entryCount < desiredEntries) entryCount <<= 1;
+        this.pawnTableSize = entryCount;
+        this.pawnTableMask = entryCount - 1;
+        this.pawnTableKeys = new long[entryCount];
+        this.pawnTableMg   = new int[entryCount];
+        this.pawnTableEg   = new int[entryCount];
+        this.pawnTableHits = 0;
+        this.pawnTableMisses = 0;
+    }
+
+    /** Enable pawn-hash statistics tracking (hits and misses). Resets counters to zero. */
+    public void enablePawnHashStats() {
+        this.pawnHashStatsEnabled = true;
+        this.pawnTableHits = 0;
+        this.pawnTableMisses = 0;
+    }
+
+    /** Returns the pawn-hash hit rate [0.0, 1.0]. Meaningful only when stats are enabled. */
+    public double getPawnHashHitRate() {
+        long total = pawnTableHits + pawnTableMisses;
+        return total == 0 ? 0.0 : (double) pawnTableHits / total;
+    }
+
+    /** Returns raw miss count. Meaningful only when stats are enabled. */
+    public long getPawnHashMisses() { return pawnTableMisses; }
+
+    /** Returns the pawn hash table capacity (entry count). */
+    public int getPawnTableSize() { return pawnTableSize; }
+
+    public int evaluate(Board board) {
+        // Material + PST scores are maintained incrementally in Board; read the cached values.
+        int mgScore = board.getIncMgScore();
+        int egScore = board.getIncEgScore();
 
         long allOccupancy = board.getWhiteOccupancy() | board.getBlackOccupancy();
         long whitePawnAtk = Attacks.whitePawnAttacks(board.getWhitePawns());
         long blackPawnAtk = Attacks.blackPawnAttacks(board.getBlackPawns());
 
-        int[] whiteMobility = computeMobility(board, true, allOccupancy, blackPawnAtk);
-        int[] blackMobility = computeMobility(board, false, allOccupancy, whitePawnAtk);
+        long whiteMobility = computeMobilityPacked(board, true, allOccupancy, blackPawnAtk);
+        long blackMobility = computeMobilityPacked(board, false, allOccupancy, whitePawnAtk);
 
-        mgScore += whiteMobility[0] - blackMobility[0];
-        egScore += whiteMobility[1] - blackMobility[1];
+        mgScore += unpackMg(whiteMobility) - unpackMg(blackMobility);
+        egScore += unpackEg(whiteMobility) - unpackEg(blackMobility);
 
         int pawnMg, pawnEg;
         long pawnKey = board.getPawnZobristHash();
-        int pawnIdx = (int) (pawnKey & PAWN_TABLE_MASK);
+        int pawnIdx = (int) (pawnKey & pawnTableMask);
         if (pawnTableKeys[pawnIdx] == pawnKey) {
+            if (pawnHashStatsEnabled) pawnTableHits++;
             pawnMg = pawnTableMg[pawnIdx];
             pawnEg = pawnTableEg[pawnIdx];
         } else {
+            if (pawnHashStatsEnabled) pawnTableMisses++;
             int[] pawnStructure = PawnStructure.evaluate(board.getWhitePawns(), board.getBlackPawns());
             pawnMg = pawnStructure[0];
             pawnEg = pawnStructure[1];
@@ -97,47 +188,146 @@ public class Evaluator {
 
         mgScore += KingSafety.evaluate(board);
 
+        // --- Bishop pair bonus ---
+        if (Long.bitCount(board.getWhiteBishops()) >= 2) {
+            mgScore += config.bishopPairMg();
+            egScore += config.bishopPairEg();
+        }
+        if (Long.bitCount(board.getBlackBishops()) >= 2) {
+            mgScore -= config.bishopPairMg();
+            egScore -= config.bishopPairEg();
+        }
+
+        // --- Rook on 7th rank bonus ---
+        int wRook7 = Long.bitCount(board.getWhiteRooks() & WHITE_RANK_7);
+        int bRook7 = Long.bitCount(board.getBlackRooks() & BLACK_RANK_7);
+        mgScore += (wRook7 - bRook7) * config.rook7thMg();
+        egScore += (wRook7 - bRook7) * config.rook7thEg();
+
+        // --- Rook on open / semi-open file bonus ---
+        long[] rookFiles = rookFileScores(board.getWhiteRooks(), board.getBlackRooks(),
+                board.getWhitePawns(), board.getBlackPawns());
+        mgScore += (int) (rookFiles[0] >> 32) - (int) (rookFiles[1] >> 32);
+        egScore += (int) rookFiles[0] - (int) rookFiles[1];
+
+        // --- Knight outpost bonus ---
+        int wOutpost = Long.bitCount(board.getWhiteKnights() & WHITE_OUTPOST_ZONE & ~blackPawnAtk);
+        int bOutpost = Long.bitCount(board.getBlackKnights() & BLACK_OUTPOST_ZONE & ~whitePawnAtk);
+        mgScore += (wOutpost - bOutpost) * config.knightOutpostMg();
+        egScore += (wOutpost - bOutpost) * config.knightOutpostEg();
+
+        // --- Connected pawn bonus ---
+        int wConn = connectedPawnCount(board.getWhitePawns());
+        int bConn = connectedPawnCount(board.getBlackPawns());
+        mgScore += (wConn - bConn) * config.connectedPawnMg();
+        egScore += (wConn - bConn) * config.connectedPawnEg();
+
+        // --- Backward pawn penalty ---
+        int wBack = backwardPawnCount(board.getWhitePawns(), board.getBlackPawns(), true);
+        int bBack = backwardPawnCount(board.getBlackPawns(), board.getWhitePawns(), false);
+        mgScore -= (wBack - bBack) * config.backwardPawnMg();
+        egScore -= (wBack - bBack) * config.backwardPawnEg();
+
+        // --- Rook behind passed pawn bonus ---
+        int[] rookBehind = rookBehindPasserScores(board.getWhiteRooks(), board.getBlackRooks(),
+                board.getWhitePawns(), board.getBlackPawns());
+        mgScore += rookBehind[0];
+        egScore += rookBehind[1];
+
         int phase = computePhase(board);
         egScore += MopUp.evaluate(board, phase);
         int score = (mgScore * phase + egScore * (TOTAL_PHASE - phase)) / TOTAL_PHASE;
 
+        // --- Tempo bonus (applied after phase interpolation) ---
+        score += Piece.isWhite(board.getActiveColor()) ? config.tempo() : -config.tempo();
+
+        // --- Hanging piece penalty (undefended attacked non-king pieces) ---
+        score += hangingPenalty(board);
+
         return Piece.isWhite(board.getActiveColor()) ? score : -score;
     }
 
-    private int[] computeMobility(Board board, boolean white, long allOccupancy, long enemyPawnAttacks) {
+    /**
+     * Penalty for non-king pieces that are attacked and not defended (bitboard form).
+     * Uses the Board's cached attackedByWhite/Black bitboards — O(1) instead of ~56
+     * isSquareAttackedBy() calls per evaluate() call (~10% CPU eliminated).
+     * Returns a white-positive score: negative if white has hanging pieces, positive if black does.
+     */
+    private int hangingPenalty(Board board) {
+        long whiteNonKing = board.getWhiteOccupancy() & ~board.getWhiteKing();
+        long blackNonKing = board.getBlackOccupancy() & ~board.getBlackKing();
+        long whiteHanging = whiteNonKing & board.getAttackedByBlack() & ~board.getAttackedByWhite();
+        long blackHanging = blackNonKing & board.getAttackedByWhite() & ~board.getAttackedByBlack();
+        return (Long.bitCount(blackHanging) - Long.bitCount(whiteHanging)) * HANGING_PENALTY;
+    }
+
+    /**
+     * Returns a 2-element array: [0] = white packed MG/EG, [1] = black packed MG/EG.
+     * Each element packs MG score in the upper 32 bits and EG score in the lower 32 bits.
+     */
+    private long[] rookFileScores(long whiteRooks, long blackRooks, long whitePawns, long blackPawns) {
+        long wPacked = rookFilePacked(whiteRooks, whitePawns, blackPawns);
+        long bPacked = rookFilePacked(blackRooks, blackPawns, whitePawns);
+        return new long[]{ wPacked, bPacked };
+    }
+
+    private long rookFilePacked(long rooks, long friendlyPawns, long enemyPawns) {
+        int mg = 0, eg = 0;
+        long temp = rooks;
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            int file = sq % 8;
+            long fileMask = FILE_MASK_BASE << file;
+            if ((friendlyPawns & fileMask) == 0) {
+                if ((enemyPawns & fileMask) == 0) {
+                    mg += config.rookOpenFileMg();
+                    eg += config.rookOpenFileEg();
+                } else {
+                    mg += config.rookSemiOpenFileMg();
+                    eg += config.rookSemiOpenFileEg();
+                }
+            }
+            temp &= temp - 1;
+        }
+        return ((long) mg << 32) | (eg & 0xFFFFFFFFL);
+    }
+
+    private long computeMobilityPacked(Board board, boolean white, long allOccupancy, long enemyPawnAttacks) {
         long friendly = white ? board.getWhiteOccupancy() : board.getBlackOccupancy();
         long safeMask = ~friendly & ~enemyPawnAttacks;
 
         int mgMob = 0;
         int egMob = 0;
 
-        mgMob += pieceMobility(white ? board.getWhiteKnights() : board.getBlackKnights(),
-                Piece.Knight, allOccupancy, safeMask, true);
-        egMob += pieceMobility(white ? board.getWhiteKnights() : board.getBlackKnights(),
-                Piece.Knight, allOccupancy, safeMask, false);
+        long kn = pieceMobilityPacked(white ? board.getWhiteKnights() : board.getBlackKnights(),
+            Piece.Knight, allOccupancy, safeMask);
+        mgMob += unpackMg(kn);
+        egMob += unpackEg(kn);
 
-        mgMob += pieceMobility(white ? board.getWhiteBishops() : board.getBlackBishops(),
-                Piece.Bishop, allOccupancy, safeMask, true);
-        egMob += pieceMobility(white ? board.getWhiteBishops() : board.getBlackBishops(),
-                Piece.Bishop, allOccupancy, safeMask, false);
+        long bi = pieceMobilityPacked(white ? board.getWhiteBishops() : board.getBlackBishops(),
+            Piece.Bishop, allOccupancy, safeMask);
+        mgMob += unpackMg(bi);
+        egMob += unpackEg(bi);
 
-        mgMob += pieceMobility(white ? board.getWhiteRooks() : board.getBlackRooks(),
-                Piece.Rook, allOccupancy, safeMask, true);
-        egMob += pieceMobility(white ? board.getWhiteRooks() : board.getBlackRooks(),
-                Piece.Rook, allOccupancy, safeMask, false);
+        long ro = pieceMobilityPacked(white ? board.getWhiteRooks() : board.getBlackRooks(),
+            Piece.Rook, allOccupancy, safeMask);
+        mgMob += unpackMg(ro);
+        egMob += unpackEg(ro);
 
-        mgMob += pieceMobility(white ? board.getWhiteQueens() : board.getBlackQueens(),
-                Piece.Queen, allOccupancy, safeMask, true);
-        egMob += pieceMobility(white ? board.getWhiteQueens() : board.getBlackQueens(),
-                Piece.Queen, allOccupancy, safeMask, false);
+        long qu = pieceMobilityPacked(white ? board.getWhiteQueens() : board.getBlackQueens(),
+            Piece.Queen, allOccupancy, safeMask);
+        mgMob += unpackMg(qu);
+        egMob += unpackEg(qu);
 
-        return new int[]{ mgMob, egMob };
+        return packMobility(mgMob, egMob);
     }
 
-    private int pieceMobility(long pieces, int pieceType, long allOccupancy, long safeMask, boolean mg) {
-        int bonus = mg ? MG_MOBILITY[pieceType] : EG_MOBILITY[pieceType];
+        private long pieceMobilityPacked(long pieces, int pieceType, long allOccupancy, long safeMask) {
+        int mgBonus = MG_MOBILITY[pieceType];
+        int egBonus = EG_MOBILITY[pieceType];
         int baseline = MOBILITY_BASELINE[pieceType];
-        int total = 0;
+        int mgTotal = 0;
+        int egTotal = 0;
         while (pieces != 0) {
             int sq = Long.numberOfTrailingZeros(pieces);
             long attacks;
@@ -149,10 +339,24 @@ public class Evaluator {
                 default: attacks = 0L;
             }
             int safeSquares = Long.bitCount(attacks & safeMask);
-            total += (safeSquares - baseline) * bonus;
+            int delta = safeSquares - baseline;
+            mgTotal += delta * mgBonus;
+            egTotal += delta * egBonus;
             pieces &= pieces - 1;
         }
-        return total;
+        return packMobility(mgTotal, egTotal);
+    }
+
+    private static long packMobility(int mg, int eg) {
+        return (((long) mg) << 32) | (eg & 0xffffffffL);
+    }
+
+    private static int unpackMg(long packed) {
+        return (int) (packed >> 32);
+    }
+
+    private static int unpackEg(long packed) {
+        return (int) packed;
     }
 
     int computePhase(Board board) {
@@ -164,44 +368,103 @@ public class Evaluator {
         return Math.min(phase, TOTAL_PHASE);
     }
 
-    private int computeMaterialAndPst(Board board, boolean white, boolean mg) {
-        int score = 0;
-        int[] material = mg ? MG_MATERIAL : EG_MATERIAL;
-
-        score += sumPiecePst(white ? board.getWhitePawns() : board.getBlackPawns(),
-                Piece.Pawn, white, mg, material);
-        score += sumPiecePst(white ? board.getWhiteKnights() : board.getBlackKnights(),
-                Piece.Knight, white, mg, material);
-        score += sumPiecePst(white ? board.getWhiteBishops() : board.getBlackBishops(),
-                Piece.Bishop, white, mg, material);
-        score += sumPiecePst(white ? board.getWhiteRooks() : board.getBlackRooks(),
-                Piece.Rook, white, mg, material);
-        score += sumPiecePst(white ? board.getWhiteQueens() : board.getBlackQueens(),
-                Piece.Queen, white, mg, material);
-        score += sumPiecePst(white ? board.getWhiteKing() : board.getBlackKing(),
-                Piece.King, white, mg, material);
-
-        return score;
-    }
-
-    private int sumPiecePst(long bitboard, int pieceType, boolean white, boolean mg, int[] material) {
-        int score = 0;
-        while (bitboard != 0) {
-            int square = Long.numberOfTrailingZeros(bitboard);
-            score += material[pieceType];
-            int pstSquare = white ? square : (square ^ 56);
-            score += mg ? PieceSquareTables.mg(pieceType, pstSquare)
-                        : PieceSquareTables.eg(pieceType, pstSquare);
-            bitboard &= bitboard - 1; // clear LSB
-        }
-        return score;
-    }
-
     public static int mgMaterialValue(int pieceType) {
         return MG_MATERIAL[pieceType];
     }
 
     public static int egMaterialValue(int pieceType) {
         return EG_MATERIAL[pieceType];
+    }
+
+    private static final long NOT_A_FILE = ~0x0101010101010101L;
+    private static final long NOT_H_FILE = ~0x8080808080808080L;
+
+    /** Count pawns that have a friendly neighbor on an adjacent file (same row ± 1 row). */
+    private static int connectedPawnCount(long pawns) {
+        // A pawn is connected if it attacks a friendly pawn, or a friendly pawn attacks it
+        long attacks = ((pawns & NOT_A_FILE) >>> 1) | ((pawns & NOT_H_FILE) << 1);
+        // Also count supporters one rank behind (diagonal support)
+        attacks |= ((pawns & NOT_A_FILE) >>> 9) | ((pawns & NOT_H_FILE) << 7)
+                 | ((pawns & NOT_A_FILE) << 7)  | ((pawns & NOT_H_FILE) >>> 9);
+        return Long.bitCount(pawns & attacks);
+    }
+
+    /**
+     * Count backward pawns: a pawn is backward if it cannot safely advance and is
+     * behind all friendly pawns on adjacent files.
+     */
+    private static int backwardPawnCount(long friendly, long enemy, boolean white) {
+        long enemyAtk = white ? Attacks.blackPawnAttacks(enemy) : Attacks.whitePawnAttacks(enemy);
+        long temp = friendly;
+        int count = 0;
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            int file = sq % 8;
+            // build adjacent-file fill of friendly pawns
+            long adjFiles = 0L;
+            if (file > 0) adjFiles |= FILE_MASK_BASE << (file - 1);
+            if (file < 7) adjFiles |= FILE_MASK_BASE << (file + 1);
+            long adjFriendly = friendly & adjFiles;
+            // For white (advancing toward row 0), backward = no friendly neighbor ahead (lower row),
+            // and the stop square is attacked by enemy pawns
+            if (white) {
+                long ahead = adjFriendly & ((1L << sq) - 1);   // rows < row are lower-index in a8=0
+                int stopSq = sq - 8; // one rank forward for white
+                if (stopSq >= 0 && ahead == 0 && (enemyAtk & (1L << stopSq)) != 0) {
+                    count++;
+                }
+            } else {
+                long ahead = adjFriendly & ~((1L << (sq + 8)) - 1);  // rows > row (higher index)
+                int stopSq = sq + 8;
+                if (stopSq < 64 && ahead == 0 && (enemyAtk & (1L << stopSq)) != 0) {
+                    count++;
+                }
+            }
+            temp &= temp - 1;
+        }
+        return count;
+    }
+
+    /**
+     * Score rook-behind-passed-pawn bonus. Returns [mg, eg] net score (white - black).
+     */
+    private int[] rookBehindPasserScores(long whiteRooks, long blackRooks,
+                                          long whitePawns, long blackPawns) {
+        int mg = 0, eg = 0;
+        // White rooks behind white passers
+        long temp = whiteRooks;
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            long fileMask = FILE_MASK_BASE << (sq % 8);
+            // Passed white pawn: on same file, ahead of rook (lower row in a8=0 = higher rank)
+            long passedOnFile = whitePawns & fileMask & ((1L << sq) - 1);
+            while (passedOnFile != 0) {
+                int psq = Long.numberOfTrailingZeros(passedOnFile);
+                // Check if this pawn is actually passed (no enemy pawn blocking ahead)
+                if ((blackPawns & fileMask & ((1L << psq) - 1)) == 0) {
+                    mg += config.rookBehindPasserMg();
+                    eg += config.rookBehindPasserEg();
+                }
+                passedOnFile &= passedOnFile - 1;
+            }
+            temp &= temp - 1;
+        }
+        // Black rooks behind black passers (black advances toward higher rows in a8=0)
+        temp = blackRooks;
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            long fileMask = FILE_MASK_BASE << (sq % 8);
+            long passedOnFile = blackPawns & fileMask & ~((1L << sq) - 1) & ~(1L << sq);
+            while (passedOnFile != 0) {
+                int psq = Long.numberOfTrailingZeros(passedOnFile);
+                if ((whitePawns & fileMask & ~((1L << psq) - 1) & ~(1L << psq)) == 0) {
+                    mg -= config.rookBehindPasserMg();
+                    eg -= config.rookBehindPasserEg();
+                }
+                passedOnFile &= passedOnFile - 1;
+            }
+            temp &= temp - 1;
+        }
+        return new int[]{mg, eg};
     }
 }

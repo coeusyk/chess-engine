@@ -2,6 +2,9 @@ package coeusyk.game.chess.tuner;
 
 import coeusyk.game.chess.core.models.Board;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
@@ -22,10 +25,28 @@ import java.util.List;
  */
 public final class PositionLoader {
 
+    private static final Logger LOG = LoggerFactory.getLogger(PositionLoader.class);
+
     private PositionLoader() {}
 
+    /**
+     * Loads all positions from the file.
+     */
     public static List<LabelledPosition> load(Path file) throws IOException {
+        return load(file, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Loads up to {@code maxPositions} positions from the file.
+     * Stops reading as soon as the cap is reached, avoiding OOM on large corpora.
+     *
+     * @param file         dataset path
+     * @param maxPositions maximum number of positions to load
+     * @return parsed positions (size ≤ maxPositions)
+     */
+    public static List<LabelledPosition> load(Path file, int maxPositions) throws IOException {
         List<LabelledPosition> result = new ArrayList<>();
+        int skipped = 0;
         try (BufferedReader reader = new BufferedReader(new FileReader(file.toFile()))) {
             String line;
             while ((line = reader.readLine()) != null) {
@@ -33,8 +54,16 @@ public final class PositionLoader {
                 if (line.isEmpty() || line.startsWith("#")) continue;
 
                 LabelledPosition lp = tryParse(line);
-                if (lp != null) result.add(lp);
+                if (lp != null) {
+                    result.add(lp);
+                    if (result.size() >= maxPositions) break;
+                } else {
+                    skipped++;
+                }
             }
+        }
+        if (skipped > 0) {
+            LOG.info(String.format("[PositionLoader] Skipped %,d unparseable lines", skipped));
         }
         return result;
     }
@@ -65,10 +94,10 @@ public final class PositionLoader {
         if (outcome < 0) return null;
 
         String fenPart = line.substring(0, bracketOpen).strip();
-        Board board = parseFen(fenPart);
-        if (board == null) return null;
+        TunerPosition pos = parseFen(fenPart);
+        if (pos == null) return null;
 
-        return new LabelledPosition(board, outcome);
+        return new LabelledPosition(pos, outcome);
     }
 
     private static LabelledPosition parseFormat2(String line) {
@@ -87,22 +116,24 @@ public final class PositionLoader {
         double outcome = parseOutcome(resultPart);
         if (outcome < 0) return null;
 
-        Board board = parseFen(fenPart);
-        if (board == null) return null;
+        TunerPosition pos = parseFen(fenPart);
+        if (pos == null) return null;
 
-        return new LabelledPosition(board, outcome);
+        return new LabelledPosition(pos, outcome);
     }
 
     /**
-     * Converts FEN or EPD position to Board.
+     * Converts FEN or EPD position to a compact {@link TunerPosition}.
+     * Temporarily creates a full Board to extract bitboards, then discards it.
      * Appends "0 1" if halfmove/fullmove counters are absent (EPD format).
      */
-    private static Board parseFen(String fen) {
+    private static TunerPosition parseFen(String fen) {
         String[] parts = fen.split("\\s+");
         // EPD has 4 mandatory fields (position, color, castling, ep); FEN has 6
         String fullFen = parts.length >= 6 ? fen : fen + " 0 1";
         try {
-            return new Board(fullFen);
+            Board board = new Board(fullFen);
+            return TunerPosition.from(board, fullFen);
         } catch (Exception e) {
             return null;
         }

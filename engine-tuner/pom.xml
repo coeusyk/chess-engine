@@ -8,7 +8,7 @@
     <parent>
         <groupId>coeusyk.spring</groupId>
         <artifactId>chess-engine</artifactId>
-        <version>0.2.0-SNAPSHOT</version>
+        <version>0.5.1-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -21,6 +21,10 @@
             <groupId>coeusyk.spring</groupId>
             <artifactId>engine-core</artifactId>
             <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
@@ -65,6 +69,7 @@
                                         <Implementation-Version>${project.version}</Implementation-Version>
                                     </manifestEntries>
                                 </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                             </transformers>
                             <filters>
                                 <filter>
@@ -83,3 +88,4 @@
         </plugins>
     </build>
 </project>
+

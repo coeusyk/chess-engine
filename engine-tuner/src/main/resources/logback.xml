@@ -1,0 +1,14 @@
+<configuration>
+    <!-- Tuner output goes to stdout. Pattern is message-only because the
+         log messages already carry their own context prefix ([TunerMain],
+         [Adam], [Tuner], etc.). -->
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="STDOUT"/>
+    </root>
+</configuration>

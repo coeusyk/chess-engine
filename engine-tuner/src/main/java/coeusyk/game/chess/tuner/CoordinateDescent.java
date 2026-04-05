@@ -1,5 +1,8 @@
 package coeusyk.game.chess.tuner;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -24,6 +27,8 @@ import java.util.List;
  */
 public final class CoordinateDescent {
 
+    private static final Logger LOG = LoggerFactory.getLogger(CoordinateDescent.class);
+
     /** Default maximum number of full-pass iterations. */
     public static final int DEFAULT_MAX_ITERATIONS = 500;
 
@@ -44,45 +49,93 @@ public final class CoordinateDescent {
                                 double[] initialParams,
                                 double k,
                                 int maxIters) {
+        return tune(positions, initialParams, k, maxIters, true);
+    }
+
+    /**
+     * Runs coordinate descent and returns the optimised parameter array.
+     *
+     * <p>The input {@code params} array is not modified; a copy is returned.
+     *
+     * @param positions     pre-loaded training set
+     * @param initialParams starting point (length {@link EvalParams#TOTAL_PARAMS})
+     * @param k             sigmoid scaling constant (from {@link KFinder})
+     * @param maxIters      iteration cap
+     * @param recalibrateK  if {@code true}, re-runs {@link KFinder} after each pass
+     *                      and logs K drift; skip if drift &lt; 0.001
+     * @return tuned parameter array (same length as {@code initialParams})
+     */
+    public static double[] tune(List<LabelledPosition> positions,
+                                double[] initialParams,
+                                double k,
+                                int maxIters,
+                                boolean recalibrateK) {
         double[] params = initialParams.clone();
+        // Clamp initial params to legal bounds before the first MSE computation
+        for (int i = 0; i < params.length; i++) {
+            params[i] = EvalParams.clampOne(i, params[i]);
+        }
         double currentMse = TunerEvaluator.computeMse(positions, params, k);
 
-        System.out.printf("[Tuner] start  MSE=%.8f  params=%d  positions=%d%n",
-                currentMse, params.length, positions.size());
+        LOG.info(String.format("[Tuner] start  MSE=%.8f  params=%d  positions=%d",
+                currentMse, params.length, positions.size()));
 
         for (int iter = 1; iter <= maxIters; iter++) {
             Instant iterStart = Instant.now();
             boolean improved = false;
 
             for (int i = 0; i < params.length; i++) {
-                // Try +1
-                params[i] += 1.0;
-                double msePlus = TunerEvaluator.computeMse(positions, params, k);
-                if (msePlus < currentMse) {
-                    currentMse = msePlus;
-                    improved = true;
-                    continue;
+                double lo = EvalParams.PARAM_MIN[i];
+                double hi = EvalParams.PARAM_MAX[i];
+
+                // Try +1 (only if within upper bound)
+                if (params[i] < hi) {
+                    params[i] += 1.0;
+                    EvalParams.enforceMaterialOrdering(params);
+                    double msePlus = TunerEvaluator.computeMse(positions, params, k);
+                    if (msePlus < currentMse) {
+                        currentMse = msePlus;
+                        improved = true;
+                        continue;
+                    }
+                    params[i] -= 1.0;
+                    EvalParams.enforceMaterialOrdering(params);
                 }
 
-                // Try -1 (reset first, then subtract)
-                params[i] -= 2.0;
-                double mseMinus = TunerEvaluator.computeMse(positions, params, k);
-                if (mseMinus < currentMse) {
-                    currentMse = mseMinus;
-                    improved = true;
-                    continue;
+                // Try -1 (only if within lower bound)
+                if (params[i] > lo) {
+                    params[i] -= 1.0;
+                    EvalParams.enforceMaterialOrdering(params);
+                    double mseMinus = TunerEvaluator.computeMse(positions, params, k);
+                    if (mseMinus < currentMse) {
+                        currentMse = mseMinus;
+                        improved = true;
+                        continue;
+                    }
+                    params[i] += 1.0;
+                    EvalParams.enforceMaterialOrdering(params);
                 }
+            }
 
-                // Neither improved — revert
-                params[i] += 1.0;
+            // K recalibration after each pass
+            if (recalibrateK) {
+                double newK = KFinder.findK(positions, params);
+                double kDrift = Math.abs(newK - k);
+                if (kDrift < 0.001) {
+                    LOG.info(String.format("[Tuner] K stable (drift=%.6f < 0.001), skipping recalibration", kDrift));
+                } else {
+                    LOG.info(String.format("[Tuner] K recalibrated: %.6f \u2192 %.6f (drift=%.6f)", k, newK, kDrift));
+                    k = newK;
+                    currentMse = TunerEvaluator.computeMse(positions, params, k);
+                }
             }
 
             long ms = Duration.between(iterStart, Instant.now()).toMillis();
-            System.out.printf("[Tuner] iter %3d  MSE=%.8f  improved=%b  time=%dms%n",
-                    iter, currentMse, improved, ms);
+            LOG.info(String.format("[Tuner] iter %3d  K=%.6f  MSE=%.8f  improved=%b  time=%dms",
+                    iter, k, currentMse, improved, ms));
 
             if (!improved) {
-                System.out.printf("[Tuner] converged after %d iterations%n", iter);
+                LOG.info(String.format("[Tuner] converged after %d iterations", iter));
                 break;
             }
         }

@@ -7,6 +7,7 @@ import coeusyk.game.chess.core.search.IterationInfo;
 import coeusyk.game.chess.core.search.SearchResult;
 import coeusyk.game.chess.core.search.Searcher;
 import coeusyk.game.chess.core.search.TimeManager;
+import coeusyk.game.chess.core.book.OpeningBook;
 import coeusyk.game.chess.core.search.TranspositionTable;
 import coeusyk.game.chess.uci.syzygy.OnlineSyzygyProber;
 
@@ -19,7 +20,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public class UciApplication {
+    private static final Logger LOG = LoggerFactory.getLogger(UciApplication.class);
     private static final String ENGINE_NAME = "Vex";
     private static final String ENGINE_AUTHOR = "coeusyk";
     private static final int MATE_SCORE = 100_000;
@@ -29,11 +34,24 @@ public class UciApplication {
     private Board board = new Board();
     private int multiPV = 1;
     private int hashSizeMb = 64;
+    private int pawnHashSizeMb = 1;
     private int threads = 1;
     private long moveOverheadMs = 30;
     private String syzygyPath = "";
     private int syzygyProbeDepth = 1;
     private boolean syzygy50MoveRule = true;
+
+    // Opening book
+    private OpeningBook openingBook = new OpeningBook(50);
+    private boolean ownBook = false;
+    private String bookFile = "Performance.bin";
+    private int bookDepth = 20;
+    private int bookVariance = 50;
+
+    // Pondering
+    private volatile TimeManager activePonderTimeManager = null;
+    private int ponderActiveColor;
+    private long ponderWtime, ponderBtime, ponderWinc, ponderBinc;
 
     // Shared transposition table — a single instance sized by Hash setoption,
     // cleared on ucinewgame, and injected into every Searcher (main + helpers).
@@ -47,13 +65,15 @@ public class UciApplication {
     private static final int AVAILABLE_CORES = Runtime.getRuntime().availableProcessors();
 
     // Cached thread pool for Lazy SMP helper threads.
-    // Helpers run at BELOW_NORMAL priority so they never starve the main search
-    // thread.  On machines with spare cores they run at near-full speed; on
-    // saturated cores they yield to the main thread automatically.
+    // Helpers run one step below normal priority (NORM_PRIORITY - 1 = 4) so that
+    // when they compete with the main search thread on the same core the main thread
+    // wins, while still getting near-full throughput on idle/spare cores.
+    // MIN_PRIORITY (1) mapped to THREAD_PRIORITY_IDLE on Windows and effectively
+    // starved helpers of CPU time, negating the SMP benefit.
     private final ExecutorService smpExecutor = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "smp-helper");
         t.setDaemon(true);
-        t.setPriority(Thread.MIN_PRIORITY);
+        t.setPriority(Thread.NORM_PRIORITY - 1);
         return t;
     });
 
@@ -107,12 +127,18 @@ public class UciApplication {
                 System.out.println("id name " + ENGINE_NAME);
                 System.out.println("id author " + ENGINE_AUTHOR);
                 System.out.println("option name Hash type spin default 64 min 1 max 65536");
+                System.out.println("option name PawnHashSize type spin default 1 min 1 max 256");
                 System.out.println("option name MultiPV type spin default 1 min 1 max 500");
                 System.out.println("option name MoveOverhead type spin default 30 min 0 max 5000");
                 System.out.println("option name Threads type spin default 1 min 1 max 512");
                 System.out.println("option name SyzygyPath type string default <empty>");
                 System.out.println("option name SyzygyProbeDepth type spin default 1 min 0 max 100");
                 System.out.println("option name Syzygy50MoveRule type check default true");
+                System.out.println("option name Ponder type check default false");
+                System.out.println("option name OwnBook type check default false");
+                System.out.println("option name BookFile type string default Performance.bin");
+                System.out.println("option name BookDepth type spin default 20 min 0 max 50");
+                System.out.println("option name BookVariance type spin default 50 min 0 max 100");
                 System.out.println("uciok");
             } else if ("isready".equals(line)) {
                 System.out.println("readyok");
@@ -120,6 +146,8 @@ public class UciApplication {
                 stopRequested.set(true);
                 board = new Board();
                 sharedTT.clear();
+                openingBook.close();
+                activePonderTimeManager = null;
             } else if (line.startsWith("position")) {
                 stopRequested.set(true);
                 handlePosition(line);
@@ -144,7 +172,11 @@ public class UciApplication {
                     emitBestMove(latestIterativeBestMove);
                 }
             } else if ("ponderhit".equals(line)) {
-                // Ponder stub: treat as no-op (full pondering not implemented)
+                TimeManager tm = activePonderTimeManager;
+                if (tm != null) {
+                    tm.configurePonderHit(ponderActiveColor, ponderWtime, ponderBtime, ponderWinc, ponderBinc);
+                    activePonderTimeManager = null;
+                }
             } else if ("quit".equals(line)) {
                 stopRequested.set(true);
                 break;
@@ -278,8 +310,46 @@ public class UciApplication {
                 threads = Math.max(1, Math.min(512, value));
             } catch (NumberFormatException ignored) {
             }
+        } else if ("pawnhashsize".equals(optionNameLower)) {
+            try {
+                int value = Integer.parseInt(valuePart);
+                pawnHashSizeMb = Math.max(1, Math.min(256, value));
+            } catch (NumberFormatException ignored) {
+            }
+        } else if ("ponder".equals(optionNameLower)) {
+            // acknowledged; ponder state is managed per-go via "go ponder"
+        } else if ("ownbook".equals(optionNameLower)) {
+            ownBook = "true".equalsIgnoreCase(valuePart);
+        } else if ("bookfile".equals(optionNameLower)) {
+            bookFile = valuePart.trim();
+            openNewBook();
+        } else if ("bookdepth".equals(optionNameLower)) {
+            try {
+                bookDepth = Math.max(0, Math.min(50, Integer.parseInt(valuePart)));
+            } catch (NumberFormatException ignored) {
+            }
+        } else if ("bookvariance".equals(optionNameLower)) {
+            try {
+                bookVariance = Math.max(0, Math.min(100, Integer.parseInt(valuePart)));
+                openingBook = new OpeningBook(bookVariance);
+                openNewBook();
+            } catch (NumberFormatException ignored) {
+            }
         }
         // Unknown options are silently ignored per UCI spec.
+    }
+
+    private void openNewBook() {
+        openingBook.close();
+        if ("Performance.bin".equals(bookFile)) {
+            openingBook.openFromClasspath("books/Performance.bin");
+        } else {
+            try {
+                openingBook.open(java.nio.file.Path.of(bookFile));
+            } catch (java.io.IOException e) {
+                LOG.warn("Could not open book file '{}': {}", bookFile, e.getMessage());
+            }
+        }
     }
 
     private void handleGo(String command) {
@@ -305,10 +375,42 @@ public class UciApplication {
 
         stopRequested.set(false);
         latestIterativeBestMove = null;
-        searchRunning = true;
+
+        // Detect ponder flag and save time params for ponderhit reconfiguration.
+        String[] goParts = command.split("\\s+");
+        boolean isGoPonder = contains(goParts, "ponder");
+        if (isGoPonder) {
+            ponderActiveColor = board.getActiveColor();
+            ponderWtime = parseLongArg(goParts, "wtime", 0L);
+            ponderBtime = parseLongArg(goParts, "btime", 0L);
+            ponderWinc  = parseLongArg(goParts, "winc",  0L);
+            ponderBinc  = parseLongArg(goParts, "binc",  0L);
+        }
 
         String positionSnapshot = board.boardStates.get(board.boardStates.size() - 1);
-        Thread worker = new Thread(() -> runSearch(command, new Board(positionSnapshot)), "uci-search-thread");
+        Board searchBoard = new Board(positionSnapshot);
+        searchBoard.setSearchMode(true);
+
+        // Forced move detection: if exactly one legal move exists, play it
+        // immediately without entering the search. Saves clock time in positions
+        // where there is no choice (e.g. single legal reply to check).
+        // Skip in ponder mode — the ponder position needs a full search.
+        List<Move> legalMoves = new MovesGenerator(searchBoard).getActiveMoves(searchBoard.getActiveColor());
+        if (!isGoPonder && legalMoves.size() == 1) {
+            emitBestMove(legalMoves.get(0));
+            System.out.flush();
+            return;
+        }
+        if (legalMoves.isEmpty()) {
+            // Checkmate or stalemate — no move to play.
+            LOG.warn("warn: handleGo called with 0 legal moves");
+            emitBestMove(null);
+            System.out.flush();
+            return;
+        }
+
+        searchRunning = true;
+        Thread worker = new Thread(() -> runSearch(command, searchBoard), "uci-search-thread");
         worker.setDaemon(true);
         searchThread = worker;
         worker.start();
@@ -324,6 +426,7 @@ public class UciApplication {
         // searchRunning=false causes a race where the GUI sends the next "go"
         // before handleGo sees searchRunning=false, silently dropping the command.
         Move bestMoveToEmit = null;
+        SearchResult result = null;
         try {
             // --- Lazy SMP: launch N-1 helper threads before the main search ---
             // Each helper runs an independent iterative-deepening loop on its own
@@ -333,6 +436,12 @@ public class UciApplication {
             // to prevent helpers from stealing CPU from the main search thread
             // on single-core or heavily-loaded machines.
             int effectiveHelpers = Math.min(threads - 1, AVAILABLE_CORES - 1);
+            // Bump the generation counter before any thread (main or helper) starts
+            // writing to the shared TT for this position.  If this were called inside
+            // searchWithTimeManager() instead, helpers submitted just before would
+            // already be running at generation N while the main thread bumps to N+1,
+            // immediately evicting any shallow entries deposited by the helpers.
+            sharedTT.incrementGeneration();
             if (effectiveHelpers > 0) {
                 // Snapshot the current position string from the board so each
                 // helper can create an independent Board without sharing state.
@@ -348,7 +457,9 @@ public class UciApplication {
                         try {
                             Searcher helper = new Searcher();
                             helper.setSharedTranspositionTable(sharedTT);
+                            helper.setPawnHashSizeMb(pawnHashSizeMb);
                             Board helperBoard = new Board(positionFen);
+                            helperBoard.setSearchMode(true);
                             helper.iterativeDeepening(
                                     helperBoard,
                                     MAX_SEARCH_DEPTH,
@@ -366,8 +477,24 @@ public class UciApplication {
 
             // --- Main search ---
             String[] parts = command.split("\\s+");
+            boolean isPonder = contains(parts, "ponder");
+
+            // Opening book probe — skip when pondering (we're searching the opponent's position).
+            if (ownBook && !isPonder) {
+                int halfMoves = searchBoard.boardStates.size() - 1;
+                if (halfMoves < bookDepth * 2) {
+                    if (!openingBook.isOpen()) openNewBook();
+                    Move bookMove = openingBook.probe(searchBoard);
+                    if (bookMove != null) {
+                        bestMoveToEmit = bookMove;
+                        return;
+                    }
+                }
+            }
+
             Searcher searcher = new Searcher();
             searcher.setSharedTranspositionTable(sharedTT);
+            searcher.setPawnHashSizeMb(pawnHashSizeMb);
             if (multiPV > 1) {
                 searcher.setMultiPV(multiPV);
             }
@@ -384,13 +511,15 @@ public class UciApplication {
                 searcher.setSearchMoves(searchMovesList);
             }
 
-            SearchResult result;
-
             if (contains(parts, "movetime")) {
                 long movetime = parseLongArg(parts, "movetime", 1000L);
                 TimeManager manager = new TimeManager();
                 manager.setMoveOverheadMs(moveOverheadMs);
                 manager.configureMovetime(movetime);
+                if (isPonder) {
+                    manager.configurePonder();
+                    activePonderTimeManager = manager;
+                }
                 result = searcher.searchWithTimeManager(
                         searchBoard,
                         64,
@@ -407,6 +536,10 @@ public class UciApplication {
                 TimeManager manager = new TimeManager();
                 manager.setMoveOverheadMs(moveOverheadMs);
                 manager.configureClock(searchBoard.getActiveColor(), wtime, btime, winc, binc);
+                if (isPonder) {
+                    manager.configurePonder();
+                    activePonderTimeManager = manager;
+                }
                 result = searcher.searchWithTimeManager(
                         searchBoard,
                         64,
@@ -434,9 +567,11 @@ public class UciApplication {
             // output latency between emitBestMove and the flag flip.
             searchRunning = false;
             searchThread = null;
+            activePonderTimeManager = null;
             // Emit bestmove only after the flag is cleared.
+            Move ponderMove = result != null ? result.ponderMove() : null;
             Move toEmit = bestMoveToEmit != null ? bestMoveToEmit : latestIterativeBestMove;
-            emitBestMove(toEmit);
+            emitBestMove(toEmit, ponderMove);
             System.out.flush();
         }
     }
@@ -451,6 +586,7 @@ public class UciApplication {
         System.out.printf("Bench depth %d | hash %dMB | %d positions%n", depth, BENCH_HASH_MB, BENCH_FENS.length);
         for (int i = 0; i < BENCH_FENS.length; i++) {
             Board benchBoard = new Board(BENCH_FENS[i]);
+            benchBoard.setSearchMode(true);
             searcher.clearTranspositionTable();
             long posStart = System.currentTimeMillis();
             SearchResult result = searcher.iterativeDeepening(benchBoard, depth);
@@ -522,6 +658,18 @@ public class UciApplication {
     private void emitBestMove(Move move) {
         if (move == null) {
             System.out.println("bestmove 0000");
+        } else {
+            System.out.println("bestmove " + moveToUci(move));
+        }
+    }
+
+    private void emitBestMove(Move move, Move ponderMove) {
+        if (move == null) {
+            System.out.println("bestmove 0000");
+            return;
+        }
+        if (ponderMove != null) {
+            System.out.println("bestmove " + moveToUci(move) + " ponder " + moveToUci(ponderMove));
         } else {
             System.out.println("bestmove " + moveToUci(move));
         }

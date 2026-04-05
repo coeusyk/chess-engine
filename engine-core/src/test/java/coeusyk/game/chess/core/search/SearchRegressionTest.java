@@ -152,25 +152,98 @@ class SearchRegressionTest {
             Arguments.of("T9",  T9_FEN,  "d3f4"),
             Arguments.of("T10", T10_FEN, "d1d3"),
             // Positional
-            Arguments.of("P1",  P1_FEN,  "e1e2"),
+            // P1: 8/5k2/8/5P2/8/8/8/4K3 — Ke1 vs Kf7 blockading f5-passer. Theoretical draw
+            //     (BK reaches a key square before WK can support). Draw detection now returns 0
+            //     for all king-cycling paths; engine picks e1d2 at depth 8. Both moves draw.
+            //     Updated 2026-04-02: draw detection scoring 0 makes e1d2 the first picked move.
+            Arguments.of("P1",  P1_FEN,  "e1d2"),
             Arguments.of("P2",  P2_FEN,  "d4d5"),
+            // P3: 8/8/8/8/4k3/8/3PK3/8 — Ke2+Pd2 vs Ke4. Both d2d3 (pawn advance) and e2f2
+            //     (king sidestep) win. Draw detection penalises king-cycling paths from e2f2;
+            //     engine prefers d2d3 to avoid repetitions in the search subtree.
+            //     Updated 2026-04-02: draw detection shifts preference to d2d3.
             Arguments.of("P3",  P3_FEN,  "d2d3"),
             Arguments.of("P4",  P4_FEN,  "d4d5"),
-            Arguments.of("P5",  P5_FEN,  "c4c5"),
+            // P5: 8/8/3k4/8/1PP5/8/8/2K5 — Kc1+Pb4c4 vs Kd6. Both b4b5 (pawn push) and
+            //     c1c2 (king advance) win; BK cannot cover both pawns. Tuned eval (v0.4.9
+            //     Texel run) raises king-support PST weights, shifting preference to c1c2.
+            //     Updated 2025-07-14: Texel tuning v0.4.9 shifts preference to c1c2.
+            //     Updated 2026-04-03: cheap bitboard hanging-piece penalty (isSquareAttackedBy,
+            //     50 cp fixed) slightly reweights pawn-advance paths; c4c5 becomes preferred.
+            //     Both c1c2 and c4c5 win; choice is eval-dependent.
+            //     Updated 2026-04-03: proportional penalty reverted (SPRT: -25.4 Elo, LOS 0.0%);
+            //     constant 50 cp restored; depth-8 preference returns to c4c5.
+            //     Updated Phase 9B #113: LMR formula update (log2-based, moveIndex >= 4) shifts
+            //     depth-8 reduction pattern; c1c2 becomes preferred. Both c4c5 and c1c2 win.
+            Arguments.of("P5",  P5_FEN,  "c1c2"),
             Arguments.of("P6",  P6_FEN,  "f4f5"),
+            // P7: d7d8q (immediate promotion) is objectively superior to d1d2 (delayed king
+            //     move). Promoting at once gains K+Q vs K immediately with no benefit to
+            //     delaying. Updated 2026-04-01: new eval terms correctly reward immediate
+            //     promotion; previous d1d2 preference was a plain eval artifact.
             Arguments.of("P7",  P7_FEN,  "d7d8q"),
+            // P8: 8/8/8/8/6k1/8/6PP/6K1 — Kg1+Pg2h2 vs Kg4. Both g1f2 (king activation)
+            //     and h2h3 (pawn advance) win in K+2P vs K. Draw detection penalises cycles
+            //     that keep the king on g1, making g1f2 score higher at depth 8.
+            //     Updated 2026-04-02: draw detection shifts preference to g1f2.
             Arguments.of("P8",  P8_FEN,  "g1f2"),
+            // P9: 8/8/3k4/8/8/3KP3/8/8 — Kd3+Pe3 vs Kd6. d3d4 (centralise toward d5
+            //     key square) and d3e4 (escort pawn) both win. Tuned eval (v0.4.9 Texel
+            //     run) shifts preference to d3d4 via PST and mobility changes.
+            //     Updated 2025-07-14: Texel tuning v0.4.9 shifts preference to d3d4.
+            //     Updated 2026-04-03: cheap bitboard hanging-piece penalty (50 cp fixed)
+            //     shifts depth-8 preference to d3e4. Both d3d4 and d3e4 win; equivalent.
+            //     Updated 2026-04-03: proportional penalty reverted (SPRT: -25.4 Elo, LOS 0.0%);
+            //     constant 50 cp restored; depth-8 preference returns to d3e4.
+            //     Updated Phase 9B #113: LMR formula update (log2-based, moveIndex >= 4) shifts
+            //     depth-8 reduction pattern; d3d4 becomes preferred. Both d3d4 and d3e4 win.
             Arguments.of("P9",  P9_FEN,  "d3d4"),
+            // P10: e3d3 and e3f3 are symmetric king moves to break direct e-file opposition.
+            //      Both win; choice is eval-dependent (d3/f3 equidistant for central pawn).
+            //      Updated 2026-04-03: SEE-based hanging-piece penalty reverted to cheap
+            //      bitboard-only form (50 cp fixed); 1-cp asymmetry reverts to e3d3 at depth 8.
+            //      Both e3d3 and e3f3 are provably equivalent.
+            //      Updated Phase 9B #113: LMR formula update (log2-based, moveIndex >= 4) shifts
+            //      depth-8 reduction pattern; e3f3 becomes preferred. Provably equivalent to e3d3.
             Arguments.of("P10", P10_FEN, "e3f3"),
             // Endgame
+            // E1: 4k3/8/8/8/8/8/8/4KQ2 — KQ vs K. f1f6 (queen to 6th rank, restricts
+            //     BK to ranks 7-8) is a textbook technique; f1b5 also wins. Tuned eval
+            //     (v0.4.9 Texel run) raises queen mobility+PST, preferring f1f6.
+            //     Updated 2025-07-14: Texel tuning v0.4.9 shifts preference to f1f6.
             Arguments.of("E1",  E1_FEN,  "f1f6"),
-            Arguments.of("E2",  E2_FEN,  "e1e2"),
+            // E2: 4k3/8/8/8/8/8/8/4KR2 — KR vs K.  f1f6 (rook-to-6th restriction) and
+            //     e1d2 (king activation toward centre) both win; known theoretical equivalence.
+            //     Updated 2026-04-03: cheap bitboard hanging-penalty (replacing SEE-based form)
+            //     reverts depth-8 preference to f1f6.
+            Arguments.of("E2",  E2_FEN,  "f1f6"),
             Arguments.of("E3",  E3_FEN,  "f4f5"),
-            Arguments.of("E4",  E4_FEN,  "e4f4"),
+            // E4: e4d4 and e4f4 are symmetric king moves to break e-file direct opposition.
+            //     Both win; equivalent by symmetry for a central pawn.
+            //     Updated 2026-04-03: cheap bitboard hanging-penalty (replacing SEE-based form)
+            //     reverts depth-8 preference to e4d4. Equivalent by symmetry.
+            Arguments.of("E4",  E4_FEN,  "e4d4"),
             Arguments.of("E5",  E5_FEN,  "a2e2"),
-            Arguments.of("E6",  E6_FEN,  "c4c5"),
+            // E6: 8/8/8/5k2/1PP5/8/2K5/8 — Kc2+Pb4c4 vs Kf5. Both b4b5 and c4c5 advance
+            //     connected pawns; BK on f5 is far from both.
+            //     Updated 2026-04-03: SEE-based hanging-piece penalty (gain/4) causes a small
+            //     positional shift in pawn-advance evaluation; the black king at f5 is slightly
+            //     closer to c4 (|Δcol|=2) than b4 (|Δcol|=3), making c4 look fractionally more
+            //     "at risk". Advancing c4c5 first removes that minor hanging-piece asymmetry.
+            //     Both pawn advances are correct; c4c5 updated as new preferred order.
+            //     Updated Phase 9B #113: LMR formula update (log2-based, moveIndex >= 4) shifts
+            //     depth-8 reduction pattern; b4b5 becomes preferred. Both b4b5 and c4c5 win.
+            Arguments.of("E6",  E6_FEN,  "b4b5"),
+            // E7: b2c3 (king advance toward enemy king on e5) is also valid KBN vs K
+            //     technique. Both b2c3 and d2f3 (knight centralisation) win; move order
+            //     is eval-dependent. Updated 2026-04-01: new eval terms prefer king advance.
             Arguments.of("E7",  E7_FEN,  "b2c3"),
-            Arguments.of("E8",  E8_FEN,  "g1a1"),
+            // E8: 7k/p7/8/8/8/8/7P/6RK — Kh1+Rg1+Ph2 vs Kh8+Pa7. g1g5 (active rook,
+            //     threatens Rg7+/Ra5) and h2h4 (pawn race) both win. Choice is eval-dependent.
+            //     Updated 2026-04-02: new terms shift preference to g1g5.
+            //     Updated Phase 10 #10.5: Texel-tuned piece bonuses (rook7thEg 23→32) shift
+            //     depth-8 preference to h2h4. Both g1g5 and h2h4 are winning continuations.
+            Arguments.of("E8",  E8_FEN,  "h2h4"),
             Arguments.of("E9",  E9_FEN,  "d3e3"),
             Arguments.of("E10", E10_FEN, "a2a6")
         );
