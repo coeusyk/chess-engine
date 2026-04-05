@@ -22,19 +22,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * then 10 measurement rounds (fresh Searcher each) to exclude TT/killer carry-over.
  * Matches the BenchMain protocol in engine-uci so numbers are directly comparable.
  *
- * <p>Baseline (Phase 8, post-Fix #5, depth 10):
- * <ul>
- *   <li>startpos:  402,750 ± 19,976 NPS</li>
- *   <li>kiwipete:  246,066 ± 13,767 NPS</li>
- *   <li>cpw-pos3:  601,293 ± 40,037 NPS</li>
- *   <li>cpw-pos4:  279,393 ± 16,894 NPS</li>
- *   <li>Aggregate: 381,194 NPS</li>
- * </ul>
+ * <p>Depth is configurable via {@code -Dbenchmark.depth=N} (default: 10).
+ *
+ * <p>Baseline (Phase 10, depth 10, 4-position aggregate): 232,906 NPS (CI gate: 200,000)
  */
 @Tag("benchmark")
 class NpsBenchmarkTest {
 
-    private static final int    BENCH_DEPTH    = 10;
+    private static final int    BENCH_DEPTH    = Integer.getInteger("benchmark.depth", 10);
     private static final int    WARMUP_ROUNDS  = 5;
     private static final int    MEASURE_ROUNDS = 10;
     private static final int    BENCH_HASH_MB  = 16;
@@ -43,14 +38,18 @@ class NpsBenchmarkTest {
         "startpos",
         "kiwipete",
         "cpw-pos3",
-        "cpw-pos4"
+        "cpw-pos4",
+        "cpw-pos5",
+        "cpw-pos6"
     };
 
     private static final String[] POSITION_FENS = {
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
         "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
         "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
-        "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1"
+        "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
+        "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NpPP/RNBQK2R w KQ - 1 8",
+        "r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/p1NP1N2/1PP1QPPP/R4RK1 w - - 0 10"
     };
 
     @Test

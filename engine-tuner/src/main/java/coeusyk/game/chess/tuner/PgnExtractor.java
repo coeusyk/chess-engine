@@ -4,7 +4,6 @@ import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Move;
 import coeusyk.game.chess.core.notation.SanConverter;
 
-import java.io.BufferedReader;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -23,10 +22,8 @@ import java.util.regex.Pattern;
  */
 public final class PgnExtractor {
 
-    private static final Pattern HEADER_PATTERN = Pattern.compile("^\\[([A-Za-z]+)\\s+\"(.*)\"\\]$");
     private static final Pattern MOVE_NUMBER    = Pattern.compile("\\d+\\.+");
     private static final Pattern ANNOTATION     = Pattern.compile("\\$\\d+");
-    private static final Pattern RESULT_TOKEN   = Pattern.compile("(1-0|0-1|1/2-1/2|\\*)$");
 
     private PgnExtractor() {}
 

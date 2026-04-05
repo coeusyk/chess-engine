@@ -49,7 +49,6 @@ public class UciApplication {
     private int bookVariance = 50;
 
     // Pondering
-    private volatile boolean ponderMode = false;
     private volatile TimeManager activePonderTimeManager = null;
     private int ponderActiveColor;
     private long ponderWtime, ponderBtime, ponderWinc, ponderBinc;
@@ -148,7 +147,6 @@ public class UciApplication {
                 board = new Board();
                 sharedTT.clear();
                 openingBook.close();
-                ponderMode = false;
                 activePonderTimeManager = null;
             } else if (line.startsWith("position")) {
                 stopRequested.set(true);
@@ -174,7 +172,6 @@ public class UciApplication {
                     emitBestMove(latestIterativeBestMove);
                 }
             } else if ("ponderhit".equals(line)) {
-                ponderMode = false;
                 TimeManager tm = activePonderTimeManager;
                 if (tm != null) {
                     tm.configurePonderHit(ponderActiveColor, ponderWtime, ponderBtime, ponderWinc, ponderBinc);
@@ -388,7 +385,6 @@ public class UciApplication {
             ponderBtime = parseLongArg(goParts, "btime", 0L);
             ponderWinc  = parseLongArg(goParts, "winc",  0L);
             ponderBinc  = parseLongArg(goParts, "binc",  0L);
-            ponderMode  = true;
         }
 
         String positionSnapshot = board.boardStates.get(board.boardStates.size() - 1);
@@ -571,7 +567,6 @@ public class UciApplication {
             // output latency between emitBestMove and the flag flip.
             searchRunning = false;
             searchThread = null;
-            ponderMode = false;
             activePonderTimeManager = null;
             // Emit bestmove only after the flag is cleared.
             Move ponderMove = result != null ? result.ponderMove() : null;

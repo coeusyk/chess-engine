@@ -4,7 +4,6 @@ import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Move;
 import coeusyk.game.chess.core.movegen.MovesGenerator;
 
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.file.Path;
@@ -33,7 +32,6 @@ import java.util.Random;
 public final class OpeningBook {
 
     private static final int ENTRY_SIZE = 16;
-    private static final long UNSIGNED_MASK = 0xFFFFFFFFL;
 
     /** variance ∈ [0,100]: 0 = always pick best, 100 = uniform random. */
     private final int variance;

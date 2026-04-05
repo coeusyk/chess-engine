@@ -46,6 +46,11 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
+                <configuration>
+                    <systemPropertyVariables>
+                        <benchmark.depth>${benchmark.depth}</benchmark.depth>
+                    </systemPropertyVariables>
+                </configuration>
             </plugin>
         </plugins>
     </build>

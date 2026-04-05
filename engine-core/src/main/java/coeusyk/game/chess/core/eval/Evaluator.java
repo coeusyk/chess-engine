@@ -2,7 +2,6 @@ package coeusyk.game.chess.core.eval;
 
 import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Piece;
-import coeusyk.game.chess.core.search.StaticExchangeEvaluator;
 
 public class Evaluator {
 
@@ -55,7 +54,6 @@ public class Evaluator {
     );
 
     private final EvalConfig config;
-    private final StaticExchangeEvaluator see;
 
     // White outpost zone: ranks 4-6 for white (rows 2-4 in a8=0: bits 16-39)
     // Black outpost zone: ranks 3-5 for black (rows 3-5 in a8=0: bits 24-47)
@@ -111,7 +109,6 @@ public class Evaluator {
     /** Creates an Evaluator using a custom configuration (for testing only). */
     public Evaluator(EvalConfig config) {
         this.config = config;
-        this.see = new StaticExchangeEvaluator();
         setPawnHashSizeMb(DEFAULT_PAWN_HASH_MB);
     }
 
@@ -403,7 +400,6 @@ public class Evaluator {
         while (temp != 0) {
             int sq = Long.numberOfTrailingZeros(temp);
             int file = sq % 8;
-            int row = sq / 8;
             // build adjacent-file fill of friendly pawns
             long adjFiles = 0L;
             if (file > 0) adjFiles |= FILE_MASK_BASE << (file - 1);

@@ -605,7 +605,6 @@ public class MovesGenerator {
         int activeColor = isWhite ? Piece.White : Piece.Black;
         long enemyBB = isWhite ? board.getBlackOccupancy() : board.getWhiteOccupancy();
         long occupied = board.getAllOccupancy();
-        long friendlyOccupancy = isWhite ? board.getWhiteOccupancy() : board.getBlackOccupancy();
 
         // Sliding captures — iterate per piece type via bitboard walk
         long bishops = isWhite ? board.getWhiteBishops() : board.getBlackBishops();

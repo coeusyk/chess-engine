@@ -126,10 +126,6 @@ class TunerEvaluatorTest {
     @Test
     void evalPositiveWhenWhiteHasExtraRook() {
         // Simpler material imbalance — White has an extra rook.
-        Board whiteExtraRook = new Board(
-                "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBR1 w KQkq - 0 1");
-        // Note: second rook replaced with empty — actually let's use a position where
-        // White clearly has more material on an otherwise empty board.
         Board whiteRookUp = new Board(
                 "4k3/8/8/8/8/8/8/4K2R w K - 0 1");
         assertTrue(TunerEvaluator.evaluate(whiteRookUp, defaultParams) > 0);
