@@ -4572,3 +4572,105 @@ touching unrelated code.
 
 **Closes #112**
 **Phase: 9B — Search Improvements**
+
+---
+
+### [2026-04-05] Phase 9B — Issue #117 Addendum: configurable PawnHashSize UCI option (deferred item)
+
+**Branch:** `phase/9b`
+
+**What changed:**
+- `Evaluator.java`:
+  - Removed `private static final int PAWN_TABLE_SIZE = 1 << 14` and static mask.
+  - Added `private static final int APPROX_PAWN_ENTRY_BYTES = 16` and `DEFAULT_PAWN_HASH_MB = 1`.
+  - Pawn hash arrays (`pawnTableKeys`, `pawnTableMg`, `pawnTableEg`) are now instance fields
+    allocated dynamically by `setPawnHashSizeMb(int mb)`.
+  - Default changed from 16K entries (256 KB) to 65536 entries (1 MB): `setPawnHashSizeMb(1)`
+    called from constructor.
+  - `setPawnHashSizeMb(int mb)` clamps to [1, 256], computes next power-of-two entry count
+    from `mb * 1024 * 1024 / APPROX_PAWN_ENTRY_BYTES`, reallocates all three arrays, resets
+    hit/miss counters.
+  - `getPawnTableSize()` returns the instance field `pawnTableSize`.
+- `Searcher.java`:
+  - `public void setPawnHashSizeMb(int mb)` delegates to `evaluator.setPawnHashSizeMb(mb)`.
+- `UciApplication.java`:
+  - `private int pawnHashSizeMb = 1` field added.
+  - `option name PawnHashSize type spin default 1 min 1 max 256` announced in UCI response.
+  - `setoption name PawnHashSize value N` handled; clamps to [1, 256].
+  - Main `Searcher` and every SMP helper `Searcher` call `setPawnHashSizeMb(pawnHashSizeMb)`.
+- Stale `tools/selfplay*.pgn` artefacts removed (slipped past `.gitignore`).
+
+**Why:** The prior #117 DEV entry explicitly deferred the UCI option. It is required by the Phase 9B
+exit criteria: the pawn hash must be configurable from the UCI GUI so that users can allocate more
+than the default 1 MB for analysis. The 1 MB default is consistent with other engines (Stockfish
+default is 1–2 MB).
+
+**NPS benchmark:** `Pawn hash hit rate: 94.2%` (gate ≥85%) ✅. BUILD SUCCESS. All 150 tests pass,
+0 failures, 2 skipped (benchmark + tactical suite require explicit system properties).
+
+**Commit:** `4bee8fa feat(engine-core): Phase 9B #117 — configurable PawnHashSize UCI option (default 1 MB)`
+
+**Closes #117** (fully — UCI option now implemented)
+**Phase: 9B — Search Improvements**
+
+---
+
+### [2026-04-05] Phase 9A — Issue #103 Lazy SMP 2T post-fix SPRT
+
+**Branch:** `phase/9b` (run after Phase 9B build)
+
+**Setup:**
+- New JAR: `engine-uci-0.4.10-SNAPSHOT.jar` (Phase 9B tip, includes TimeManager safety cap)
+- Test: Vex-2T (Threads=2) vs. Vex-1T (Threads=1), same JAR
+- SPRT parameters: H0=0, H1=10, α=β=0.05, TC=5+0.05, concurrency=2
+- PGN: `tools/results/sprt_smp_2T_phase9b_<TS>.pgn`
+
+**Results:**
+
+<!-- PLACEHOLDER — fill in when SPRT concludes -->
+| Stat                 | Value                           |
+|----------------------|---------------------------------|
+| Games                | TBD                             |
+| Score                | TBD                             |
+| Elo estimate         | TBD                             |
+| LOS                  | TBD                             |
+| Draw ratio           | TBD                             |
+| SPRT verdict         | **TBD**                         |
+| PGN                  | `tools/results/sprt_smp_2T_phase9b_<TS>.pgn` |
+
+**Phase: 9B — Search Improvements**
+
+---
+
+### [2026-04-05] Phase 9B — Comprehensive SPRT vs Phase 9A baseline (engine-uci-0.4.9.jar)
+
+**Branch:** `phase/9b`
+
+**Setup:**
+- New JAR: `engine-uci-0.4.10-SNAPSHOT.jar` (all Phase 9B changes)
+- Old JAR: `tools/engine-uci-0.4.9.jar` (Phase 9A baseline)
+- SPRT parameters: H0=0, H1=10, α=β=0.05, TC=5+0.05, concurrency=2
+- Script: `tools/sprt_phase9b.ps1`
+
+**Changes validated:**
+  - TT aging: evict entries > AGE_THRESHOLD=4 generations (#111)
+  - Null-move threshold: depth > 6 for R=3 (#112)
+  - LMR: moveIndex ≥ 4 + log2-based formula (#113)
+  - Futility margin depth 1: 100 → 150 cp (#114); depth 2: 300 cp (#115)
+  - Aspiration windows: depth ≥ 4 (#116)
+  - Pawn hash: 1 MB default, configurable via PawnHashSize UCI option (#117)
+
+**Results:**
+
+<!-- PLACEHOLDER — fill in when SPRT concludes -->
+| Stat                 | Value                           |
+|----------------------|---------------------------------|
+| Games                | TBD                             |
+| Score                | TBD                             |
+| Elo estimate         | TBD                             |
+| LOS                  | TBD                             |
+| Draw ratio           | TBD                             |
+| SPRT verdict         | **TBD**                         |
+| PGN                  | `tools/results/sprt_phase9b_<TS>.pgn` |
+
+**Phase: 9B — Search Improvements**
