@@ -7,7 +7,7 @@
     <parent>
         <groupId>coeusyk.spring</groupId>
         <artifactId>chess-engine</artifactId>
-        <version>0.5.0</version>
+        <version>0.5.1-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
