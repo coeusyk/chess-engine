@@ -4782,7 +4782,7 @@ per-thread CPU affinity will see the expected 2T benefit.
 
 ### [2026-04-06] Phase 10 — Piece Bonus Texel Tuning (#10.5)
 
-**Branch:** `phase/10-piece-bonuses` at TBD
+**Branch:** `phase/10-piece-bonuses` at `d303667`
 
 **Built:**
 
