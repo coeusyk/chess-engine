@@ -4846,3 +4846,34 @@ per-thread CPU affinity will see the expected 2T benefit.
 - Trigger release workflow (patch bump: 0.5.1-SNAPSHOT → 0.5.1)
 
 **Phase: 10 — Classical Eval + Search Micro-optimisations**
+---
+
+### [2026-04-06] Phase 11 — Issue #124: Syzygy Probing In-Check Guards + Search Test Suite
+
+**Built:**
+- Added `!board.isActiveColorInCheck()` guard to the DTZ root probe in `searchRoot()`
+- Added `!sideToMoveInCheck` guard to the WDL alphaBeta probe (was already present in the original scaffold but added explicitly in the diff)
+- Created `SyzygySearchTest` (7 test cases) verifying: NoOpSyzygyProber availability/invalidity, WDL probe scoring for lost and won positions, in-check bypass, and graceful degradation
+
+**Decisions Made:**
+- `AlwaysLossProber` is intentionally NOT used for the TB-lost scoring test: in a negamax tree the probe fires on child nodes. `AlwaysLossProber` returns LOSS for whoever is to move, so at White-to-move child nodes it signals White is losing — which flips to +99 744 for Black at the root. Instead `LossForBlackToMoveProber` (returns LOSS/Black-to-move, WIN/White-to-move) correctly propagates TB_LOSS_SCORE to the root via negamax negation.
+- UCI `SyzygyPath` option, `setoption` parsing, and wiring to `OnlineSyzygyProber` were already present from Phase 7 scaffolding.
+
+**Verified FEN positions (hand-checked against Lichess tablebase API):**
+- `8/8/8/8/8/8/KQ6/7k w - - 0 1` → WDL = WIN  (KQK, White to move)
+- `8/8/8/8/8/8/KR6/7k w - - 0 1` → WDL = WIN  (KRK, White to move)
+- `8/8/8/8/8/8/1K6/7k w - - 0 1` → WDL = DRAW (KK,  White to move — insufficient material)
+- `8/8/8/8/8/8/KQ6/7k b - - 0 1` → WDL = LOSS (KQK, Black to move)
+
+**Broke / Fixed:**
+- `tbLostPositionScoresBelowMinusTenThousandAtDepthTwo` was failing (score = +99 744). Root cause: stub used `AlwaysLossProber` which fires on White-to-move children and negamax reverses the sign. Fixed by switching to `LossForBlackToMoveProber`.
+
+**Measurements:**
+- Perft depth 5 (startpos): not measured this cycle (no board/movegen changes)
+- Nodes/sec: not measured this cycle
+- Elo vs. baseline: not measured this cycle
+
+**Next:**
+- Issue #125: KQK/KRK forced-win repetition draw fix
+
+**Phase: 11 — Endgame Tablebase + Pre-CCRL Hardening**

@@ -555,9 +555,11 @@ public class Searcher {
             moves.removeIf(m -> isExcludedMove(m, excludedRootMoves));
         }
 
-        // Syzygy DTZ probe at root: if few pieces remain, ask the tablebase for the best move
+        // Syzygy DTZ probe at root: if few pieces remain, ask the tablebase for the best move.
+        // Skip when in check: the position is tactically critical and move generation must run.
         if (syzygyProber.isAvailable()
                 && excludedRootMoves.isEmpty()
+                && !board.isActiveColorInCheck()
                 && Long.bitCount(board.getAllOccupancy()) <= syzygyProber.getPieceLimit()) {
             DTZResult dtzResult = syzygyProber.probeDTZ(board);
             if (dtzResult.valid() && dtzResult.bestMoveUci() != null) {
@@ -701,8 +703,10 @@ public class Searcher {
             return ttScore;
         }
 
-        // Syzygy WDL probe in search: return tablebase score for positions with few pieces
+        // Syzygy WDL probe in search: return tablebase score for positions with few pieces.
+        // Skip when in check: must generate evasions rather than truncating with a TB score.
         if (syzygyProber.isAvailable()
+                && !sideToMoveInCheck
                 && effectiveDepth >= syzygyProbeDepth
                 && Long.bitCount(board.getAllOccupancy()) <= syzygyProber.getPieceLimit()) {
             WDLResult wdlResult = syzygyProber.probeWDL(board);
