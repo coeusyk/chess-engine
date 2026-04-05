@@ -23,4 +23,9 @@ public record SearchResult(
         long futilitySkips,
         long deltaPruningSkips
 ) {
+    /** Returns the ponder move (PV[1]), or {@code null} if the PV has fewer than 2 moves. */
+    public Move ponderMove() {
+        List<Move> pv = principalVariation();
+        return pv != null && pv.size() > 1 ? pv.get(1) : null;
+    }
 }

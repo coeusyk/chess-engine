@@ -8,9 +8,9 @@ import org.slf4j.LoggerFactory;
 public class TimeManager {
     private static final Logger LOG = LoggerFactory.getLogger(TimeManager.class);
     private long moveOverheadMs = 30;
-    private long softLimitMs = 1;
-    private long hardLimitMs = 1;
-    private long startNanos;
+    private volatile long softLimitMs = 1;
+    private volatile long hardLimitMs = 1;
+    private volatile long startNanos;
 
     public void setMoveOverheadMs(long moveOverheadMs) {
         if (moveOverheadMs < 0) {
@@ -31,6 +31,25 @@ public class TimeManager {
         long usable = Math.max(1, movetimeMs - moveOverheadMs);
         softLimitMs = usable;
         hardLimitMs = usable;
+    }
+
+    /**
+     * Configures the time manager for ponder mode: both limits are set to
+     * effectively infinite so the search runs until {@code stop} or
+     * {@code ponderhit} arrives.
+     */
+    public void configurePonder() {
+        softLimitMs = Long.MAX_VALUE / 2;
+        hardLimitMs = Long.MAX_VALUE / 2;
+    }
+
+    /**
+     * Reconfigures the time manager when a {@code ponderhit} command is received.
+     * Resets the clock origin to "now" and calculates normal clock-based limits.
+     */
+    public void configurePonderHit(int activeColor, long wtimeMs, long btimeMs, long wincMs, long bincMs) {
+        startNanos = System.nanoTime();
+        configureClock(activeColor, wtimeMs, btimeMs, wincMs, bincMs);
     }
 
     public void configureClock(int activeColor, long wtimeMs, long btimeMs, long wincMs, long bincMs) {
