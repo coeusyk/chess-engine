@@ -7,6 +7,7 @@ import coeusyk.game.chess.core.search.IterationInfo;
 import coeusyk.game.chess.core.search.SearchResult;
 import coeusyk.game.chess.core.search.Searcher;
 import coeusyk.game.chess.core.search.TimeManager;
+import coeusyk.game.chess.core.book.OpeningBook;
 import coeusyk.game.chess.core.search.TranspositionTable;
 import coeusyk.game.chess.uci.syzygy.OnlineSyzygyProber;
 
@@ -39,6 +40,19 @@ public class UciApplication {
     private String syzygyPath = "";
     private int syzygyProbeDepth = 1;
     private boolean syzygy50MoveRule = true;
+
+    // Opening book
+    private OpeningBook openingBook = new OpeningBook(50);
+    private boolean ownBook = false;
+    private String bookFile = "Performance.bin";
+    private int bookDepth = 20;
+    private int bookVariance = 50;
+
+    // Pondering
+    private volatile boolean ponderMode = false;
+    private volatile TimeManager activePonderTimeManager = null;
+    private int ponderActiveColor;
+    private long ponderWtime, ponderBtime, ponderWinc, ponderBinc;
 
     // Shared transposition table — a single instance sized by Hash setoption,
     // cleared on ucinewgame, and injected into every Searcher (main + helpers).
@@ -121,6 +135,11 @@ public class UciApplication {
                 System.out.println("option name SyzygyPath type string default <empty>");
                 System.out.println("option name SyzygyProbeDepth type spin default 1 min 0 max 100");
                 System.out.println("option name Syzygy50MoveRule type check default true");
+                System.out.println("option name Ponder type check default false");
+                System.out.println("option name OwnBook type check default false");
+                System.out.println("option name BookFile type string default Performance.bin");
+                System.out.println("option name BookDepth type spin default 20 min 0 max 50");
+                System.out.println("option name BookVariance type spin default 50 min 0 max 100");
                 System.out.println("uciok");
             } else if ("isready".equals(line)) {
                 System.out.println("readyok");
@@ -128,6 +147,9 @@ public class UciApplication {
                 stopRequested.set(true);
                 board = new Board();
                 sharedTT.clear();
+                openingBook.close();
+                ponderMode = false;
+                activePonderTimeManager = null;
             } else if (line.startsWith("position")) {
                 stopRequested.set(true);
                 handlePosition(line);
@@ -152,7 +174,12 @@ public class UciApplication {
                     emitBestMove(latestIterativeBestMove);
                 }
             } else if ("ponderhit".equals(line)) {
-                // Ponder stub: treat as no-op (full pondering not implemented)
+                ponderMode = false;
+                TimeManager tm = activePonderTimeManager;
+                if (tm != null) {
+                    tm.configurePonderHit(ponderActiveColor, ponderWtime, ponderBtime, ponderWinc, ponderBinc);
+                    activePonderTimeManager = null;
+                }
             } else if ("quit".equals(line)) {
                 stopRequested.set(true);
                 break;
@@ -292,8 +319,40 @@ public class UciApplication {
                 pawnHashSizeMb = Math.max(1, Math.min(256, value));
             } catch (NumberFormatException ignored) {
             }
+        } else if ("ponder".equals(optionNameLower)) {
+            // acknowledged; ponder state is managed per-go via "go ponder"
+        } else if ("ownbook".equals(optionNameLower)) {
+            ownBook = "true".equalsIgnoreCase(valuePart);
+        } else if ("bookfile".equals(optionNameLower)) {
+            bookFile = valuePart.trim();
+            openNewBook();
+        } else if ("bookdepth".equals(optionNameLower)) {
+            try {
+                bookDepth = Math.max(0, Math.min(50, Integer.parseInt(valuePart)));
+            } catch (NumberFormatException ignored) {
+            }
+        } else if ("bookvariance".equals(optionNameLower)) {
+            try {
+                bookVariance = Math.max(0, Math.min(100, Integer.parseInt(valuePart)));
+                openingBook = new OpeningBook(bookVariance);
+                openNewBook();
+            } catch (NumberFormatException ignored) {
+            }
         }
         // Unknown options are silently ignored per UCI spec.
+    }
+
+    private void openNewBook() {
+        openingBook.close();
+        if ("Performance.bin".equals(bookFile)) {
+            openingBook.openFromClasspath("books/Performance.bin");
+        } else {
+            try {
+                openingBook.open(java.nio.file.Path.of(bookFile));
+            } catch (java.io.IOException e) {
+                LOG.warn("Could not open book file '{}': {}", bookFile, e.getMessage());
+            }
+        }
     }
 
     private void handleGo(String command) {
@@ -320,6 +379,18 @@ public class UciApplication {
         stopRequested.set(false);
         latestIterativeBestMove = null;
 
+        // Detect ponder flag and save time params for ponderhit reconfiguration.
+        String[] goParts = command.split("\\s+");
+        boolean isGoPonder = contains(goParts, "ponder");
+        if (isGoPonder) {
+            ponderActiveColor = board.getActiveColor();
+            ponderWtime = parseLongArg(goParts, "wtime", 0L);
+            ponderBtime = parseLongArg(goParts, "btime", 0L);
+            ponderWinc  = parseLongArg(goParts, "winc",  0L);
+            ponderBinc  = parseLongArg(goParts, "binc",  0L);
+            ponderMode  = true;
+        }
+
         String positionSnapshot = board.boardStates.get(board.boardStates.size() - 1);
         Board searchBoard = new Board(positionSnapshot);
         searchBoard.setSearchMode(true);
@@ -327,8 +398,9 @@ public class UciApplication {
         // Forced move detection: if exactly one legal move exists, play it
         // immediately without entering the search. Saves clock time in positions
         // where there is no choice (e.g. single legal reply to check).
+        // Skip in ponder mode — the ponder position needs a full search.
         List<Move> legalMoves = new MovesGenerator(searchBoard).getActiveMoves(searchBoard.getActiveColor());
-        if (legalMoves.size() == 1) {
+        if (!isGoPonder && legalMoves.size() == 1) {
             emitBestMove(legalMoves.get(0));
             System.out.flush();
             return;
@@ -358,6 +430,7 @@ public class UciApplication {
         // searchRunning=false causes a race where the GUI sends the next "go"
         // before handleGo sees searchRunning=false, silently dropping the command.
         Move bestMoveToEmit = null;
+        SearchResult result = null;
         try {
             // --- Lazy SMP: launch N-1 helper threads before the main search ---
             // Each helper runs an independent iterative-deepening loop on its own
@@ -408,6 +481,21 @@ public class UciApplication {
 
             // --- Main search ---
             String[] parts = command.split("\\s+");
+            boolean isPonder = contains(parts, "ponder");
+
+            // Opening book probe — skip when pondering (we're searching the opponent's position).
+            if (ownBook && !isPonder) {
+                int halfMoves = searchBoard.boardStates.size() - 1;
+                if (halfMoves < bookDepth * 2) {
+                    if (!openingBook.isOpen()) openNewBook();
+                    Move bookMove = openingBook.probe(searchBoard);
+                    if (bookMove != null) {
+                        bestMoveToEmit = bookMove;
+                        return;
+                    }
+                }
+            }
+
             Searcher searcher = new Searcher();
             searcher.setSharedTranspositionTable(sharedTT);
             searcher.setPawnHashSizeMb(pawnHashSizeMb);
@@ -427,13 +515,15 @@ public class UciApplication {
                 searcher.setSearchMoves(searchMovesList);
             }
 
-            SearchResult result;
-
             if (contains(parts, "movetime")) {
                 long movetime = parseLongArg(parts, "movetime", 1000L);
                 TimeManager manager = new TimeManager();
                 manager.setMoveOverheadMs(moveOverheadMs);
                 manager.configureMovetime(movetime);
+                if (isPonder) {
+                    manager.configurePonder();
+                    activePonderTimeManager = manager;
+                }
                 result = searcher.searchWithTimeManager(
                         searchBoard,
                         64,
@@ -450,6 +540,10 @@ public class UciApplication {
                 TimeManager manager = new TimeManager();
                 manager.setMoveOverheadMs(moveOverheadMs);
                 manager.configureClock(searchBoard.getActiveColor(), wtime, btime, winc, binc);
+                if (isPonder) {
+                    manager.configurePonder();
+                    activePonderTimeManager = manager;
+                }
                 result = searcher.searchWithTimeManager(
                         searchBoard,
                         64,
@@ -477,9 +571,12 @@ public class UciApplication {
             // output latency between emitBestMove and the flag flip.
             searchRunning = false;
             searchThread = null;
+            ponderMode = false;
+            activePonderTimeManager = null;
             // Emit bestmove only after the flag is cleared.
+            Move ponderMove = result != null ? result.ponderMove() : null;
             Move toEmit = bestMoveToEmit != null ? bestMoveToEmit : latestIterativeBestMove;
-            emitBestMove(toEmit);
+            emitBestMove(toEmit, ponderMove);
             System.out.flush();
         }
     }
@@ -566,6 +663,18 @@ public class UciApplication {
     private void emitBestMove(Move move) {
         if (move == null) {
             System.out.println("bestmove 0000");
+        } else {
+            System.out.println("bestmove " + moveToUci(move));
+        }
+    }
+
+    private void emitBestMove(Move move, Move ponderMove) {
+        if (move == null) {
+            System.out.println("bestmove 0000");
+            return;
+        }
+        if (ponderMove != null) {
+            System.out.println("bestmove " + moveToUci(move) + " ponder " + moveToUci(ponderMove));
         } else {
             System.out.println("bestmove " + moveToUci(move));
         }

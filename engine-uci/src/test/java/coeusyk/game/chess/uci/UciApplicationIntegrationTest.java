@@ -58,7 +58,9 @@ class UciApplicationIntegrationTest {
 
         String bestMoveLine = harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(10));
         assertNotNull(bestMoveLine);
-        String bestMove = bestMoveLine.substring("bestmove ".length()).trim().toLowerCase(Locale.ROOT);
+        String bestMoveFull = bestMoveLine.substring("bestmove ".length()).trim().toLowerCase(Locale.ROOT);
+        // The engine may append " ponder <move>" — extract just the first token.
+        String bestMove = bestMoveFull.contains(" ") ? bestMoveFull.substring(0, bestMoveFull.indexOf(' ')) : bestMoveFull;
 
         Board board = new Board();
         applyUciMove(board, "e2e4");
