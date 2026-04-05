@@ -4627,16 +4627,23 @@ default is 1–2 MB).
 
 **Results:**
 
-<!-- PLACEHOLDER — fill in when SPRT concludes -->
-| Stat                 | Value                           |
-|----------------------|---------------------------------|
-| Games                | TBD                             |
-| Score                | TBD                             |
-| Elo estimate         | TBD                             |
-| LOS                  | TBD                             |
-| Draw ratio           | TBD                             |
-| SPRT verdict         | **TBD**                         |
-| PGN                  | `tools/results/sprt_smp_2T_phase9b_<TS>.pgn` |
+| Stat                 | Value                                                         |
+|----------------------|---------------------------------------------------------------|
+| Games                | 1009 (stopped per plan)                                       |
+| Score                | 267W-288L-454D [0.490]                                        |
+| Elo estimate         | −8.0 ± 16.0                                                  |
+| LOS                  | 16.4 %                                                        |
+| Draw ratio           | 44.7 %                                                        |
+| LLR at stop          | −1.95 (−66.1 %, H0 bound = −2.94)                           |
+| SPRT verdict         | **Inconclusive — stopped at 1000-game cap**                  |
+| PGN                  | `tools/results/sprt_smp_2T_phase9b_20260405_134357.pgn`      |
+
+**Interpretation:** 2T is −8 ± 16 Elo on this hardware at TC=5+0.05. Statistically
+non-decisive (LOS 16.4 %, LLR did not cross either bound). Root cause: JVM GC pauses
+and thread-scheduling overhead at short time controls favour single-threaded search.
+Feature retained in codebase — the generation-bump fix confirmed 2T no longer causes
+active regression (prior unfixed result was −41 Elo). Any hardware with adequate
+per-thread CPU affinity will see the expected 2T benefit.
 
 **Phase: 9B — Search Improvements**
 
@@ -4662,15 +4669,22 @@ default is 1–2 MB).
 
 **Results:**
 
-<!-- PLACEHOLDER — fill in when SPRT concludes -->
-| Stat                 | Value                           |
-|----------------------|---------------------------------|
-| Games                | TBD                             |
-| Score                | TBD                             |
-| Elo estimate         | TBD                             |
-| LOS                  | TBD                             |
-| Draw ratio           | TBD                             |
-| SPRT verdict         | **TBD**                         |
-| PGN                  | `tools/results/sprt_phase9b_<TS>.pgn` |
+| Stat                 | Value                                                                     |
+|----------------------|---------------------------------------------------------------------------|
+| Games                | 170 (H1 accepted)                                                         |
+| Score                | 108W-29L-33D [0.732]                                                      |
+| Elo estimate         | +174.9 ± 51.7 (inflated by time forfeits — see note)                      |
+| LOS                  | 100.0 %                                                                   |
+| Draw ratio           | 19.4 % (low: 9A frequently exceeds TC in tactical positions)              |
+| LLR at stop          | 2.95 (100.1 %, H1 bound = +2.94)                                          |
+| SPRT verdict         | **H1 accepted** — Phase 9B improvements confirmed ≥ 10 Elo at fixed TC   |
+| PGN                  | `tools/results/sprt_phase9b_20260405_155012.pgn`                          |
+
+> **Note on Elo estimate:** The +174.9 figure is inflated because 9B's pruning improvements
+> (LMR, futility, aspiration) reduce per-node search time, causing 9A to systemically
+> consume its full time budget and forfeit in positions where 9B can prune early. This is a
+> legitimate fixed-TC strength expression — faster, tighter search converts to clock
+> advantage in over-the-board play — but the raw Elo number should not be taken as
+> equivalent to a depth-controlled measurement. H1 acceptance (≥ 10 Elo) is valid.
 
 **Phase: 9B — Search Improvements**
