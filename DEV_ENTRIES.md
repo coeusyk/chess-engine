@@ -4832,11 +4832,17 @@ per-thread CPU affinity will see the expected 2T benefit.
 - Tuner: MSE 0.05834970 → 0.05692550; improvement = 0.00142420 (2.44% reduction)
 - NPS: not re-measured (eval-only change on laptop; benchmark requires PC)
 - Perft: no regression (board/movegen untouched)
-- SPRT: pending (cutechess-cli required, PC only)
+- SPRT: **H1 accepted** (149 games, TC 5+0.05)
+  - Score: Vex-10-PieceTuned 94-21-34 vs Vex-9A (0.745)
+  - Elo gain: +186.2 ± 54.2 (LOS 100.0%)
+  - White: 52-7-16 [0.800], Black: 42-14-18 [0.689]
+  - Draw ratio: 22.8%
+  - LLR: 2.95 / 2.94 bound (100.1% confidence)
+  - Verdict: Decisive — piece bonus Texel tuning yields massive Elo improvement
 
 **Next:**
 
-- Run SPRT on PC: `tools/sprt_phase10_piece_bonuses.ps1` vs `engine-uci-0.4.9.jar`
-- Await SPRT verdict before merging to `develop`
+- Merge `phase/10-piece-bonuses` → `develop`
+- Trigger release workflow (patch bump: 0.5.1-SNAPSHOT → 0.5.1)
 
 **Phase: 10 — Classical Eval + Search Micro-optimisations**
