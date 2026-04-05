@@ -134,6 +134,7 @@ class NpsBenchmarkTest {
         System.out.println("[NpsBenchmark] TT + Pawn-hash Statistics (single pass over all positions at depth " + BENCH_DEPTH + ")");
         Searcher statsSearcher = new Searcher();
         statsSearcher.setTranspositionTableSizeMb(BENCH_HASH_MB);
+        statsSearcher.enableTTStats();     // must be called before any search
         statsSearcher.enablePawnHashStats();  // must be called before any search
         for (String fen : POSITION_FENS) {
             Board b = new Board(fen);

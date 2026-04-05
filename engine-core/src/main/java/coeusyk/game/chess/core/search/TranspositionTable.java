@@ -34,6 +34,10 @@ public class TranspositionTable {
     private final AtomicLong probes = new AtomicLong(0);
     private final AtomicLong hits   = new AtomicLong(0);
 
+    // Stats are off by default — AtomicLong CAS on every probe measurably impacts NPS.
+    // Call enableStats() before a dedicated stats pass; never during search.
+    private volatile boolean statsEnabled = false;
+
     // Threshold (in generation ticks) beyond which a stored entry is considered
     // stale and always evicted on the next store() collision, regardless of depth.
     // Byte arithmetic wraps correctly: (byte)(currentGeneration - e.generation())
@@ -75,13 +79,29 @@ public class TranspositionTable {
     }
 
     public Entry probe(long key) {
-        probes.incrementAndGet();
         Entry entry = table.get(indexFor(key));
+        if (statsEnabled) {
+            probes.incrementAndGet();
+            if (entry != null && entry.key() == key) {
+                hits.incrementAndGet();
+                return entry;
+            }
+            return null;
+        }
         if (entry != null && entry.key() == key) {
-            hits.incrementAndGet();
             return entry;
         }
         return null;
+    }
+
+    /**
+     * Enables probe/hit statistics tracking. Off by default to avoid
+     * AtomicLong CAS overhead on the hot search path. Call before a
+     * dedicated stats pass; never during normal search.
+     */
+    public void enableStats() {
+        statsEnabled = true;
+        resetStats();
     }
 
     /**

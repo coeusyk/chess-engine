@@ -224,6 +224,11 @@ public class Searcher {
         return transpositionTable.getStats();
     }
 
+    /** Enables TT probe/hit statistics tracking. Off by default — see {@link TranspositionTable#enableStats()}. */
+    void enableTTStats() {
+        transpositionTable.enableStats();
+    }
+
     /** Enables pawn-hash statistics tracking in the evaluator. Resets counters. */
     void enablePawnHashStats() {
         evaluator.enablePawnHashStats();
@@ -466,7 +471,7 @@ public class Searcher {
             totalNodes,
             totalLeafNodes,
             totalQuiescenceNodes,
-            transpositionTable.getHitRate(),
+            totalNodes > 0 ? (double) totalTtHits / totalNodes : 0.0,
             totalBetaCutoffs,
             totalFirstMoveCutoffs,
             totalTtHits,

@@ -54,7 +54,7 @@ jobs:
         if: steps.baseline.outputs.skip != 'true'
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y cutechess
+          sudo apt-get install -y cutechess-cli
 
       - name: Run SPRT match
         if: steps.baseline.outputs.skip != 'true'
