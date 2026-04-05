@@ -166,6 +166,73 @@ class SyzygySearchTest {
     }
 
     // -----------------------------------------------------------------------
+    // #126: KBN vs K — Syzygy probe verification
+    // -----------------------------------------------------------------------
+
+    /**
+     * Confirms KBN vs K (4 pieces) is within the default 5-piece tablebase limit so the
+     * WDL probe fires at the root when Syzygy is active.
+     *
+     * <p>FEN: {@code 8/8/8/8/8/8/8/KBN1k3 w - - 0 1}
+     * White: Ka1, Bb1, Nc1 | Black: ke1 — 4 pieces total.
+     * The probe infrastructure is verified via {@code AlwaysWinProber}; actual Syzygy
+     * files are not required for this test.</p>
+     */
+    @Test
+    void kbnVsKPieceCountWithinTablebases() {
+        Board kbnVsK = new Board("8/8/8/8/8/8/8/KBN1k3 w - - 0 1");
+        long occupancy = kbnVsK.getAllOccupancy();
+        int pieceCount = Long.bitCount(occupancy);
+        assertTrue(pieceCount <= new coeusyk.game.chess.core.syzygy.NoOpSyzygyProber().getPieceLimit(),
+                "KBN vs K (4 pieces) must be within the default Syzygy piece limit, got " + pieceCount);
+    }
+
+    /**
+     * Simulates Syzygy returning WDL=WIN for the KBN vs K position.
+     * The engine must propagate the tablebase win score (≥ +10 000 cp) to the root.
+     *
+     * <p>This tests the WDL-in-alphaBeta plumbing for 4-piece positions. The
+     * {@code AlwaysWinProber} acts as a stand-in for a real 4-piece Syzygy probe
+     * returning WIN for White to move.</p>
+     */
+    @Test
+    void kbnVsKReturnsWinScoreWithSyzygyEnabled() {
+        Board kbnVsK = new Board("8/8/8/8/8/8/8/KBN1k3 w - - 0 1");
+        Searcher searcher = new Searcher();
+        searcher.setSyzygyProber(new AlwaysWinProber());
+
+        SearchResult result = searcher.searchDepth(kbnVsK, 2);
+
+        assertTrue(result.scoreCp() >= 10_000,
+                "KBN vs K with Syzygy enabled must return TB win score (>= 10 000), got: " + result.scoreCp());
+    }
+
+    /**
+     * Without Syzygy (NoOpSyzygyProber), the engine uses classical eval for KBN vs K.
+     * The score should be positive (White has Bishop + Knight advantage) but NOT a
+     * guaranteed win within typical search depths — KBN vs K requires ~33 moves of
+     * optimal play, beyond the horizon of classical search.
+     *
+     * <p>Documents the expected behaviour at CCRL when Syzygy files are not installed:
+     * the engine will have a positive score but is unlikely to convert the endgame.</p>
+     */
+    @Test
+    void kbnVsKWithoutSyzygyReturnsPositiveButNotTablebasisScore() {
+        Board kbnVsK = new Board("8/8/8/8/8/8/8/KBN1k3 w - - 0 1");
+        Searcher searcher = new Searcher();
+        // Default NoOpSyzygyProber — no Syzygy files available
+
+        SearchResult result = searcher.searchDepth(kbnVsK, 6);
+
+        // Classical eval should return positive score (White has B+N material advantage)
+        // but must NOT reach TB_WIN_SCORE (that would mean Syzygy incorrectly fired)
+        assertTrue(result.scoreCp() > 0,
+                "KBN vs K without Syzygy should return positive material score, got: " + result.scoreCp());
+        assertTrue(result.scoreCp() < 10_000,
+                "KBN vs K without Syzygy must not return a tablebase win score — probe must be inactive");
+    }
+
+    // -----------------------------------------------------------------------
     // Stub probers
     // -----------------------------------------------------------------------
 
