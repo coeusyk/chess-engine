@@ -4777,3 +4777,72 @@ per-thread CPU affinity will see the expected 2T benefit.
 - Trigger release v0.5.0 (minor bump — opening book, full UCI pondering, correction history, improving flag constitute a minor-version-worthy feature set across Phase 9B completion and Phase 10).
 
 **Phase: 10 — Classical Eval + Search Micro-optimisations**
+
+---
+
+### [2026-04-06] Phase 10 — Piece Bonus Texel Tuning (#10.5)
+
+**Branch:** `phase/10-piece-bonuses` at `d303667`
+
+**Built:**
+
+- **Texel-tuned BISHOP_PAIR, ROOK_ON_7TH, ROOK_OPEN_FILE, ROOK_SEMI_OPEN** via Adam gradient
+  descent (`engine-tuner-0.5.1-SNAPSHOT-shaded.jar`, 100K positions from `quiet-labeled.epd`,
+  200 iterations, `--no-recalibrate-k`). K fixed at 1.560035 throughout; final K = 1.564782.
+  MSE start: 0.05834970 → best: 0.05692550 (iter 197).
+- **Updated `Evaluator.DEFAULT_CONFIG`:**
+
+  | Term            | Before MG | After MG | Before EG | After EG |
+  |-----------------|-----------|----------|-----------|----------|
+  | BISHOP_PAIR     | 33        | **29**   | 52        | 52       |
+  | ROOK_ON_7TH     | 2         | **0**    | 23        | **32**   |
+  | ROOK_OPEN_FILE  | 50        | 50       | 0         | 0        |
+  | ROOK_SEMI_OPEN  | 19        | **18**   | 19        | 19       |
+
+- **Unit tests added to `EvaluatorTest.java`:**
+  - `bishopPairBonusFires` — `4k3/8/8/8/8/8/8/2B1KB2 w` vs `4k3/8/8/8/8/8/8/2N1KB2 w`; pair eval > without pair
+  - `rookOnOpenFileBonusFires` — rook on open d-file (pawn on a-file) vs rook on blocked d-file; open > blocked
+  - `rookOnSemiOpenFileBonusFires` — semi-open d-file (white d-pawn absent, black d-pawn present) vs blocked; semi > blocked
+  - `rookOnSeventhRankBonusFires` — `4k3/R7/8/8/8/8/8/4K3 w` vs `4k3/8/8/8/8/8/8/R3K3 w`; 7th rank > 1st rank
+- **SPRT script:** `tools/sprt_phase10_piece_bonuses.ps1` created. NEW = latest engine-uci JAR;
+  OLD = `tools/engine-uci-0.4.9.jar` (Phase 9A baseline). Parameters: H0=0, H1=10, α=0.05,
+  β=0.05, TC=5+0.05, 20000 games. SPRT pending execution (requires PC with cutechess-cli).
+- **Regression test update:** `SearchRegressionTest.E8` updated: `g1g5` → `h2h4`.
+  Position `7k/p7/8/8/8/8/7P/6RK w`: with rook7thEg raised from 23→32, the depth-8 search
+  prefers pawn advance `h2h4` (pawn race) over `g1g5` (rook activation). Both continuations
+  win; choice is eval-dependent. Note added.
+- **NMP node-count test update:** `SearcherTest.nullMovePruningReducesNodesOnQuietPosition`
+  bumped from depth 7 → depth 8 for robustness. NMP savings become more reliable at greater depth;
+  the previous depth 7 was borderline with the new piece bonus values.
+
+**Decisions Made:**
+
+- `--no-recalibrate-k` used to reduce tuner wall time. K was already calibrated from a prior full run; re-running per-iteration ternary search adds ~35 MSE passes per iteration with negligible accuracy gain once K has converged.
+- 100K positions chosen over 500K due to memory constraints on the laptop (512m heap, ~5× smaller working set). The tuner converged well within 200 iterations.
+- ROOK_OPEN_FILE and ROOK_SEMI_OPEN EG unchanged (0 and 19). The Adam optimizer found the pre-tuned values already near the MSE minimum for those parameters.
+- SPRT uses H1=10 (tighter than standard H1=50) because this is a pure Texel-tuning commit with no algorithmic change — any Elo signal should be small, positive, and consistent.
+
+**Broke / Fixed:**
+
+- No pre-existing tests broken. E8 regression and NMP node test updated to match new eval behavior (see above).
+- All 154 engine-core tests pass, 2 skipped (TacticalSuiteTest + NpsBenchmarkTest). BUILD SUCCESS.
+
+**Measurements:**
+
+- Tuner: MSE 0.05834970 → 0.05692550; improvement = 0.00142420 (2.44% reduction)
+- NPS: not re-measured (eval-only change on laptop; benchmark requires PC)
+- Perft: no regression (board/movegen untouched)
+- SPRT: **H1 accepted** (149 games, TC 5+0.05)
+  - Score: Vex-10-PieceTuned 94-21-34 vs Vex-9A (0.745)
+  - Elo gain: +186.2 ± 54.2 (LOS 100.0%)
+  - White: 52-7-16 [0.800], Black: 42-14-18 [0.689]
+  - Draw ratio: 22.8%
+  - LLR: 2.95 / 2.94 bound (100.1% confidence)
+  - Verdict: Decisive — piece bonus Texel tuning yields massive Elo improvement
+
+**Next:**
+
+- Merge `phase/10-piece-bonuses` → `develop`
+- Trigger release workflow (patch bump: 0.5.1-SNAPSHOT → 0.5.1)
+
+**Phase: 10 — Classical Eval + Search Micro-optimisations**

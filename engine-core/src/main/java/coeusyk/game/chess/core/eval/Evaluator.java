@@ -43,10 +43,10 @@ public class Evaluator {
      */
     public static final EvalConfig DEFAULT_CONFIG = new EvalConfig(
         /* tempo              */ 21,
-        /* bishopPairMg/Eg   */ 33, 52,
-        /* rook7thMg/Eg      */ 2, 23,
+        /* bishopPairMg/Eg   */ 29, 52,
+        /* rook7thMg/Eg      */ 0, 32,
         /* rookOpenMg/Eg     */ 50, 0,
-        /* rookSemiMg/Eg     */ 19, 19,
+        /* rookSemiMg/Eg     */ 18, 19,
         /* knightOutpostMg/Eg*/ 40, 30,
         /* connectedPawnMg/Eg*/ 9, 4,
         /* backwardPawnMg/Eg */ 0, 0,

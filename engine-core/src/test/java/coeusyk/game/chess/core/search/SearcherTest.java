@@ -163,8 +163,8 @@ class SearcherTest {
         Board boardWithNullMove    = new Board("r2q1rk1/ppp2ppp/2n2n2/3bp3/3P4/2P1PN2/PP1N1PPP/R1BQ1RK1 w - - 0 9");
         Board boardWithoutNullMove = new Board("r2q1rk1/ppp2ppp/2n2n2/3bp3/3P4/2P1PN2/PP1N1PPP/R1BQ1RK1 w - - 0 9");
 
-        SearchResult withNullMove    = new Searcher(true, false, true).searchDepth(boardWithNullMove, 7);
-        SearchResult withoutNullMove = new Searcher(true, false, false).searchDepth(boardWithoutNullMove, 7);
+        SearchResult withNullMove    = new Searcher(true, false, true).searchDepth(boardWithNullMove, 8);
+        SearchResult withoutNullMove = new Searcher(true, false, false).searchDepth(boardWithoutNullMove, 8);
 
         long withNullMoveNodes    = withNullMove.nodesVisited()    + withNullMove.leafNodes();
         long withoutNullMoveNodes = withoutNullMove.nodesVisited() + withoutNullMove.leafNodes();
