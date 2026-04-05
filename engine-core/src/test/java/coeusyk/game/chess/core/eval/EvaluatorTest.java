@@ -508,4 +508,58 @@ class EvaluatorTest {
         assertTrue(hangingScore < baselineScore,
                 "Rook attacked by lesser-value piece with only king-defender must be penalised by SEE score");
     }
+
+    // --- Piece bonus tests (Phase 10 — #10.5 exit criteria) ---
+
+    @Test
+    void bishopPairBonusFires() {
+        // White Ke1, Bc1, Bf1 (bishop pair) vs White Ke1, Nc1, Bf1 (bishop + knight).
+        // Bishop material (428) > knight material (391), and bishop pair adds
+        // bishopPairMg/Eg on top. Both effects favour the pair position.
+        Board withPair    = new Board("4k3/8/8/8/8/8/8/2B1KB2 w - - 0 1");
+        Board withoutPair = new Board("4k3/8/8/8/8/8/8/2N1KB2 w - - 0 1");
+
+        assertTrue(evaluator.evaluate(withPair) > evaluator.evaluate(withoutPair),
+                "Two bishops should score higher than bishop + knight (pair bonus + material)");
+    }
+
+    @Test
+    void rookOnOpenFileBonusFires() {
+        // Same material: white Ke1 + Rd1 + one pawn; black Ke8 only.
+        // A: pawn on a2 — d-file has no friendly pawn → rook gets open-file bonus.
+        // B: pawn on d2 — d-file has friendly pawn → no bonus.
+        // The open-file MG bonus (50 cp) dominates the pawn-PST difference (~21 cp).
+        Board rookOpenFile = new Board("4k3/8/8/8/8/8/P7/3RK3 w - - 0 1");
+        Board rookBlocked  = new Board("4k3/8/8/8/8/8/3P4/3RK3 w - - 0 1");
+
+        assertTrue(evaluator.evaluate(rookOpenFile) > evaluator.evaluate(rookBlocked),
+                "Rook on open d-file (pawn on a2) should score higher than rook on blocked d-file (pawn on d2)");
+    }
+
+    @Test
+    void rookOnSemiOpenFileBonusFires() {
+        // Same material: white Ke1 + Rd1 + Pa_; black Ke8 + Pa7 + Pd7.
+        // A: white pawn on a2 — d-file has only the enemy pawn (Pd7) → semi-open bonus.
+        // B: white pawn on d2 — d-file has friendly pawn (Pd2) → no bonus.
+        // The semi-open EG bonus (19 cp) plus pawn-EG PST delta (~14 cp) dominate.
+        Board rookSemiOpen = new Board("4k3/p2p4/8/8/8/8/P7/3RK3 w - - 0 1");
+        Board rookBlocked  = new Board("4k3/p2p4/8/8/8/8/3P4/3RK3 w - - 0 1");
+
+        assertTrue(evaluator.evaluate(rookSemiOpen) > evaluator.evaluate(rookBlocked),
+                "Rook on semi-open d-file (white pawn a2, black pawn d7) should score higher than rook on blocked d-file (white pawn d2)");
+    }
+
+    @Test
+    void rookOnSeventhRankBonusFires() {
+        // Both positions have equal material: white Ke1 + one rook; black Ke8.
+        // A: rook on a7 (WHITE_RANK_7 = bits 8–15) → rook7th bonus fires.
+        // B: rook on a1 → no rook7th bonus.
+        // Rook EG PST(a7)=10 + rook7thEg(23) > rook EG PST(a1)=12, and
+        // MG PSTs are equal (both 4), so A > B by ~19 cp.
+        Board rookOn7th = new Board("4k3/R7/8/8/8/8/8/4K3 w - - 0 1");
+        Board rookOn1st = new Board("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
+
+        assertTrue(evaluator.evaluate(rookOn7th) > evaluator.evaluate(rookOn1st),
+                "Rook on 7th rank (a7) should score higher than rook on 1st rank (a1)");
+    }
 }

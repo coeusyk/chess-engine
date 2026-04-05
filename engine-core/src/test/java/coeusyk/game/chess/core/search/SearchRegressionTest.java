@@ -239,10 +239,11 @@ class SearchRegressionTest {
             //     is eval-dependent. Updated 2026-04-01: new eval terms prefer king advance.
             Arguments.of("E7",  E7_FEN,  "b2c3"),
             // E8: 7k/p7/8/8/8/8/7P/6RK — Kh1+Rg1+Ph2 vs Kh8+Pa7. g1g5 (active rook,
-            //     threatens Rg7+/Ra5) and g1a1 (stop a-passer) both win. Engine evaluates
-            //     g1g5 as +696 cp at depth 8; flexible rook position can reach a5 next.
+            //     threatens Rg7+/Ra5) and h2h4 (pawn race) both win. Choice is eval-dependent.
             //     Updated 2026-04-02: new terms shift preference to g1g5.
-            Arguments.of("E8",  E8_FEN,  "g1g5"),
+            //     Updated Phase 10 #10.5: Texel-tuned piece bonuses (rook7thEg 23→32) shift
+            //     depth-8 preference to h2h4. Both g1g5 and h2h4 are winning continuations.
+            Arguments.of("E8",  E8_FEN,  "h2h4"),
             Arguments.of("E9",  E9_FEN,  "d3e3"),
             Arguments.of("E10", E10_FEN, "a2a6")
         );
