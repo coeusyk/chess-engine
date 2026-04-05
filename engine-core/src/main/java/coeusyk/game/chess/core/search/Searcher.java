@@ -42,6 +42,11 @@ public class Searcher {
     private static final int TB_WIN_SCORE = MATE_SCORE - 2 * MAX_PLY;
     private static final int TB_LOSS_SCORE = -(MATE_SCORE - 2 * MAX_PLY);
 
+    /** Material advantage (cp, EG values) above which draws are penalised with contempt. */
+    static final int CONTEMPT_THRESHOLD = 300;
+    /** Draw avoidance score (cp): winning side rates a draw at −DRAW_CONTEMPT, losing side at +DRAW_CONTEMPT. */
+    static final int DRAW_CONTEMPT = 20;
+
     // Correction history: maps pawn structure to a static-eval bias.
     // Stored at GRAIN scale; applied as: adjustedEval = rawEval + ch[color][key] / GRAIN.
     private static final int CORRECTION_HISTORY_SIZE = 1024;
@@ -675,8 +680,13 @@ public class Searcher {
         // Draw detection: return 0 for any recognized draw condition (skip at root so we
         // always return a bestMove from searchRoot, never a raw draw score).
         if (ply > 0) {
-            if (board.isRepetitionDraw() || board.isFiftyMoveRuleDraw() || board.isInsufficientMaterial()) {
-                return 0;
+            if (board.isInsufficientMaterial()) {
+                return 0;  // theoretical draw: neither side can win regardless of play
+            }
+            if (board.isRepetitionDraw() || board.isFiftyMoveRuleDraw()) {
+                // Potentially avoidable draw: penalise the winning side so it actively avoids
+                // cycling (KQK, KRK repetitions) and 50-move-clock exhaustion.
+                return contemptScore(board);
             }
         }
 
@@ -1554,6 +1564,26 @@ public class Searcher {
 
     private int evaluate(Board board) {
         return evaluator.evaluate(board);
+    }
+
+    /**
+     * Score assigned to an avoidable draw (repetition or 50-move rule) with contempt.
+     * When one side has a material advantage of > {@link #CONTEMPT_THRESHOLD} cp (EG values),
+     * the winning side receives {@code -DRAW_CONTEMPT} (hates the draw) and the losing side
+     * receives {@code +DRAW_CONTEMPT} (prefers the draw). Balanced positions return 0.
+     * Uses fast bitCount material only — no PST, no mobility, so it's O(1).
+     */
+    int contemptScore(Board board) {
+        int wMat = Long.bitCount(board.getWhiteQueens())  * 1040
+                 + Long.bitCount(board.getWhiteRooks())   * 555
+                 + (Long.bitCount(board.getWhiteKnights()) + Long.bitCount(board.getWhiteBishops())) * 300;
+        int bMat = Long.bitCount(board.getBlackQueens())  * 1040
+                 + Long.bitCount(board.getBlackRooks())   * 555
+                 + (Long.bitCount(board.getBlackKnights()) + Long.bitCount(board.getBlackBishops())) * 300;
+        int materialAdv = Piece.isWhite(board.getActiveColor()) ? (wMat - bMat) : (bMat - wMat);
+        if (materialAdv >  CONTEMPT_THRESHOLD) return -DRAW_CONTEMPT;
+        if (materialAdv < -CONTEMPT_THRESHOLD) return  DRAW_CONTEMPT;
+        return 0;
     }
 
     private int wdlToScore(WDLResult.WDL wdl) {

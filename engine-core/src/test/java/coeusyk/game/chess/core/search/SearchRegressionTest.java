@@ -211,12 +211,19 @@ class SearchRegressionTest {
             //     BK to ranks 7-8) is a textbook technique; f1b5 also wins. Tuned eval
             //     (v0.4.9 Texel run) raises queen mobility+PST, preferring f1f6.
             //     Updated 2025-07-14: Texel tuning v0.4.9 shifts preference to f1f6.
-            Arguments.of("E1",  E1_FEN,  "f1f6"),
+            //     Updated Phase 11 #125: doubled MopUp edge/proximity weights (10→20, 4→8)
+            //     and draw contempt (+/-20 cp) change the depth-8 gradient. f1d3 (queen
+            //     diagonal activation toward center) emerges as preferred. Both f1f6 and
+            //     f1d3 are winning KQK continuations; the ordering is eval-dependent.
+            Arguments.of("E1",  E1_FEN,  "f1d3"),
             // E2: 4k3/8/8/8/8/8/8/4KR2 — KR vs K.  f1f6 (rook-to-6th restriction) and
             //     e1d2 (king activation toward centre) both win; known theoretical equivalence.
             //     Updated 2026-04-03: cheap bitboard hanging-penalty (replacing SEE-based form)
             //     reverts depth-8 preference to f1f6.
-            Arguments.of("E2",  E2_FEN,  "f1f6"),
+            //     Updated Phase 11 #125: doubled MopUp weights and draw contempt shift the
+            //     depth-8 evaluation. e1e2 (king toward centre — standard KRK first step)
+            //     is now preferred. Both e1e2 and f1f6 are correct KRK technique.
+            Arguments.of("E2",  E2_FEN,  "e1e2"),
             Arguments.of("E3",  E3_FEN,  "f4f5"),
             // E4: e4d4 and e4f4 are symmetric king moves to break e-file direct opposition.
             //     Both win; equivalent by symmetry for a central pawn.

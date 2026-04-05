@@ -4877,3 +4877,52 @@ per-thread CPU affinity will see the expected 2T benefit.
 - Issue #125: KQK/KRK forced-win repetition draw fix
 
 **Phase: 11 — Endgame Tablebase + Pre-CCRL Hardening**
+
+---
+
+### 2026-04-06 — Phase 11 Issue #125: Fix KQK/KRK repetition draws
+
+**What was done:** Fixed engine drawing by repetition (or reaching 50-move rule) in KQ vs K and KR vs K positions that are trivially winning.
+
+**Diagnosis:**
+1. `MopUp.evaluate()` WAS firing correctly for KQK/KRK (phase 4/2 ≤ threshold 8; material diff 1040/555 ≥ 400). No trigger issue.
+2. MopUp gradient was too weak: max 112 cp (edge × 10 + proximity × 4), giving only ~14 cp per king-step improvement. In a 1040 cp material sea, the engine treated many positions as interchangeable and cycled between them.
+3. No draw contempt: `isRepetitionDraw()` and `isFiftyMoveRuleDraw()` returned score = 0 regardless of material advantage. The winning side was completely indifferent to draws — a draw from +1040 looked identical to a neutral draw.
+
+**Fixes applied:**
+
+*MopUp.java:*
+- Edge bonus multiplier: `CMD[sq] × 10` → `CMD[sq] × 20` (max 60 → 120 cp)
+- Proximity bonus multiplier: `(14 − dist) × 4` → `(14 − dist) × 8` (max 52 → 104 cp)
+- Total max: 112 → 224 cp; effective step gradient: ~14 → ~18 cp
+
+*Searcher.java:*
+- Added `CONTEMPT_THRESHOLD = 300` and `DRAW_CONTEMPT = 20` (package-private for tests).
+- Added `contemptScore(Board board)`: quick O(1) material check; returns `−DRAW_CONTEMPT` when materialAdv > 300 cp (winning side hates draw), `+DRAW_CONTEMPT` when materialAdv < −300 cp (losing side loves draw), 0 otherwise.
+- Changed draw detection: `isInsufficientMaterial()` still returns 0 (true draw); `isRepetitionDraw()` and `isFiftyMoveRuleDraw()` now return `contemptScore(board)`.
+
+**Tests:**
+- `EndgameDrawAvoidanceTest` (10 tests, all passing):
+  - `contemptScoreNegativeWhenWinningKQK/KRK`: −20 for winning side ✓
+  - `contemptScorePositiveForLosingSideKQK`: +20 for losing side ✓
+  - `contemptScoreZeroForBalancedKK/KNKB`: 0 for balanced positions ✓
+  - `mopUpBonusIsHighForCornerKing`: MopUp ≥ 120 for corner king ✓
+  - `mopUpCornerKingExceedsEdgeKing`: relative ordering preserved ✓
+  - `kqkSearchReturnsPositiveScore` / `krkSearchReturnsPositiveScore`: depth-4 score > 500/400 ✓
+  - `kqkHighFiftyMoveClockReturnsPositiveScore`: depth-4 positive score at halfmoveClock=40 ✓
+
+**Regression updates (SearchRegressionTest):**
+- E1 (KQK `4k3/8/8/8/8/8/8/4KQ2 w`): `f1f6` → `f1d3`. Both win; `f1d3` (queen diagonal activation) now scores higher at depth 8 with stronger MopUp gradient. Equivalent to `f1f6`.
+- E2 (KRK `4k3/8/8/8/8/8/8/4KR2 w`): `f1f6` → `e1e2`. Both win; `e1e2` (king centralization — standard KRK first step) now preferred. Equivalent.
+
+**Test suite:** 171 run, 0 failures, 2 skipped.
+
+**Measurements:**
+- Perft: no board/movegen changes — no regression expected, not re-measured.
+- Elo vs. baseline: not measured this cycle (SPRT pending after issue #126 and #127).
+
+**Next:**
+- Issue #126: KBN vs K Syzygy WDL probe verification
+- Issue #127: CCRL submission checklist
+
+**Phase: 11 — Endgame Tablebase + Pre-CCRL Hardening**
