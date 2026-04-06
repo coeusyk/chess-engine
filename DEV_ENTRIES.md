@@ -5177,3 +5177,44 @@ fixes landed in the same session (TT hashfull metric, UCI SyzygyOnline option).
 - Compile: clean; no regression on existing tests.
 
 **Phase: 12 — Data Pipeline**
+
+---
+
+### [2026-04-06] Phase 12 — Texel Run-2 Eval Application and Test Rebaseline
+
+**Built:**
+
+- Applied Texel run-2 evaluation parameters from the new corpus-driven tuning pass to `engine-core`: material values, all 12 PST tables, mobility weights, pawn-structure terms, and king-safety terms.
+- Kept `DEFAULT_CONFIG` aligned with the tuned scalar set while preserving non-zero attacker, bishop-pair, tempo, and rook-file terms where the corpus did not provide enough signal.
+- Added hard minimum floors in `engine-tuner` `EvalParams.buildMin()` for attacker weights, bishop-pair bonuses, and tempo so future tuning runs cannot collapse them to zero again from sparse corpus coverage.
+- Rebased eval-sensitive unit tests in `EvaluatorTest` to positions that remain valid under the new PST geometry and MG/EG balance.
+- Rebased six `SearchRegressionTest` expected best moves with explicit explanation comments for each changed position.
+- Corrected the repeated-search TT assertion to check raw TT hits instead of hit-rate percentage when a fully cached second search visits zero non-TT nodes.
+
+**Decisions Made:**
+
+- Treated zeroed scalar outputs from the Texel run as a corpus-coverage failure, not as a real optimisation result. The quiet self-play corpus did not contain enough king-attack and bishop-pair signal to justify removing those terms.
+- Kept the Texel-run PST and material changes, which had broad support in the corpus, but pinned lower bounds on strategically important scalar terms before the next tuning pass.
+- Reworked failing tests by holding material constant and changing only the feature under test. This avoids false negatives caused by extreme PST differences dominating low-phase positions.
+
+**Broke / Fixed:**
+
+- Applying the run-2 values initially broke 13 `engine-core` tests.
+- `EvaluatorTest` failures came from changed PST geometry and tuned constants: bishop-pair comparison squares were no longer favorable, the rook mobility test used a square with a worse endgame rook PST than `a1`, half-open king-file penalty no longer applied because `HALF_OPEN = 0`, and open/semi-open rook tests were comparing different pawn PSTs instead of isolating the file bonus.
+- Fixed those regressions by redesigning the affected test positions around the new tuned values rather than weakening assertions.
+- `SearcherTest` hit-rate assertion was wrong for the tuned build: the second search produced TT hits with `nodesVisited = 0`, so `ttHitRate()` legitimately returned `0.0`. Fixed the test to assert `ttHits() > 0`.
+- Search regression positions `P1`, `P3`, `P5`, `P10`, `E1`, and `E2` changed best move at depth 8 after the PST update; the expected moves and rationale comments were updated together.
+
+**Measurements:**
+
+- Texel corpus generated for this pass: 28,901 positions.
+- Texel tuning result vs prior baseline MSE: `-16.63%`.
+- `engine-core` test suite: 177 tests run, 0 failures, 0 errors, 2 skipped.
+- Perft depth 5 (startpos): Not measured in this cycle.
+- Nodes/sec: Not measured in this cycle.
+- Elo vs. baseline: Not measured in this cycle.
+
+**Next:**
+
+- Run a second-pass Texel tuning cycle with PST/material frozen and only scalar terms free under the new lower bounds.
+- Validate any resulting eval changes with SPRT on the PC only; do not use laptop measurements for NPS or Elo decisions.
