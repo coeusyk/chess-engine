@@ -38,6 +38,7 @@ public class UciApplication {
     private int threads = 1;
     private long moveOverheadMs = 30;
     private String syzygyPath = "";
+    private boolean syzygyOnline = false;
     private int syzygyProbeDepth = 1;
     private boolean syzygy50MoveRule = true;
 
@@ -133,6 +134,7 @@ public class UciApplication {
                 System.out.println("option name MoveOverhead type spin default 30 min 0 max 5000");
                 System.out.println("option name Threads type spin default 1 min 1 max 512");
                 System.out.println("option name SyzygyPath type string default <empty>");
+                System.out.println("option name SyzygyOnline type check default false");
                 System.out.println("option name SyzygyProbeDepth type spin default 1 min 0 max 100");
                 System.out.println("option name Syzygy50MoveRule type check default true");
                 System.out.println("option name Ponder type check default false");
@@ -298,6 +300,8 @@ public class UciApplication {
             }
         } else if ("syzygypath".equals(optionNameLower)) {
             syzygyPath = valuePart.trim();
+        } else if ("syzygyonline".equals(optionNameLower)) {
+            syzygyOnline = "true".equalsIgnoreCase(valuePart);
         } else if ("syzygyprobedepth".equals(optionNameLower)) {
             try {
                 int value = Integer.parseInt(valuePart);
@@ -509,7 +513,7 @@ public class UciApplication {
             }
 
             // Configure Syzygy probing
-            if (!syzygyPath.isEmpty() && !"<empty>".equals(syzygyPath)) {
+            if (syzygyOnline) {
                 searcher.setSyzygyProber(new OnlineSyzygyProber(syzygy50MoveRule));
                 searcher.setSyzygyProbeDepth(syzygyProbeDepth);
                 searcher.setSyzygy50MoveRule(syzygy50MoveRule);

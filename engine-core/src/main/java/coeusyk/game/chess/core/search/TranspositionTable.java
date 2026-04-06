@@ -1,6 +1,5 @@
 package coeusyk.game.chess.core.search;
 
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
@@ -29,8 +28,7 @@ public class TranspositionTable {
     private AtomicReferenceArray<Entry> table;
     private int mask;
 
-    // AtomicInteger/AtomicLong keep counts consistent across concurrent threads.
-    private final AtomicInteger occupiedCount = new AtomicInteger(0);
+    // AtomicLong counters for optional probe/hit statistics.
     private final AtomicLong probes = new AtomicLong(0);
     private final AtomicLong hits   = new AtomicLong(0);
 
@@ -74,7 +72,6 @@ public class TranspositionTable {
 
         table = new AtomicReferenceArray<>(entryCount);
         mask = entryCount - 1;
-        occupiedCount.set(0);
         resetStats();
     }
 
@@ -139,19 +136,37 @@ public class TranspositionTable {
                 || (byte)(currentGeneration - existing.generation()) >= AGE_THRESHOLD
                 || depth >= existing.depth();
         if (replace) {
-            if (existing == null) {
-                occupiedCount.incrementAndGet();
-            }
             table.set(index, new Entry(key, bestMove, depth, score, bound, currentGeneration));
         }
     }
 
+    /**
+     * Returns occupied-entries-per-mille (0–1000) based on a 1000-slot sample,
+     * counting only slots that hold a current-or-recent-generation entry
+     * (age &lt; {@link #AGE_THRESHOLD}).  This gives a meaningful "live occupancy"
+     * reading that falls back toward 0 between searches rather than staying
+     * permanently at 1000 once the table has been fully populated.
+     *
+     * <p>Sampling avoids a full O(N) scan on the hot reporting path.  The
+     * stride is {@code len / sampleSize} so samples are evenly distributed,
+     * which is accurate enough for a GUI progress bar.
+     */
     public int hashfull() {
         int len = table.length();
         if (len == 0) {
             return 0;
         }
-        return (int) ((long) occupiedCount.get() * 1000L / len);
+        final int sampleSize = Math.min(1000, len);
+        final int stride = Math.max(1, len / sampleSize);
+        int recent = 0;
+        byte gen = currentGeneration;
+        for (int i = 0; i < sampleSize; i++) {
+            Entry e = table.get(i * stride);
+            if (e != null && (byte)(gen - e.generation()) < AGE_THRESHOLD) {
+                recent++;
+            }
+        }
+        return recent * 1000 / sampleSize;
     }
 
     public int getEntryCount() {
@@ -180,7 +195,6 @@ public class TranspositionTable {
         for (int i = 0; i < len; i++) {
             table.set(i, null);
         }
-        occupiedCount.set(0);
         resetStats();
     }
 

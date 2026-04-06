@@ -5127,3 +5127,53 @@ Build: `mvn -pl engine-core,engine-tuner verify` → BUILD SUCCESS.
 
 **Closes #130**
 **Phase: 12 — Data Pipeline**
+
+---
+
+### 2026-04-06 — Phase 12 Follow-up: Expanded corpus (1000 games) + bug fixes
+
+**Context:** Second 500-game selfplay batch completed (`selfplay_20260406_204755.pgn`, TC
+10+0.1, Concurrency 4, 0 crashes / 0 time forfeits / 0 illegal moves). Two additional
+fixes landed in the same session (TT hashfull metric, UCI SyzygyOnline option).
+
+**Corpus re-generation (run 2):**
+- PGN dir: `tools/results` — 4 PGN files processed (1000 total engine games)
+  - `selfplay_20260406_141223.pgn` (0.57 MB), `selfplay_20260406_180146.pgn` (0.05 MB)
+  - `selfplay_20260406_180535.pgn` (1.37 MB), `selfplay_20260406_204755.pgn` (1.37 MB)
+- Unique quiet positions extracted (deduplicated by normalized FEN): **50,000** (hit cap)
+- Stockfish-annotated (depth 12, 4 threads): **28,901 positions** (exceeds ≥20k AC)
+- Output: `data/texel_corpus.csv` (overwrite); sample updated: `data/texel_corpus_sample.csv`
+
+**Texel tuner run 2:**
+- Command: same as run 1 with new corpus
+- Loaded: 28,901 positions in 300 ms; 829 parameters; K = 0.500050
+- **MSE start: 0.06918540 → MSE final: 0.05769310** (16.63% reduction, 100 iterations)
+  - Start MSE is higher than run-1 final (0.05659863) because parameters from run 1 were
+    fitted to the 22k-position corpus; the new 28.9k-position corpus represents different
+    FEN distribution → fresh baseline. After 100 iterations the new params converge lower.
+- Updated `tuned_params.txt` written.
+
+**fix(tt): hashfull() corrected — generation-sampling approach:**
+- Root cause: `occupiedCount` (AtomicInteger) only incremented on null→non-null slot
+  transitions; no decrement path existed. TT fills after one deep search (~2M entries,
+  64 MB) → `hashfull` permanently returned 1000 for the entire game.
+- Fix: `hashfull()` now samples 1000 evenly-spaced TT slots and counts entries with
+  `age < AGE_THRESHOLD (4)` (current-or-recent generation). Gives live occupancy that
+  drops between searches as generation-based aging evicts stale entries.
+- Removed dead code: `AtomicInteger occupiedCount` field, `occupiedCount.set(0)` in
+  `resize()`/`clear()`, `occupiedCount.incrementAndGet()` in `store()`.
+- Compile: clean; `TranspositionTableTest`: pass.
+
+**fix(uci): SyzygyOnline opt-in replaces implicit SyzygyPath activation:**
+- Root cause: syzygy probe block guarded by `!syzygyPath.isEmpty() && !"<empty>".equals()"`;
+  setting `SyzygyPath` to a local .rtbw directory in CuteChess inadvertently activated
+  `OnlineSyzygyProber` (HTTP → lichess.ovh) — a network round-trip per probe that would
+  collapse NPS to near zero during any endgame. The `syzygyPath` value was never passed
+  to the prober; it was a dead field relative to the actual probing mechanism.
+- Fix: added `private boolean syzygyOnline = false;` field, `SyzygyOnline type check
+  default false` UCI option, `syzygyonline` setoption handler. Probe block now triggers
+  only on `syzygyOnline == true`. `SyzygyPath` remains in the option list as a reserved
+  slot for a future local file reader.
+- Compile: clean; no regression on existing tests.
+
+**Phase: 12 — Data Pipeline**
