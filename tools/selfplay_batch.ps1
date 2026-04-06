@@ -9,30 +9,37 @@
       - Time forfeits
       - Adjudicated illegal moves
 
-    This script is the CCRL pre-submission stability gate.
-    Recommended invocation before CCRL submission:
-        .\tools\selfplay_batch.ps1 -Games 1000 -TC "40/4"
+    Two-tier CCRL pre-submission stability gate:
 
-    For quick CI/developer smoke testing:
-        .\tools\selfplay_batch.ps1 -Games 100 -TC "10+0.1"
+    Tier 1 — crash/illegal-move gate (run first, ~30 min):
+        .\tools\selfplay_batch.ps1 -Games 200 -TC "10+0.1" -Concurrency 2
+
+    Tier 2 — CCRL TC time-forfeit check (run overnight, concurrency=1 matches CCRL hardware):
+        .\tools\selfplay_batch.ps1 -Games 50 -TC "40/240" -Concurrency 1
+        (CCRL tests at 40 moves / 4 minutes = 240 seconds in cutechess TC format)
+
+    NOTE: TC values are passed directly to cutechess-cli and are in SECONDS.
+          CCRL 40/4 (40 moves in 4 minutes) = -TC "40/240" here.
+          Concurrency=1 is required for Tier 2 to match CCRL single-game-at-a-time conditions.
 
 .PARAMETER Games
-    Number of games to play (default: 1000).
+    Number of games to play (default: 200).
 
 .PARAMETER TC
-    Time control string passed to cutechess-cli (default: "40/4" — 40 moves in 4 minutes).
+    Time control string passed to cutechess-cli in seconds (default: "10+0.1").
+    CCRL 40/4 (4 minutes) = "40/240". Do NOT use "40/4" — that is 4 seconds.
 
 .PARAMETER Concurrency
-    Number of concurrent games (default: 2).
+    Number of concurrent games (default: 1). Use 2 for Tier 1, 1 for Tier 2 (CCRL conditions).
 
 .PARAMETER JarPath
     Explicit path to the engine-uci fat JAR. If omitted the script auto-detects the
     newest engine-uci-*.jar (excluding original-*) in engine-uci/target/.
 #>
 param(
-    [int]    $Games       = 1000,
-    [string] $TC          = "40/4",
-    [int]    $Concurrency = 2,
+    [int]    $Games       = 200,
+    [string] $TC          = "10+0.1",
+    [int]    $Concurrency = 1,
     [string] $JarPath     = ""
 )
 
