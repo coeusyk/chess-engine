@@ -139,11 +139,21 @@ public final class EvalParams {
         Arrays.fill(lo, IDX_PASSED_MG_START, IDX_ISOLATED_MG,  0);  // Passed pawn bonuses >= 0
         Arrays.fill(lo, IDX_ISOLATED_MG, IDX_SHIELD_RANK2,     0);  // Pawn penalties >= 0
         Arrays.fill(lo, IDX_SHIELD_RANK2, IDX_MOB_MG_START,    0);  // King safety >= 0
+        // Attacker weights pinned >= 2: corpus coverage gaps can zero these incorrectly.
+        // King-attack positions are underrepresented in quiet-start self-play. A floor
+        // of 2 prevents the optimizer absorbing this signal into PSTs when training data
+        // lacks king-side attack patterns. Re-evaluate after noob_3moves.epd corpus run.
+        lo[IDX_ATK_KNIGHT] = 2;
+        lo[IDX_ATK_BISHOP] = 2;
+        lo[IDX_ATK_ROOK]   = 2;
+        lo[IDX_ATK_QUEEN]  = 3;
         Arrays.fill(lo, IDX_MOB_MG_START, IDX_MOB_EG_START,   -5);  // Mobility MG may be slightly negative
         Arrays.fill(lo, IDX_MOB_EG_START, IDX_TEMPO,            0);  // Mobility EG must be >= 0
-        lo[IDX_TEMPO]          = 0;   // Tempo bonus >= 0
-        lo[IDX_BISHOP_PAIR_MG] = 0;   // Bishop pair MG >= 0
-        lo[IDX_BISHOP_PAIR_EG] = 0;   // Bishop pair EG >= 0
+        lo[IDX_TEMPO]          = 5;   // Tempo bonus >= 5cp (PST absorption risk)
+        // Bishop pair pinned >= 15: one of the most Elo-stable terms in classical eval.
+        // Zeroing indicates missing B+B vs B+N endgame positions in corpus, not uselessness.
+        lo[IDX_BISHOP_PAIR_MG] = 15;  // Bishop pair MG >= 15cp
+        lo[IDX_BISHOP_PAIR_EG] = 15;  // Bishop pair EG >= 15cp
         lo[IDX_ROOK_7TH_MG]   = 0;   // Rook on 7th MG >= 0
         lo[IDX_ROOK_7TH_EG]   = 0;   // Rook on 7th EG >= 0
         lo[IDX_ROOK_OPEN_FILE_MG]  = 0;   // Rook open file MG >= 0

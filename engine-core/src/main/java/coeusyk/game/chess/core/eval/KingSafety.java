@@ -7,11 +7,11 @@ public final class KingSafety {
 
     private KingSafety() {}
 
-    private static final int SHIELD_RANK_2_BONUS = 12;
-    private static final int SHIELD_RANK_3_BONUS = 7;
+    private static final int SHIELD_RANK_2_BONUS = 0;
+    private static final int SHIELD_RANK_3_BONUS = 5;
 
-    private static final int OPEN_FILE_PENALTY = 45;
-    private static final int HALF_OPEN_FILE_PENALTY = 13;
+    private static final int OPEN_FILE_PENALTY = 37;
+    private static final int HALF_OPEN_FILE_PENALTY = 0;
 
     private static final int[] ATTACKER_WEIGHT = new int[7];
 
