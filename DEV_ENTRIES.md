@@ -4994,3 +4994,104 @@ per-thread CPU affinity will see the expected 2T benefit.
 - Run full 1000-game CCRL batch before submission
 
 **Phase: 11 — Endgame Tablebase + Pre-CCRL Hardening**
+
+---
+
+### 2026-04-06 — Phase 12 Issue #129: Draw-Failure Extractor and Regression Gate
+
+**What was done:** Added tooling to detect and gate positions where the engine draws a
+clearly-winning position (draw-by-repetition / stalemate / 50-move against strong eval).
+
+**tools/extract_draw_failures.ps1:**
+- Scans SPRT/selfplay PGN files for games that ended in a non-adjudication draw
+  (repetition, stalemate, 50-move rule) despite |eval| > `ThresholdCp` (default 200 cp)
+  in the last 20 plies.
+- Intentionally skips `"Draw by adjudication"` games (correct engine-agreed draws).
+- Extracts starting FEN from `[FEN]` header when present (SPRT with opening book) or
+  uses the standard starting FEN for vanilla selfplay games; the position reported is
+  the FEN from the move at which the score first crossed the threshold.
+- Deduplicates by normalizing the en-passant field of the 4-field EPD form.
+- Appends unique findings to `engine-core/src/test/resources/regression/draw_failures.epd`
+  in EPD format with a `c0` label describing the source file, move number, and eval.
+- Parameters: `-PgnFile`, `-PgnDir`, `-EpdOut`, `-ThresholdCp`.
+
+**engine-core/src/test/resources/regression/draw_failures.epd (new file):**
+- Seeded with issue #125 regression position: rook + knight vs rook endgame where
+  pre-fix engine (contempt disabled / pawns excluded) drew by repetition.
+- FEN: `8/R7/4p3/8/8/2r2nk1/8/K7 b - -` (verified legal; white king on a1, no
+  attacks from Nf3 on f3 or Rc3 on c3).
+- Append-only policy: never remove entries unless a regression test explicitly covers
+  the fix and CI gates further regressions.
+
+**SearchRegressionTest — new @ParameterizedTest:**
+- `engineDoesNotDrawFromWinningPosition(String label, String fen)` at `DRAW_FAILURE_DEPTH = 12`.
+- Loads all entries from `regression/draw_failures.epd` via classloader; appends
+  `" 0 1"` to 4-field EPD FEN; asserts `scoreCp() ≠ 0`.
+- Returns `Stream.empty()` if the EPD file is not on the classpath (graceful skip,
+  compatible with partial checkouts or builds that skip resources).
+- Currently: 1 EPD entry → 1 parametrized test case runs as part of the regression suite.
+
+**Tests:** 176 (+1) run, 0 failures, 0 errors, 2 skipped. New test passes at depth 12.
+
+**K-factor note:** `TunerEvaluator.java` confirms sigmoid formula
+`1 / (1 + 10^(−k·e/400))` with fitted K = 0.701544, giving an effective
+scaling factor of 400/0.701544 ≈ **570** — used as the default `$K` in the
+Texel corpus generator (issue #130).
+
+**Phase: 12 — Data Pipeline**
+
+---
+
+### 2026-04-06 — Phase 12 Issue #130: Texel Corpus Generator
+
+**What was done:** Added a complete pipeline for generating Stockfish-annotated
+training data from self-play PGN and consuming it in the tuner.
+
+**tools/generate_texel_corpus.ps1:**
+- Requires PowerShell 7+ (uses `ForEach-Object -Parallel`).
+- Requires Stockfish binary (`-StockfishPath` required parameter; validated on startup).
+- Implements a minimal board tracker in pure PS (64-square array): handles pawn pushes,
+  pawn captures (including en passant), castling (O-O, O-O-O), promotions, and all
+  piece moves (N/B/R/Q/K) with full disambiguation via slider ray tracing
+  (`Can-SliderReach` along 8 directions, `Find-SourceSquare` with knight offset checking).
+  Castling rights and en-passant square tracked per-ply.
+- `Extract-QuietPositions`: replays each game's SAN move list, skips captures (`x`),
+  checks (`+`/`#`), opening ply ≤ 10, and positions with ≤ 6 pieces (endgame threshold).
+  Returns `(Fen4, GameResult)` pairs.
+- `ForEach-Object -Parallel` with `-ThrottleLimit $Threads` (default 8): one Stockfish
+  process created per parallel worker, reused across the batch via `stdin`/`stdout`.
+- Stockfish query: `position fen <fen> 0 1` + `go depth <N>` → parses `score cp` or
+  `score mate` from `info` lines; mate scores mapped to ±9999 cp.
+- WDL label: `1 / (1 + 10^(−cp / K))` where K = 570.0 (default, overridable via `-K`).
+- Deduplication by normalized FEN (en-passant field zeroed).
+- Output CSV: `fen,wdl_stockfish,game_result`. `-MaxPositions 50000` default.
+- Parameters: `-PgnDir`, `-StockfishPath`, `-Threads`, `-Depth`, `-OutputCsv`,
+  `-MaxPositions`, `-K`.
+
+**data/texel_corpus_sample.csv (new file, 100 rows):**
+- Schema reference committed to the repo; full corpus gitignored via `data/texel_corpus.csv`.
+- Columns: `fen` (quoted), `wdl_stockfish` (6 decimal places), `game_result`.
+- Represents diverse positions: opening, middlegame, and late endgame examples.
+
+**engine-tuner/PositionLoader.java — loadCsv() added:**
+- `loadCsv(Path csvPath, int maxPositions)`: reads CSV with mandatory header row
+  `fen,wdl_stockfish,game_result`; uses `wdl_stockfish` as training label (more accurate
+  than game outcome); handles optional quoted FEN field.
+- `tryParseCsvLine()` helper: returns `null` on malformed lines (silently skipped, with
+  count logged).
+- No changes to existing `load()`, `parseBracket()`, or `parseEpd()` code paths.
+
+**engine-tuner/TunerMain.java — --corpus argument added:**
+- `--corpus <csv_path>`: when provided, routes data loading to `PositionLoader.loadCsv()`
+  instead of the default dataset path; validated for file existence at startup.
+- Usage string, startup log, and validation updated accordingly.
+- No changes to optimization internals (GradientDescent, CoordinateDescent, KFinder).
+
+**.gitignore — data/texel_corpus.csv ignored:**
+- Added a dedicated `### Texel corpus ###` section at the end; only the sample CSV is
+  tracked in the repo.
+
+**Tests:** `engine-core,engine-tuner` verify: 176 run, 0 failures, 0 errors, 2 skipped.
+Build: `mvn -pl engine-core,engine-tuner verify` → BUILD SUCCESS.
+
+**Phase: 12 — Data Pipeline**

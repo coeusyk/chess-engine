@@ -1,0 +1,9 @@
+# Draw-from-winning-position regression seeds — Phase 12 (#129)
+# Format: <fen-4-fields> c0 "<label>";
+# Append-only: never remove entries unless bug is confirmed fixed AND a regression test covers it.
+# Generated/maintained by: tools/extract_draw_failures.ps1
+#
+# Seed #1 — Issue #125: engine drew by 3-fold repetition from a position Stockfish scores #-29.
+# Pre-fix engine (contempt disabled / pawns excluded from contemptScore) returned score 0 at depth 9-10.
+# Post-fix (DRAW_CONTEMPT=50, pawns counted, >= boundary) correctly avoids the draw.
+8/R7/4p3/8/8/2r2nk1/8/K7 b - - c0 "draw_failure issue_125 selfplay move 74 eval confirmed";

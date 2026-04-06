@@ -8,9 +8,13 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.URL;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 @Tag("regression")
 class SearchRegressionTest {
@@ -254,6 +258,47 @@ class SearchRegressionTest {
             Arguments.of("E9",  E9_FEN,  "d3e3"),
             Arguments.of("E10", E10_FEN, "a2a6")
         );
+    }
+
+    // ── Draw-failure regression gate — Phase 12 (#129) ──────────────
+    // Loads FENs from draw_failures.epd and asserts the engine does NOT
+    // return a neutral score (0 cp) at depth 12. Each FEN is a position where
+    // an older engine version drew by repetition despite being clearly winning.
+
+    private static final int DRAW_FAILURE_DEPTH = 12;
+
+    @ParameterizedTest(name = "DrawFailure: {0}")
+    @MethodSource("drawFailurePositions")
+    @Tag("regression")
+    void engineDoesNotDrawFromWinningPosition(String label, String fen) {
+        Board board = new Board(fen);
+        SearchResult result = new Searcher().searchDepth(board, DRAW_FAILURE_DEPTH);
+        assertNotEquals(0, result.scoreCp(),
+                "Engine returned draw score 0 for draw-failure position: " + label + " | " + fen);
+    }
+
+    static Stream<Arguments> drawFailurePositions() throws Exception {
+        URL url = SearchRegressionTest.class.getClassLoader()
+                      .getResource("regression/draw_failures.epd");
+        if (url == null) {
+            return Stream.empty(); // EPD not on classpath yet — skip gracefully
+        }
+        try (BufferedReader br = new BufferedReader(new InputStreamReader(url.openStream()))) {
+            return br.lines()
+                .filter(l -> !l.isBlank() && !l.startsWith("#"))
+                .map(line -> {
+                    // EPD: <pos> <side> <castling> <ep> <ops>...
+                    String[] parts = line.trim().split("\\s+", 5);
+                    String fen   = parts[0] + " " + parts[1] + " " + parts[2] + " " + parts[3];
+                    // Append dummy halfmove / fullmove counters so Board() accepts the FEN
+                    String fenFull = fen + " 0 1";
+                    String label = line.contains("c0 \"")
+                            ? line.replaceAll(".*c0 \\\"([^\"]+)\".*", "$1") : fen;
+                    return Arguments.of(label, fenFull);
+                })
+                .collect(java.util.stream.Collectors.toList())
+                .stream();
+        }
     }
 
     // ── Discovery: run this to capture bestmoves at depth DEFAULT_DEPTH ──
