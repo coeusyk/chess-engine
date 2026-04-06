@@ -51,3 +51,7 @@ data/texel_corpus.csv
 
 ### Logs ###
 *.log
+
+### Opening books ###
+tools/noob_3moves.epd
+tools/noob_3moves.epd.zip

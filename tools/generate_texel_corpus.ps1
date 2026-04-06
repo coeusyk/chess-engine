@@ -53,6 +53,7 @@
 #>
 param(
     [string]$PgnDir         = (Join-Path $PSScriptRoot "results"),
+    [string]$PgnFile        = "",
     [Parameter(Mandatory)][string]$StockfishPath,
     [int]   $Threads        = 8,
     [int]   $Depth          = 12,
@@ -144,17 +145,17 @@ function Board-PieceCount($brd) {
 
 function Sq([char]$file, [int]$rank) { return (8 - $rank) * 8 + ([int]$file - [int][char]'a') }
 function Sq-File([int]$sq) { return [char]([int][char]'a' + ($sq % 8)) }
-function Sq-Rank([int]$sq) { return 8 - [int]($sq / 8) }
+function Sq-Rank([int]$sq) { return 8 - ($sq -shr 3) }
 
 function Can-SliderReach([char[]]$sq, [int]$from, [int]$to, [int[]]$dirs) {
     # Returns true if a slider on $from can reach $to along one of $dirs with no blockers.
     foreach ($d in $dirs) {
         $cur = $from + $d
         while ($cur -ge 0 -and $cur -lt 64) {
-            # Prevent file wrapping
-            $prevF = $from % 8; $curF = $cur % 8
+            # Prevent file wrapping — use previous step's file, not origin file
+            $prevF = ($cur - $d) % 8; $curF = $cur % 8
             if ([Math]::Abs($d % 8) -eq 1 -and [Math]::Abs($curF - $prevF) -ne 1) { break }
-            # Diagonal — check col distance increases by 1 each step
+            # Diagonal — check col distance is exactly 1 each step
             if ([Math]::Abs($d) -in @(7,9) -and [Math]::Abs($cur % 8 - ($cur - $d) % 8) -ne 1) { break }
             if ($cur -eq $to) { return $true }
             if ($sq[$cur] -ne ' ') { break }
@@ -169,12 +170,12 @@ function Find-SourceSquare($brd, [char]$piece, [int]$toSq, [string]$disam) {
     # Returns the from-square index, or -1 if not found.
     $isWhite = $piece -ge 'A' -and $piece -le 'Z'
     $toFile  = $toSq % 8
-    $toRank  = [int]($toSq / 8)  # 0=rank8..7=rank1 internally
+    $toRank  = ($toSq -shr 3)  # 0=rank8..7=rank1 internally
     $candidates = @()
 
     for ($s = 0; $s -lt 64; $s++) {
-        if ($brd.sq[$s] -ne $piece) { continue }
-        $sFile = $s % 8; $sRank = [int]($s / 8)
+        if ($brd.sq[$s] -cne $piece) { continue }
+        $sFile = $s % 8; $sRank = ($s -shr 3)
 
         $canReach = switch ($piece) {
             { $_ -in 'N','n' } {
@@ -203,12 +204,12 @@ function Find-SourceSquare($brd, [char]$piece, [int]$toSq, [string]$disam) {
     }
     if ($disam -match '^[1-8]$') {
         $r = 8 - [int]$disam[0] + 48  # e.g. '3' → rank 3 → internal row 5
-        foreach ($c in $candidates) { if ([int]($c / 8) -eq $r) { return $c } }
+        foreach ($c in $candidates) { if (($c -shr 3) -eq $r) { return $c } }
     }
     if ($disam -match '^[a-h][1-8]$') {
         $f = [int][char]$disam[0] - [int][char]'a'
         $r = 8 - [int]$disam[1] + 48
-        foreach ($c in $candidates) { if (($c % 8 -eq $f) -and ([int]($c / 8) -eq $r)) { return $c } }
+        foreach ($c in $candidates) { if (($c % 8 -eq $f) -and (($c -shr 3) -eq $r)) { return $c } }
     }
     return $candidates[0]  # Best guess if disambiguation unclear
 }
@@ -270,12 +271,12 @@ function Apply-San($brd, [string]$san) {
             $r1 = $toRank + $dir * (-1)
             if ($r1 -ge 1 -and $r1 -le 8) {
                 $s1 = (8 - $r1) * 8 + $toFile
-                if ($brd.sq[$s1] -eq $myPawn) { $fromSq = $s1 }
+                if ($brd.sq[$s1] -ceq $myPawn) { $fromSq = $s1 }
                 else {
                     $r2 = $toRank + $dir * (-2)
                     if ($r2 -ge 1 -and $r2 -le 8) {
                         $s2 = (8 - $r2) * 8 + $toFile
-                        if ($brd.sq[$s2] -eq $myPawn) { $fromSq = $s2 }
+                        if ($brd.sq[$s2] -ceq $myPawn) { $fromSq = $s2 }
                     }
                 }
             }
@@ -541,14 +542,23 @@ function Get-StockfishEval($proc, [string]$fen4, [int]$depth) {
 # ---------------------------------------------------------------------------
 
 # Resolve PGN files
-if (-not (Test-Path $PgnDir)) {
-    Write-Error "PGN directory not found: $PgnDir"
-    exit 1
-}
-$pgnFiles = @(Get-ChildItem -Path $PgnDir -Filter "*.pgn" -File)
-if ($pgnFiles.Count -eq 0) {
-    Write-Warning "No .pgn files found in: $PgnDir"
-    exit 0
+if ($PgnFile -ne "") {
+    $PgnFile = Resolve-Path $PgnFile -ErrorAction Stop | Select-Object -ExpandProperty Path
+    if (-not (Test-Path $PgnFile -PathType Leaf)) {
+        Write-Error "PGN file not found: $PgnFile"
+        exit 1
+    }
+    $pgnFiles = @(Get-Item $PgnFile)
+} else {
+    if (-not (Test-Path $PgnDir)) {
+        Write-Error "PGN directory not found: $PgnDir"
+        exit 1
+    }
+    $pgnFiles = @(Get-ChildItem -Path $PgnDir -Filter "*.pgn" -File)
+    if ($pgnFiles.Count -eq 0) {
+        Write-Warning "No .pgn files found in: $PgnDir"
+        exit 0
+    }
 }
 
 # Ensure output dir exists
@@ -558,7 +568,11 @@ if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Path $outDir -Forc
 Write-Host ""
 Write-Host "Generate Texel Corpus" -ForegroundColor Cyan
 Write-Host "=====================" -ForegroundColor Cyan
-Write-Host "PGN dir      : $PgnDir ($($pgnFiles.Count) files)"
+if ($PgnFile -ne "") {
+    Write-Host "PGN file     : $PgnFile"
+} else {
+    Write-Host "PGN dir      : $PgnDir ($($pgnFiles.Count) files)"
+}
 Write-Host "Stockfish    : $StockfishPath"
 Write-Host "Threads      : $Threads"
 Write-Host "Depth        : $Depth"

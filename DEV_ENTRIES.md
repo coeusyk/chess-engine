@@ -5091,7 +5091,39 @@ training data from self-play PGN and consuming it in the tuner.
 - Added a dedicated `### Texel corpus ###` section at the end; only the sample CSV is
   tracked in the repo.
 
+**Board tracker bugs found and fixed (3 bugs in `tools/generate_texel_corpus.ps1`):**
+- **Bug 1 — integer division rounding:** `[int]($sq / 8)` uses PowerShell's banker's
+  rounding (.NET `Math.Round` ties-to-even), so squares on files f/g/h computed the
+  wrong rank. Fixed at 5 locations to `($sq -shr 3)` (logical right-shift = floor divide).
+- **Bug 2 — slider wrap check:** `Can-SliderReach` computed `$prevF = $from % 8` (origin
+  file) once before the loop; after 2+ steps along a diagonal the stale value broke the
+  wrap guard. Fixed to `$prevF = ($cur - $d) % 8` (previous step's file).
+- **Bug 3 — case-insensitive comparison:** PowerShell `-ne`/`-eq` are case-insensitive.
+  `'n' -ne 'N'` evaluated to `False`, causing `Find-SourceSquare` to accept Black pieces
+  as candidates for White piece moves (e.g., Black knight on c6 returned as source for
+  White `Nxd4`). Fixed 3 comparisons: `$brd.sq[$s] -cne $piece` in `Find-SourceSquare`,
+  `$brd.sq[$s1] -ceq $myPawn` and `$brd.sq[$s2] -ceq $myPawn` in pawn push detection.
+  Verified via `_trace_game2.ps1`: WARNING `fromSq=18 sq[18]=n` was root cause; all 23
+  SANs parse cleanly after fix with no WARNING emitted.
+
+**Corpus generation (production run):**
+- PGN: `tools/results/selfplay_20260406_180535.pgn` (500 games, noob_3moves.epd book,
+  TC 10+0.1, Concurrency 4, 0 crashes / 0 time forfeits / 0 illegal moves)
+- Unique quiet positions extracted: **26,344**  (after deduplication)
+- Stockfish-annotated (depth 12): **22,431 positions** (exceeds ≥20k AC)
+- Output: `data/texel_corpus.csv` (3 columns: `fen`, `wdl_stockfish`, `game_result`)
+- Sample committed: `data/texel_corpus_sample.csv` (header + first 100 rows, real data)
+
+**Texel tuner run (production):**
+- Command: `java -Xmx4g -jar engine-tuner/target/engine-tuner-0.5.5-SNAPSHOT-shaded.jar`
+  `N/A 50000 100 --corpus data/texel_corpus.csv`
+- Loaded: 22,431 positions in 247 ms; 829 parameters; K = 0.500050 (calibrated)
+- Optimizer: Adam (fast, feature-based MSE path; 100 iterations × ~15 ms/iter)
+- **MSE start: 0.06782111 → MSE final: 0.05659863** (16.55% reduction, 100 iterations)
+- Updated `tuned_params.txt` written in working directory
+
 **Tests:** `engine-core,engine-tuner` verify: 176 run, 0 failures, 0 errors, 2 skipped.
 Build: `mvn -pl engine-core,engine-tuner verify` → BUILD SUCCESS.
 
+**Closes #130**
 **Phase: 12 — Data Pipeline**
