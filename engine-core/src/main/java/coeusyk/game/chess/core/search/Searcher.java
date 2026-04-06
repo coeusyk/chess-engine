@@ -45,7 +45,9 @@ public class Searcher {
     /** Material advantage (cp, EG values) above which draws are penalised with contempt. */
     static final int CONTEMPT_THRESHOLD = 300;
     /** Draw avoidance score (cp): winning side rates a draw at −DRAW_CONTEMPT, losing side at +DRAW_CONTEMPT. */
-    static final int DRAW_CONTEMPT = 20;
+    static final int DRAW_CONTEMPT = 50;
+    /** Per-instance contempt value (cp); overridden by UCI setoption Contempt. */
+    private int contempt = DRAW_CONTEMPT;
 
     // Correction history: maps pawn structure to a static-eval bias.
     // Stored at GRAIN scale; applied as: adjustedEval = rawEval + ch[color][key] / GRAIN.
@@ -267,6 +269,11 @@ public class Searcher {
 
     public void setSyzygy50MoveRule(boolean respect) {
         this.syzygy50MoveRule = respect;
+    }
+
+    /** Overrides the per-game contempt value (clamped to [0, 100] cp). */
+    public void setContempt(int contemptCp) {
+        this.contempt = Math.max(0, Math.min(100, contemptCp));
     }
 
     public SearchResult searchDepth(Board board, int depth) {
@@ -1568,21 +1575,24 @@ public class Searcher {
 
     /**
      * Score assigned to an avoidable draw (repetition or 50-move rule) with contempt.
-     * When one side has a material advantage of > {@link #CONTEMPT_THRESHOLD} cp (EG values),
-     * the winning side receives {@code -DRAW_CONTEMPT} (hates the draw) and the losing side
-     * receives {@code +DRAW_CONTEMPT} (prefers the draw). Balanced positions return 0.
+     * When one side has a material advantage of >= {@link #CONTEMPT_THRESHOLD} cp (EG values),
+     * the winning side receives {@code -contempt} (hates the draw) and the losing side
+     * receives {@code +contempt} (prefers the draw). Balanced positions return 0.
      * Uses fast bitCount material only — no PST, no mobility, so it's O(1).
+     * Pawns are included so that pawn-supported advantages are not under-counted.
      */
     int contemptScore(Board board) {
         int wMat = Long.bitCount(board.getWhiteQueens())  * 1040
                  + Long.bitCount(board.getWhiteRooks())   * 555
-                 + (Long.bitCount(board.getWhiteKnights()) + Long.bitCount(board.getWhiteBishops())) * 300;
+                 + (Long.bitCount(board.getWhiteKnights()) + Long.bitCount(board.getWhiteBishops())) * 300
+                 + Long.bitCount(board.getWhitePawns())   * 100;
         int bMat = Long.bitCount(board.getBlackQueens())  * 1040
                  + Long.bitCount(board.getBlackRooks())   * 555
-                 + (Long.bitCount(board.getBlackKnights()) + Long.bitCount(board.getBlackBishops())) * 300;
+                 + (Long.bitCount(board.getBlackKnights()) + Long.bitCount(board.getBlackBishops())) * 300
+                 + Long.bitCount(board.getBlackPawns())   * 100;
         int materialAdv = Piece.isWhite(board.getActiveColor()) ? (wMat - bMat) : (bMat - wMat);
-        if (materialAdv >  CONTEMPT_THRESHOLD) return -DRAW_CONTEMPT;
-        if (materialAdv < -CONTEMPT_THRESHOLD) return  DRAW_CONTEMPT;
+        if (materialAdv >= CONTEMPT_THRESHOLD) return -contempt;
+        if (materialAdv <= -CONTEMPT_THRESHOLD) return  contempt;
         return 0;
     }
 

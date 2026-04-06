@@ -168,4 +168,23 @@ class EndgameDrawAvoidanceTest {
         assertTrue(result.scoreCp() > 0,
                 "KQK with 50-move counter at 40 should return positive score, got " + result.scoreCp());
     }
+
+    /**
+     * Regression test for reopened issue #125.
+     * FEN is from an actual self-play game that drew by 3-fold repetition despite Black
+     * winning by force (Stockfish: mate in 29).  The original bug excluded pawns from the
+     * contemptScore() material count, making the advantage appear as exactly 300 cp (strict
+     * threshold check 300 &gt; 300 returned false) instead of the true 400 cp.
+     *
+     * <p>Black: rook (555) + knight (300) + pawn e6 (100) = 955 cp
+     * <p>White: rook (555) cp
+     * <p>materialAdv for Black to move = 400 &gt;= 300 → should return -DRAW_CONTEMPT
+     */
+    @Test
+    void contemptScoreCountsPawnsBlackWinning() {
+        // Black to move: rook + knight + pawn vs rook — pawn must be counted
+        Board pos = new Board("8/R7/4p3/8/2r1K3/5nk1/8/8 b - - 1 74");
+        assertEquals(-Searcher.DRAW_CONTEMPT, searcher.contemptScore(pos),
+                "Black to move with rook+knight+pawn advantage: pawn must be counted, contempt must fire");
+    }
 }

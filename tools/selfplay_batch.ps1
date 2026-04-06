@@ -93,9 +93,9 @@ if (-not $Java) { $Java = 'java' }
 $repoRoot = Split-Path -Parent $PSScriptRoot
 if (-not $JarPath) {
     $targetDir  = Join-Path (Join-Path $repoRoot "engine-uci") "target"
-    $candidates = Get-ChildItem -Path $targetDir -Filter "engine-uci-*.jar" -ErrorAction SilentlyContinue |
+    $candidates = @(Get-ChildItem -Path $targetDir -Filter "engine-uci-*.jar" -ErrorAction SilentlyContinue |
                   Where-Object { $_.Name -notlike "original-*" } |
-                  Sort-Object LastWriteTime -Descending
+                  Sort-Object LastWriteTime -Descending)
     if ($candidates.Count -gt 0) { $JarPath = $candidates[0].FullName }
 }
 if (-not $JarPath -or -not (Test-Path $JarPath)) {

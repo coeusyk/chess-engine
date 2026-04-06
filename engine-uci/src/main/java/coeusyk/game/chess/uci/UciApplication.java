@@ -47,6 +47,7 @@ public class UciApplication {
     private String bookFile = "Performance.bin";
     private int bookDepth = 20;
     private int bookVariance = 50;
+    private int contempt = 50;
 
     // Pondering
     private volatile TimeManager activePonderTimeManager = null;
@@ -139,6 +140,7 @@ public class UciApplication {
                 System.out.println("option name BookFile type string default Performance.bin");
                 System.out.println("option name BookDepth type spin default 20 min 0 max 50");
                 System.out.println("option name BookVariance type spin default 50 min 0 max 100");
+                System.out.println("option name Contempt type spin default 50 min 0 max 100");
                 System.out.println("uciok");
             } else if ("isready".equals(line)) {
                 System.out.println("readyok");
@@ -335,6 +337,11 @@ public class UciApplication {
                 openNewBook();
             } catch (NumberFormatException ignored) {
             }
+        } else if ("contempt".equals(optionNameLower)) {
+            try {
+                contempt = Math.max(0, Math.min(100, Integer.parseInt(valuePart)));
+            } catch (NumberFormatException ignored) {
+            }
         }
         // Unknown options are silently ignored per UCI spec.
     }
@@ -458,6 +465,7 @@ public class UciApplication {
                             Searcher helper = new Searcher();
                             helper.setSharedTranspositionTable(sharedTT);
                             helper.setPawnHashSizeMb(pawnHashSizeMb);
+                            helper.setContempt(contempt);
                             Board helperBoard = new Board(positionFen);
                             helperBoard.setSearchMode(true);
                             helper.iterativeDeepening(
@@ -495,6 +503,7 @@ public class UciApplication {
             Searcher searcher = new Searcher();
             searcher.setSharedTranspositionTable(sharedTT);
             searcher.setPawnHashSizeMb(pawnHashSizeMb);
+            searcher.setContempt(contempt);
             if (multiPV > 1) {
                 searcher.setMultiPV(multiPV);
             }
