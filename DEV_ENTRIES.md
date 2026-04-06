@@ -4959,3 +4959,38 @@ per-thread CPU affinity will see the expected 2T benefit.
 - Issue #127: CCRL submission checklist
 
 **Phase: 11 — Endgame Tablebase + Pre-CCRL Hardening**
+
+---
+
+### 2026-04-06 — Phase 11 Issue #127: CCRL Submission Checklist
+
+**What was done:** Created the three artifacts required for CCRL submission readiness.
+
+**docs/ccrl-submission.md:**
+- Engine name, version (`0.5.5-SNAPSHOT`), author, UCI options
+- Recommended TC (1+0.01 to 40/4), known limitations (Syzygy files not bundled), GitHub releases link
+
+**tools/pre_submission_check.ps1:**
+- Four-check gate: JAR exists, UCI handshake (`uci` → `uciok`), isready handshake (`isready` → `readyok`), bench determinism (two consecutive runs, node count must match)
+- Run result: **all 4 checks PASS** (`-BenchDepth 13`)
+- Bench output: **16 621 621 nodes** — deterministic across 3 consecutive runs
+
+**tools/selfplay_batch.ps1:**
+- 100/1000-game stability check using cutechess-cli; checks for crashes, time forfeits, illegal moves
+- Run result (20-game smoke run, TC 10+0.1, concurrency 4): **0 crashes / 0 time forfeits / 0 illegal moves**
+- Score after 20 games: Vex-A 6 – 4 – 10 draws (Elo difference: +34.9 ±111.3 — expected parity in self-play)
+- 1000-game batch at TC 40/4 to be run manually before CCRL submission
+
+**Tests added:** None (tooling only — no engine-core changes).
+
+**Measurements:**
+- Bench determinism: 16 621 621 nodes (3 consecutive runs, identical each time)
+- Selfplay 20-game: no crashes, no forfeits, no illegal moves
+- Perft: no code changes — not re-measured.
+- Elo vs. baseline: SPRT pending.
+
+**Next:**
+- Create PR from phase/11-endgame → develop
+- Run full 1000-game CCRL batch before submission
+
+**Phase: 11 — Endgame Tablebase + Pre-CCRL Hardening**
