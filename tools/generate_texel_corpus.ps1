@@ -80,14 +80,17 @@ if (-not (Test-Path $StockfishPath)) {
 
 Write-Host ""
 Write-Host "Validating Stockfish..." -ForegroundColor Cyan
-$sf = Start-Process -FilePath $StockfishPath -RedirectStandardInput 'NUL' `
-    -RedirectStandardOutput 'NUL' -PassThru -WindowStyle Hidden 2>$null
+$_sfTmpOut = [System.IO.Path]::GetTempFileName()
+$sf = Start-Process -FilePath $StockfishPath `
+    -RedirectStandardOutput $_sfTmpOut -NoNewWindow -PassThru 2>$null
 Start-Sleep -Milliseconds 500
 if ($sf.HasExited) {
+    Remove-Item $_sfTmpOut -ErrorAction SilentlyContinue
     Write-Error "Stockfish failed to start. Check the binary: $StockfishPath"
     exit 1
 }
 $sf.Kill(); $sf.WaitForExit()
+Remove-Item $_sfTmpOut -ErrorAction SilentlyContinue
 
 Write-Host "  Stockfish OK: $StockfishPath" -ForegroundColor Green
 

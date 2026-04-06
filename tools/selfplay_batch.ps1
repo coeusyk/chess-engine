@@ -35,12 +35,19 @@
 .PARAMETER JarPath
     Explicit path to the engine-uci fat JAR. If omitted the script auto-detects the
     newest engine-uci-*.jar (excluding original-*) in engine-uci/target/.
+
+.PARAMETER Openings
+    Path to an EPD or PGN opening book file. When provided, games start from random
+    positions drawn from this file (format=epd auto-detected for .epd files, otherwise pgn).
+    Strongly recommended for corpus generation to ensure position diversity.
+    Example: tools\quiet-labeled.epd
 #>
 param(
     [int]    $Games       = 200,
     [string] $TC          = "10+0.1",
     [int]    $Concurrency = 1,
-    [string] $JarPath     = ""
+    [string] $JarPath     = "",
+    [string] $Openings    = ""
 )
 
 Set-StrictMode -Version Latest
@@ -120,16 +127,25 @@ Write-Host "JAR         : $JarName"
 Write-Host "Games       : $Games"
 Write-Host "TC          : $TC"
 Write-Host "Concurrency : $Concurrency"
+Write-Host "Openings    : $(if ($Openings) { $Openings } else { 'startpos (no book)' })"
 Write-Host "PGN output  : $PgnOut"
 Write-Host ""
 
 # ---------------------------------------------------------------------------
 # Run cutechess-cli
 # ---------------------------------------------------------------------------
+$openingsArgs = @()
+if ($Openings) {
+    if (-not (Test-Path $Openings)) { Write-Error "Openings file not found: $Openings"; exit 1 }
+    $openFmt = if ($Openings -match '\.epd$') { 'epd' } else { 'pgn' }
+    $openingsArgs = @("-openings", "file=$(Resolve-Path $Openings)", "format=$openFmt", "order=random")
+}
+
 $ccArgs = @(
     "-engine", "name=Vex-A", "cmd=$Java", "arg=-jar", "arg=$JarPath", "proto=uci",
     "-engine", "name=Vex-B", "cmd=$Java", "arg=-jar", "arg=$JarPath", "proto=uci",
-    "-each", "tc=$TC",
+    "-each", "tc=$TC"
+) + $openingsArgs + @(
     "-games", "$Games",
     "-repeat",
     "-recover",

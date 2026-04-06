@@ -112,13 +112,16 @@ function Parse-Games([string[]]$lines) {
 }
 
 function Analyze-Game([string[]]$block) {
-    # Extracts result, starting FEN, draw type, and eval sequence from one game block.
+    # Extracts result, starting FEN, draw type, eval sequence, and last SAN move from one game block.
     $result    = $null
     $fen       = $null
     $drawType  = $null
+    $lastSan   = $null
     $evals     = [System.Collections.Generic.List[double]]::new()
     $moveNums  = [System.Collections.Generic.List[int]]::new()
     $currentMoveNum = 0
+    # SAN move token regex: handles normal moves, captures, promotions, check/mate, and castling
+    $SAN_REGEX = [regex]'^([NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?[+#]?|O-O(?:-O)?[+#]?)\s*'
 
     foreach ($line in $block) {
         # Headers
@@ -132,6 +135,13 @@ function Analyze-Game([string[]]$block) {
             if ($line.Substring($pos) -match '^(\d+)\.+\s*') {
                 $currentMoveNum = [int]$Matches[1]
                 $pos += $Matches[0].Length
+                continue
+            }
+            # Detect SAN move token (appears between move number and eval comment)
+            $m = $SAN_REGEX.Match($line.Substring($pos))
+            if ($m.Success -and $m.Index -eq 0 -and $line[$pos] -ne '{') {
+                $lastSan = $m.Groups[1].Value
+                $pos    += $m.Length
                 continue
             }
             # Eval comment {+1.23/9 0.45s, ...}
@@ -164,6 +174,7 @@ function Analyze-Game([string[]]$block) {
         Result   = $result
         Fen      = if ($fen) { $fen } else { $STANDARD_FEN }
         DrawType = $drawType
+        LastSan  = $lastSan
         Evals    = $evals.ToArray()
         MoveNums = $moveNums.ToArray()
     }
@@ -226,7 +237,8 @@ function Process-PgnFile([string]$pgnPath, [System.Collections.Generic.HashSet[s
         } else { $info.Fen }
 
         $label    = "draw_failure $filename move $($fail.MoveNum) eval $($fail.EvalCp)cp"
-        $line     = "$epd4 c0 `"$label`";"
+        $bmPart   = if ($info.LastSan) { "bm $($info.LastSan); " } else { "" }
+        $line     = "$epd4 $($bmPart)c0 `"$label`";"
         $writer.WriteLine($line)
         [void]$knownFens.Add($normFen)
         $failures++
