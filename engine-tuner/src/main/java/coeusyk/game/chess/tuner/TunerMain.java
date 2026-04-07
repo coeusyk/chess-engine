@@ -39,7 +39,7 @@ public final class TunerMain {
 
     public static void main(String[] args) throws Exception {
         if (args.length < 1) {
-            LOG.error("Usage: engine-tuner <dataset> [maxPositions] [maxIterations] [--optimizer adam|coordinate] [--no-recalibrate-k] [--freeze-psts] [--corpus <csv>]");
+        LOG.error("Usage: engine-tuner <dataset> [maxPositions] [maxIterations] [--optimizer adam|coordinate] [--no-recalibrate-k] [--corpus <csv>]");
             System.exit(1);
         }
 
@@ -48,7 +48,6 @@ public final class TunerMain {
         int    maxIters       = -1; // sentinel: use optimizer default
         String optimizer      = "adam";
         boolean recalibrateK  = true;
-        boolean freezePsts    = false; // #133: two-phase diagnostic — freeze PST gradients
         Path   corpusPath     = null;  // #130: optional Stockfish-annotated CSV
 
         // Parse remaining positional args and named flags
@@ -65,8 +64,6 @@ public final class TunerMain {
                 }
             } else if ("--no-recalibrate-k".equals(args[i])) {
                 recalibrateK = false;
-            } else if ("--freeze-psts".equals(args[i])) {
-                freezePsts = true;
             } else if ("--corpus".equals(args[i])) {
                 if (i + 1 >= args.length) {
                     LOG.error("--corpus requires a path argument: --corpus <csv_path>");
@@ -97,7 +94,6 @@ public final class TunerMain {
         LOG.info("[TunerMain] Max iters:     {}", maxIters);
         LOG.info("[TunerMain] Optimizer:     {}", optimizer);
         LOG.info("[TunerMain] Recalibrate K: {}", recalibrateK ? "yes" : "no (--no-recalibrate-k)");
-        LOG.info("[TunerMain] Freeze PSTs:   {}", freezePsts ? "yes (--freeze-psts, PST indices frozen)" : "no");
         if (corpusPath != null) {
             LOG.info("[TunerMain] Corpus CSV:    {} (overrides dataset for training data)", corpusPath.toAbsolutePath());
         }
@@ -133,7 +129,7 @@ public final class TunerMain {
         double[] tuned;
         if ("adam".equals(optimizer)) {
             LOG.info(String.format("[TunerMain] Running Adam gradient descent (K=%.6f, maxIters=%d, fast-path)...", k, maxIters));
-            tuned = GradientDescent.tuneWithFeatures(features, params, k, maxIters, recalibrateK, freezePsts);
+            tuned = GradientDescent.tuneWithFeatures(features, params, k, maxIters, recalibrateK);
         } else {
             LOG.info(String.format("[TunerMain] Running coordinate descent (K=%.6f, maxIters=%d)...", k, maxIters));
             tuned = CoordinateDescent.tune(positions, params, k, maxIters, recalibrateK);

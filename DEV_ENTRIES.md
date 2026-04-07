@@ -5481,7 +5481,17 @@ Two structural gaps in time allocation:
 **Built:**
 
 - **13.1 — `--freeze-psts` diagnostic flag (Issue #133):**
-  Added `boolean freezePsts` as a 6th parameter to `GradientDescent.tuneWithFeatures()`. When active, the Adam loop zeroes the gradient for PST indices [12..779] (`IDX_PST_START..IDX_PASSED_MG_START`) and keeps the accumulator aligned with the current parameter value (`accum[i] = params[i]; continue`). Original 5-param signature preserved as a convenience overload delegating to the 6-param version with `freezePsts=false`. Flag parsing added to `TunerMain.java` via `--freeze-psts` token. Log line emitted on startup. Decision gate: run tuner for 25 iterations with `--freeze-psts`; if `ATTACKER_WEIGHT` [800–803] rises above pinned minimums, PST absorption is primary cause → proceed to issue #132. If scalars remain pinned despite frozen PSTs, corpus coverage gap is primary cause → proceed to issue #135.
+  Added `boolean freezePsts` as a 6th parameter to `GradientDescent.tuneWithFeatures()`. When active, the Adam loop zeroes the gradient for PST indices [12..779] (`IDX_PST_START..IDX_PASSED_MG_START`) and keeps the accumulator aligned with the current parameter value (`accum[i] = params[i]; continue`). Original 5-param signature preserved as a convenience overload delegating to the 6-param version with `freezePsts=false`. Flag parsing added to `TunerMain.java` via `--freeze-psts` token. Log line emitted on startup.
+
+  **Diagnostic run (25 iterations, --freeze-psts, full corpus ~28k positions):**
+  - Before (EvalParams initial): ATK N=6, B=4, R=5, Q=7 · TEMPO=19 · BISHOP_PAIR MG=31 EG=51 · ROOK_OPEN MG=20 EG=10 · ROOK_7TH MG=9 EG=20
+  - After 25 iters with PSTs frozen: ATK N=2, B=2, R=2, Q=3 · TEMPO=5 · BISHOP_PAIR MG=15 EG=27 · ROOK_OPEN MG=0 EG=0 · ROOK_7TH MG=0 EG=0
+  - Final MSE=0.06540696; K stable at 0.500050 throughout.
+
+  **Decision gate result — Corpus coverage gap is primary cause.**
+  Scalars collapsed to their Math.max() minima even with PSTs fully frozen, indicating the corpus gradient for ATK_WEIGHT/TEMPO/rook bonuses is consistently negative — the current ~28k-position corpus does not contain sufficient positions where these scalar features differentiate game outcomes. PST absorption is also active (scalars go to 0 on unfrozen runs), but freezing PSTs alone does not rescue the signal. Both Issue #134 (barrier method to prevent future collapse) and Issue #135 (corpus augmentation with targeted FEN seeds) are required.
+
+  **Flag removed after diagnostic (AC4):** The `--freeze-psts` flag and its `boolean freezePsts` variable were deleted from `TunerMain.java`. The 6-parameter `GradientDescent.tuneWithFeatures(..., boolean freezePsts)` overload was removed; the body was merged into the canonical 5-parameter signature with the PST-freeze conditional excised. The diagnostic has served its purpose.
 
 - **13.4 — Bonferroni SPRT correction (Issue #136):**
   Added `[int]$BonferroniM = 0` parameter to `tools/sprt.ps1`. When `$BonferroniM > 1`, divides both `$Alpha` and `$Beta` by `$BonferroniM` and prints a correction notice. Created `docs/sprt-guidelines.md` with four sections: (1) Standard SPRT usage (H0=0, H1=50, α=0.05, β=0.05), (2) Bonferroni family-wise error correction formula with worked example for m=5, (3) H1 scaling guidance for batched tests, (4) SPRT as sequential test explanation.
