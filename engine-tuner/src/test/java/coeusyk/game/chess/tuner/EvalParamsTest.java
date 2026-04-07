@@ -63,15 +63,15 @@ class EvalParamsTest {
 
     @Test
     void newTermBoundsAreReasonable() {
-        assertEquals(0.0, EvalParams.PARAM_MIN[EvalParams.IDX_TEMPO], 1e-12);
+        assertEquals(5.0,  EvalParams.PARAM_MIN[EvalParams.IDX_TEMPO], 1e-12);
         assertEquals(30.0, EvalParams.PARAM_MAX[EvalParams.IDX_TEMPO], 1e-12);
-        assertEquals(0.0, EvalParams.PARAM_MIN[EvalParams.IDX_BISHOP_PAIR_MG], 1e-12);
+        assertEquals(15.0, EvalParams.PARAM_MIN[EvalParams.IDX_BISHOP_PAIR_MG], 1e-12);
         assertEquals(60.0, EvalParams.PARAM_MAX[EvalParams.IDX_BISHOP_PAIR_MG], 1e-12);
-        assertEquals(0.0, EvalParams.PARAM_MIN[EvalParams.IDX_BISHOP_PAIR_EG], 1e-12);
+        assertEquals(15.0, EvalParams.PARAM_MIN[EvalParams.IDX_BISHOP_PAIR_EG], 1e-12);
         assertEquals(80.0, EvalParams.PARAM_MAX[EvalParams.IDX_BISHOP_PAIR_EG], 1e-12);
-        assertEquals(0.0, EvalParams.PARAM_MIN[EvalParams.IDX_ROOK_7TH_MG], 1e-12);
+        assertEquals(0.0,  EvalParams.PARAM_MIN[EvalParams.IDX_ROOK_7TH_MG], 1e-12);
         assertEquals(50.0, EvalParams.PARAM_MAX[EvalParams.IDX_ROOK_7TH_MG], 1e-12);
-        assertEquals(0.0, EvalParams.PARAM_MIN[EvalParams.IDX_ROOK_7TH_EG], 1e-12);
+        assertEquals(0.0,  EvalParams.PARAM_MIN[EvalParams.IDX_ROOK_7TH_EG], 1e-12);
         assertEquals(50.0, EvalParams.PARAM_MAX[EvalParams.IDX_ROOK_7TH_EG], 1e-12);
     }
 
