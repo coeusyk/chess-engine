@@ -5390,3 +5390,16 @@ Updated SearchRegressionTest.java: E1 expected move f1d3->f1f6 and E2 e1e2->f1f6
 | CCRL submission completed | PASS |
 
 Phase 11/12 COMPLETE
+
+#### CCRL Submission — Vex 0.5.4
+
+- **Date:** 2026-04-08
+- **Forum URL:** http://kirill-kryukov.com/chess/discussion-board/viewforum.php?f=7
+- **Submission instructions:** http://kirill-kryukov.com/chess/discussion-board/viewtopic.php?t=11975 ("How to get your engine tested for CCRL", by Graham Banks)
+- **Engine submitted:** Vex 0.5.4
+- **Download link:** https://github.com/coeusyk/chess-engine/releases/tag/v0.5.4
+- **Author:** Yash Karecha (coeusyk), India
+- **Type:** Open source, Java engine (requires Java 17+)
+- **Run command:** `java -jar engine-uci-0.5.4.jar`
+- **Estimated strength:** ~2800–2900 Elo (CCRL scale); internal SPRT vs v0.4.9: +149 Elo ±99, 24W-7L-11D
+- **Forum post template:** see `docs/ccrl-submission.md` § "Where to Submit"

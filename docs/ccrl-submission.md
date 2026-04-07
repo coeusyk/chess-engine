@@ -136,3 +136,49 @@ The script:
 - **KBN vs K probe verification (#126):** Confirmed that 4-piece positions are
   within the default 5-piece limit. Probe plumbing is correct; Syzygy files
   required for actual conversion.
+
+---
+
+## Where to Submit
+
+Post a new topic in the **CCRL Public Forum**:
+
+> **URL:** http://kirill-kryukov.com/chess/discussion-board/viewforum.php?f=7
+
+For submission instructions, see the pinned post:
+
+> **"How to get your engine tested for CCRL":**
+> http://kirill-kryukov.com/chess/discussion-board/viewtopic.php?t=11975
+
+Required information (per Graham Banks, CCRL):
+- Engine name and version
+- Estimated strength
+- Author name and nationality
+- Open or closed source; homepage; download link
+- Executable files (avx2 preferred); for Java engines, the JAR + run command
+
+### Forum Post Template for Vex 0.5.4
+
+**Title:** New engine: Vex 0.5.4 (Java, open source)
+
+**Body:**
+
+```
+Engine:            Vex 0.5.4
+Author:            Yash Karecha (coeusyk), India
+Open source:       Yes — https://github.com/coeusyk/chess-engine
+Download:          https://github.com/coeusyk/chess-engine/releases/tag/v0.5.4
+Run command:       java -jar engine-uci-0.5.4.jar  (requires Java 17+)
+Estimated strength ~2800–2900 (CCRL scale)
+                   (internal SPRT vs v0.4.9: +149 Elo ±99, 24W-7L-11D, LLR 2.95)
+Settings:          Hash 128 MiB, 1 thread
+Architecture:      Bitboard, Negamax/PVS, aspiration windows, Lazy SMP,
+                   Syzygy WDL+DTZ (5-piece)
+Evaluation:        HCE tapered mid/endgame, Texel-tuned
+```
+
+### Submission record
+
+- **Submitted:** 2026-04-08
+- **Forum:** http://kirill-kryukov.com/chess/discussion-board/viewforum.php?f=7
+- **Instructions post:** http://kirill-kryukov.com/chess/discussion-board/viewtopic.php?t=11975
