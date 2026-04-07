@@ -6,8 +6,7 @@
 |----------------|--------------------------------------------------------------------|
 | Engine name    | Vex                                                                |
 | Author         | Yash Karecha (coeusyk)                                             |
-| Repository     | https://github.com/coeusyk/chess-engine                            |
-| Releases page  | https://github.com/coeusyk/chess-engine/releases                  |
+| Repository     | Private (closed source; JAR distributed directly to testers)       |
 | Language       | Java 17+                                                           |
 | Architecture   | Bitboard, Negamax + Alpha-Beta, PVS, aspiration windows, Lazy SMP |
 | Evaluation     | Hand-crafted (HCE), tapered mid/endgame, Texel-tuned parameters   |
@@ -30,6 +29,15 @@ java -jar engine-uci-<version>.jar
 ```
 
 **Requirements:** Java 17 or later (Java 21 recommended). No Maven, no classpath setup.
+
+**For CCRL testers:** The repository is private. The JAR must be shared directly
+(e.g. by email attachment or file-sharing service). The CCRL tester does not need
+the source code — only the JAR and Java 17+ on their machine.
+
+**On the avx2 requirement:** CCRL prefers avx2-compiled native executables. Vex is
+a JVM-based engine and does not compile to a native binary. The JVM will use
+available SIMD/avx2 hardware automatically at run time via JIT. No special build
+step is required by the tester.
 
 ---
 
@@ -150,35 +158,52 @@ For submission instructions, see the pinned post:
 > **"How to get your engine tested for CCRL":**
 > http://kirill-kryukov.com/chess/discussion-board/viewtopic.php?t=11975
 
-Required information (per Graham Banks, CCRL):
-- Engine name and version
-- Estimated strength
-- Author name and nationality
-- Open or closed source; homepage; download link
-- Executable files (avx2 preferred); for Java engines, the JAR + run command
+Required information (per Graham Banks, CCRL — exact fields from t=11975):
+1. Engine name and version number
+2. Estimated strength
+3. Author name and nationality
+4. Open source or closed source
+5. Homepage (if any)
+6. For closed source: credit all third-party code used
+7. Executable files (avx2 preferred). For Java engines: the fat JAR + run command.
+   The CCRL tester must have Java 17+ installed.
 
-### Forum Post Template for Vex 0.5.4
+**On open/closed source:** The repository is private. The engine is built from
+original source code only — no proprietary chess code, no licensed third-party
+chess logic. Standard Maven dependencies (Spring Boot, JUnit, slf4j) are used
+for the UCI interface and tests under their respective open-source licences.
 
-**Title:** New engine: Vex 0.5.4 (Java, open source)
+### Forum Post Template for Vex 0.5.5
+
+_(Update version number once the release workflow completes.)_
+
+**Title:** New engine: Vex 0.5.5 (Java, closed source)
 
 **Body:**
 
 ```
-Engine:            Vex 0.5.4
+Engine:            Vex 0.5.5
 Author:            Yash Karecha (coeusyk), India
-Open source:       Yes — https://github.com/coeusyk/chess-engine
-Download:          https://github.com/coeusyk/chess-engine/releases/tag/v0.5.4
-Run command:       java -jar engine-uci-0.5.4.jar  (requires Java 17+)
+Open source:       No (closed source, private repository)
+Homepage:          N/A
+Download:          JAR provided directly upon request (see attachment / PM)
+Run command:       java -jar engine-uci-0.5.5.jar  (requires Java 17+)
 Estimated strength ~2800–2900 (CCRL scale)
                    (internal SPRT vs v0.4.9: +149 Elo ±99, 24W-7L-11D, LLR 2.95)
 Settings:          Hash 128 MiB, 1 thread
 Architecture:      Bitboard, Negamax/PVS, aspiration windows, Lazy SMP,
                    Syzygy WDL+DTZ (5-piece)
 Evaluation:        HCE tapered mid/endgame, Texel-tuned
+Note:              Java engine — JVM handles SIMD/avx2 at run time via JIT.
+                   Tester needs Java 17+ (Java 21 recommended).
 ```
 
 ### Submission record
 
-- **Submitted:** 2026-04-08
+| Version | Submitted   | Forum thread |
+|---------|-------------|----------------------------------------------------|
+| 0.5.4   | 2026-04-08  | http://kirill-kryukov.com/chess/discussion-board/viewforum.php?f=7 |
+| 0.5.5   | (pending)   | — |
+
 - **Forum:** http://kirill-kryukov.com/chess/discussion-board/viewforum.php?f=7
 - **Instructions post:** http://kirill-kryukov.com/chess/discussion-board/viewtopic.php?t=11975
