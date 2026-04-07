@@ -5459,3 +5459,17 @@ Two structural gaps in time allocation:
 - `stabilityScaleClampedToLegalRange`: 0.1 → 0.4, 5.0 → 2.0.
 - `shouldStopSoftRespectsStabilityScale`: low scale does not fire immediately.
 - Full suite: 160 run, 0 fail, 2 skipped.
+
+**Measurements / SPRT:**
+- SPRT: Vex-new (0.5.5-SNAPSHOT, bb68366) vs Vex-old (v0.4.9 baseline), TC=5+0.05
+- Parameters: ELO0=0, ELO1=50, alpha=0.05, beta=0.05
+- Result: **H1 accepted** — LLR 3.08 (104.4%), lbound=-2.94, ubound=2.94
+- Score: 29W – 9L – 8D [0.717] over 46 games
+- Elo: +161.8 ± 103.3, LOS: 99.9%, DrawRatio: 17.4%
+- Old engine time forfeits: 19 losses (9 "Black loses on time" + 10 "White loses on time") — confirms opening over-allocation bug in flat divisor
+- New engine time forfeits: 0
+
+**Next:**
+- Update baseline reference: copy `engine-uci-0.5.5-SNAPSHOT.jar` → `tools/engine-uci-0.5.5.jar`
+- Bump pom.xml version 0.5.5-SNAPSHOT → 0.5.5 and release
+- Continue Phase 12 data pipeline work
