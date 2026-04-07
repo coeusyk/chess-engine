@@ -66,6 +66,7 @@ public class Searcher {
     private long leafNodes;
     private long quiescenceNodes;
     private long checkExtensionsApplied;
+    private long matingThreatExtensionsApplied;
     private int seldepth;
     private long betaCutoffs;
     private long firstMoveCutoffs;
@@ -345,6 +346,7 @@ public class Searcher {
 
         aborted = false;
         checkExtensionsApplied = 0;
+        matingThreatExtensionsApplied = 0;
         searchStartNanos = System.nanoTime();
         transpositionTable.resetStats();
         java.util.Arrays.fill(staticEvalStack, 0);
@@ -726,7 +728,17 @@ public class Searcher {
         }
 
         if (effectiveDepth == 0) {
-            return quiescence(board, alpha, beta, ply, 0, shouldStopHard);
+            // Mating-threat leaf extension: when alpha is already in mate territory
+            // (a forced mate was found in another branch), extend 1 ply to check
+            // whether this branch also resolves the position — avoids quiet-move
+            // horizon blindness near a forced mating sequence.
+            if (currentExtensionsUsed < maxExtensions && alpha >= MATE_SCORE - MAX_PLY) {
+                effectiveDepth = 1;
+                currentExtensionsUsed++;
+                matingThreatExtensionsApplied++;
+            } else {
+                return quiescence(board, alpha, beta, ply, 0, shouldStopHard);
+            }
         }
 
         long zobrist = board.getZobristHash();
