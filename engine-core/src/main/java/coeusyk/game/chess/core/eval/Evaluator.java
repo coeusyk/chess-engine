@@ -72,28 +72,28 @@ public class Evaluator {
         PHASE_WEIGHTS[Piece.Queen]  = 4;
 
         MG_MATERIAL[Piece.Pawn]   = 100;
-        MG_MATERIAL[Piece.Knight] = 304;
-        MG_MATERIAL[Piece.Bishop] = 331;
-        MG_MATERIAL[Piece.Rook]   = 469;
-        MG_MATERIAL[Piece.Queen]  = 1094;
+        MG_MATERIAL[Piece.Knight] = 391;
+        MG_MATERIAL[Piece.Bishop] = 428;
+        MG_MATERIAL[Piece.Rook]   = 558;
+        MG_MATERIAL[Piece.Queen]  = 1200;
         MG_MATERIAL[Piece.King]   = 0;
 
-        EG_MATERIAL[Piece.Pawn]   = 70;
-        EG_MATERIAL[Piece.Knight] = 200;
-        EG_MATERIAL[Piece.Bishop] = 215;
-        EG_MATERIAL[Piece.Rook]   = 440;
-        EG_MATERIAL[Piece.Queen]  = 885;
+        EG_MATERIAL[Piece.Pawn]   = 89;
+        EG_MATERIAL[Piece.Knight] = 287;
+        EG_MATERIAL[Piece.Bishop] = 311;
+        EG_MATERIAL[Piece.Rook]   = 555;
+        EG_MATERIAL[Piece.Queen]  = 1040;
         EG_MATERIAL[Piece.King]   = 0;
 
-        MG_MOBILITY[Piece.Knight] = 3;
-        MG_MOBILITY[Piece.Bishop] = 3;
-        MG_MOBILITY[Piece.Rook]   = 5;
-        MG_MOBILITY[Piece.Queen]  = 5;
+        MG_MOBILITY[Piece.Knight] = 7;
+        MG_MOBILITY[Piece.Bishop] = 8;
+        MG_MOBILITY[Piece.Rook]   = 7;
+        MG_MOBILITY[Piece.Queen]  = 2;
 
-        EG_MOBILITY[Piece.Knight] = 0;
-        EG_MOBILITY[Piece.Bishop] = 0;
-        EG_MOBILITY[Piece.Rook]   = 0;
-        EG_MOBILITY[Piece.Queen]  = 0;
+        EG_MOBILITY[Piece.Knight] = 1;
+        EG_MOBILITY[Piece.Bishop] = 3;
+        EG_MOBILITY[Piece.Rook]   = 2;
+        EG_MOBILITY[Piece.Queen]  = 6;
 
         MOBILITY_BASELINE[Piece.Knight] = 4;
         MOBILITY_BASELINE[Piece.Bishop] = 7;

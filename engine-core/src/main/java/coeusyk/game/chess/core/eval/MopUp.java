@@ -38,8 +38,8 @@ public final class MopUp {
         int loseKingSq = Long.numberOfTrailingZeros(
                 whiteWinning ? board.getBlackKing() : board.getWhiteKing());
 
-        int edgeBonus = CENTER_MANHATTAN_DISTANCE[loseKingSq] * 20;
-        int proximityBonus = (14 - manhattanDistance(winKingSq, loseKingSq)) * 8;
+        int edgeBonus = CENTER_MANHATTAN_DISTANCE[loseKingSq] * 10;
+        int proximityBonus = (14 - manhattanDistance(winKingSq, loseKingSq)) * 4;
 
         int mopUp = edgeBonus + proximityBonus;
         return whiteWinning ? mopUp : -mopUp;

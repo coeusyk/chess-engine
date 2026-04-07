@@ -109,27 +109,27 @@ class EvaluatorTest {
         // Tables stored in display order: a8=0, h1=63
         // Board also uses a8=0, so white PST lookup is direct (no mirror).
         // White knight on e4 → board sq 36 → table index 36
-        // MG_KNIGHT row 4 (32-39): {15,3,24,-28,18,14,5,-4} → col 4 = 18 (Texel run-2)
-        assertEquals(18, PieceSquareTables.mg(2, 36));
-        // EG_KNIGHT row 4 (32-39): {-61,-54,-33,51,63,-49,-61,5} → col 4 = 63 (Texel run-2)
-        assertEquals(63, PieceSquareTables.eg(2, 36));
-        // MG_PAWN row 4 (32-39): {-51,-43,-29,-29,-8,-7,-17,-34} → col 4 = -8 (Texel run-2)
-        assertEquals(-8, PieceSquareTables.mg(1, 36));
+        // MG_KNIGHT row 4 (32-39): {-13,8,9,10,15,11,14,-10} → col 4 = 15 (v0.5.4)
+        assertEquals(15, PieceSquareTables.mg(2, 36));
+        // EG_KNIGHT row 4 (32-39): {-24,-13,9,19,10,11,0,-27} → col 4 = 10 (v0.5.4)
+        assertEquals(10, PieceSquareTables.eg(2, 36));
+        // MG_PAWN row 4 (32-39): {-30,-27,-5,6,12,9,-10,-31} → col 4 = 12 (v0.5.4)
+        assertEquals(12, PieceSquareTables.mg(1, 36));
     }
 
     @Test
     void mgAndEgMaterialValuesAreCorrect() {
         assertEquals(100, Evaluator.mgMaterialValue(1));   // Pawn   (unchanged)
-        assertEquals(304, Evaluator.mgMaterialValue(2));   // Knight (Texel run-2)
-        assertEquals(331, Evaluator.mgMaterialValue(3));   // Bishop (Texel run-2)
-        assertEquals(469, Evaluator.mgMaterialValue(4));   // Rook   (Texel run-2)
-        assertEquals(1094, Evaluator.mgMaterialValue(5));  // Queen  (Texel run-2)
+        assertEquals(391, Evaluator.mgMaterialValue(2));   // Knight (v0.5.4)
+        assertEquals(428, Evaluator.mgMaterialValue(3));   // Bishop (v0.5.4)
+        assertEquals(558, Evaluator.mgMaterialValue(4));   // Rook   (v0.5.4)
+        assertEquals(1200, Evaluator.mgMaterialValue(5));  // Queen  (v0.5.4)
 
-        assertEquals(70, Evaluator.egMaterialValue(1));    // Pawn   (Texel run-2)
-        assertEquals(200, Evaluator.egMaterialValue(2));   // Knight (Texel run-2)
-        assertEquals(215, Evaluator.egMaterialValue(3));   // Bishop (Texel run-2)
-        assertEquals(440, Evaluator.egMaterialValue(4));   // Rook   (Texel run-2)
-        assertEquals(885, Evaluator.egMaterialValue(5));   // Queen  (Texel run-2)
+        assertEquals(89, Evaluator.egMaterialValue(1));    // Pawn   (v0.5.4)
+        assertEquals(287, Evaluator.egMaterialValue(2));   // Knight (v0.5.4)
+        assertEquals(311, Evaluator.egMaterialValue(3));   // Bishop (v0.5.4)
+        assertEquals(555, Evaluator.egMaterialValue(4));   // Rook   (v0.5.4)
+        assertEquals(1040, Evaluator.egMaterialValue(5));  // Queen  (v0.5.4)
     }
 
     @Test
@@ -252,15 +252,15 @@ class EvaluatorTest {
 
     @Test
     void passedPawnBonusScalesByRank() {
-        // e7 = sq 12 (row 1, rank 7): bonusIndex 6 → MG 0, EG 30 (Texel run-2: PASSED_MG all 0)
-        // e3 = sq 44 (row 5, rank 3): bonusIndex 2 → MG 0, EG 0
+        // e7 = sq 12 (row 1, rank 7): bonusIndex 6 → PASSED_MG[6]=52, PASSED_EG[6]=129 (v0.5.4)
+        // e3 = sq 44 (row 5, rank 3): bonusIndex 2 → PASSED_MG[2]=4, PASSED_EG[2]=11 (v0.5.4)
         long e7 = 1L << 12;
         long e3 = 1L << 44;
         int[] scoreHigh = PawnStructure.evaluate(e7, 0L);
         int[] scoreLow = PawnStructure.evaluate(e3, 0L);
-        // PASSED_MG is all-zero after Texel run-2 (PSTs absorb pawn advancement signal);
-        // both ranks give the same MG score (isolated pawn penalty = -ISOLATED_MG each).
-        assertEquals(scoreHigh[0], scoreLow[0], "PASSED_MG all-zero: equal MG for isolated passed pawns at any rank");
+        // PASSED_MG is non-zero in v0.5.4; rank 7 bonus (index 6 = 52) > rank 3 (index 2 = 4).
+        assertTrue(scoreHigh[0] > scoreLow[0],
+                "Rank 7 passed pawn should have higher MG bonus than rank 3");
         assertTrue(scoreHigh[1] > scoreLow[1],
                 "Rank 7 passed pawn should have higher EG bonus than rank 3");
     }
@@ -293,8 +293,8 @@ class EvaluatorTest {
         int[] scoreDoubled = PawnStructure.evaluate(doubled, 0L);
         int[] scoreSpread = PawnStructure.evaluate(spread, 0L);
 
-        assertTrue(scoreSpread[0] > scoreDoubled[0],
-                "Doubled pawns MG: spread > doubled (DOUBLED_MG=17, Texel run-2)");
+        assertTrue(scoreSpread[0] >= scoreDoubled[0],
+                "Doubled pawns MG: spread >= doubled (DOUBLED_MG=0 in v0.5.4; EG penalty=13 enforces correctness)");
         assertTrue(scoreSpread[1] > scoreDoubled[1],
                 "Doubled pawns should score lower in EG");
     }

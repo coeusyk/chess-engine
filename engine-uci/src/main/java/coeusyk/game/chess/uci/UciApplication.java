@@ -469,7 +469,6 @@ public class UciApplication {
                             Searcher helper = new Searcher();
                             helper.setSharedTranspositionTable(sharedTT);
                             helper.setPawnHashSizeMb(pawnHashSizeMb);
-                            helper.setContempt(contempt);
                             Board helperBoard = new Board(positionFen);
                             helperBoard.setSearchMode(true);
                             helper.iterativeDeepening(
@@ -507,7 +506,6 @@ public class UciApplication {
             Searcher searcher = new Searcher();
             searcher.setSharedTranspositionTable(sharedTT);
             searcher.setPawnHashSizeMb(pawnHashSizeMb);
-            searcher.setContempt(contempt);
             if (multiPV > 1) {
                 searcher.setMultiPV(multiPV);
             }

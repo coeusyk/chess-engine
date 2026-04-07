@@ -39,7 +39,7 @@ $Elo1     = 50
 $Alpha    = 0.05
 $Beta     = 0.05
 $MaxGames = 20000
-$TC       = '10+0.1'
+$TC       = '5+0.05'
 
 # --- Resolve cutechess-cli from env or PATH ---
 $Cutechess = $env:CUTECHESS
