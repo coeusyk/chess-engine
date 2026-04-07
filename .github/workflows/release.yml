@@ -24,10 +24,10 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout master
+      - name: Checkout develop
         uses: actions/checkout@v4
         with:
-          ref: master
+          ref: develop
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -99,7 +99,7 @@ jobs:
           git commit -m "chore(release): bump to ${{ steps.versions.outputs.next }}"
 
       - name: Push commits and tag
-        run: git push origin master --follow-tags
+        run: git push origin develop --follow-tags
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
