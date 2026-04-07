@@ -44,6 +44,12 @@
     Sigmoid scaling constant K = 400 / k_calibrated.
     Default: 570 (matches TunerEvaluator.java with k_calibrated ≈ 0.701544).
 
+.PARAMETER CustomFens
+    Optional path to an EPD file (one FEN per line, # comments ignored) containing
+    seed positions that ensure specific structural features are represented in the
+    corpus. Each FEN is annotated with Stockfish at -Depth and appended to the
+    output CSV. Useful for fixing coverage gaps found via --coverage-audit.
+
 .EXAMPLE
     .\tools\generate_texel_corpus.ps1 `
         -StockfishPath "C:\Tools\stockfish-windows-x86-64-avx2.exe" `
@@ -59,7 +65,8 @@ param(
     [int]   $Depth          = 12,
     [string]$OutputCsv      = (Join-Path $PSScriptRoot ".." "data" "texel_corpus.csv"),
     [int]   $MaxPositions   = 50000,
-    [double]$K              = 570.0
+    [double]$K              = 570.0,
+    [string]$CustomFens     = ""  # Optional path to EPD seed file for coverage augmentation
 )
 
 Set-StrictMode -Version Latest
@@ -579,6 +586,7 @@ Write-Host "Depth        : $Depth"
 Write-Host "Max positions: $MaxPositions"
 Write-Host "K (sigmoid)  : $K  [K = 400/k_calibrated ≈ 400/0.701544]"
 Write-Host "Output CSV   : $OutputCsv"
+if ($CustomFens -ne '') { Write-Host "Custom FENs  : $CustomFens" }
 Write-Host ""
 
 # ── Step 1: Extract quiet positions from all PGN files ──
@@ -699,6 +707,78 @@ $allAnnotated = [System.Collections.Generic.List[PSCustomObject]]::new()
 foreach ($batch in $annotated) { foreach ($r in $batch) { $allAnnotated.Add($r) } }
 
 Write-Host "Annotated $($allAnnotated.Count) positions."
+
+# ── Step 1b: Load custom seed FENs (if provided) and annotate with Stockfish ──
+if ($CustomFens -ne '') {
+    if (-not (Test-Path $CustomFens -PathType Leaf)) {
+        Write-Warning "--custom-fens file not found: $CustomFens (skipping)"
+    } else {
+        Write-Host "Step 1b: Loading custom FENs from $CustomFens..." -ForegroundColor Cyan
+        $seedFens = Get-Content $CustomFens | Where-Object { $_ -match '\S' -and $_ -notmatch '^\s*#' }
+        Write-Host "  Found $($seedFens.Count) seed FENs"
+
+        # Start a single Stockfish process for seed annotation
+        $seedPsi = [System.Diagnostics.ProcessStartInfo]::new()
+        $seedPsi.FileName               = $StockfishPath
+        $seedPsi.UseShellExecute        = $false
+        $seedPsi.RedirectStandardInput  = $true
+        $seedPsi.RedirectStandardOutput = $true
+        $seedPsi.CreateNoWindow         = $true
+        $seedProc = [System.Diagnostics.Process]::new()
+        $seedProc.StartInfo = $seedPsi
+        [void]$seedProc.Start()
+        $seedProc.StandardInput.WriteLine('uci')
+        $seedProc.StandardInput.WriteLine('isready')
+        $seedProc.StandardInput.Flush()
+        $stimo = [DateTime]::UtcNow.AddSeconds(10)
+        while ([DateTime]::UtcNow -lt $stimo) {
+            $sl = $seedProc.StandardOutput.ReadLine()
+            if ($null -eq $sl -or $sl -eq 'readyok') { break }
+        }
+
+        $seedAdded = 0
+        foreach ($fen in $seedFens) {
+            $fen = $fen.Trim()
+            # Ensure FEN has move counters (append '0 1' if missing)
+            $fenParts = $fen -split '\s+'
+            if ($fenParts.Count -lt 6) {
+                $fen = "$fen 0 1"
+            }
+            try {
+                $seedProc.StandardInput.WriteLine("position fen $fen")
+                $seedProc.StandardInput.WriteLine("go depth $Depth")
+                $seedProc.StandardInput.Flush()
+
+                $evalCp  = $null
+                $stimo2  = [DateTime]::UtcNow.AddSeconds(60)
+                while ([DateTime]::UtcNow -lt $stimo2) {
+                    $line = $seedProc.StandardOutput.ReadLine()
+                    if ($null -eq $line) { break }
+                    if ($line -match 'info.*\bscore cp (-?\d+)') { $evalCp = [int]$Matches[1] }
+                    if ($line -match 'info.*\bscore mate (-?\d+)') {
+                        $evalCp = if ([int]$Matches[1] -gt 0) { 30000 } else { -30000 }
+                    }
+                    if ($line -match '^bestmove') { break }
+                }
+                if ($null -ne $evalCp) {
+                    $wdl = 1.0 / (1.0 + [Math]::Pow(10.0, -[double]$evalCp / $K))
+                    $allAnnotated.Add([PSCustomObject]@{
+                        Fen        = $fen
+                        Wdl        = [Math]::Round($wdl, 6)
+                        GameResult = 0.5   # No game result for seed positions — use draw
+                    })
+                    $seedAdded++
+                }
+            } catch {
+                Write-Warning "  Seed annotation error for FEN: $fen — $_"
+            }
+        }
+        try { $seedProc.StandardInput.WriteLine('quit'); $seedProc.StandardInput.Flush() } catch {}
+        $seedProc.WaitForExit(3000) | Out-Null
+        if (-not $seedProc.HasExited) { try { $seedProc.Kill() } catch {} }
+        Write-Host "  Added $seedAdded annotated seed positions." -ForegroundColor Green
+    }
+}
 
 # ── Step 3: Write CSV ──
 Write-Host ""

@@ -240,6 +240,74 @@ public final class EvalParams {
     private EvalParams() {}
 
     /**
+     * Returns a human-readable name for the parameter at the given index.
+     * Used by coverage-audit output and diagnostics.
+     */
+    public static String getParamName(int idx) {
+        if (idx < IDX_PST_START) {
+            String[] matNames = {
+                "PAWN_MG",   "PAWN_EG",   "KNIGHT_MG",  "KNIGHT_EG",
+                "BISHOP_MG", "BISHOP_EG", "ROOK_MG",    "ROOK_EG",
+                "QUEEN_MG",  "QUEEN_EG",  "KING_MG",    "KING_EG"
+            };
+            return idx < matNames.length ? matNames[idx] : "MAT[" + idx + "]";
+        }
+        if (idx < IDX_PASSED_MG_START) {
+            int rel     = idx - IDX_PST_START;
+            int pieceIdx = rel / 128;
+            int phaseIdx = (rel % 128) / 64;
+            int sq       = rel % 64;
+            String[] ptNames = { "PAWN", "KNIGHT", "BISHOP", "ROOK", "QUEEN", "KING" };
+            String[] phases  = { "MG", "EG" };
+            return ptNames[pieceIdx] + "_PST_" + phases[phaseIdx] + "[" + sq + "]";
+        }
+        switch (idx) {
+            case 780: case 781: case 782: case 783: case 784: case 785:
+                return "PASSED_MG_" + (idx - IDX_PASSED_MG_START + 1);
+            case 786: case 787: case 788: case 789: case 790: case 791:
+                return "PASSED_EG_" + (idx - IDX_PASSED_EG_START + 1);
+            case 792: return "ISOLATED_MG";
+            case 793: return "ISOLATED_EG";
+            case 794: return "DOUBLED_MG";
+            case 795: return "DOUBLED_EG";
+            case 796: return "SHIELD_RANK2";
+            case 797: return "SHIELD_RANK3";
+            case 798: return "OPEN_FILE";
+            case 799: return "HALF_OPEN_FILE";
+            case 800: return "ATK_KNIGHT";
+            case 801: return "ATK_BISHOP";
+            case 802: return "ATK_ROOK";
+            case 803: return "ATK_QUEEN";
+            case 804: return "MOB_MG_KNIGHT";
+            case 805: return "MOB_MG_BISHOP";
+            case 806: return "MOB_MG_ROOK";
+            case 807: return "MOB_MG_QUEEN";
+            case 808: return "MOB_EG_KNIGHT";
+            case 809: return "MOB_EG_BISHOP";
+            case 810: return "MOB_EG_ROOK";
+            case 811: return "MOB_EG_QUEEN";
+            case 812: return "TEMPO";
+            case 813: return "BISHOP_PAIR_MG";
+            case 814: return "BISHOP_PAIR_EG";
+            case 815: return "ROOK_7TH_MG";
+            case 816: return "ROOK_7TH_EG";
+            case 817: return "ROOK_OPEN_FILE_MG";
+            case 818: return "ROOK_OPEN_FILE_EG";
+            case 819: return "ROOK_SEMI_OPEN_MG";
+            case 820: return "ROOK_SEMI_OPEN_EG";
+            case 821: return "KNIGHT_OUTPOST_MG";
+            case 822: return "KNIGHT_OUTPOST_EG";
+            case 823: return "CONNECTED_PAWN_MG";
+            case 824: return "CONNECTED_PAWN_EG";
+            case 825: return "BACKWARD_PAWN_MG";
+            case 826: return "BACKWARD_PAWN_EG";
+            case 827: return "ROOK_BEHIND_PASSER_MG";
+            case 828: return "ROOK_BEHIND_PASSER_EG";
+            default:  return "PARAM[" + idx + "]";
+        }
+    }
+
+    /**
      * Extracts current hardcoded evaluation constants into a flat double[] array.
      * These are the PeSTO defaults as used by the live Evaluator.
      * After a tuning run, copy the tuned values back into PieceSquareTables,

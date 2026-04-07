@@ -320,6 +320,48 @@ public final class GradientDescent {
     }
 
     /**
+     * Computes the diagonal of the empirical Fisher information matrix.
+     *
+     * <p>For each parameter i: {@code fisherDiag[i] = mean_p( (∂L/∂p_i)^2 )}.
+     * A low value indicates that the parameter has little gradient signal across the
+     * corpus — i.e. the corpus is "starved" of positions that exercise feature i.
+     *
+     * @param features precomputed position features
+     * @param params   current parameter array
+     * @param k        sigmoid scaling constant
+     * @return array of length {@code params.length}: diagonal Fisher estimates
+     */
+    public static double[] computeFisherDiagonal(List<PositionFeatures> features,
+                                                 double[] params,
+                                                 double k) {
+        int n = params.length;
+        double kFactor = k * Math.log(10.0) / 400.0;
+
+        double[] fisherDiag = features.parallelStream()
+                .map(pf -> {
+                    double[] localFisher = new double[n];
+                    double eval   = pf.eval(params);
+                    double sig    = TunerEvaluator.sigmoid(eval, k);
+                    double factor = (sig - pf.outcome) * sig * (1.0 - sig) * kFactor;
+                    double[] localGrad = new double[n];
+                    pf.accumulateGradient(localGrad, params, factor);
+                    for (int i = 0; i < n; i++) {
+                        localFisher[i] = localGrad[i] * localGrad[i];
+                    }
+                    return localFisher;
+                })
+                .collect(
+                    () -> new double[n],
+                    (acc, lf) -> { for (int i = 0; i < n; i++) acc[i] += lf[i]; },
+                    (a,   b)  -> { for (int i = 0; i < n; i++) a[i]  +=  b[i]; }
+                );
+
+        double scale = 1.0 / features.size();
+        for (int i = 0; i < n; i++) fisherDiag[i] *= scale;
+        return fisherDiag;
+    }
+
+    /**
      * Computes the analytical gradient of the MSE objective using finite difference
      * for dEval/dParam[i].
      *

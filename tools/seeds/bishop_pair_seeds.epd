@@ -1,0 +1,45 @@
+# Seed FENs for bishop-pair (BISHOP_PAIR_MG / BISHOP_PAIR_EG) corpus coverage.
+# Positions selected where one side has the bishop pair while the opponent has
+# bishop+knight or knight+knight — structural advantage accrues through open
+# diagonals and endgame mobility. Use with --custom-fens in generate_texel_corpus.ps1
+# to augment the Stockfish-annotated training corpus.
+#
+# Format: FEN only (one per line, EPD-style without semicolon tags).
+# ≥30 starting positions covering both MG and EG bishop-pair scenarios.
+
+# --- Middlegame bishop pair (White has both bishops) ---
+r1bqk2r/pppp1ppp/2n2n2/4p3/1bB1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5
+r1bqr1k1/ppp2ppp/3p1n2/4p3/1bB1P3/2N2N2/PPP2PPP/R1BQR1K1 w - - 2 9
+r2qk2r/ppp1bppp/3pb3/3np3/3PP3/2N1BN2/PPP1BPPP/R2QK2R w KQkq - 2 9
+r1bq1rk1/pp2ppbp/2np1np1/3P4/2P1PB2/2N2N2/PP3PPP/R1BQR1K1 w - - 0 9
+2rqr1k1/pp2bppp/3p1n2/3bp3/3PP1B1/2N1BN2/PP3PPP/R2Q1RK1 w - - 2 13
+r1b2rk1/ppq1bppp/2p1pn2/3p4/3P1B2/2N1BN2/PPP2PPP/R2Q1RK1 w - - 0 11
+r2q1rk1/ppb1bppp/2nppn2/8/3PP1B1/2NBBN2/PPP2PPP/R2Q1RK1 w - - 0 10
+r1bq1rk1/pp3ppp/2npbn2/4p3/2B1P3/2NBPN2/PPP2PPP/R2Q1RK1 w - - 0 9
+2r1rbk1/pp3ppp/2nq1n2/3pb3/3PBB2/2N3P1/PPQ2PBP/R4RK1 w - - 2 16
+3r1rk1/ppq2ppp/3pbn2/4p3/2B1P1B1/2N1QN2/PPP2PPP/R4RK1 w - - 0 14
+r2q1rk1/ppp2ppp/3pbn2/4p3/2B1PB2/2NQ1N2/PPP2PPP/R4RK1 w - - 2 10
+
+# --- Endgame bishop pair (pawns traded, open diagonals) ---
+2b5/3b1k2/4p3/2rp4/1B6/2B5/5PPP/4R1K1 w - - 0 30
+8/3b1k2/1p2p3/p1bp4/B4P2/1B4KP/8/8 w - - 0 35
+3r4/2b1kp2/6b1/2p3p1/2P3P1/1BK1B3/8/3R4 w - - 2 29
+5k2/5p2/4b3/2pb1p2/5P2/1B2B3/P5K1/8 w - - 0 26
+8/3bk3/2pb4/4p3/4P3/2B2K2/3B4/8 w - - 4 42
+6k1/pp3p2/2p1b3/1b6/4P3/1PB3PP/P4PBK/8 w - - 0 31
+1r6/2b1k3/2b1pp2/2p5/2P1P3/2BB4/5K2/1R6 w - - 4 33
+8/1pkb4/1ppb4/8/3PP3/3BB2K/8/8 w - - 0 38
+8/6k1/2pp4/2b1bp2/5P2/2BKB3/8/8 w - - 2 44
+4k3/pp3b2/2p2bp1/3p4/3P1P2/2BBP3/PP4K1/8 w - - 0 27
+
+# --- Bishop pair vs knight pair (structural contest) ---
+r1bqr1k1/ppn2ppp/3pbn2/4p3/2BPPB2/2N2N2/PPP3PP/R2QR1K1 w - - 0 11
+r2q1rk1/pp2bppp/3pbn2/2p5/2B4B/2NP1N2/PPP2PPP/R2Q1RK1 w - - 0 11
+r3r1k1/pp3ppp/3qbn2/2p1b3/2B1P1B1/2NP1N2/PP3PPP/R2QR1K1 w - - 2 13
+r4rk1/1p3ppp/2q1bn2/p1ppb3/2B1P1B1/2NP1N2/PP3PPP/R2Q1RK1 w - - 0 14
+r1bq1rk1/pp1n1ppp/3pbn2/2p5/2BPPB2/2N2N2/PP4PP/R2QR1K1 w - - 4 13
+3r1rk1/pp1qbppp/3pbn2/2p5/2B1PB2/2N1PN2/PPQN1PPP/R4RK1 w - - 2 14
+r3rbk1/pp3ppp/3qbn2/2ppb3/4PBP1/2NBBN2/PPP2P1P/3Q1RK1 w - - 0 13
+r2r2k1/pp2bppp/3qbn2/2pp4/4PBP1/2NBBN2/PPP2P1P/3QR1K1 w - - 2 14
+5rk1/pp1q1ppp/3rbn2/2ppb3/4PBP1/2NBBN2/PPP2P1P/3QR1K1 w - - 4 16
+6k1/pp3ppp/3rbn2/2ppb3/4PBP1/2N1BN2/PPP1BP1P/3QR1K1 w - - 0 18

@@ -25,6 +25,7 @@ import java.util.List;
  *   <li>{@code --optimizer adam|coordinate} — optional: choose optimizer (default: adam)</li>
  *   <li>{@code --no-recalibrate-k} — optional: disable K recalibration after each pass
  *                                   (default: enabled)</li>
+ *   <li>{@code --coverage-audit}   — compute Fisher diagonal, print starved parameters, exit</li>
  * </ul>
  *
  * <p>Output is written to {@code tuned_params.txt} in the working directory.
@@ -39,7 +40,7 @@ public final class TunerMain {
 
     public static void main(String[] args) throws Exception {
         if (args.length < 1) {
-        LOG.error("Usage: engine-tuner <dataset> [maxPositions] [maxIterations] [--optimizer adam|coordinate] [--no-recalibrate-k] [--corpus <csv>]");
+        LOG.error("Usage: engine-tuner <dataset> [maxPositions] [maxIterations] [--optimizer adam|coordinate] [--no-recalibrate-k] [--corpus <csv>] [--coverage-audit]");
             System.exit(1);
         }
 
@@ -48,6 +49,7 @@ public final class TunerMain {
         int    maxIters       = -1; // sentinel: use optimizer default
         String optimizer      = "adam";
         boolean recalibrateK  = true;
+        boolean coverageAudit = false;
         Path   corpusPath     = null;  // #130: optional Stockfish-annotated CSV
 
         // Parse remaining positional args and named flags
@@ -64,6 +66,8 @@ public final class TunerMain {
                 }
             } else if ("--no-recalibrate-k".equals(args[i])) {
                 recalibrateK = false;
+            } else if ("--coverage-audit".equals(args[i])) {
+                coverageAudit = true;
             } else if ("--corpus".equals(args[i])) {
                 if (i + 1 >= args.length) {
                     LOG.error("--corpus requires a path argument: --corpus <csv_path>");
@@ -94,6 +98,7 @@ public final class TunerMain {
         LOG.info("[TunerMain] Max iters:     {}", maxIters);
         LOG.info("[TunerMain] Optimizer:     {}", optimizer);
         LOG.info("[TunerMain] Recalibrate K: {}", recalibrateK ? "yes" : "no (--no-recalibrate-k)");
+        LOG.info("[TunerMain] Coverage audit: {}", coverageAudit ? "yes (will exit after audit)" : "no");
         if (corpusPath != null) {
             LOG.info("[TunerMain] Corpus CSV:    {} (overrides dataset for training data)", corpusPath.toAbsolutePath());
         }
@@ -124,6 +129,31 @@ public final class TunerMain {
         // --- Find optimal K using fast feature-based MSE ---
         LOG.info("[TunerMain] Finding optimal K...");
         double k = KFinder.findKFromFeatures(features, params);
+
+        // --- Coverage audit: compute Fisher diagonal, report starved params, exit ---
+        if (coverageAudit) {
+            LOG.info("[CoverageAudit] Computing Fisher diagonal over {} positions...", features.size());
+            double[] fisherDiag = GradientDescent.computeFisherDiagonal(features, params, k);
+            Integer[] indices = new Integer[EvalParams.TOTAL_PARAMS];
+            for (int i = 0; i < indices.length; i++) indices[i] = i;
+            java.util.Arrays.sort(indices,
+                    (a, b) -> Double.compare(fisherDiag[a], fisherDiag[b]));
+            int starvedCount = 0;
+            System.out.printf("%-32s  %4s  %10s  %8s  %8s  %s%n",
+                    "PARAMETER", "IDX", "FISHER", "VALUE", "MIN", "STATUS");
+            System.out.println("-".repeat(80));
+            for (int idx : indices) {
+                boolean starved = fisherDiag[idx] < 1e-4;
+                if (starved) starvedCount++;
+                System.out.printf("%-32s  %4d  %10.3e  %8.1f  %8.1f  %s%n",
+                        EvalParams.getParamName(idx), idx, fisherDiag[idx],
+                        params[idx], EvalParams.PARAM_MIN[idx],
+                        starved ? "*** STARVED ***" : "ok");
+            }
+            System.out.println("-".repeat(80));
+            LOG.info("[CoverageAudit] STARVED parameters: {} / {}", starvedCount, EvalParams.TOTAL_PARAMS);
+            System.exit(0);
+        }
 
         // --- Run chosen optimizer ---
         double[] tuned;

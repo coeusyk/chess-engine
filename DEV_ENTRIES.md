@@ -5501,6 +5501,21 @@ Two structural gaps in time allocation:
   Fix 2 (Evaluator.java): `hangingPenalty()` extended to suppress the penalty for undefended pieces that are attacking the enemy king ring when the king has ≤1 safe escape squares. Added `AttackTables.KING_ATTACKS[kingSq]` lookup for king ring and `pieceAttacks(board, sq, white, allOcc)` private static helper dispatching to `Attacks.*`. Prevents the engine penalizing hanging pieces that are part of a mating net (regression: Ng4 in issue game).
   Fix 3 (SearchRegressionTest.java): Added `Q1_FEN = "7k/6pp/8/8/6n1/7B/2b2q2/6QK b - - 0 45"` and `horizonBlindnessRegression_Q1()` test at depth 12 asserting `scoreCp() > 200`. Issue FEN `8/6pp/...` had missing black king (rank 8 should be `7k`); corrected during implementation.
 
+- **13.5 — Coverage audit + corpus augmentation (Issue #135):**
+  Added `getParamName(int idx)` to `EvalParams.java`: static method returning human-readable names for all 829 parameters (material values at 0–11, PST-slice labelling at 12–779, passed-pawn bonuses at 780–791, scalar names at 792–828).
+  Added `computeFisherDiagonal(List<PositionFeatures>, double[], double)` to `GradientDescent.java`: parallel-stream implementation that squares per-position gradients and averages across the corpus to estimate diagonal Fisher information. Low values (< 1e-4) identify corpus-starved parameters.
+  Added `--coverage-audit` flag to `TunerMain.java`: after K calibration, computes Fisher diagonal, sorts ascending, prints all 829 parameters with Fisher / value / min / STARVED status, then exits.
+  Created `tools/seeds/attacker_weight_seeds.epd` (51 seed FENs weighted toward king-side attack structures — multiple pieces bearing on the enemy king's zone) and `tools/seeds/bishop_pair_seeds.epd` (41 seed FENs covering middlegame / endgame bishop-pair vs knight-pair contests).
+  Added `-CustomFens` parameter to `tools/generate_texel_corpus.ps1`: reads an EPD file (lines starting with `#` ignored), annotates each FEN with Stockfish at `$Depth`, appends annotated positions to the output CSV. Enables targeted corpus augmentation without re-running the full self-play extraction.
+  Created `docs/coverage-audit-results.md` recording baseline audit on 100-position sample (829/829 STARVED — expected for this tiny corpus) and planned full-corpus commands.
+
+  **Baseline audit run (100-position sample — for tooling verification):**
+  - Corpus: `data/texel_corpus_sample.csv` (100 positions)
+  - STARVED: 829 / 829 (all parameters — expected, sample too small)
+  - BISHOP_PAIR_MG/EG: Fisher = 0 (no bishop-pair positions at all)
+  - ATK_KNIGHT Fisher = 7.45e-08, ATK_ROOK = 1.82e-07 (effectively zero)
+  - **Full-corpus audit: PC-pending** (requires Stockfish + cutechess-cli on Ryzen 7 7700X)
+
 **Decisions Made:**
 
 - **Stage 3 quiet-check moves in Q-search was attempted and reverted.** Initial implementation added a Stage 3 to `quiescence()` at `qPly==0` that generated all moves, filtered non-captures/non-promotions, checked each for check, and recursively searched. Benchmarked at depth 10 on 6 bench positions: 187,422 NPS vs baseline 210,633 NPS — **11% regression**, exceeding the 5% threshold stated in Issue #138. Reverted per issue policy: "If aggregate NPS drops more than 5%, revert to the mating-threat leaf extension approach instead."
