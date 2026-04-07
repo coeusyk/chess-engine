@@ -349,11 +349,22 @@ public class Searcher {
         transpositionTable.resetStats();
         java.util.Arrays.fill(staticEvalStack, 0);
 
+        // Tracks how many consecutive completed depths produced the same best move.
+        // Used to scale the soft time limit: stable positions get a discount so the
+        // engine stops early; positions where the best move just changed get extra time.
+        int stableDepthCount = 0;
+        if (timeManager != null) {
+            timeManager.setStabilityScale(1.0);
+        }
+
         for (int depth = effectiveStartDepth; depth <= effectiveMaxDepth; depth++) {
             if (shouldStopSoft.getAsBoolean()) {
                 aborted = true;
                 break;
             }
+
+            // Snapshot best move before this depth so we can detect stability after.
+            Move bestMoveBeforeDepth = previousBestMove;
 
             seldepth = 0;
             int maxCheckExtensions = getMaxCheckExtensionsForDepth(depth);
@@ -439,6 +450,32 @@ public class Searcher {
             }
 
             nodesPerDepth[depth] = totalNodes - nodesBeforeDepth;
+
+            // --- Stability-based soft-limit scaling ---
+            // Only active when a TimeManager is present (clock-based search) and once
+            // we have at least depth 5 so the best move is reliable.
+            if (timeManager != null && depth >= 5 && previousBestMove != null) {
+                boolean sameMove = previousBestMove.equals(bestMoveBeforeDepth);
+                if (sameMove) {
+                    stableDepthCount++;
+                } else {
+                    stableDepthCount = 0;
+                }
+                double scale;
+                if (!sameMove) {
+                    // Best move just changed — give extra time to resolve the instability.
+                    scale = 1.20;
+                } else if (stableDepthCount >= 3) {
+                    // Stable for 3+ depths — position is clearly resolved, stop earlier.
+                    scale = 0.75;
+                } else if (stableDepthCount == 2) {
+                    // Stable for 2 depths — apply a mild discount.
+                    scale = 0.85;
+                } else {
+                    scale = 1.0;
+                }
+                timeManager.setStabilityScale(scale);
+            }
 
             // Stop before starting the next depth if the soft time budget is
             // already exceeded after completing this one.  Prevents a cheap

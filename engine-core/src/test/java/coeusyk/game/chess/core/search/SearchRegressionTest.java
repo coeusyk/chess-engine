@@ -8,9 +8,13 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.URL;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 @Tag("regression")
 class SearchRegressionTest {
@@ -154,14 +158,17 @@ class SearchRegressionTest {
             // Positional
             // P1: 8/5k2/8/5P2/8/8/8/4K3 — Ke1 vs Kf7 blockading f5-passer. Theoretical draw
             //     (BK reaches a key square before WK can support). Draw detection now returns 0
-            //     for all king-cycling paths; engine picks e1d2 at depth 8. Both moves draw.
-            //     Updated 2026-04-02: draw detection scoring 0 makes e1d2 the first picked move.
+            //     for all king-cycling paths. Updated 2026-04-02: draw detection scoring 0 makes e1d2 preferred.
+            //     Reverted to v0.5.4 eval baseline: depth-8 preference returns to e1d2 (king advance).
+            //     Both f5f6 and e1d2 are equivalent continuations.
             Arguments.of("P1",  P1_FEN,  "e1d2"),
             Arguments.of("P2",  P2_FEN,  "d4d5"),
             // P3: 8/8/8/8/4k3/8/3PK3/8 — Ke2+Pd2 vs Ke4. Both d2d3 (pawn advance) and e2f2
             //     (king sidestep) win. Draw detection penalises king-cycling paths from e2f2;
             //     engine prefers d2d3 to avoid repetitions in the search subtree.
             //     Updated 2026-04-02: draw detection shifts preference to d2d3.
+            //     Reverted to v0.5.4 eval baseline: depth-8 preference returns to d2d3 (pawn advance).
+            //     Both e2d1 and d2d3 are winning continuations; choice is eval-dependent.
             Arguments.of("P3",  P3_FEN,  "d2d3"),
             Arguments.of("P4",  P4_FEN,  "d4d5"),
             // P5: 8/8/3k4/8/1PP5/8/8/2K5 — Kc1+Pb4c4 vs Kd6. Both b4b5 (pawn push) and
@@ -175,12 +182,17 @@ class SearchRegressionTest {
             //     constant 50 cp restored; depth-8 preference returns to c4c5.
             //     Updated Phase 9B #113: LMR formula update (log2-based, moveIndex >= 4) shifts
             //     depth-8 reduction pattern; c1c2 becomes preferred. Both c4c5 and c1c2 win.
+            //     Reverted to v0.5.4 eval baseline: depth-8 preference returns to c1c2 (king advance).
+            //     Both c4c5 and c1c2 are winning continuations; choice is eval-dependent.
             Arguments.of("P5",  P5_FEN,  "c1c2"),
             Arguments.of("P6",  P6_FEN,  "f4f5"),
-            // P7: d7d8q (immediate promotion) is objectively superior to d1d2 (delayed king
-            //     move). Promoting at once gains K+Q vs K immediately with no benefit to
-            //     delaying. Updated 2026-04-01: new eval terms correctly reward immediate
-            //     promotion; previous d1d2 preference was a plain eval artifact.
+            // P7: 8/3P4/8/8/8/8/8/3K1k2 — Kd1+Pd7 vs Kf1. d7d8q (immediate promotion)
+            //     and d1d2 (king advance toward f1 before promoting) both win. d7d8q gains
+            //     a queen at once; d1d2 brings the king one step closer for the KQK mate
+            //     before promoting, which the mop-up eval rates higher at depth 8.
+            //     Updated 2026-04-01: new eval terms reward immediate promotion → d7d8q.
+            //     Reverted to v0.5.4 eval baseline: higher queen value (1200) makes immediate
+            //     promotion d7d8q preferred over d1d2. Both d7d8q and d1d2 are winning; equivalent.
             Arguments.of("P7",  P7_FEN,  "d7d8q"),
             // P8: 8/8/8/8/6k1/8/6PP/6K1 — Kg1+Pg2h2 vs Kg4. Both g1f2 (king activation)
             //     and h2h3 (pawn advance) win in K+2P vs K. Draw detection penalises cycles
@@ -197,6 +209,8 @@ class SearchRegressionTest {
             //     constant 50 cp restored; depth-8 preference returns to d3e4.
             //     Updated Phase 9B #113: LMR formula update (log2-based, moveIndex >= 4) shifts
             //     depth-8 reduction pattern; d3d4 becomes preferred. Both d3d4 and d3e4 win.
+            //     Reverted to v0.5.4 eval baseline: depth-8 preference returns to d3d4 (king
+            //     centralises toward d5 key square). All of d3d4, d3e4, d3c4 win; equivalent.
             Arguments.of("P9",  P9_FEN,  "d3d4"),
             // P10: e3d3 and e3f3 are symmetric king moves to break direct e-file opposition.
             //      Both win; choice is eval-dependent (d3/f3 equidistant for central pawn).
@@ -205,17 +219,32 @@ class SearchRegressionTest {
             //      Both e3d3 and e3f3 are provably equivalent.
             //      Updated Phase 9B #113: LMR formula update (log2-based, moveIndex >= 4) shifts
             //      depth-8 reduction pattern; e3f3 becomes preferred. Provably equivalent to e3d3.
+            //     Reverted to v0.5.4 eval baseline: depth-8 preference returns to e3f3.
+            //     Both e3d3 and e3f3 are provably equivalent king moves.
             Arguments.of("P10", P10_FEN, "e3f3"),
             // Endgame
             // E1: 4k3/8/8/8/8/8/8/4KQ2 — KQ vs K. f1f6 (queen to 6th rank, restricts
             //     BK to ranks 7-8) is a textbook technique; f1b5 also wins. Tuned eval
             //     (v0.4.9 Texel run) raises queen mobility+PST, preferring f1f6.
             //     Updated 2025-07-14: Texel tuning v0.4.9 shifts preference to f1f6.
+            //     Updated Phase 11 #125: doubled MopUp edge/proximity weights (10→20, 4→8)
+            //     and draw contempt (+/-20 cp) change the depth-8 gradient. f1d3 (queen
+            //     diagonal activation toward center) emerges as preferred. Both f1f6 and
+            //     f1d3 are winning KQK continuations; the ordering is eval-dependent.
+            //     Updated Texel run-2: new PST values revert depth-8 preference to f1f6
+            //     (queen restriction to 6th rank — textbook KQK technique). Both are winning.
+            //     Reverted to v0.5.4 eval + v0.5.4 Searcher + v0.5.4 MopUp: f1f6 (textbook
+            //     restriction technique). Both f1f6 and f1d3 win; equivalent KQK continuations.
             Arguments.of("E1",  E1_FEN,  "f1f6"),
             // E2: 4k3/8/8/8/8/8/8/4KR2 — KR vs K.  f1f6 (rook-to-6th restriction) and
             //     e1d2 (king activation toward centre) both win; known theoretical equivalence.
             //     Updated 2026-04-03: cheap bitboard hanging-penalty (replacing SEE-based form)
             //     reverts depth-8 preference to f1f6.
+            //     Updated Phase 11 #125: doubled MopUp weights and draw contempt shift the
+            //     depth-8 evaluation. e1e2 (king toward centre — standard KRK first step)
+            //     is now preferred. Both e1e2 and f1f6 are correct KRK technique.
+            //     Reverted to v0.5.4 eval + v0.5.4 Searcher + v0.5.4 MopUp: f1f6 (textbook
+            //     rook restriction). Both f1f6, e1e2, f1f3 are correct KRK continuations.
             Arguments.of("E2",  E2_FEN,  "f1f6"),
             Arguments.of("E3",  E3_FEN,  "f4f5"),
             // E4: e4d4 and e4f4 are symmetric king moves to break e-file direct opposition.
@@ -247,6 +276,53 @@ class SearchRegressionTest {
             Arguments.of("E9",  E9_FEN,  "d3e3"),
             Arguments.of("E10", E10_FEN, "a2a6")
         );
+    }
+
+    // ── Draw-failure regression gate — Phase 12 (#129) ──────────────
+    // Loads FENs from draw_failures.epd and asserts the engine does NOT
+    // return a neutral score (0 cp) at depth 12. Each FEN is a position where
+    // an older engine version drew by repetition despite being clearly winning.
+
+    private static final int DRAW_FAILURE_DEPTH = 12;
+
+    @ParameterizedTest(name = "DrawFailure: {0}")
+    @MethodSource("drawFailurePositions")
+    @Tag("regression")
+    void engineDoesNotDrawFromWinningPosition(String label, String fen) {
+        Board board = new Board(fen);
+        SearchResult result = new Searcher().searchDepth(board, DRAW_FAILURE_DEPTH);
+        assertNotEquals(0, result.scoreCp(),
+                "Engine returned draw score 0 for draw-failure position: " + label + " | " + fen);
+    }
+
+    static Stream<Arguments> drawFailurePositions() throws Exception {
+        URL url = SearchRegressionTest.class.getClassLoader()
+                      .getResource("regression/draw_failures.epd");
+        if (url == null) {
+            return Stream.empty(); // EPD not on classpath yet — skip gracefully
+        }
+        try (BufferedReader br = new BufferedReader(new InputStreamReader(url.openStream()))) {
+            return br.lines()
+                .filter(l -> !l.isBlank() && !l.startsWith("#"))
+                .map(line -> {
+                    // EPD supports two FEN formats:
+                    //   4-field: <pos> <side> <castling> <ep> [opcodes]
+                    //   6-field: <pos> <side> <castling> <ep> <halfmove> <fullmove> [opcodes]
+                    String[] parts = line.trim().split("\\s+", 7);
+                    String base4 = parts[0] + " " + parts[1] + " " + parts[2] + " " + parts[3];
+                    // Use clock fields if parts[4] and parts[5] are numeric
+                    boolean hasClockFields = parts.length >= 6
+                            && parts[4].matches("\\d+") && parts[5].matches("\\d+");
+                    String fenFull = hasClockFields
+                            ? base4 + " " + parts[4] + " " + parts[5]
+                            : base4 + " 0 1";
+                    String label = line.contains("c0 \"")
+                            ? line.replaceAll(".*c0 \\\"([^\"]+)\".*", "$1") : base4;
+                    return Arguments.of(label, fenFull);
+                })
+                .collect(java.util.stream.Collectors.toList())
+                .stream();
+        }
     }
 
     // ── Discovery: run this to capture bestmoves at depth DEFAULT_DEPTH ──

@@ -38,6 +38,7 @@ public class UciApplication {
     private int threads = 1;
     private long moveOverheadMs = 30;
     private String syzygyPath = "";
+    private boolean syzygyOnline = false;
     private int syzygyProbeDepth = 1;
     private boolean syzygy50MoveRule = true;
 
@@ -47,11 +48,13 @@ public class UciApplication {
     private String bookFile = "Performance.bin";
     private int bookDepth = 20;
     private int bookVariance = 50;
+    private int contempt = 50;
 
     // Pondering
     private volatile TimeManager activePonderTimeManager = null;
     private int ponderActiveColor;
     private long ponderWtime, ponderBtime, ponderWinc, ponderBinc;
+    private int ponderMoveNumber;
 
     // Shared transposition table — a single instance sized by Hash setoption,
     // cleared on ucinewgame, and injected into every Searcher (main + helpers).
@@ -132,6 +135,7 @@ public class UciApplication {
                 System.out.println("option name MoveOverhead type spin default 30 min 0 max 5000");
                 System.out.println("option name Threads type spin default 1 min 1 max 512");
                 System.out.println("option name SyzygyPath type string default <empty>");
+                System.out.println("option name SyzygyOnline type check default false");
                 System.out.println("option name SyzygyProbeDepth type spin default 1 min 0 max 100");
                 System.out.println("option name Syzygy50MoveRule type check default true");
                 System.out.println("option name Ponder type check default false");
@@ -139,6 +143,7 @@ public class UciApplication {
                 System.out.println("option name BookFile type string default Performance.bin");
                 System.out.println("option name BookDepth type spin default 20 min 0 max 50");
                 System.out.println("option name BookVariance type spin default 50 min 0 max 100");
+                System.out.println("option name Contempt type spin default 50 min 0 max 100");
                 System.out.println("uciok");
             } else if ("isready".equals(line)) {
                 System.out.println("readyok");
@@ -174,7 +179,7 @@ public class UciApplication {
             } else if ("ponderhit".equals(line)) {
                 TimeManager tm = activePonderTimeManager;
                 if (tm != null) {
-                    tm.configurePonderHit(ponderActiveColor, ponderWtime, ponderBtime, ponderWinc, ponderBinc);
+                    tm.configurePonderHit(ponderActiveColor, ponderWtime, ponderBtime, ponderWinc, ponderBinc, ponderMoveNumber);
                     activePonderTimeManager = null;
                 }
             } else if ("quit".equals(line)) {
@@ -296,6 +301,8 @@ public class UciApplication {
             }
         } else if ("syzygypath".equals(optionNameLower)) {
             syzygyPath = valuePart.trim();
+        } else if ("syzygyonline".equals(optionNameLower)) {
+            syzygyOnline = "true".equalsIgnoreCase(valuePart);
         } else if ("syzygyprobedepth".equals(optionNameLower)) {
             try {
                 int value = Integer.parseInt(valuePart);
@@ -333,6 +340,11 @@ public class UciApplication {
                 bookVariance = Math.max(0, Math.min(100, Integer.parseInt(valuePart)));
                 openingBook = new OpeningBook(bookVariance);
                 openNewBook();
+            } catch (NumberFormatException ignored) {
+            }
+        } else if ("contempt".equals(optionNameLower)) {
+            try {
+                contempt = Math.max(0, Math.min(100, Integer.parseInt(valuePart)));
             } catch (NumberFormatException ignored) {
             }
         }
@@ -385,6 +397,7 @@ public class UciApplication {
             ponderBtime = parseLongArg(goParts, "btime", 0L);
             ponderWinc  = parseLongArg(goParts, "winc",  0L);
             ponderBinc  = parseLongArg(goParts, "binc",  0L);
+            ponderMoveNumber = (board.boardStates.size() - 1) / 2;
         }
 
         String positionSnapshot = board.boardStates.get(board.boardStates.size() - 1);
@@ -500,7 +513,7 @@ public class UciApplication {
             }
 
             // Configure Syzygy probing
-            if (!syzygyPath.isEmpty() && !"<empty>".equals(syzygyPath)) {
+            if (syzygyOnline) {
                 searcher.setSyzygyProber(new OnlineSyzygyProber(syzygy50MoveRule));
                 searcher.setSyzygyProbeDepth(syzygyProbeDepth);
                 searcher.setSyzygy50MoveRule(syzygy50MoveRule);
@@ -535,7 +548,8 @@ public class UciApplication {
 
                 TimeManager manager = new TimeManager();
                 manager.setMoveOverheadMs(moveOverheadMs);
-                manager.configureClock(searchBoard.getActiveColor(), wtime, btime, winc, binc);
+                int moveNumber = (searchBoard.boardStates.size() - 1) / 2;
+                manager.configureClock(searchBoard.getActiveColor(), wtime, btime, winc, binc, moveNumber);
                 if (isPonder) {
                     manager.configurePonder();
                     activePonderTimeManager = manager;

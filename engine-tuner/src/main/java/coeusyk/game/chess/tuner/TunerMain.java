@@ -39,7 +39,7 @@ public final class TunerMain {
 
     public static void main(String[] args) throws Exception {
         if (args.length < 1) {
-            LOG.error("Usage: engine-tuner <dataset> [maxPositions] [maxIterations] [--optimizer adam|coordinate] [--no-recalibrate-k]");
+            LOG.error("Usage: engine-tuner <dataset> [maxPositions] [maxIterations] [--optimizer adam|coordinate] [--no-recalibrate-k] [--corpus <csv>]");
             System.exit(1);
         }
 
@@ -48,6 +48,7 @@ public final class TunerMain {
         int    maxIters       = -1; // sentinel: use optimizer default
         String optimizer      = "adam";
         boolean recalibrateK  = true;
+        Path   corpusPath     = null;  // #130: optional Stockfish-annotated CSV
 
         // Parse remaining positional args and named flags
         for (int i = 1; i < args.length; i++) {
@@ -63,6 +64,16 @@ public final class TunerMain {
                 }
             } else if ("--no-recalibrate-k".equals(args[i])) {
                 recalibrateK = false;
+            } else if ("--corpus".equals(args[i])) {
+                if (i + 1 >= args.length) {
+                    LOG.error("--corpus requires a path argument: --corpus <csv_path>");
+                    System.exit(1);
+                }
+                corpusPath = Paths.get(args[++i]);
+                if (!corpusPath.toFile().exists()) {
+                    LOG.error("--corpus file not found: {}", corpusPath.toAbsolutePath());
+                    System.exit(1);
+                }
             } else if (maxPositions == Integer.MAX_VALUE) {
                 maxPositions = Integer.parseInt(args[i]);
             } else if (maxIters == -1) {
@@ -83,10 +94,19 @@ public final class TunerMain {
         LOG.info("[TunerMain] Max iters:     {}", maxIters);
         LOG.info("[TunerMain] Optimizer:     {}", optimizer);
         LOG.info("[TunerMain] Recalibrate K: {}", recalibrateK ? "yes" : "no (--no-recalibrate-k)");
+        if (corpusPath != null) {
+            LOG.info("[TunerMain] Corpus CSV:    {} (overrides dataset for training data)", corpusPath.toAbsolutePath());
+        }
 
         // --- Load positions (streaming with early stop at maxPositions) ---
         Instant loadStart = Instant.now();
-        List<LabelledPosition> positions = PositionLoader.load(datasetPath, maxPositions);
+        List<LabelledPosition> positions;
+        if (corpusPath != null) {
+            // #130: load Stockfish-annotated CSV instead of EPD dataset
+            positions = PositionLoader.loadCsv(corpusPath, maxPositions);
+        } else {
+            positions = PositionLoader.load(datasetPath, maxPositions);
+        }
         long loadMs = Duration.between(loadStart, Instant.now()).toMillis();
         LOG.info(String.format("[TunerMain] Loaded %,d positions in %,d ms", positions.size(), loadMs));
 
