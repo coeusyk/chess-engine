@@ -22,12 +22,20 @@
 .PARAMETER Old
     Path to the old (baseline) engine JAR to test against.
 
+.PARAMETER BonferroniM
+    Number of simultaneous hypotheses (for Bonferroni family-wise error correction).
+    Default: 0 (no correction). When set > 1, alpha and beta are divided by this value.
+    Example: -BonferroniM 5 adjusts alpha=0.05 to per-test alpha=0.01.
+
 .EXAMPLE
     .\tools\sprt.ps1 -New engine-uci\target\engine-uci.jar -Old tools\engine-uci-0.4.9.jar
+.EXAMPLE
+    .\tools\sprt.ps1 -New engine-uci\target\engine-uci.jar -Old tools\engine-uci-0.4.9.jar -BonferroniM 5
 #>
 param(
     [Parameter(Mandatory)][string]$New,
-    [Parameter(Mandatory)][string]$Old
+    [Parameter(Mandatory)][string]$Old,
+    [int]$BonferroniM = 0
 )
 
 Set-StrictMode -Version Latest
@@ -40,6 +48,13 @@ $Alpha    = 0.05
 $Beta     = 0.05
 $MaxGames = 20000
 $TC       = '5+0.05'
+
+# --- Bonferroni family-wise error correction (#136) ---
+if ($BonferroniM -gt 1) {
+    $Alpha = $Alpha / $BonferroniM
+    $Beta  = $Beta  / $BonferroniM
+    Write-Host "Bonferroni correction applied: per-test alpha=$Alpha, beta=$Beta for m=$BonferroniM hypotheses."
+}
 
 # --- Resolve cutechess-cli from env or PATH ---
 $Cutechess = $env:CUTECHESS

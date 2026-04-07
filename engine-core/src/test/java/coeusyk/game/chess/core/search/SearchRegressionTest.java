@@ -15,6 +15,7 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Tag("regression")
 class SearchRegressionTest {
@@ -130,7 +131,14 @@ class SearchRegressionTest {
     // E10: Philidor position — Black defends with third-rank rook check (5 pieces, Black to move).
     static final String E10_FEN = "8/8/5KPk/8/8/8/r7/5R2 b - - 0 1";
 
-    // ── Stability test: assert every position matches its captured bestmove ──
+    // ── Q-search horizon regression (Issue #138) ─────────────────────
+    // Regression game: chess.com/game/computer/1061637955 (2026-04-08)
+    // Vex (Black) had forced mate-in-5 via 45...Bc2! but drew by perpetual.
+    // FEN: position after 44...Qf2+ 45.Kh1 (Black to move).
+    // White: Kh1 Qg1 Bh3 | Black: Kh8 Qf2 Ng4 Bc2 + pawns g7/h7.
+    // Mating line: 45...Bc2 46.Bxg7+ Kxg7 47.Bxg4 Bxe4+ 48.Bf3 Bxf3#
+    // Engine must not return a draw/repetition score — eval must be > +200cp for Black.
+    static final String Q1_FEN = "7k/6pp/8/8/6n1/7B/2b2q2/6QK b - - 0 45";
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("regressionPositions")
@@ -267,11 +275,11 @@ class SearchRegressionTest {
             //     technique. Both b2c3 and d2f3 (knight centralisation) win; move order
             //     is eval-dependent. Updated 2026-04-01: new eval terms prefer king advance.
             Arguments.of("E7",  E7_FEN,  "b2c3"),
-            // E8: 7k/p7/8/8/8/8/7P/6RK — Kh1+Rg1+Ph2 vs Kh8+Pa7. g1g5 (active rook,
-            //     threatens Rg7+/Ra5) and h2h4 (pawn race) both win. Choice is eval-dependent.
+            // E8: 7k/p7/8/8/8/8/7P/6RK — Kh1+Rg1+Ph2 vs Kh8+Pa7. g1g6 (active rook,
+            //     restricts black king on rank 6) and h2h4 (pawn race) both win. Choice is eval-dependent.
             //     Updated 2026-04-02: new terms shift preference to g1g5.
             //     Updated Phase 10 #10.5: Texel-tuned piece bonuses (rook7thEg 23→32) shift
-            //     depth-8 preference to h2h4. Both g1g5 and h2h4 are winning continuations.
+            //     depth-8 preference to h2h4. Both g1g5/g1g6 and h2h4 are winning continuations.
             Arguments.of("E8",  E8_FEN,  "h2h4"),
             Arguments.of("E9",  E9_FEN,  "d3e3"),
             Arguments.of("E10", E10_FEN, "a2a6")
@@ -356,6 +364,25 @@ class SearchRegressionTest {
             }
         }
         System.out.println("=== END DISCOVERY ===");
+    }
+
+    // ── Helper ──────────────────────────────────────────────────────
+
+    // ── Q-search horizon regression — Issue #138 ─────────────────────
+    // From FEN Q1_FEN: Black has forced mate-in-5 starting with 45...Bc2!
+    // Engine must recognise it is clearly winning; eval must be > +200cp for Black.
+    // (Score is returned in the active-side perspective, so positive = good for Black.)
+    private static final int Q1_DEPTH = 12;
+
+    @Test
+    @Tag("regression")
+    void horizonBlindnessRegression_Q1() {
+        Board board = new Board(Q1_FEN);
+        SearchResult result = new Searcher().searchDepth(board, Q1_DEPTH);
+        assertTrue(result.scoreCp() > 200,
+                "Horizon blindness regression (Issue #138): engine returned "
+                + result.scoreCp() + "cp from Q1_FEN — expected > 200cp (Black winning). "
+                + "Bestmove: " + (result.bestMove() != null ? toUci(result.bestMove()) : "null"));
     }
 
     // ── Helper ──────────────────────────────────────────────────────

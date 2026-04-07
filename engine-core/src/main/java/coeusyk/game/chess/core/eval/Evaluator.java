@@ -2,6 +2,7 @@ package coeusyk.game.chess.core.eval;
 
 import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Piece;
+import coeusyk.game.chess.core.bitboard.AttackTables;
 
 public class Evaluator {
 
@@ -252,13 +253,79 @@ public class Evaluator {
      * Uses the Board's cached attackedByWhite/Black bitboards — O(1) instead of ~56
      * isSquareAttackedBy() calls per evaluate() call (~10% CPU eliminated).
      * Returns a white-positive score: negative if white has hanging pieces, positive if black does.
+     *
+     * <p>Suppression rule (Issue #138): do not apply the penalty to an undefended piece that
+     * is attacking a square in the enemy king ring (squares adjacent to the enemy king) when
+     * the enemy king has ≤1 safe escape square. Such pieces are typically part of a mating net
+     * (e.g. a knight on g4 covering h2 as part of a forced mate sequence).
      */
     private int hangingPenalty(Board board) {
+        long allOcc       = board.getAllOccupancy();
         long whiteNonKing = board.getWhiteOccupancy() & ~board.getWhiteKing();
         long blackNonKing = board.getBlackOccupancy() & ~board.getBlackKing();
         long whiteHanging = whiteNonKing & board.getAttackedByBlack() & ~board.getAttackedByWhite();
         long blackHanging = blackNonKing & board.getAttackedByWhite() & ~board.getAttackedByBlack();
+
+        // Suppress penalty for white pieces that are attacking a trapped black king.
+        long bKingBb = board.getBlackKing();
+        if (bKingBb != 0L && whiteHanging != 0L) {
+            int  bKingSq   = Long.numberOfTrailingZeros(bKingBb);
+            long bKingRing = AttackTables.KING_ATTACKS[bKingSq];
+            int  bEscapes  = Long.bitCount(bKingRing
+                    & ~board.getBlackOccupancy() & ~board.getAttackedByWhite());
+            if (bEscapes <= 1) {
+                long tmp = whiteHanging;
+                while (tmp != 0L) {
+                    int  sq  = Long.numberOfTrailingZeros(tmp);
+                    tmp &= tmp - 1;
+                    if ((pieceAttacks(board, sq, true, allOcc) & bKingRing) != 0L)
+                        whiteHanging &= ~(1L << sq);
+                }
+            }
+        }
+
+        // Suppress penalty for black pieces that are attacking a trapped white king.
+        long wKingBb = board.getWhiteKing();
+        if (wKingBb != 0L && blackHanging != 0L) {
+            int  wKingSq   = Long.numberOfTrailingZeros(wKingBb);
+            long wKingRing = AttackTables.KING_ATTACKS[wKingSq];
+            int  wEscapes  = Long.bitCount(wKingRing
+                    & ~board.getWhiteOccupancy() & ~board.getAttackedByBlack());
+            if (wEscapes <= 1) {
+                long tmp = blackHanging;
+                while (tmp != 0L) {
+                    int  sq  = Long.numberOfTrailingZeros(tmp);
+                    tmp &= tmp - 1;
+                    if ((pieceAttacks(board, sq, false, allOcc) & wKingRing) != 0L)
+                        blackHanging &= ~(1L << sq);
+                }
+            }
+        }
+
         return (Long.bitCount(blackHanging) - Long.bitCount(whiteHanging)) * HANGING_PENALTY;
+    }
+
+    /**
+     * Returns the attack bitboard for the piece on {@code sq}, dispatching by piece type.
+     * Used exclusively by {@link #hangingPenalty} to check whether a hanging piece
+     * covers a square in the enemy king ring.
+     */
+    private static long pieceAttacks(Board board, int sq, boolean white, long allOcc) {
+        long bit = 1L << sq;
+        if (white) {
+            if ((board.getWhiteKnights() & bit) != 0L) return Attacks.knightAttacks(sq);
+            if ((board.getWhiteBishops() & bit) != 0L) return Attacks.bishopAttacks(sq, allOcc);
+            if ((board.getWhiteRooks()   & bit) != 0L) return Attacks.rookAttacks(sq, allOcc);
+            if ((board.getWhiteQueens()  & bit) != 0L) return Attacks.queenAttacks(sq, allOcc);
+            if ((board.getWhitePawns()   & bit) != 0L) return Attacks.whitePawnAttacks(bit);
+        } else {
+            if ((board.getBlackKnights() & bit) != 0L) return Attacks.knightAttacks(sq);
+            if ((board.getBlackBishops() & bit) != 0L) return Attacks.bishopAttacks(sq, allOcc);
+            if ((board.getBlackRooks()   & bit) != 0L) return Attacks.rookAttacks(sq, allOcc);
+            if ((board.getBlackQueens()  & bit) != 0L) return Attacks.queenAttacks(sq, allOcc);
+            if ((board.getBlackPawns()   & bit) != 0L) return Attacks.blackPawnAttacks(bit);
+        }
+        return 0L;
     }
 
     /**

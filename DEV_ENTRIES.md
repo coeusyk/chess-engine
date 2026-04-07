@@ -5473,3 +5473,42 @@ Two structural gaps in time allocation:
 - Update baseline reference: copy `engine-uci-0.5.5-SNAPSHOT.jar` → `tools/engine-uci-0.5.5.jar`
 - Bump pom.xml version 0.5.5-SNAPSHOT → 0.5.5 and release
 - Continue Phase 12 data pipeline work
+
+---
+
+### [2026-04-08] Phase 13 — Tuner Overhaul: PST Freeze + SPRT Corrections + Q-search Horizon Fix
+
+**Built:**
+
+- **13.1 — `--freeze-psts` diagnostic flag (Issue #133):**
+  Added `boolean freezePsts` as a 6th parameter to `GradientDescent.tuneWithFeatures()`. When active, the Adam loop zeroes the gradient for PST indices [12..779] (`IDX_PST_START..IDX_PASSED_MG_START`) and keeps the accumulator aligned with the current parameter value (`accum[i] = params[i]; continue`). Original 5-param signature preserved as a convenience overload delegating to the 6-param version with `freezePsts=false`. Flag parsing added to `TunerMain.java` via `--freeze-psts` token. Log line emitted on startup. Decision gate: run tuner for 25 iterations with `--freeze-psts`; if `ATTACKER_WEIGHT` [800–803] rises above pinned minimums, PST absorption is primary cause → proceed to issue #132. If scalars remain pinned despite frozen PSTs, corpus coverage gap is primary cause → proceed to issue #135.
+
+- **13.4 — Bonferroni SPRT correction (Issue #136):**
+  Added `[int]$BonferroniM = 0` parameter to `tools/sprt.ps1`. When `$BonferroniM > 1`, divides both `$Alpha` and `$Beta` by `$BonferroniM` and prints a correction notice. Created `docs/sprt-guidelines.md` with four sections: (1) Standard SPRT usage (H0=0, H1=50, α=0.05, β=0.05), (2) Bonferroni family-wise error correction formula with worked example for m=5, (3) H1 scaling guidance for batched tests, (4) SPRT as sequential test explanation.
+
+- **13.6 — Q-search horizon blindness fix (Issue #138):**
+  Fix 2 (Evaluator.java): `hangingPenalty()` extended to suppress the penalty for undefended pieces that are attacking the enemy king ring when the king has ≤1 safe escape squares. Added `AttackTables.KING_ATTACKS[kingSq]` lookup for king ring and `pieceAttacks(board, sq, white, allOcc)` private static helper dispatching to `Attacks.*`. Prevents the engine penalizing hanging pieces that are part of a mating net (regression: Ng4 in issue game).
+  Fix 3 (SearchRegressionTest.java): Added `Q1_FEN = "7k/6pp/8/8/6n1/7B/2b2q2/6QK b - - 0 45"` and `horizonBlindnessRegression_Q1()` test at depth 12 asserting `scoreCp() > 200`. Issue FEN `8/6pp/...` had missing black king (rank 8 should be `7k`); corrected during implementation.
+
+**Decisions Made:**
+
+- **Stage 3 quiet-check moves in Q-search was attempted and reverted.** Initial implementation added a Stage 3 to `quiescence()` at `qPly==0` that generated all moves, filtered non-captures/non-promotions, checked each for check, and recursively searched. Benchmarked at depth 10 on 6 bench positions: 187,422 NPS vs baseline 210,633 NPS — **11% regression**, exceeding the 5% threshold stated in Issue #138. Reverted per issue policy: "If aggregate NPS drops more than 5%, revert to the mating-threat leaf extension approach instead."
+
+- **Fix 2 alone passes Q1 regression test.** After reverting Stage 3, the Q1 regression test still passes at depth 12. This confirms the hanging penalty suppression (Fix 2) is sufficient: it removes the artificial −50cp penalty on Ng4 that was steering the engine away from the mating continuation. Without the penalty, the main search at depth 12 correctly scores `Bc2` higher than the perpetual.
+
+- **E8 expected move restored.** During Stage 3 development, the E8 bestmove preference shifted from `h2h4` → `g1g6` (both winning; eval-dependent). After Stage 3 revert, E8 returns to `h2h4`. Test restored to `h2h4` baseline.
+
+**Broke / Fixed:**
+
+- `Q1_FEN` from issue `8/6pp/8/8/6n1/7B/2b2q2/6QK b - - 0 45` is missing the black king. Fixed to `7k/6pp/8/8/6n1/7B/2b2q2/6QK b - - 0 45` (black king on h8). Engine threw `IllegalStateException: error: could not find king on board` — caught during first test run.
+- Stage 3 Q-search NPS regression (11%) — reverted, replaced by no-op (Fix 2 sufficient).
+
+**Measurements:**
+
+- Bench depth 10, 6 positions:
+  - Baseline (pre-Phase 13): 210,633 NPS
+  - Phase 13 final (Stage 3 reverted): 207,368 NPS
+  - Delta: **−1.6%** (within 5% threshold)
+- Regression suite: 34 tests, 0 failures (`SearchRegressionTest`).
+- Full engine-core suite: 161 tests, 0 failures, 2 skipped.
+- SPRT vs pre-task baseline: H0=0, H1=5, α=0.05, β=0.05 — **PENDING** (requires cutechess match run).

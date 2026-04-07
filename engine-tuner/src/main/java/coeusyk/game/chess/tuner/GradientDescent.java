@@ -196,6 +196,29 @@ public final class GradientDescent {
                                             double k,
                                             int maxIters,
                                             boolean recalibrateK) {
+        return tuneWithFeatures(features, initialParams, k, maxIters, recalibrateK, false);
+    }
+
+    /**
+     * Runs Adam gradient descent using precomputed {@link PositionFeatures}.
+     *
+     * @param features     precomputed list
+     * @param initialParams starting point
+     * @param k            sigmoid scaling constant
+     * @param maxIters     iteration cap
+     * @param recalibrateK if {@code true}, re-runs {@link KFinder} after each iteration
+     * @param freezePsts   if {@code true}, gradient for PST indices
+     *                     [{@link EvalParams#IDX_PST_START}..{@link EvalParams#IDX_PASSED_MG_START})
+     *                     is zeroed before each Adam update — scalars only tune.
+     *                     Use {@code --freeze-psts} flag for the two-phase diagnostic (Issue #133).
+     * @return tuned parameter array
+     */
+    public static double[] tuneWithFeatures(List<PositionFeatures> features,
+                                            double[] initialParams,
+                                            double k,
+                                            int maxIters,
+                                            boolean recalibrateK,
+                                            boolean freezePsts) {
         int n = initialParams.length;
         double[] params = initialParams.clone();
 
@@ -219,6 +242,11 @@ public final class GradientDescent {
 
             for (int i = 0; i < n; i++) {
                 if (EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i]) continue;
+                // --freeze-psts: zero PST gradient; keep accumulator aligned with current param.
+                if (freezePsts && i >= EvalParams.IDX_PST_START && i < EvalParams.IDX_PASSED_MG_START) {
+                    accum[i] = params[i];
+                    continue;
+                }
 
                 m[i] = BETA1 * m[i] + (1 - BETA1) * grad[i];
                 v[i] = BETA2 * v[i] + (1 - BETA2) * grad[i] * grad[i];
