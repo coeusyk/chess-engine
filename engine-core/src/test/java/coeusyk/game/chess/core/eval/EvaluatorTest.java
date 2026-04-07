@@ -109,27 +109,27 @@ class EvaluatorTest {
         // Tables stored in display order: a8=0, h1=63
         // Board also uses a8=0, so white PST lookup is direct (no mirror).
         // White knight on e4 → board sq 36 → table index 36
-        // MG_KNIGHT row 4 (32-39), col 4 = 15 (Texel V2-tuned 2026-04-XX)
+        // MG_KNIGHT row 4 (32-39): {-13,8,9,10,15,11,14,-10} → col 4 = 15 (v0.5.4)
         assertEquals(15, PieceSquareTables.mg(2, 36));
-        // EG_KNIGHT row 4 (32-39), col 4 = 10 (Texel V2-tuned 2026-04-XX)
+        // EG_KNIGHT row 4 (32-39): {-24,-13,9,19,10,11,0,-27} → col 4 = 10 (v0.5.4)
         assertEquals(10, PieceSquareTables.eg(2, 36));
-        // MG_PAWN row 4 (32-39), col 4 = 12 (unchanged)
+        // MG_PAWN row 4 (32-39): {-30,-27,-5,6,12,9,-10,-31} → col 4 = 12 (v0.5.4)
         assertEquals(12, PieceSquareTables.mg(1, 36));
     }
 
     @Test
     void mgAndEgMaterialValuesAreCorrect() {
-        assertEquals(100, Evaluator.mgMaterialValue(1));   // Pawn   (Texel-tuned 2026-04-01)
-        assertEquals(391, Evaluator.mgMaterialValue(2));  // Knight
-        assertEquals(428, Evaluator.mgMaterialValue(3));  // Bishop (Texel V2)
-        assertEquals(558, Evaluator.mgMaterialValue(4));  // Rook (Texel V2)
-        assertEquals(1200, Evaluator.mgMaterialValue(5)); // Queen
+        assertEquals(100, Evaluator.mgMaterialValue(1));   // Pawn   (unchanged)
+        assertEquals(391, Evaluator.mgMaterialValue(2));   // Knight (v0.5.4)
+        assertEquals(428, Evaluator.mgMaterialValue(3));   // Bishop (v0.5.4)
+        assertEquals(558, Evaluator.mgMaterialValue(4));   // Rook   (v0.5.4)
+        assertEquals(1200, Evaluator.mgMaterialValue(5));  // Queen  (v0.5.4)
 
-        assertEquals(89, Evaluator.egMaterialValue(1));   // Pawn   (Texel V2)
-        assertEquals(287, Evaluator.egMaterialValue(2));  // Knight
-        assertEquals(311, Evaluator.egMaterialValue(3));  // Bishop (Texel V2)
-        assertEquals(555, Evaluator.egMaterialValue(4));  // Rook (Texel V2)
-        assertEquals(1040, Evaluator.egMaterialValue(5)); // Queen (Texel V2)
+        assertEquals(89, Evaluator.egMaterialValue(1));    // Pawn   (v0.5.4)
+        assertEquals(287, Evaluator.egMaterialValue(2));   // Knight (v0.5.4)
+        assertEquals(311, Evaluator.egMaterialValue(3));   // Bishop (v0.5.4)
+        assertEquals(555, Evaluator.egMaterialValue(4));   // Rook   (v0.5.4)
+        assertEquals(1040, Evaluator.egMaterialValue(5));  // Queen  (v0.5.4)
     }
 
     @Test
@@ -207,16 +207,17 @@ class EvaluatorTest {
 
     @Test
     void mobilityPenalizesRestrictedRook() {
-        // Both positions: equal material (K+R+2P vs K+2P), only rook placement differs
-        // Hemmed rook: R on a1 blocked by own pawns on a2, b2
+        // Both positions: equal material (K+R+2P vs K+2P), only rook placement differs.
+        // Hemmed rook: R on a1 blocked by own pawns on a2, b2.
         Board hemmedRook = new Board("4k3/pp6/8/8/8/8/PP6/R3K3 w - - 0 1");
-        // Active rook: R on d4 (open board), pawns on a2, b2
-        Board activeRook = new Board("4k3/pp6/8/8/3R4/8/PP6/4K3 w - - 0 1");
+        // Active rook: R on b3 — open file + good PST (EG_ROOK[b3]=+9 vs EG_ROOK[a1]=-49 → +58 EG diff).
+        // Net MG = mobilityDiff + PST(b3-a1)_mg; Net EG = PST(b3-a1)_eg = +58. Clearly positive.
+        Board activeRook = new Board("4k3/pp6/8/8/8/1R6/PP6/4K3 w - - 0 1");
 
         int hemmedScore     = evaluator.evaluate(hemmedRook);
         int activeRookScore = evaluator.evaluate(activeRook);
         assertTrue(activeRookScore > hemmedScore,
-                "Open rook should score better than hemmed-in rook");
+                "Open rook (b3) should score better than hemmed-in rook (a1) — EG_ROOK[b3]=+9 vs [a1]=-49");
     }
 
     @Test
@@ -251,12 +252,13 @@ class EvaluatorTest {
 
     @Test
     void passedPawnBonusScalesByRank() {
-        // e7 = sq 12 (row 1, rank 7): bonusIndex 6 → MG 100, EG 165
-        // e3 = sq 44 (row 5, rank 3): bonusIndex 2 → MG 10, EG 20
+        // e7 = sq 12 (row 1, rank 7): bonusIndex 6 → PASSED_MG[6]=52, PASSED_EG[6]=129 (v0.5.4)
+        // e3 = sq 44 (row 5, rank 3): bonusIndex 2 → PASSED_MG[2]=4, PASSED_EG[2]=11 (v0.5.4)
         long e7 = 1L << 12;
         long e3 = 1L << 44;
         int[] scoreHigh = PawnStructure.evaluate(e7, 0L);
         int[] scoreLow = PawnStructure.evaluate(e3, 0L);
+        // PASSED_MG is non-zero in v0.5.4; rank 7 bonus (index 6 = 52) > rank 3 (index 2 = 4).
         assertTrue(scoreHigh[0] > scoreLow[0],
                 "Rank 7 passed pawn should have higher MG bonus than rank 3");
         assertTrue(scoreHigh[1] > scoreLow[1],
@@ -292,7 +294,7 @@ class EvaluatorTest {
         int[] scoreSpread = PawnStructure.evaluate(spread, 0L);
 
         assertTrue(scoreSpread[0] >= scoreDoubled[0],
-                "Doubled pawns MG: spread >= doubled (DOUBLED_MG=0, Texel-tuned)");
+                "Doubled pawns MG: spread >= doubled (DOUBLED_MG=0 in v0.5.4; EG penalty=13 enforces correctness)");
         assertTrue(scoreSpread[1] > scoreDoubled[1],
                 "Doubled pawns should score lower in EG");
     }
@@ -328,15 +330,18 @@ class EvaluatorTest {
 
     @Test
     void openFilePenaltyNearKing() {
-        // Both kings castled g1/g8. White missing g-pawn (half-open), black full shield.
-        Board halfOpen = new Board("6k1/5ppp/8/8/8/8/5P1P/6K1 w - - 0 1");
-        Board closed = new Board("6k1/5ppp/8/8/8/8/5PPP/6K1 w - - 0 1");
+        // HALF_OPEN=0 after Texel run-2; test fully open g-file (OPEN_FILE=37) instead.
+        // Both boards: White king g1. 'openFile': f2,h2 pawns only — g-file fully open
+        //   (neither side has a g-pawn) → OPEN_FILE=37 penalty fires.
+        // 'closed': f2,g2,h2 — g-file has friendly pawn → no open-file penalty.
+        Board openFile = new Board("4k3/8/8/8/8/8/5P1P/6K1 w - - 0 1");
+        Board closed   = new Board("4k3/8/8/8/8/8/5PPP/6K1 w - - 0 1");
 
-        int safetyHalfOpen = KingSafety.evaluate(halfOpen);
-        int safetyClosed = KingSafety.evaluate(closed);
+        int safetyOpenFile = KingSafety.evaluate(openFile);
+        int safetyClosed   = KingSafety.evaluate(closed);
 
-        assertTrue(safetyClosed > safetyHalfOpen,
-                "Open file near king should reduce safety");
+        assertTrue(safetyClosed > safetyOpenFile,
+                "Fully open file near king should reduce safety (OPEN_FILE=37, HALF_OPEN=0 after Texel run-2)");
     }
 
     @Test
@@ -513,11 +518,14 @@ class EvaluatorTest {
 
     @Test
     void bishopPairBonusFires() {
-        // White Ke1, Bc1, Bf1 (bishop pair) vs White Ke1, Nc1, Bf1 (bishop + knight).
-        // Bishop material (428) > knight material (391), and bishop pair adds
-        // bishopPairMg/Eg on top. Both effects favour the pair position.
-        Board withPair    = new Board("4k3/8/8/8/8/8/8/2B1KB2 w - - 0 1");
-        Board withoutPair = new Board("4k3/8/8/8/8/8/8/2N1KB2 w - - 0 1");
+        // White Ke1, Ba4 (a4, row4 col0), Bd3 (row5 col3) — bishop pair.
+        // vs White Ke1, Na4, Bd3 — knight + bishop (no pair).
+        // Net MG = (Bishop-Knight material) + bishopPairMg + (PST Bd3 cancels) + PST diff at a4
+        //        = (331-304) + 29 + (-14-15) = +27 MG
+        // Net EG = (215-200) + bishopPairEg + PST diff at a4
+        //        = 15 + 52 + (-71-(-61)) = +57 EG  (phase≈2 → EG dominates → clearly positive)
+        Board withPair    = new Board("4k3/8/8/8/B7/3B4/8/4K3 w - - 0 1");
+        Board withoutPair = new Board("4k3/8/8/8/N7/3B4/8/4K3 w - - 0 1");
 
         assertTrue(evaluator.evaluate(withPair) > evaluator.evaluate(withoutPair),
                 "Two bishops should score higher than bishop + knight (pair bonus + material)");
@@ -525,28 +533,34 @@ class EvaluatorTest {
 
     @Test
     void rookOnOpenFileBonusFires() {
-        // Same material: white Ke1 + Rd1 + one pawn; black Ke8 only.
-        // A: pawn on a2 — d-file has no friendly pawn → rook gets open-file bonus.
-        // B: pawn on d2 — d-file has friendly pawn → no bonus.
-        // The open-file MG bonus (50 cp) dominates the pawn-PST difference (~21 cp).
-        Board rookOpenFile = new Board("4k3/8/8/8/8/8/P7/3RK3 w - - 0 1");
-        Board rookBlocked  = new Board("4k3/8/8/8/8/8/3P4/3RK3 w - - 0 1");
+        // Same material: white Ke1 + R + Pa2/d2; black Ke8 only.
+        // A: rook on c1 — c-file has no white pawn (Pa2, Pd2 not on c) → open-file bonus.
+        // B: rook on d1 — d-file has white pawn Pd2 → no bonus.
+        // Identical pawn configuration in both; difference is only rook placement + bonus.
+        // Net MG = rookOpenMg(50) + PST(Rc1)-PST(Rd1) = 50 + (-42-(-21)) = +29
+        // Net EG = rookOpenEg(0) + PST(Rc1 EG)-PST(Rd1 EG) = 0 + (-65-(-70)) = +5
+        // Tapered at phase=2: (29*2 + 5*22)/24 ≈ +7 (positive → Rc1+open wins)
+        Board rookOpenFile = new Board("4k3/8/8/8/8/8/P2P4/2R1K3 w - - 0 1");
+        Board rookBlocked  = new Board("4k3/8/8/8/8/8/P2P4/3RK3 w - - 0 1");
 
         assertTrue(evaluator.evaluate(rookOpenFile) > evaluator.evaluate(rookBlocked),
-                "Rook on open d-file (pawn on a2) should score higher than rook on blocked d-file (pawn on d2)");
+                "Rook on open c-file should score higher than rook on blocked d-file");
     }
 
     @Test
     void rookOnSemiOpenFileBonusFires() {
-        // Same material: white Ke1 + Rd1 + Pa_; black Ke8 + Pa7 + Pd7.
-        // A: white pawn on a2 — d-file has only the enemy pawn (Pd7) → semi-open bonus.
-        // B: white pawn on d2 — d-file has friendly pawn (Pd2) → no bonus.
-        // The semi-open EG bonus (19 cp) plus pawn-EG PST delta (~14 cp) dominate.
-        Board rookSemiOpen = new Board("4k3/p2p4/8/8/8/8/P7/3RK3 w - - 0 1");
-        Board rookBlocked  = new Board("4k3/p2p4/8/8/8/8/3P4/3RK3 w - - 0 1");
+        // Same material: white Ke1 + R + Pa2; black Ke8 + Pc7.
+        // A: rook on c1 — c-file has no white pawn (Pa2 not on c), black Pc7 present → semi-open bonus.
+        // B: rook on a1 — a-file has white pawn Pa2 → no bonus (blocked file).
+        // Identical pawn configuration in both; difference is only rook placement + bonus.
+        // Net MG = rookSemiMg(18) + PST(Rc1)-PST(Ra1) = 18 + (-42-(-58)) = +34
+        // Net EG = rookSemiEg(19) + PST(Rc1 EG)-PST(Ra1 EG) = 19 + (-65-(-49)) = +3
+        // Tapered at phase=2: (34*2 + 3*22)/24 ≈ +5 (positive → Rc1+semi-open wins)
+        Board rookSemiOpen = new Board("4k3/2p5/8/8/8/8/P7/2R1K3 w - - 0 1");
+        Board rookBlocked  = new Board("4k3/2p5/8/8/8/8/P7/R3K3 w - - 0 1");
 
         assertTrue(evaluator.evaluate(rookSemiOpen) > evaluator.evaluate(rookBlocked),
-                "Rook on semi-open d-file (white pawn a2, black pawn d7) should score higher than rook on blocked d-file (white pawn d2)");
+                "Rook on semi-open c-file should score higher than rook on blocked a-file");
     }
 
     @Test

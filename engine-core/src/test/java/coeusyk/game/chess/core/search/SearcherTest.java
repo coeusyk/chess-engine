@@ -385,7 +385,9 @@ class SearcherTest {
         searcher.searchDepth(board, 4);
         SearchResult second = searcher.searchDepth(new Board("r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/2N5/PPPP1PPP/R1BQK1NR b KQkq - 2 3"), 4);
 
-        assertTrue(second.ttHitRate() > 0.0);
+        // TT hits are counted via ttHits(); ttHitRate() divides by nodesVisited which
+        // excludes TT-hit nodes (they return before nodesVisited++) — use raw count instead.
+        assertTrue(second.ttHits() > 0, "Expected TT hits on repeated search, got: " + second.ttHits());
     }
 
     @Test
