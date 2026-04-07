@@ -211,6 +211,19 @@ public final class EvalParams {
     }
 
     /**
+     * Returns {@code true} if the parameter at {@code idx} is a scalar evaluation
+     * term (material value, pawn-structure bonus, king-safety weight, or other
+     * non-PST term), and {@code false} if it is a piece-square-table entry.
+     *
+     * <p>Scalar params occupy indices [0, IDX_PST_START) and [IDX_PASSED_MG_START, TOTAL_PARAMS).
+     * PST entries occupy [IDX_PST_START, IDX_PASSED_MG_START).
+     * The logarithmic barrier (Issue #134) is applied only to scalar params.
+     */
+    public static boolean isScalarParam(int idx) {
+        return idx < IDX_PST_START || idx >= IDX_PASSED_MG_START;
+    }
+
+    /**
      * Enforces P &lt; N &lt; B &lt; R &lt; Q material ordering for both MG and EG.
      * If a violation is found, the offending value is clamped upward to one more
      * than the preceding piece's value (i.e., the lighter piece value + 1).

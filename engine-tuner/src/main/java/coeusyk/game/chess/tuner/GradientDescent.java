@@ -40,6 +40,12 @@ public final class GradientDescent {
     /** Early-stop if relative MSE improvement falls below this threshold. */
     private static final double CONVERGENCE_THRESHOLD = 1e-9;
 
+    // Logarithmic barrier hyperparameters (Issue #134)
+    // Barrier pushes scalar params away from PARAM_MIN, replacing the hard lower-bound clamp.
+    // gamma is annealed per-iteration: gamma_t = BARRIER_GAMMA_INIT * BARRIER_ANNEAL_RATE^(t-1)
+    private static final double BARRIER_GAMMA_INIT  = 0.001;
+    private static final double BARRIER_ANNEAL_RATE = 0.99;
+
     private GradientDescent() {}
 
     /**
@@ -104,6 +110,17 @@ public final class GradientDescent {
             // Compute gradient via finite difference
             double[] grad = computeGradient(positions, params, k);
 
+            // Apply logarithmic barrier gradient to scalar params to push away from PARAM_MIN.
+            // Replaces the hard lower-bound clamp for non-PST parameters.
+            double gamma = BARRIER_GAMMA_INIT * Math.pow(BARRIER_ANNEAL_RATE, iter - 1);
+            for (int i = 0; i < n; i++) {
+                if (!EvalParams.isScalarParam(i)) continue;
+                if (EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i]) continue;
+                double distance = params[i] - EvalParams.PARAM_MIN[i];
+                if (distance < 1e-4) distance = 1e-4;
+                grad[i] -= gamma / distance;
+            }
+
             // Adam update
             for (int i = 0; i < n; i++) {
                 // Skip frozen parameters (min == max)
@@ -119,8 +136,13 @@ public final class GradientDescent {
                 // Update float accumulator
                 accum[i] -= LR * mHat / (Math.sqrt(vHat) + EPSILON);
 
-                // Discretize and clamp
-                params[i] = EvalParams.clampOne(i, Math.round(accum[i]));
+                // Discretize and clamp. For scalar params the barrier enforces the lower bound,
+                // so only the upper bound is hard-clamped; PSTs use the full two-sided clamp.
+                if (EvalParams.isScalarParam(i)) {
+                    params[i] = Math.min(EvalParams.PARAM_MAX[i], Math.round(accum[i]));
+                } else {
+                    params[i] = EvalParams.clampOne(i, Math.round(accum[i]));
+                }
             }
 
             // Enforce material ordering after full update
@@ -217,6 +239,17 @@ public final class GradientDescent {
 
             double[] grad = computeGradientFromFeatures(features, params, k);
 
+            // Apply logarithmic barrier gradient to scalar params to push away from PARAM_MIN.
+            // Replaces the hard lower-bound clamp for non-PST parameters.
+            double gamma = BARRIER_GAMMA_INIT * Math.pow(BARRIER_ANNEAL_RATE, iter - 1);
+            for (int i = 0; i < n; i++) {
+                if (!EvalParams.isScalarParam(i)) continue;
+                if (EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i]) continue;
+                double distance = params[i] - EvalParams.PARAM_MIN[i];
+                if (distance < 1e-4) distance = 1e-4;
+                grad[i] -= gamma / distance;
+            }
+
             for (int i = 0; i < n; i++) {
                 if (EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i]) continue;
 
@@ -227,7 +260,12 @@ public final class GradientDescent {
                 double vHat = v[i] / (1 - Math.pow(BETA2, iter));
 
                 accum[i] -= LR * mHat / (Math.sqrt(vHat) + EPSILON);
-                params[i] = EvalParams.clampOne(i, Math.round(accum[i]));
+                // Barrier enforces lower bound for scalar params; only hard-clamp upper bound.
+                if (EvalParams.isScalarParam(i)) {
+                    params[i] = Math.min(EvalParams.PARAM_MAX[i], Math.round(accum[i]));
+                } else {
+                    params[i] = EvalParams.clampOne(i, Math.round(accum[i]));
+                }
             }
 
             EvalParams.enforceMaterialOrdering(params);

@@ -6,9 +6,10 @@
     Runs SPRT(ELO0, ELO1, ALPHA, BETA) to validate whether the new engine
     is stronger than the old engine.
 
-    SPRT Parameters (edit as needed):
+    SPRT Parameters:
       ELO0  - null hypothesis Elo bound  (default 0:  no improvement)
-      ELO1  - alternative hypothesis Elo bound (default 50: meaningful gain)
+      ELO1  - alternative hypothesis Elo bound (default 50: meaningful gain;
+              use -Elo1 5 for tight tuner-methodology validations per AC)
       ALPHA - false positive rate  (default 0.05 = 5%)
       BETA  - false negative rate  (default 0.05 = 5%)
 
@@ -27,23 +28,31 @@
     Default: 0 (no correction). When set > 1, alpha and beta are divided by this value.
     Example: -BonferroniM 5 adjusts alpha=0.05 to per-test alpha=0.01.
 
+.PARAMETER Elo0
+    Null hypothesis Elo bound (default: 0). Override per-issue AC as needed.
+
+.PARAMETER Elo1
+    Alternative hypothesis Elo bound (default: 50). Use -Elo1 5 for tuning-methodology SPRTs.
+
 .EXAMPLE
     .\tools\sprt.ps1 -New engine-uci\target\engine-uci.jar -Old tools\engine-uci-0.4.9.jar
+.EXAMPLE
+    .\tools\sprt.ps1 -New engine-uci\target\engine-uci.jar -Old tools\engine-uci-0.5.5.jar -Elo1 5
 .EXAMPLE
     .\tools\sprt.ps1 -New engine-uci\target\engine-uci.jar -Old tools\engine-uci-0.4.9.jar -BonferroniM 5
 #>
 param(
     [Parameter(Mandatory)][string]$New,
     [Parameter(Mandatory)][string]$Old,
-    [int]$BonferroniM = 0
+    [int]$BonferroniM = 0,
+    [int]$Elo0 = 0,
+    [int]$Elo1 = 50
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# --- SPRT parameters (edit here) ---
-$Elo0     = 0
-$Elo1     = 50
+# --- SPRT parameters (override via -Elo0/-Elo1 on the command line) ---
 $Alpha    = 0.05
 $Beta     = 0.05
 $MaxGames = 20000

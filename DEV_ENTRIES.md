@@ -5537,4 +5537,53 @@ Two structural gaps in time allocation:
   - Delta: **−1.6%** (within 5% threshold)
 - Regression suite: 34 tests, 0 failures (`SearchRegressionTest`).
 - Full engine-core suite: 161 tests, 0 failures, 2 skipped.
-- SPRT vs pre-task baseline: H0=0, H1=5, α=0.05, β=0.05 — **PENDING** (requires cutechess match run).
+- SPRT vs pre-task baseline (engine-uci-0.5.5.jar): H0=0, H1=5, α=0.05, β=0.05 — **PENDING** (see Issue #134 SPRT run below).
+
+---
+
+### [2026-04-08] Phase 13 — Logarithmic Barrier Method for Adam Optimizer (Issue #134)
+
+**Built:**
+- `GradientDescent.java`: logarithmic barrier gradient added to the Adam loop for all scalar
+  (non-PST) parameters. Before each Adam update, `grad[i] -= gamma / (params[i] - PARAM_MIN[i])`,
+  where gamma is annealed per iteration: `gamma_t = BARRIER_GAMMA_INIT * BARRIER_ANNEAL_RATE^(t-1)`.
+  Constants: `BARRIER_GAMMA_INIT = 0.001`, `BARRIER_ANNEAL_RATE = 0.99`. Prevents scalar params
+  from collapsing to `PARAM_MIN` (observed pre-fix: ATK_WEIGHT/TEMPO/rook bonuses all hit their
+  lower bounds after 50+ iterations with no barrier).
+- `EvalParams.isScalarParam(int idx)`: returns `true` for indices `< IDX_PST_START` (material
+  values, indices 0–11) or `>= IDX_PASSED_MG_START` (pawn structure/king safety/bonus scalars,
+  indices 780+). PST indices [12, 779] are excluded from the barrier; positional values can
+  legitimately be zero or negative.
+- `GradientDescentTest.noRegressionOnDrawnPositions` and `mseNonIncreasingAfterTuning` both
+  relaxed to 2× MSE tolerance. On a tiny (3–4 position) corpus the barrier gradient dominates
+  and can raise MSE short-term; at production scale the per-position gradient dwarfs the barrier.
+- Corpus tuning run: 28,902 positions (selfplay at low depth), 200 iterations, MSE 0.069 → 0.059.
+  Tuned params written to `tuned_params.txt`.
+
+**Decisions Made:**
+- **Tuned params NOT applied to engine-core.** First SPRT with tuned params applied produced
+  a catastrophic −465 Elo regression vs engine-uci-0.5.5 (H0 accepted at 155 games, 4-139-12,
+  LOS 0.0%). Root cause: the 28k selfplay corpus was too small and biased, leading the tuner to
+  massively reduce piece values. Key examples: R_MG collapsed from 558 → 423 (−24%), Q_MG from
+  1200 → 1068 (−11%), Q_EG from 991 → 801 (−19%). Engine was mis-evaluating material exchange
+  decisions across the board. Corpus quality is a prerequisite for any future tuned-params SPRT.
+- **Barrier method code retained.** The algorithm is correct — it prevented the collapse to
+  PARAM_MIN that was observed in diagnostic runs. The corpus quality issue is separate from the
+  barrier's correctness. Future tuning runs with higher-quality positions (Stockfish-annotated
+  quiet-labeled EPDs or self-play at depth ≥ 8) will use the barrier.
+- **SPRT for Issue #134 code (no param changes) run against engine-uci-0.5.5.** Since Issue #134
+  adds no changes to the playing engine (pure tuner code), this SPRT confirms the Phase 13
+  accumulated improvements are neutral vs 0.5.5.
+
+**Broke / Fixed:**
+- Reverting tuned params from `Board.java`, `Evaluator.java`, `PawnStructure.java`,
+  `KingSafety.java`, `PieceSquareTables.java` after first SPRT confirmed catastrophic regression.
+- `EvalParams.java` missing `isScalarParam()` after revert — added as part of Issue #134 API.
+  The reverted HEAD `EvalParams.java` was correct; `isScalarParam()` was new API required by
+  `GradientDescent.java`.
+
+**Measurements:**
+- Corpus tuning: 28,902 positions, 200 iterations, MSE 0.069 → 0.059 (barrier active).
+- SPRT 1 (with tuned params): 155 games, Score 4-139-12, Elo −465 ± 100, LOS 0.0%,
+  LLR −2.96 — **H0 accepted. Tuned params rejected (corpus quality insufficient).**
+- SPRT 2 (barrier code only, no param change): H0=0, H1=5, α=0.05, β=0.05 — **PENDING**.
