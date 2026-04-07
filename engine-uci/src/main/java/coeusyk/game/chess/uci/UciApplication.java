@@ -54,6 +54,7 @@ public class UciApplication {
     private volatile TimeManager activePonderTimeManager = null;
     private int ponderActiveColor;
     private long ponderWtime, ponderBtime, ponderWinc, ponderBinc;
+    private int ponderMoveNumber;
 
     // Shared transposition table — a single instance sized by Hash setoption,
     // cleared on ucinewgame, and injected into every Searcher (main + helpers).
@@ -178,7 +179,7 @@ public class UciApplication {
             } else if ("ponderhit".equals(line)) {
                 TimeManager tm = activePonderTimeManager;
                 if (tm != null) {
-                    tm.configurePonderHit(ponderActiveColor, ponderWtime, ponderBtime, ponderWinc, ponderBinc);
+                    tm.configurePonderHit(ponderActiveColor, ponderWtime, ponderBtime, ponderWinc, ponderBinc, ponderMoveNumber);
                     activePonderTimeManager = null;
                 }
             } else if ("quit".equals(line)) {
@@ -396,6 +397,7 @@ public class UciApplication {
             ponderBtime = parseLongArg(goParts, "btime", 0L);
             ponderWinc  = parseLongArg(goParts, "winc",  0L);
             ponderBinc  = parseLongArg(goParts, "binc",  0L);
+            ponderMoveNumber = (board.boardStates.size() - 1) / 2;
         }
 
         String positionSnapshot = board.boardStates.get(board.boardStates.size() - 1);
@@ -546,7 +548,8 @@ public class UciApplication {
 
                 TimeManager manager = new TimeManager();
                 manager.setMoveOverheadMs(moveOverheadMs);
-                manager.configureClock(searchBoard.getActiveColor(), wtime, btime, winc, binc);
+                int moveNumber = (searchBoard.boardStates.size() - 1) / 2;
+                manager.configureClock(searchBoard.getActiveColor(), wtime, btime, winc, binc, moveNumber);
                 if (isPonder) {
                     manager.configurePonder();
                     activePonderTimeManager = manager;

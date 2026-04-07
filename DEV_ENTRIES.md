@@ -5403,3 +5403,59 @@ Phase 11/12 COMPLETE
 - **Run command:** `java -jar engine-uci-0.5.4.jar`
 - **Estimated strength:** ~2800–2900 Elo (CCRL scale); internal SPRT vs v0.4.9: +149 Elo ±99, 24W-7L-11D
 - **Forum post template:** see `docs/ccrl-submission.md` § "Where to Submit"
+
+### [2026-04-08] Phase 12 — Time Management: Move-Number Divisor + Stability Multiplier
+
+**Problem:**
+Two structural gaps in time allocation:
+1. Flat `remaining / 20` divisor assumed 20 moves left regardless of game phase.
+   At TC 5+0.05 move 1 this allocates 15 s soft limit — 5% of the full clock on a
+   single opening move where the answer is almost always stable by depth 10.
+2. No best-move stability signal. The engine always searched to the full soft budget
+   even when depths 8–12 agreed on the same move.
+
+**Root cause analysis:**
+- Opening over-allocation: at move 1 the game has ~49 moves ahead; dividing by 20
+  wastes ~2.5× as much time as necessary. This directly front-loads the clock.
+- No stability shortcut: Stockfish and other competitive engines apply a scale
+  multiplier (typically 0.5–0.75×) when the best move is stable over multiple
+  consecutive depths, and an extension (1.2–1.5×) when it just changed. Vex had
+  neither, spending identical time on a trivially stable e4 as on a tactical crisis.
+
+**Changes:**
+
+`TimeManager.java`:
+- Added `stabilityScale` field (default 1.0), written/read only by main search thread.
+- `setStabilityScale(double)` clamped to [0.4, 2.0].
+- `shouldStopSoft()` now returns `elapsedMs() >= (long)(softLimitMs * stabilityScale)`.
+- `configureClock()` overloaded with `moveNumber` parameter.
+  Divisor = `clamp(50 - moveNumber, 15, 40)`:
+  - Move 1:  divisor=40 → soft ≈ 6.1 s (was 15 s at 5+0.05, full clock)
+  - Move 20: divisor=30 → soft ≈ 5 s
+  - Move 35: divisor=15 → soft ≈ 4 s (endgame, fewer moves left → more time per move)
+- Hard limit reduced from `soft * 2.5` to `soft * 2` (tighter cap; prevents single
+  depth from running to 37 s on a 5-minute game).
+- All configure*() methods reset `stabilityScale = 1.0` for the new position.
+- Zero-arg overloads preserved for backward compatibility (moveNumber defaults to 0).
+
+`Searcher.java` (iterativeDeepening):
+- `stableDepthCount` counter and `bestMoveBeforeDepth` snapshot added to ID loop.
+- After each completed depth at depth ≥ 5, updates stability scale:
+  | Condition               | Scale |
+  |-------------------------|-------|
+  | Best move changed       | 1.20  |
+  | Stable 1 depth          | 1.00  |
+  | Stable 2 depths         | 0.85  |
+  | Stable 3+ depths        | 0.75  |
+- Only active when a TimeManager is present; fixed-depth searches unaffected.
+
+`UciApplication.java`:
+- Passes `(boardStates.size() - 1) / 2` as `moveNumber` to `configureClock()`.
+- Added `ponderMoveNumber` field; saved on `go ponder`; passed to `configurePonderHit()`.
+
+**Tests:**
+- `moveNumberAwareDivisorAllocatesLessTimeInOpening`: move 1 soft < move 35 soft at equal remaining.
+- `stabilityScaleRestoresAfterConfigureClock`: re-configure resets scale to 1.0.
+- `stabilityScaleClampedToLegalRange`: 0.1 → 0.4, 5.0 → 2.0.
+- `shouldStopSoftRespectsStabilityScale`: low scale does not fire immediately.
+- Full suite: 160 run, 0 fail, 2 skipped.
