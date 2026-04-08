@@ -190,4 +190,60 @@ class GradientDescentTest {
         assertTrue(tuned[pawnMgIdx] >= 0,
                 "Pawn MG value must never go negative, was " + tuned[pawnMgIdx]);
     }
+
+    // -----------------------------------------------------------------------
+    // L-BFGS contract tests (Issue #137)
+    // -----------------------------------------------------------------------
+
+    @Test
+    void lbfgsInputArrayIsNotModified() {
+        double[] params = EvalParams.extractFromCurrentEval();
+        double[] snapshot = params.clone();
+        List<PositionFeatures> features = PositionFeatures.buildList(mixedOutcomePositions());
+
+        GradientDescent.tuneWithFeaturesLBFGS(features, params, 1.0, 1, false);
+
+        assertArrayEquals(snapshot, params, "tuneWithFeaturesLBFGS() must not modify input params");
+    }
+
+    @Test
+    void lbfgsReturnedArrayHasSameLengthAsInput() {
+        double[] params = EvalParams.extractFromCurrentEval();
+        List<PositionFeatures> features = PositionFeatures.buildList(mixedOutcomePositions());
+
+        double[] result = GradientDescent.tuneWithFeaturesLBFGS(features, params, 1.0, 1, false);
+
+        assertEquals(params.length, result.length);
+    }
+
+    @Test
+    void lbfgsParamsStayWithinBounds() {
+        double[] params = EvalParams.extractFromCurrentEval();
+        double k = KFinder.findKFromFeatures(PositionFeatures.buildList(mixedOutcomePositions()), params);
+        List<PositionFeatures> features = PositionFeatures.buildList(mixedOutcomePositions());
+
+        double[] tuned = GradientDescent.tuneWithFeaturesLBFGS(features, params, k, 5, false);
+
+        for (int i = 0; i < tuned.length; i++) {
+            assertTrue(tuned[i] >= EvalParams.PARAM_MIN[i] - 1e-9,
+                    "L-BFGS param " + i + " = " + tuned[i] + " below min " + EvalParams.PARAM_MIN[i]);
+            assertTrue(tuned[i] <= EvalParams.PARAM_MAX[i] + 1e-9,
+                    "L-BFGS param " + i + " = " + tuned[i] + " above max " + EvalParams.PARAM_MAX[i]);
+        }
+    }
+
+    @Test
+    void lbfgsMseDoesNotDiverge() {
+        double[] params = EvalParams.extractFromCurrentEval();
+        double k = KFinder.findKFromFeatures(PositionFeatures.buildList(mixedOutcomePositions()), params);
+        List<PositionFeatures> features = PositionFeatures.buildList(mixedOutcomePositions());
+
+        double mseBefore = TunerEvaluator.computeMseFromFeatures(features, params, k);
+        double[] tuned   = GradientDescent.tuneWithFeaturesLBFGS(features, params, k, 3, false);
+        double mseAfter  = TunerEvaluator.computeMseFromFeatures(features, tuned, k);
+
+        // Same relaxed tolerance as Adam barrier: on tiny corpus the barrier can dominate
+        assertTrue(mseAfter <= mseBefore * 2.0,
+                "L-BFGS MSE must not more than double (" + mseBefore + " \u2192 " + mseAfter + ")");
+    }
 }

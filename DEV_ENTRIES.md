@@ -5587,3 +5587,62 @@ Two structural gaps in time allocation:
 - SPRT 1 (with tuned params): 155 games, Score 4-139-12, Elo −465 ± 100, LOS 0.0%,
   LLR −2.96 — **H0 accepted. Tuned params rejected (corpus quality insufficient).**
 - SPRT 2 (barrier code only, no param change): H0=0, H1=5, α=0.05, β=0.05 — **PENDING**.
+
+---
+
+### [2026-04-08] Phase 13 — L-BFGS Optimizer Transition (Issue #137)
+
+**Built:**
+
+- `GradientDescent.tuneWithFeaturesLBFGS()`: L-BFGS optimizer with m=10 history pairs.
+  Two-loop recursion computes `H^{-1} · ∇L` in O(m · N) time. Circular buffer stores last
+  m `(s_k, y_k)` pairs where `s_k = accum_k − accum_{k-1}` (float-accumulator differences)
+  and `y_k = ∇L_k − ∇L_{k-1}` (gradient differences including barrier contribution).
+  Oren-Luenberger H_0 scaling: `h_0 = (y^T s) / (y^T y)`. Non-descent direction reset:
+  if `q · ∇L ≤ 0` (degenerate Hessian approximation), history cleared and steepest descent
+  used for that iteration. Adam code fully preserved — no removed methods.
+- Gradient norm convergence criterion (Issue #137 spec): `||∇L||₂ < 1e-5` breaks the loop
+  early with a `System.out.printf` message, replacing the fixed iteration cap as primary
+  exit condition. `maxIters` remains as an emergency timeout.
+- Logarithmic barrier gradient (same as Adam path, Issue #134) included in all L-BFGS
+  gradient computations via `computeBarrierGradient()` private helper. Including barrier
+  in both `grad` and `newGrad` for each (s,y) pair ensures curvature history reflects
+  the full augmented objective consistently.
+- Private helpers added: `dot(double[], double[])`, `axpy(double, double[], double[])`,
+  `computeBarrierGradient(features, params, k, iter)`.
+- `TunerMain.java`: `--optimizer lbfgs` accepted alongside `adam|coordinate`. Dispatches to
+  `GradientDescent.tuneWithFeaturesLBFGS()`. Usage javadoc updated.
+- `GradientDescentTest.java`: 4 new L-BFGS contract tests: `lbfgsInputArrayIsNotModified`,
+  `lbfgsReturnedArrayHasSameLengthAsInput`, `lbfgsParamsStayWithinBounds`,
+  `lbfgsMseDoesNotDiverge`. All 81 tuner tests pass.
+
+**Decisions Made:**
+
+- Step size α = 1.0 (standard L-BFGS trial step). Float accumulators absorb sub-integer
+  updates across iterations; integer discretization only occurs on write to `params`.
+  After the first (s,y) pair, H_0 scaling amplifies the direction proportionally to the
+  inverse Hessian diagonal, similar to Adam's `1/sqrt(vHat)` normalization.
+- (s,y) pairs computed from float-accumulator differences, not integer-param differences.
+  This ensures non-trivial s_k values even when integer params don't change between
+  consecutive steps (gradient magnitudes ≈ 0.001–0.01 → accum moves 0.001–0.01/step at α=1).
+- Barrier gradient included in tracked history to ensure consistent representation of
+  the augmented objective. The barrier contribution is small (γ_t ≈ 0.001 × 0.99^t) and
+  anneals toward zero, causing negligible inconsistency in y_k differences across iterations.
+- `ys > 1e-20` guard before storing curvature pair prevents division-by-zero and rejects
+  pairs where the Wolfe curvature condition is violated (can occur with discrete params).
+
+**Left out:**
+
+- Line search (Wolfe conditions). Standard L-BFGS uses a Wolfe line search to guarantee
+  sufficient decrease. For Texel tuning on integer params, the discrete landscape breaks
+  the standard Armijo descent condition for small step sizes. Fixed α=1 is pragmatic and
+  consistent with how Adam is implemented. To be revisited if L-BFGS MSE significantly
+  exceeds Adam.
+- Tuning run: pending PC. Full L-BFGS production run (corpus → convergence) and MSE
+  comparison vs Adam barrier-method must be done on the PC before issue closes.
+
+**Measurements:**
+
+- 81 tuner tests: 0 failures, 1 skipped. Build time ≈ 10s.
+- Full production L-BFGS tuning run (augmented corpus): **PENDING**.
+- SPRT vs Phase 12 Texel baseline: H0=0, H1=10, α=0.05, β=0.05 — **PENDING** (awaiting params).

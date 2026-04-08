@@ -14,7 +14,7 @@ import java.util.List;
  *
  * <p>Usage:
  * <pre>
- *   java -jar engine-tuner.jar &lt;dataset&gt; [maxPositions] [maxIterations] [--optimizer adam|coordinate] [--no-recalibrate-k]
+ *   java -jar engine-tuner.jar &lt;dataset&gt; [maxPositions] [maxIterations] [--optimizer adam|coordinate|lbfgs] [--no-recalibrate-k]
  * </pre>
  *
  * <ul>
@@ -22,7 +22,9 @@ import java.util.List;
  *   <li>{@code maxPositions}      — optional: cap on positions loaded (default: all)</li>
  *   <li>{@code maxIterations}     — optional: optimizer iteration cap
  *                                   (default: optimizer-specific DEFAULT_MAX_ITERATIONS)</li>
- *   <li>{@code --optimizer adam|coordinate} — optional: choose optimizer (default: adam)</li>
+ *   <li>{@code --optimizer adam|coordinate|lbfgs} — optional: choose optimizer (default: adam).
+ *                                   {@code lbfgs} uses limited-memory BFGS with m=10 history pairs
+ *                                   and gradient norm convergence (Issue #137).</li>
  *   <li>{@code --no-recalibrate-k} — optional: disable K recalibration after each pass
  *                                   (default: enabled)</li>
  *   <li>{@code --coverage-audit}   — compute Fisher diagonal, print starved parameters, exit</li>
@@ -40,7 +42,7 @@ public final class TunerMain {
 
     public static void main(String[] args) throws Exception {
         if (args.length < 1) {
-        LOG.error("Usage: engine-tuner <dataset> [maxPositions] [maxIterations] [--optimizer adam|coordinate] [--no-recalibrate-k] [--corpus <csv>] [--coverage-audit]");
+        LOG.error("Usage: engine-tuner <dataset> [maxPositions] [maxIterations] [--optimizer adam|coordinate|lbfgs] [--no-recalibrate-k] [--corpus <csv>] [--coverage-audit]");
             System.exit(1);
         }
 
@@ -60,8 +62,8 @@ public final class TunerMain {
                     System.exit(1);
                 }
                 optimizer = args[++i].toLowerCase();
-                if (!"adam".equals(optimizer) && !"coordinate".equals(optimizer)) {
-                    LOG.error("Unknown optimizer: {} (valid: adam, coordinate)", optimizer);
+                if (!"adam".equals(optimizer) && !"coordinate".equals(optimizer) && !"lbfgs".equals(optimizer)) {
+                    LOG.error("Unknown optimizer: {} (valid: adam, coordinate, lbfgs)", optimizer);
                     System.exit(1);
                 }
             } else if ("--no-recalibrate-k".equals(args[i])) {
@@ -87,9 +89,9 @@ public final class TunerMain {
 
         // Apply optimizer-specific defaults for maxIters
         if (maxIters == -1) {
-            maxIters = "adam".equals(optimizer)
-                    ? GradientDescent.DEFAULT_MAX_ITERATIONS
-                    : CoordinateDescent.DEFAULT_MAX_ITERATIONS;
+            maxIters = "coordinate".equals(optimizer)
+                    ? CoordinateDescent.DEFAULT_MAX_ITERATIONS
+                    : GradientDescent.DEFAULT_MAX_ITERATIONS;  // adam and lbfgs share the same cap
         }
 
         LOG.info("[TunerMain] Dataset:       {}", datasetPath.toAbsolutePath());
@@ -160,6 +162,9 @@ public final class TunerMain {
         if ("adam".equals(optimizer)) {
             LOG.info(String.format("[TunerMain] Running Adam gradient descent (K=%.6f, maxIters=%d, fast-path)...", k, maxIters));
             tuned = GradientDescent.tuneWithFeatures(features, params, k, maxIters, recalibrateK);
+        } else if ("lbfgs".equals(optimizer)) {
+            LOG.info(String.format("[TunerMain] Running L-BFGS (K=%.6f, maxIters=%d, m=10, ||∇L||<1e-5 convergence)...", k, maxIters));
+            tuned = GradientDescent.tuneWithFeaturesLBFGS(features, params, k, maxIters, recalibrateK);
         } else {
             LOG.info(String.format("[TunerMain] Running coordinate descent (K=%.6f, maxIters=%d)...", k, maxIters));
             tuned = CoordinateDescent.tune(positions, params, k, maxIters, recalibrateK);
