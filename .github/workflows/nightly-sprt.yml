@@ -10,6 +10,7 @@ jobs:
     runs-on: windows-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      CUTECHESS_VERSION: 'v1.4.0'
 
     steps:
       - name: Checkout develop
@@ -71,21 +72,34 @@ jobs:
         if: steps.baseline.outputs.skip != 'true'
         shell: pwsh
         run: |
-          $cutechess = (Get-Command cutechess-cli -ErrorAction SilentlyContinue)?.Source
-          if ($cutechess) {
-            Write-Host "Found cutechess-cli in PATH: $cutechess"
-            "CUTECHESS=$cutechess" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-            exit 0
+          # Resolve version from env
+          $version = $env:CUTECHESS_VERSION          # e.g. v1.4.0
+          $versionNum = $version.TrimStart('v')      # e.g. 1.4.0
+
+          $installDir = Join-Path $env:RUNNER_TEMP 'cutechess'
+          $zipPath    = Join-Path $env:RUNNER_TEMP 'cutechess.zip'
+          $zipUrl     = "https://github.com/cutechess/cutechess/releases/download/$version/cutechess-$versionNum-win64.zip"
+
+          Write-Host "Downloading cutechess-cli $version from: $zipUrl"
+          Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UseBasicParsing
+
+          Write-Host "Extracting to: $installDir"
+          Expand-Archive -Path $zipPath -DestinationPath $installDir -Force
+
+          # The CLI binary may be in the root or a subdirectory — find it
+          $cliExe = Get-ChildItem -Path $installDir -Recurse -Filter 'cutechess-cli.exe' | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $cliExe) {
+            throw "cutechess-cli.exe not found after extracting $zipUrl"
           }
 
-          choco install cutechess -y --no-progress
-          $cutechess = (Get-Command cutechess-cli -ErrorAction SilentlyContinue)?.Source
-          if (-not $cutechess) {
-            throw "cutechess-cli not found after install. Set CUTECHESS explicitly or ensure chocolatey package availability."
-          }
+          Write-Host "Found cutechess-cli: $cliExe"
 
-          Write-Host "Installed cutechess-cli: $cutechess"
-          "CUTECHESS=$cutechess" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          # Add the directory containing the exe to PATH for this job
+          $cliDir = Split-Path $cliExe -Parent
+          "$cliDir" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+          # Also expose the full path directly for the run step
+          "CUTECHESS=$cliExe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Run SPRT match
         if: steps.baseline.outputs.skip != 'true'
