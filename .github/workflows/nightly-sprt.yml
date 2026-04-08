@@ -123,14 +123,22 @@ jobs:
             throw "cutechess-cli not found."
           }
 
+          # Use full path to java.exe so cutechess-cli can find it without relying
+          # on its own PATH resolution (which differs from the shell's PATH).
+          $javaExe = Join-Path $env:JAVA_HOME 'bin\java.exe'
+          if (-not (Test-Path $javaExe)) {
+            throw "java.exe not found at $javaExe (JAVA_HOME=$env:JAVA_HOME)"
+          }
+
           Write-Host "Dev JAR:      $devJar"
           Write-Host "Baseline JAR: $baselineJar"
           Write-Host "Cutechess:    $cutechess"
+          Write-Host "Java:         $javaExe"
 
           $sprtOut = Join-Path $env:RUNNER_TEMP 'sprt_output.txt'
           & $cutechess `
-            -engine name=Vex-dev  cmd="java -jar $devJar"      proto=uci `
-            -engine name=Vex-base cmd="java -jar $baselineJar" proto=uci `
+            -engine name=Vex-dev  cmd="$javaExe -jar $devJar"      proto=uci `
+            -engine name=Vex-base cmd="$javaExe -jar $baselineJar" proto=uci `
             -each tc=5+0.05 `
             -games 1000 `
             -repeat `
@@ -141,6 +149,9 @@ jobs:
             -concurrency 2 *>&1 | Tee-Object -FilePath $sprtOut
 
           $outputText = Get-Content -Path $sprtOut -Raw
+          if ($outputText -match 'Cannot start engine') {
+            throw "cutechess-cli could not start one or more engines. Check Java path and JAR integrity.`n$($outputText -split '\n' | Select-String 'Cannot|Error|Warning' | Select-Object -First 10 | Out-String)"
+          }
           if ($outputText -match 'H1 was accepted') {
             'verdict=H1_ACCEPTED' | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           } elseif ($outputText -match 'H0 was accepted') {
