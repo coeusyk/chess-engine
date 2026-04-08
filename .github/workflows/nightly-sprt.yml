@@ -115,8 +115,8 @@ jobs:
 
           $sprtOut = Join-Path $env:RUNNER_TEMP 'sprt_output.txt'
           & $cutechess `
-            -engine "name=Vex-dev"  "cmd=java -jar \"$devJar\""      proto=uci `
-            -engine "name=Vex-base" "cmd=java -jar \"$baselineJar\"" proto=uci `
+            -engine name=Vex-dev  cmd="java -jar $devJar"      proto=uci `
+            -engine name=Vex-base cmd="java -jar $baselineJar" proto=uci `
             -each tc=5+0.05 `
             -games 1000 `
             -repeat `
