@@ -13,13 +13,16 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Parses position+outcome datasets in two formats:
+ * Parses position+outcome datasets in three formats:
  *
  * Format 1 — FEN with bracketed result:
  *   rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1 [1.0]
  *
  * Format 2 — EPD with c9 result annotation:
  *   rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq c6 0 2 c9 "1-0";
+ *
+ * Format 3 — EPD with c0 result annotation (quiet-labeled.epd / Ethereal format):
+ *   rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq c6 0 2 c0 "1/2-1/2";
  *
  * Lines that cannot be parsed are silently skipped.
  */
@@ -76,7 +79,11 @@ public final class PositionLoader {
             }
             // Format 2: contains c9 keyword and ends with ;
             if (line.contains("c9")) {
-                return parseFormat2(line);
+                return parseFormat2(line, "c9");
+            }
+            // Format 3: contains c0 keyword (quiet-labeled.epd / Ethereal)
+            if (line.contains("c0")) {
+                return parseFormat2(line, "c0");
             }
         } catch (Exception ignored) {
             // Skip unparseable lines
@@ -100,16 +107,15 @@ public final class PositionLoader {
         return new LabelledPosition(pos, outcome);
     }
 
-    private static LabelledPosition parseFormat2(String line) {
+    private static LabelledPosition parseFormat2(String line, String marker) {
         // Strip trailing semicolon
         String stripped = line.endsWith(";") ? line.substring(0, line.length() - 1).strip() : line;
 
-        // Find c9 annotation
-        int c9Idx = stripped.indexOf("c9");
-        if (c9Idx < 0) return null;
+        int markerIdx = stripped.indexOf(marker);
+        if (markerIdx < 0) return null;
 
-        String fenPart    = stripped.substring(0, c9Idx).strip();
-        String resultPart = stripped.substring(c9Idx + 2).strip();
+        String fenPart    = stripped.substring(0, markerIdx).strip();
+        String resultPart = stripped.substring(markerIdx + 2).strip();
 
         // Result is quoted: "1-0", "0-1", "1/2-1/2"
         resultPart = resultPart.replace("\"", "").strip();
@@ -217,6 +223,108 @@ public final class PositionLoader {
             TunerPosition pos = parseFen(fenPart);
             if (pos == null) return null;
             return new LabelledPosition(pos, wdl);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * Loads up to {@code maxPositions} labelled positions from a quiet-labeled.epd-compatible
+     * annotated EPD file (Issue #140).
+     *
+     * <p>Supported annotation keywords: {@code c0} (Ethereal/quiet-labeled.epd), {@code c9},
+     * and bracketed format {@code [result]}.
+     *
+     * <p>Two filters are applied:
+     * <ol>
+     *   <li>Positions where the active side is in check are skipped.</li>
+     *   <li>Positions with material count &gt; 32 are skipped (opening-book noise filter).</li>
+     * </ol>
+     *
+     * @param file         path to the annotated EPD file
+     * @param maxPositions maximum number of positions to load
+     * @return parsed positions (size &le; maxPositions)
+     * @throws IOException if the file cannot be read
+     */
+    public static List<LabelledPosition> loadEpd(Path file, int maxPositions) throws IOException {
+        List<LabelledPosition> result = new ArrayList<>();
+        int skipped = 0;
+        try (BufferedReader reader = new BufferedReader(new FileReader(file.toFile()))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.strip();
+                if (line.isEmpty() || line.startsWith("#")) continue;
+
+                LabelledPosition lp = tryParseEpdLine(line);
+                if (lp != null) {
+                    result.add(lp);
+                    if (result.size() >= maxPositions) break;
+                } else {
+                    skipped++;
+                }
+            }
+        }
+        if (skipped > 0) {
+            LOG.info(String.format("[PositionLoader] EPD: skipped %,d filtered/unparseable lines", skipped));
+        }
+        return result;
+    }
+
+    /**
+     * Parses a single annotated EPD line with in-check and material-count filters.
+     * Handles c0 (Ethereal), c9, and bracketed result formats.
+     * Returns {@code null} if the line is unparseable or filtered out.
+     */
+    private static LabelledPosition tryParseEpdLine(String line) {
+        try {
+            String fenPart;
+            double outcome;
+
+            if (line.contains("[")) {
+                // Bracketed format: <FEN> [result]
+                int open  = line.lastIndexOf('[');
+                int close = line.lastIndexOf(']');
+                if (open < 0 || close < open) return null;
+                outcome = parseOutcome(line.substring(open + 1, close).strip());
+                if (outcome < 0) return null;
+                fenPart = line.substring(0, open).strip();
+            } else {
+                // c0 or c9 annotation format
+                String stripped = line.endsWith(";") ? line.substring(0, line.length() - 1).strip() : line;
+                String marker;
+                int markerIdx;
+                int c0Idx = stripped.indexOf("c0");
+                int c9Idx = stripped.indexOf("c9");
+                if (c0Idx >= 0 && (c9Idx < 0 || c0Idx <= c9Idx)) {
+                    marker    = "c0";
+                    markerIdx = c0Idx;
+                } else if (c9Idx >= 0) {
+                    marker    = "c9";
+                    markerIdx = c9Idx;
+                } else {
+                    return null;
+                }
+                fenPart = stripped.substring(0, markerIdx).strip();
+                String resultPart = stripped.substring(markerIdx + 2).strip().replace("\"", "").strip();
+                outcome = parseOutcome(resultPart);
+                if (outcome < 0) return null;
+            }
+
+            // Build full FEN (EPD has 4 fields, FEN has 6)
+            String[] parts  = fenPart.split("\\s+");
+            String   fullFen = parts.length >= 6 ? fenPart : fenPart + " 0 1";
+
+            Board board = new Board(fullFen);
+
+            // Filter 1: skip positions where the active side is in check
+            if (board.isActiveColorInCheck()) return null;
+
+            // Filter 2: skip positions with material count > 32 (opening-book noise)
+            TunerPosition pos = TunerPosition.from(board, fullFen);
+            int materialCount = Long.bitCount(pos.getWhiteOccupancy() | pos.getBlackOccupancy());
+            if (materialCount > 32) return null;
+
+            return new LabelledPosition(pos, outcome);
         } catch (Exception ignored) {
             return null;
         }

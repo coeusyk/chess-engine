@@ -34,6 +34,10 @@
 .PARAMETER Elo1
     Alternative hypothesis Elo bound (default: 50). Use -Elo1 5 for tuning-methodology SPRTs.
 
+.PARAMETER OpeningsFile
+    Path to an EPD opening book. Defaults to tools/noob_3moves.epd if the file is present
+    next to the script. Pass an empty string ("") to explicitly disable.
+
 .EXAMPLE
     .\tools\sprt.ps1 -New engine-uci\target\engine-uci.jar -Old tools\engine-uci-0.4.9.jar
 .EXAMPLE
@@ -46,7 +50,8 @@ param(
     [Parameter(Mandatory)][string]$Old,
     [int]$BonferroniM = 0,
     [int]$Elo0 = 0,
-    [int]$Elo1 = 50
+    [int]$Elo1 = 50,
+    [string]$OpeningsFile = ""  # Default: auto-detect noob_3moves.epd next to script
 )
 
 Set-StrictMode -Version Latest
@@ -74,6 +79,19 @@ if (-not $Cutechess -or -not (Test-Path $Cutechess)) {
 }
 
 $Java = if ($env:JAVA) { $env:JAVA } else { 'java' }
+
+# --- Resolve opening book (auto-detect noob_3moves.epd if not specified) ---
+if ($OpeningsFile -eq "") {
+    $defaultBook = Join-Path $PSScriptRoot 'noob_3moves.epd'
+    if (Test-Path $defaultBook) { $OpeningsFile = $defaultBook }
+}
+$openingsArgs = @()
+if ($OpeningsFile -ne "" -and (Test-Path $OpeningsFile)) {
+    $openingsArgs = @("-openings", "file=$OpeningsFile", "format=epd", "order=random", "plies=4")
+    Write-Host "Opening book: $OpeningsFile"
+} elseif ($OpeningsFile -ne "") {
+    Write-Warning "Opening book not found: $OpeningsFile — running without openings"
+}
 
 # --- Resolve JAR paths relative to caller ---
 $NewResolved = Resolve-Path $New -ErrorAction SilentlyContinue
@@ -106,6 +124,7 @@ Write-Host ""
     -sprt "elo0=$Elo0" "elo1=$Elo1" "alpha=$Alpha" "beta=$Beta" `
     -concurrency 2 `
     -ratinginterval 10 `
+    @openingsArgs `
     -pgnout $PgnOut
 
 Write-Host ""

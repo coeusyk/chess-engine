@@ -46,8 +46,11 @@ tools/selfplay*.pgn
 tools/results/*.pgn
 tools/results/*.txt
 
-### Texel corpus (generated artifact — never commit full CSV) ###
+### Texel corpus (generated artifact — never commit) ###
 data/texel_corpus.csv
+data/texel_corpus.epd
+data/quiet-labeled.epd
+data/*.log
 
 ### Logs ###
 *.log

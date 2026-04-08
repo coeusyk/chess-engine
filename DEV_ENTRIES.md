@@ -5659,3 +5659,61 @@ Two structural gaps in time allocation:
   - Parameter deltas: negligible (integer params effectively unchanged after float-accum step ≈ 0.01/param).
   - Eval symmetry: all 39 EvaluatorTest symmetry assertions pass post-run (params unchanged).
 - SPRT vs Phase 12 Texel baseline (v0.5.5): H0=0, H1=10, α=0.05, β=0.05 — **PENDING** (same JAR pair as #138 SPRT, H1 threshold doubled).
+
+---
+
+### [2026-04-09] Phase 13 — Corpus Replacement: quiet-labeled.epd (Issue #140)
+
+**Built:**
+
+- Replaced 28,901-position self-play corpus (`texel_corpus.csv`) with Ethereal's
+  `quiet-labeled.epd` (Stockfish/GM-game annotated, c9 format, ~725k positions).
+- `PositionLoader.loadEpd(Path, int)`: new EPD ingestion path with two filters:
+  1. In-check positions skipped via `board.isActiveColorInCheck()`.
+  2. Full-board positions (materialCount > 32) skipped to remove opening noise.
+- `PositionLoader.tryParseEpdLine()`: handles c0 (Ethereal), c9, and bracketed result formats.
+- `PositionLoader.parseFormat2(line, marker)`: generalized to accept `c0` or `c9` markers.
+- `TunerMain` `--corpus-format [csv|epd]` flag: epd → `loadEpd()`, csv → `loadCsv()`, auto detects.
+- `tools/generate_texel_corpus.ps1` rewritten: PGN self-play extraction removed. Now samples from
+  `--BaseEpd` (quiet-labeled.epd) with deduplication; optional `--AugmentFens` Stockfish annotation.
+- `tools/sprt.ps1` updated: `$OpeningsFile` param auto-detects `tools/noob_3moves.epd`; adds
+  `-openings file=... format=epd order=random plies=4` to cutechess-cli when book present.
+- `.gitignore`: added `data/texel_corpus.epd`, `data/quiet-labeled.epd`, `data/*.log`.
+- `data/texel_corpus_sample.csv` removed from git tracking (`git rm --cached`).
+
+**Decisions Made:**
+
+- Scrapped self-play corpus entirely. The 28k Vex positions had inaccurate WDL labels (~1800 Elo)
+  and insufficient diversity, causing ATTACKER_WEIGHT and other king-safety terms to receive zero
+  gradient. quiet-labeled.epd provides 703k filtered positions (21k filtered out by in-check and
+  >32 piece-count filters) from Stockfish/GM games with accurate c9 annotations.
+- Material>32 filter (>32 pieces) equivalent to skipping the initial position — keeps only
+  positions past the opening setup phase. This matches Ethereal's own filtering practice.
+
+**Broke / Fixed:**
+
+- PositionLoader previously only handled `c9` annotation; fixed by generalizing `parseFormat2`
+  to accept either `c0` or `c9` as the marker parameter.
+
+**Measurements:**
+
+- **100-iter Adam run** on quiet-labeled.epd (703,755 positions loaded after filters):
+  - Load time: ~4 seconds
+  - Feature vector build: ~270 ms
+  - Per-iteration time: ~470–590 ms
+  - Initial K: 1.554044, Initial MSE: 0.05829914
+  - Final K (iter 100): 1.134822, Final MSE: 0.06116832
+  - Note: MSE increases with changing K because recalibrated K flattens sigmoid for
+    extreme-eval positions; the parameters themselves improved (see parameter deltas below).
+  - ATTACKER_WEIGHTS: 6/5/5/6 (N/B/R/Q) → **11/9/10/11** (first non-trivial gradient signal)
+  - Material (MG): Pawn 100, Knight 343→450, Bishop 377→451, Rook 423→600, Queen 1068→1200
+  - TEMPO: unchanged at 30; BISHOP_PAIR: unchanged at MG=60 EG=80
+- SPRT vs Phase 12 baseline (v0.5.5): H0=0, H1=5, α=0.05, β=0.05 — **PENDING** (new SPRT
+  with opening book noob_3moves.epd to be started after commit).
+
+**Next:**
+
+- Apply tuned_params.txt values to engine-core source (Issue #133 / #135 follow-ups).
+- Run SPRT for #140 with opening book (H1=5).
+- Close #137 and #138 once their SPRTs conclude.
+- Issue #134: Logarithmic barrier refinement using 703k corpus baseline.

@@ -42,7 +42,7 @@ public final class TunerMain {
 
     public static void main(String[] args) throws Exception {
         if (args.length < 1) {
-        LOG.error("Usage: engine-tuner <dataset> [maxPositions] [maxIterations] [--optimizer adam|coordinate|lbfgs] [--no-recalibrate-k] [--corpus <csv>] [--coverage-audit]");
+        LOG.error("Usage: engine-tuner <dataset> [maxPositions] [maxIterations] [--optimizer adam|coordinate|lbfgs] [--corpus-format csv|epd] [--no-recalibrate-k] [--corpus <csv>] [--coverage-audit]");
             System.exit(1);
         }
 
@@ -53,6 +53,7 @@ public final class TunerMain {
         boolean recalibrateK  = true;
         boolean coverageAudit = false;
         Path   corpusPath     = null;  // #130: optional Stockfish-annotated CSV
+        String corpusFormat   = "auto"; // #140: "auto", "csv", "epd"
 
         // Parse remaining positional args and named flags
         for (int i = 1; i < args.length; i++) {
@@ -70,6 +71,16 @@ public final class TunerMain {
                 recalibrateK = false;
             } else if ("--coverage-audit".equals(args[i])) {
                 coverageAudit = true;
+            } else if ("--corpus-format".equals(args[i])) {
+                if (i + 1 >= args.length) {
+                    LOG.error("--corpus-format requires a value: csv|epd");
+                    System.exit(1);
+                }
+                corpusFormat = args[++i].toLowerCase();
+                if (!"csv".equals(corpusFormat) && !"epd".equals(corpusFormat)) {
+                    LOG.error("Unknown corpus format: {} (valid: csv, epd)", corpusFormat);
+                    System.exit(1);
+                }
             } else if ("--corpus".equals(args[i])) {
                 if (i + 1 >= args.length) {
                     LOG.error("--corpus requires a path argument: --corpus <csv_path>");
@@ -101,6 +112,7 @@ public final class TunerMain {
         LOG.info("[TunerMain] Optimizer:     {}", optimizer);
         LOG.info("[TunerMain] Recalibrate K: {}", recalibrateK ? "yes" : "no (--no-recalibrate-k)");
         LOG.info("[TunerMain] Coverage audit: {}", coverageAudit ? "yes (will exit after audit)" : "no");
+        LOG.info("[TunerMain] Corpus format: {}", corpusFormat);
         if (corpusPath != null) {
             LOG.info("[TunerMain] Corpus CSV:    {} (overrides dataset for training data)", corpusPath.toAbsolutePath());
         }
@@ -108,9 +120,13 @@ public final class TunerMain {
         // --- Load positions (streaming with early stop at maxPositions) ---
         Instant loadStart = Instant.now();
         List<LabelledPosition> positions;
-        if (corpusPath != null) {
-            // #130: load Stockfish-annotated CSV instead of EPD dataset
-            positions = PositionLoader.loadCsv(corpusPath, maxPositions);
+        if ("epd".equals(corpusFormat)) {
+            // #140: load quiet-labeled.epd-compatible file with in-check and material filters
+            positions = PositionLoader.loadEpd(datasetPath, maxPositions);
+        } else if ("csv".equals(corpusFormat) || corpusPath != null) {
+            // #130: load Stockfish-annotated CSV
+            Path src = (corpusPath != null) ? corpusPath : datasetPath;
+            positions = PositionLoader.loadCsv(src, maxPositions);
         } else {
             positions = PositionLoader.load(datasetPath, maxPositions);
         }
