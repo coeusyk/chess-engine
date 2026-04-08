@@ -130,15 +130,29 @@ jobs:
             throw "java.exe not found at $javaExe (JAVA_HOME=$env:JAVA_HOME)"
           }
 
+          # Create .bat wrappers so Qt's QProcess launches them via cmd.exe.
+          # Direct QProcess::start() on Windows cannot reliably invoke java.exe
+          # with arguments; routing through a .bat file is the standard fix.
+          $wrappersDir = Join-Path $env:RUNNER_TEMP 'wrappers'
+          New-Item -ItemType Directory -Path $wrappersDir -Force | Out-Null
+
+          $devBat  = Join-Path $wrappersDir 'vex-dev.bat'
+          $baseBat = Join-Path $wrappersDir 'vex-base.bat'
+
+          "@echo off`n`"$javaExe`" -jar `"$devJar`"" | Set-Content -Path $devBat  -Encoding ASCII
+          "@echo off`n`"$javaExe`" -jar `"$baselineJar`"" | Set-Content -Path $baseBat -Encoding ASCII
+
           Write-Host "Dev JAR:      $devJar"
           Write-Host "Baseline JAR: $baselineJar"
           Write-Host "Cutechess:    $cutechess"
           Write-Host "Java:         $javaExe"
+          Write-Host "Dev wrapper:"; Get-Content $devBat
+          Write-Host "Base wrapper:"; Get-Content $baseBat
 
           $sprtOut = Join-Path $env:RUNNER_TEMP 'sprt_output.txt'
           & $cutechess `
-            -engine name=Vex-dev  cmd="$javaExe -jar $devJar"      proto=uci `
-            -engine name=Vex-base cmd="$javaExe -jar $baselineJar" proto=uci `
+            -engine name=Vex-dev  cmd=$devBat  proto=uci `
+            -engine name=Vex-base cmd=$baseBat proto=uci `
             -each tc=5+0.05 `
             -games 1000 `
             -repeat `
