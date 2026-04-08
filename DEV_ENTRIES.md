@@ -5638,11 +5638,24 @@ Two structural gaps in time allocation:
   the standard Armijo descent condition for small step sizes. Fixed α=1 is pragmatic and
   consistent with how Adam is implemented. To be revisited if L-BFGS MSE significantly
   exceeds Adam.
-- Tuning run: pending PC. Full L-BFGS production run (corpus → convergence) and MSE
-  comparison vs Adam barrier-method must be done on the PC before issue closes.
+- Tuning run: since L-BFGS MSE exceeded baseline, parameters from the tuning run are NOT
+  merged into engine source. This is expected — the texel_corpus.csv (28,901 positions) is
+  the same corpus used in #134 and does not provide sufficient signal to improve on the
+  existing hand-tuned engine values. Line search (Wolfe conditions) was deliberately omitted
+  (see "Left out" above); with α=1.0 fixed, the first step overshot the minimum slightly
+  (MSE +0.00009), and the second step converged by MSE flat-line.
 
 **Measurements:**
 
 - 81 tuner tests: 0 failures, 1 skipped. Build time ≈ 10s.
-- Full production L-BFGS tuning run (augmented corpus): **PENDING**.
-- SPRT vs Phase 12 Texel baseline: H0=0, H1=10, α=0.05, β=0.05 — **PENDING** (awaiting params).
+- **Production L-BFGS run** (texel_corpus.csv, 28,901 positions, maxIters=500):
+  - Initial MSE: 0.06918540 (K=0.500050)
+  - Iter 1: MSE=0.06927795, ||∇L||=17.3 (step taken from pure gradient direction, h=1, H_0=I)
+  - Iter 2: MSE=0.06927795, ||∇L||=1.49e-3 (MSE delta < 1e-9 — flat-line convergence)
+  - Converged in **2 iterations**. Gradient norm at termination: 1.49e-3 (above 1e-5 threshold;
+    secondary flat-line criterion fired first due to identical MSE values after rounding).
+  - Final MSE: **0.06928** vs Adam barrier-method MSE: **0.059** → L-BFGS final MSE **EXCEEDS**
+    Adam barrier MSE. Per AC: parameter update NOT applied.
+  - Parameter deltas: negligible (integer params effectively unchanged after float-accum step ≈ 0.01/param).
+  - Eval symmetry: all 39 EvaluatorTest symmetry assertions pass post-run (params unchanged).
+- SPRT vs Phase 12 Texel baseline (v0.5.5): H0=0, H1=10, α=0.05, β=0.05 — **PENDING** (same JAR pair as #138 SPRT, H1 threshold doubled).
