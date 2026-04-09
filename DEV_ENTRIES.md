@@ -5716,4 +5716,67 @@ Two structural gaps in time allocation:
 - Apply tuned_params.txt values to engine-core source (Issue #133 / #135 follow-ups).
 - Run SPRT for #140 with opening book (H1=5).
 - Close #137 and #138 once their SPRTs conclude.
-- Issue #134: Logarithmic barrier refinement using 703k corpus baseline.
+- Issue #134: Logarithmic barrier refinement using 703k corpus baseline.        
+
+---
+
+### [2026-04-09] Phase 13 — Per-Group SPRT Tuning Infrastructure (Issue #141)
+
+**Context:**
+After 3× SPRT H0 from bulk Texel tuning (all 829 params simultaneously), reverted eval to
+HEAD~3. Now implementing per-group approach: tune one group at a time, SPRT each group
+before accumulating, never bulk-apply all params again.
+
+**Built:**
+- `tools/apply-tuned-params.ps1` — Reads `tuned_params.txt` and applies changes to engine-core
+  Java source files + syncs `EvalParams.extractFromCurrentEval()`. Supports `--Group` for
+  material / pst / pawn-structure / king-safety / mobility / scalars / all.
+- `tools/tune-groups.ps1` — Full orchestration script for per-group SPRT workflow (Phase A K
+  calibration, Phase B group tuning, apply, rebuild, SPRT, H1/H0 decision per group).
+- **EvalParams.java synced** to current engine baseline (5 targeted replacements):
+  - Material: Knight 416→391, Bishop MG 416→428, Rook 564→558/537→555, Queen EG 991→1040
+  - Pawn structure: PASSED_MG/EG arrays, ISOLATED_MG 17→14, ISOLATED_EG 9→7, DOUBLED_EG 11→13
+  - King safety: SHIELD_RANK3 8→7, HALF_OPEN_FILE 15→13, ATK_BISHOP 4→5, ATK_QUEEN 7→6
+  - Mobility: MG values synced, EG Knight 0→1
+  - Scalars: All 17 values synced to Evaluator.DEFAULT_CONFIG (tempo 19→21, rookOpenFileMg 20→50, etc.)
+- **Pre-tuning baseline JAR** saved: `tools/baseline-v0.5.6-pretune.jar` (2,175,220 bytes)
+- Tuner JAR rebuilt: `engine-tuner-0.5.6-SNAPSHOT-shaded.jar`
+
+**Phase A — K Calibration:**
+- Corpus: `tools/quiet-labeled.epd`, 703,755 positions loaded from 725,000 (21,245 filtered)
+- K = 1.520762, MSE = 0.05827519
+
+**Phase B — Group Results:**
+
+| Group    | Optimizer | MSE start  | MSE end    | Verdict        |
+|----------|-----------|------------|------------|----------------|
+| scalars  | Adam      | 0.05827519 | 0.05942424 | DIVERGE (3/3)  |
+| scalars  | Adam 50k  | 0.05789    | 0.05887    | DIVERGE        |
+| material | Adam      | 0.05827519 | 0.05849525 | DIVERGE        |
+| material | L-BFGS    | 0.05827519 | 0.05827519 | NO CHANGE (1-iter) |
+| pst      | Adam      | 0.05827519 | 0.05755604 | **+1.23% ✓**   |
+
+**Diagnosis of scalars/material failure:**
+- Scalars: Multiple params already at PARAM_MAX bounds (ROOK_OPEN_FILE_MG=50=max,
+  KNIGHT_OUTPOST_MG=40=max, KNIGHT_OUTPOST_EG=30=max). Optimizer pins remaining params to
+  upper bounds. Not Texel-tunable with current bounds.
+- Material: Material params have near-zero gradients when PSTs are frozen. The groups are
+  strongly coupled — material is at its Texel minimum given the current PST values. L-BFGS
+  reports gradient magnitude 24.5 but material-specific components are sub-0.5cp → no integer
+  movement, converges after 1 iter.
+- PST: 768 params, strong positional signal, 300 Adam iterations → MSE 0.05827519→0.05755604
+  (improvement of 0.00071915, ~1.23%). Final K after re-calibration: 1.535034. Best group
+  by far for per-group isolation.
+
+**PST tuning convergence:**
+- Iter 1-40: Rapid descent from 0.05827 to 0.05757 (fast region)
+- Iter 40-300: Slow steady improvement 0.05757 to 0.05755604 (plateau)
+- Total: 300 iterations × ~175ms/iter ≈ 52 seconds
+
+**Next:**
+- Apply PST results → `tools/apply-tuned-params.ps1 -Group pst`
+- Rebuild engine-uci JAR
+- SPRT PST group: `.\tools\sprt.ps1 -New engine-uci\target\... -Old tools\baseline-v0.5.6-pretune.jar -Tag "phase13-pst-group"`
+- If H1: commit PST changes, then tune next group (pawn-structure)
+- If H0: revert, diagnose (PST convention flip may have introduced regression)
+- After PST SPRT final, address scalars group: raise PARAM_MAX bounds for capped params

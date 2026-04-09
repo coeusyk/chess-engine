@@ -370,11 +370,11 @@ public final class EvalParams {
         // Piece type indices (Piece.Pawn=1, Knight=2, Bishop=3, Rook=4, Queen=5, King=6)
         // Stored as 2 per type: [2*(type-1)] = MG, [2*(type-1)+1] = EG
         // Pawn MG is hard-pinned at 100 (anchoring point for all other values).
-        p[0]  = 100;  p[1]  = 86;    // Pawn (MG pinned at 100)
+        p[0]  = 100;  p[1]  = 89;    // Pawn (MG pinned at 100)
         p[2]  = 391;  p[3]  = 287;   // Knight
-        p[4]  = 416;  p[5]  = 302;   // Bishop
-        p[6]  = 564;  p[7]  = 537;   // Rook
-        p[8]  = 1200; p[9]  = 991;   // Queen
+        p[4]  = 428;  p[5]  = 311;   // Bishop
+        p[6]  = 558;  p[7]  = 555;   // Rook
+        p[8]  = 1200; p[9]  = 1040;  // Queen
         p[10] = 0;    p[11] = 0;     // King
 
         // --- PST tables ---
@@ -515,58 +515,58 @@ public final class EvalParams {
         }
 
         // --- Pawn structure ---
-        // PASSED_MG = {0, 6, 1, 0, 8, 7, 45, 0} — indices 1..6 are tunable
-        int[] PASSED_MG = {0, 6, 1, 0, 8, 7, 45, 0};
-        int[] PASSED_EG = {0, 4, 9, 29, 56, 123, 116, 0};
+        // PASSED_MG = {0, 8, 4, 0, 8, 10, 52, 0} — indices 1..6 are tunable
+        int[] PASSED_MG = {0, 8, 4, 0, 8, 10, 52, 0};
+        int[] PASSED_EG = {0, 5, 11, 32, 59, 129, 129, 0};
         for (int i = 0; i < 6; i++) {
             p[IDX_PASSED_MG_START + i] = PASSED_MG[i + 1];
             p[IDX_PASSED_EG_START + i] = PASSED_EG[i + 1];
         }
-        p[IDX_ISOLATED_MG] = 17;
-        p[IDX_ISOLATED_EG] = 9;
+        p[IDX_ISOLATED_MG] = 14;
+        p[IDX_ISOLATED_EG] = 7;
         p[IDX_DOUBLED_MG]  = 0;
-        p[IDX_DOUBLED_EG]  = 11;
+        p[IDX_DOUBLED_EG]  = 13;
 
         // --- King safety ---
         p[IDX_SHIELD_RANK2]   = 12;
-        p[IDX_SHIELD_RANK3]   = 8;
+        p[IDX_SHIELD_RANK3]   = 7;
         p[IDX_OPEN_FILE]      = 45;
-        p[IDX_HALF_OPEN_FILE] = 15;
+        p[IDX_HALF_OPEN_FILE] = 13;
         p[IDX_ATK_KNIGHT]     = 6;
-        p[IDX_ATK_BISHOP]     = 4;
+        p[IDX_ATK_BISHOP]     = 5;
         p[IDX_ATK_ROOK]       = 5;
-        p[IDX_ATK_QUEEN]      = 7;
+        p[IDX_ATK_QUEEN]      = 6;
 
         // --- Mobility ---
-        // MG: N=6, B=7, R=8, Q=3
-        p[IDX_MOB_MG_START]     = 6;  // Knight
-        p[IDX_MOB_MG_START + 1] = 7;  // Bishop
-        p[IDX_MOB_MG_START + 2] = 8;  // Rook
-        p[IDX_MOB_MG_START + 3] = 3;  // Queen
-        // EG: N=0, B=2, R=2, Q=6
-        p[IDX_MOB_EG_START]     = 0;  // Knight
-        p[IDX_MOB_EG_START + 1] = 2;  // Bishop
+        // MG: N=7, B=8, R=7, Q=2
+        p[IDX_MOB_MG_START]     = 7;  // Knight
+        p[IDX_MOB_MG_START + 1] = 8;  // Bishop
+        p[IDX_MOB_MG_START + 2] = 7;  // Rook
+        p[IDX_MOB_MG_START + 3] = 2;  // Queen
+        // EG: N=1, B=3, R=2, Q=6
+        p[IDX_MOB_EG_START]     = 1;  // Knight
+        p[IDX_MOB_EG_START + 1] = 3;  // Bishop
         p[IDX_MOB_EG_START + 2] = 2;  // Rook
         p[IDX_MOB_EG_START + 3] = 6;  // Queen
 
         // --- Bonus eval terms ---
-        p[IDX_TEMPO]          = 19;   // Tempo bonus
-        p[IDX_BISHOP_PAIR_MG] = 31;   // Bishop pair MG
-        p[IDX_BISHOP_PAIR_EG] = 51;   // Bishop pair EG
-        p[IDX_ROOK_7TH_MG]          = 9;    // Rook on 7th rank MG
-        p[IDX_ROOK_7TH_EG]          = 20;   // Rook on 7th rank EG
-        p[IDX_ROOK_OPEN_FILE_MG]    = 20;   // Rook on open file MG
-        p[IDX_ROOK_OPEN_FILE_EG]    = 10;   // Rook on open file EG
-        p[IDX_ROOK_SEMI_OPEN_MG]    = 10;   // Rook on semi-open file MG
-        p[IDX_ROOK_SEMI_OPEN_EG]    = 5;    // Rook on semi-open file EG
-        p[IDX_KNIGHT_OUTPOST_MG]    = 20;   // Knight outpost MG
-        p[IDX_KNIGHT_OUTPOST_EG]    = 10;   // Knight outpost EG
-        p[IDX_CONNECTED_PAWN_MG]    = 10;   // Connected pawn bonus MG
-        p[IDX_CONNECTED_PAWN_EG]    = 8;    // Connected pawn bonus EG
-        p[IDX_BACKWARD_PAWN_MG]     = 10;   // Backward pawn penalty MG
-        p[IDX_BACKWARD_PAWN_EG]     = 5;    // Backward pawn penalty EG
-        p[IDX_ROOK_BEHIND_PASSER_MG] = 15;  // Rook behind passer MG
-        p[IDX_ROOK_BEHIND_PASSER_EG] = 25;  // Rook behind passer EG
+        p[IDX_TEMPO]          = 21;   // Tempo bonus
+        p[IDX_BISHOP_PAIR_MG] = 29;   // Bishop pair MG
+        p[IDX_BISHOP_PAIR_EG] = 52;   // Bishop pair EG
+        p[IDX_ROOK_7TH_MG]          = 0;    // Rook on 7th rank MG
+        p[IDX_ROOK_7TH_EG]          = 32;   // Rook on 7th rank EG
+        p[IDX_ROOK_OPEN_FILE_MG]    = 50;   // Rook on open file MG
+        p[IDX_ROOK_OPEN_FILE_EG]    = 0;    // Rook on open file EG
+        p[IDX_ROOK_SEMI_OPEN_MG]    = 18;   // Rook on semi-open file MG
+        p[IDX_ROOK_SEMI_OPEN_EG]    = 19;   // Rook on semi-open file EG
+        p[IDX_KNIGHT_OUTPOST_MG]    = 40;   // Knight outpost MG
+        p[IDX_KNIGHT_OUTPOST_EG]    = 30;   // Knight outpost EG
+        p[IDX_CONNECTED_PAWN_MG]    = 9;    // Connected pawn bonus MG
+        p[IDX_CONNECTED_PAWN_EG]    = 4;    // Connected pawn bonus EG
+        p[IDX_BACKWARD_PAWN_MG]     = 0;    // Backward pawn penalty MG
+        p[IDX_BACKWARD_PAWN_EG]     = 0;    // Backward pawn penalty EG
+        p[IDX_ROOK_BEHIND_PASSER_MG] = 12;  // Rook behind passer MG
+        p[IDX_ROOK_BEHIND_PASSER_EG] = 4;   // Rook behind passer EG
 
         return p;
     }
