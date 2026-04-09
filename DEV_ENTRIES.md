@@ -5780,3 +5780,39 @@ before accumulating, never bulk-apply all params again.
 - If H1: commit PST changes, then tune next group (pawn-structure)
 - If H0: revert, diagnose (PST convention flip may have introduced regression)
 - After PST SPRT final, address scalars group: raise PARAM_MAX bounds for capped params
+
+### [2026-04-09] Phase 13 — PST Convention Bug Fix (SPRT v2)
+
+**Context:**
+First PST SPRT (`phase13-pst-group`, terminal e212e1d3/6b5b4263) returned H0 at game 22:
+score 2W-19L-1D [0.114], Elo −356.8, LOS 0.0%. Key diagnostic: Vex-new playing Black
+returned 0W-11L-0D (complete collapse), while White showed 2W-8L-1D (bad but not catastrophic).
+The Black asymmetry is the canonical symptom of a PST rank-flip bug.
+
+**Root Cause:**
+`tools/apply-tuned-params.ps1` `Apply-Pst` function used `$javaRows += ,$rows[7 - $r]`
+(a vertical rank-flip). The code comment claimed PieceSquareTables.java uses "a1=0" convention.
+**Both the tuner (EvalParams.java, confirmed by internal comment "a8=0 convention") and the
+engine PSTs (PieceSquareTables.java, confirmed by EvaluatorTest comment "Tables stored in
+display order: a8=0, h1=63") use a8=0.** The flip was wrong — it double-inverted PSTs.
+
+Effect of wrong flip:
+- White pawns on rank 7 (near promotion) evaluated as rank 2 (starting position) → push penalty
+- White pawns on rank 2 (starting) evaluated as rank 7 (near promotion) → over-valued passive pawns
+- Black PST uses `sq ^ 56` — wrong base PST made Black evaluation doubly-wrong for all pieces
+
+**Fixed:**
+1. `tools/apply-tuned-params.ps1`: `rows[7 - $r]` → `rows[$r]` (no flip, both sides a8=0)
+2. `PieceSquareTables.java` Javadoc: corrected "a1=0" comment to "a8=0 (rank 8 at top, index 0 = a8)"
+3. `engine-core/test/.../EvaluatorTest.java`: updated `pstTableLookupCorrect` expected values
+   (MG_KNIGHT[36]: 15→19, EG_KNIGHT[36]: 10→14, MG_PAWN[36]: 12→14)
+4. `SearchRegressionTest.java`: updated E4 expected e4d4→e4f4 (symmetric), E8 h2h4→g1g5 (eval-dep)
+   — both are documented as equivalent moves, PST tuning changed depth-8 eval preference.
+5. PieceSquareTables.java reverted to pre-tuning state, then re-applied with corrected mapping.
+
+**Test results after fix:** 161 run, 0 failures, 2 skipped (unchanged from baseline).
+
+**SPRT v2 (phase13-pst-group-v2):**
+After 20 games: 6W-4L-10D [0.550], Elo +34.9 ±111.3, LOS 73.6%, DrawRatio 50%.
+Black score: 4W-2L-4D [0.600] — confirms Black collapse is resolved.
+SPRT running (LLR 0.13/2.94, verdict pending).

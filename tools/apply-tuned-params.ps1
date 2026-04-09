@@ -179,12 +179,11 @@ function Apply-Pst {
             }
             $rows = $pstData[$tunerKey]   # 8 rows, each an array of 8 ints (a8=0 order)
 
-            # PieceSquareTables.java uses a1=0 (rank 1 at bottom), so row 0 = rank 1.
-            # EvalParams uses a8=0 (rank 8 at top), so row 0 = rank 8.
-            # Mapping: PST_java[row R] = tuner[7 - R]
+            # Both PieceSquareTables.java and the tuner use a8=0 (index 0 = a8, rank 8 first).
+            # No flip needed: tuned_params.txt row 0 → Java array row 0 (rank 8), etc.
             $javaRows = @()
             for ($r = 0; $r -le 7; $r++) {
-                $javaRows += ,$rows[7 - $r]
+                $javaRows += ,$rows[$r]
             }
 
             # Build the replacement array body
@@ -196,7 +195,7 @@ function Apply-Pst {
 
             # Replace the array in PieceSquareTables.java
             # Pattern: static final int[] XX_YY = { ... };
-            $arrayName = "${phase}_${pieceMap[$piece]}"
+            $arrayName = "${phase}_$($pieceMap[$piece])"
             $pattern = "(?s)(static final int\[\] ${arrayName} = \{)[^}]*(})"
             $replacement = "`${1}`r`n$arrayBody`${2}"
             $content = [regex]::Replace($content, $pattern, $replacement)

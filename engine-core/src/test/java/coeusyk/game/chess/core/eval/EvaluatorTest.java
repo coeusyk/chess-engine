@@ -109,12 +109,12 @@ class EvaluatorTest {
         // Tables stored in display order: a8=0, h1=63
         // Board also uses a8=0, so white PST lookup is direct (no mirror).
         // White knight on e4 → board sq 36 → table index 36
-        // MG_KNIGHT row 4 (32-39): {-13,8,9,10,15,11,14,-10} → col 4 = 15 (v0.5.4)
-        assertEquals(15, PieceSquareTables.mg(2, 36));
-        // EG_KNIGHT row 4 (32-39): {-24,-13,9,19,10,11,0,-27} → col 4 = 10 (v0.5.4)
-        assertEquals(10, PieceSquareTables.eg(2, 36));
-        // MG_PAWN row 4 (32-39): {-30,-27,-5,6,12,9,-10,-31} → col 4 = 12 (v0.5.4)
-        assertEquals(12, PieceSquareTables.mg(1, 36));
+        // MG_KNIGHT row 4 (32-39): {-8,14,14,14,19,13,18,-8} → col 4 = 19 (v0.5.6-tuned)
+        assertEquals(19, PieceSquareTables.mg(2, 36));
+        // EG_KNIGHT row 4 (32-39): {-19,-9,14,23,14,16,5,-23} → col 4 = 14 (v0.5.6-tuned)
+        assertEquals(14, PieceSquareTables.eg(2, 36));
+        // MG_PAWN row 4 (32-39): {-29,-26,-4,7,14,10,-9,-31} → col 4 = 14 (v0.5.6-tuned)
+        assertEquals(14, PieceSquareTables.mg(1, 36));
     }
 
     @Test

@@ -259,7 +259,8 @@ class SearchRegressionTest {
             //     Both win; equivalent by symmetry for a central pawn.
             //     Updated 2026-04-03: cheap bitboard hanging-penalty (replacing SEE-based form)
             //     reverts depth-8 preference to e4d4. Equivalent by symmetry.
-            Arguments.of("E4",  E4_FEN,  "e4d4"),
+            //     Updated Phase 13 PST tuning: symmetric preference shifts to e4f4. Both win.
+            Arguments.of("E4",  E4_FEN,  "e4f4"),
             Arguments.of("E5",  E5_FEN,  "a2e2"),
             // E6: 8/8/8/5k2/1PP5/8/2K5/8 — Kc2+Pb4c4 vs Kf5. Both b4b5 and c4c5 advance
             //     connected pawns; BK on f5 is far from both.
@@ -280,7 +281,8 @@ class SearchRegressionTest {
             //     Updated 2026-04-02: new terms shift preference to g1g5.
             //     Updated Phase 10 #10.5: Texel-tuned piece bonuses (rook7thEg 23→32) shift
             //     depth-8 preference to h2h4. Both g1g5/g1g6 and h2h4 are winning continuations.
-            Arguments.of("E8",  E8_FEN,  "h2h4"),
+            //     Updated Phase 13 PST tuning: preference shifts back to g1g5. Both are winning.
+            Arguments.of("E8",  E8_FEN,  "g1g5"),
             Arguments.of("E9",  E9_FEN,  "d3e3"),
             Arguments.of("E10", E10_FEN, "a2a6")
         );
