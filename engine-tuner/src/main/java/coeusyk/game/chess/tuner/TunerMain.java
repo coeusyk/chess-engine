@@ -42,7 +42,7 @@ public final class TunerMain {
 
     public static void main(String[] args) throws Exception {
         if (args.length < 1) {
-        LOG.error("Usage: engine-tuner <dataset> [maxPositions] [maxIterations] [--optimizer adam|coordinate|lbfgs] [--corpus-format csv|epd] [--no-recalibrate-k] [--corpus <csv>] [--coverage-audit]");
+        LOG.error("Usage: engine-tuner <dataset> [maxPositions] [maxIterations] [--optimizer adam|coordinate|lbfgs] [--param-group material|pst|pawn-structure|king-safety|mobility|scalars] [--corpus-format csv|epd] [--no-recalibrate-k] [--freeze-k] [--freeze-params] [--corpus <csv>] [--coverage-audit]");
             System.exit(1);
         }
 
@@ -51,9 +51,12 @@ public final class TunerMain {
         int    maxIters       = -1; // sentinel: use optimizer default
         String optimizer      = "adam";
         boolean recalibrateK  = true;
+        boolean freezeK       = false; // --freeze-k:      Phase B — keep K fixed during Adam
+        boolean freezeParams  = false; // --freeze-params: Phase A — calibrate K only, skip optimizer
         boolean coverageAudit = false;
         Path   corpusPath     = null;  // #130: optional Stockfish-annotated CSV
         String corpusFormat   = "auto"; // #140: "auto", "csv", "epd"
+        String paramGroup     = null;  // --param-group: restrict optimizer to one parameter group
 
         // Parse remaining positional args and named flags
         for (int i = 1; i < args.length; i++) {
@@ -69,8 +72,26 @@ public final class TunerMain {
                 }
             } else if ("--no-recalibrate-k".equals(args[i])) {
                 recalibrateK = false;
+            } else if ("--freeze-k".equals(args[i])) {
+                freezeK = true;
+                recalibrateK = false;
+            } else if ("--freeze-params".equals(args[i])) {
+                freezeParams = true;
             } else if ("--coverage-audit".equals(args[i])) {
                 coverageAudit = true;
+            } else if ("--param-group".equals(args[i])) {
+                if (i + 1 >= args.length) {
+                    LOG.error("--param-group requires a value: material|pst|pawn-structure|king-safety|mobility|scalars");
+                    System.exit(1);
+                }
+                paramGroup = args[++i];
+                // Validate early so the user gets a clear error message before loading data.
+                try {
+                    EvalParams.buildGroupMask(paramGroup);
+                } catch (IllegalArgumentException e) {
+                    LOG.error("--param-group: {}", e.getMessage());
+                    System.exit(1);
+                }
             } else if ("--corpus-format".equals(args[i])) {
                 if (i + 1 >= args.length) {
                     LOG.error("--corpus-format requires a value: csv|epd");
@@ -111,8 +132,11 @@ public final class TunerMain {
         LOG.info("[TunerMain] Max iters:     {}", maxIters);
         LOG.info("[TunerMain] Optimizer:     {}", optimizer);
         LOG.info("[TunerMain] Recalibrate K: {}", recalibrateK ? "yes" : "no (--no-recalibrate-k)");
+        LOG.info("[TunerMain] Freeze K:      {}", freezeK      ? "yes (--freeze-k, Phase B)"      : "no");
+        LOG.info("[TunerMain] Freeze params: {}", freezeParams ? "yes (--freeze-params, Phase A)"  : "no");
         LOG.info("[TunerMain] Coverage audit: {}", coverageAudit ? "yes (will exit after audit)" : "no");
         LOG.info("[TunerMain] Corpus format: {}", corpusFormat);
+        LOG.info("[TunerMain] Param group:   {}", paramGroup != null ? paramGroup : "all (no mask)");
         if (corpusPath != null) {
             LOG.info("[TunerMain] Corpus CSV:    {} (overrides dataset for training data)", corpusPath.toAbsolutePath());
         }
@@ -173,14 +197,26 @@ public final class TunerMain {
             System.exit(0);
         }
 
+        // --- Phase A: --freeze-params — K calibrated, params untouched, optimizer skipped ---
+        if (freezeParams) {
+            LOG.info(String.format("[TunerMain] --freeze-params: Phase A complete. K = %.6f  (optimizer skipped)", k));
+            LOG.info("[TunerMain] Re-run with --freeze-k to begin Phase B parameter tuning.");
+            Path outputPath = Paths.get("tuned_params.txt");
+            EvalParams.writeToFile(params, k, outputPath);
+            LOG.info("[TunerMain] Initial parameters written to: {}  (K calibrated, params unchanged)",
+                    outputPath.toAbsolutePath());
+            return;
+        }
+
         // --- Run chosen optimizer ---
         double[] tuned;
+        boolean[] groupMask = (paramGroup != null) ? EvalParams.buildGroupMask(paramGroup) : null;
         if ("adam".equals(optimizer)) {
             LOG.info(String.format("[TunerMain] Running Adam gradient descent (K=%.6f, maxIters=%d, fast-path)...", k, maxIters));
-            tuned = GradientDescent.tuneWithFeatures(features, params, k, maxIters, recalibrateK);
+            tuned = GradientDescent.tuneWithFeatures(features, params, k, maxIters, recalibrateK, groupMask);
         } else if ("lbfgs".equals(optimizer)) {
-            LOG.info(String.format("[TunerMain] Running L-BFGS (K=%.6f, maxIters=%d, m=10, ||∇L||<1e-5 convergence)...", k, maxIters));
-            tuned = GradientDescent.tuneWithFeaturesLBFGS(features, params, k, maxIters, recalibrateK);
+            LOG.info(String.format("[TunerMain] Running L-BFGS (K=%.6f, maxIters=%d, m=10, ||\u2207L||<1e-5 convergence)...", k, maxIters));
+            tuned = GradientDescent.tuneWithFeaturesLBFGS(features, params, k, maxIters, recalibrateK, groupMask);
         } else {
             LOG.info(String.format("[TunerMain] Running coordinate descent (K=%.6f, maxIters=%d)...", k, maxIters));
             tuned = CoordinateDescent.tune(positions, params, k, maxIters, recalibrateK);

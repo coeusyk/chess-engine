@@ -51,7 +51,8 @@ param(
     [int]$BonferroniM = 0,
     [int]$Elo0 = 0,
     [int]$Elo1 = 50,
-    [string]$OpeningsFile = ""  # Default: auto-detect noob_3moves.epd next to script
+    [string]$OpeningsFile = "",  # Default: auto-detect noob_3moves.epd next to script
+    [string]$Tag = ""            # Optional descriptive tag for PGN filename (e.g. "phase13-material-group")
 )
 
 Set-StrictMode -Version Latest
@@ -103,8 +104,9 @@ if (-not $OldResolved) { Write-Error "Old engine JAR not found: $Old"; exit 1 }
 $ResultsDir = Join-Path $PSScriptRoot 'results'
 if (-not (Test-Path $ResultsDir)) { New-Item -ItemType Directory -Path $ResultsDir | Out-Null }
 
-$TS     = Get-Date -Format 'yyyyMMdd_HHmmss'
-$PgnOut = Join-Path $ResultsDir "sprt_$TS.pgn"
+$TS      = Get-Date -Format 'yyyyMMdd_HHmmss'
+$tagPart = if ($Tag) { "${Tag}_" } else { "" }
+$PgnOut  = Join-Path $ResultsDir "sprt_${tagPart}$TS.pgn"
 
 Write-Host "SPRT: new vs old  ELO0=$Elo0 ELO1=$Elo1 alpha=$Alpha beta=$Beta  TC=$TC"
 Write-Host "NEW : $($NewResolved.Path)"

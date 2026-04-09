@@ -250,6 +250,43 @@ public final class EvalParams {
         }
     }
 
+    /**
+     * Builds a boolean mask array of length {@link #TOTAL_PARAMS} where only
+     * parameters belonging to the named group are {@code true}.
+     *
+     * <p>Valid group names:
+     * <ul>
+     *   <li>{@code material}       — indices [0, 12)</li>
+     *   <li>{@code pst}            — indices [12, 780)</li>
+     *   <li>{@code pawn-structure} — indices [780, 796)</li>
+     *   <li>{@code king-safety}    — indices [796, 804)</li>
+     *   <li>{@code mobility}       — indices [804, 812)</li>
+     *   <li>{@code scalars}        — indices [812, 829)</li>
+     * </ul>
+     *
+     * @param groupName one of the six group names listed above (case-sensitive)
+     * @return boolean mask; pass {@code null} instead to tune all params
+     * @throws IllegalArgumentException if {@code groupName} is not one of the valid names
+     */
+    public static boolean[] buildGroupMask(String groupName) {
+        int lo, hi;
+        switch (groupName) {
+            case "material":       lo = IDX_MATERIAL_START;  hi = IDX_PST_START;        break;
+            case "pst":            lo = IDX_PST_START;        hi = IDX_PASSED_MG_START;  break;
+            case "pawn-structure": lo = IDX_PASSED_MG_START; hi = IDX_SHIELD_RANK2;     break;
+            case "king-safety":    lo = IDX_SHIELD_RANK2;    hi = IDX_MOB_MG_START;     break;
+            case "mobility":       lo = IDX_MOB_MG_START;    hi = IDX_TEMPO;            break;
+            case "scalars":        lo = IDX_TEMPO;            hi = TOTAL_PARAMS;         break;
+            default:
+                throw new IllegalArgumentException(
+                    "Unknown param group: \"" + groupName + "\""
+                    + " (valid: material, pst, pawn-structure, king-safety, mobility, scalars)");
+        }
+        boolean[] mask = new boolean[TOTAL_PARAMS];
+        java.util.Arrays.fill(mask, lo, hi, true);
+        return mask;
+    }
+
     private EvalParams() {}
 
     /**

@@ -228,6 +228,14 @@ public class UciApplication {
                 board.makeMove(move);
             }
         }
+
+        // Reopen book on the UCI main thread so the book is guaranteed open
+        // before the next "go" arrives. This fixes the data race where ucinewgame
+        // closed the book and the lazy reopen in runSearch() ran on the search thread
+        // concurrently with setoption writes from the UCI thread.
+        if (ownBook && !openingBook.isOpen()) {
+            openNewBook();
+        }
     }
 
     private void handleSetOption(String command) {
@@ -328,7 +336,13 @@ public class UciApplication {
         } else if ("ownbook".equals(optionNameLower)) {
             ownBook = "true".equalsIgnoreCase(valuePart);
         } else if ("bookfile".equals(optionNameLower)) {
-            bookFile = valuePart.trim();
+            String trimmed = valuePart.trim();
+            if (trimmed.contains("..") || trimmed.contains("\0") || trimmed.length() > 512) {
+                LOG.warn("setoption BookFile rejected: invalid path '{}'",
+                        trimmed.replaceAll("[\r\n\t]", "_"));
+                return;
+            }
+            bookFile = trimmed;
             openNewBook();
         } else if ("bookdepth".equals(optionNameLower)) {
             try {
@@ -353,14 +367,52 @@ public class UciApplication {
 
     private void openNewBook() {
         openingBook.close();
-        if ("Performance.bin".equals(bookFile)) {
-            openingBook.openFromClasspath("books/Performance.bin");
-        } else {
+        String safeLog = bookFile.replaceAll("[\r\n\t]", "_");  // log injection guard
+
+        java.nio.file.Path p = java.nio.file.Path.of(bookFile);
+
+        // Step 1: absolute path — use directly.
+        if (p.isAbsolute()) {
             try {
-                openingBook.open(java.nio.file.Path.of(bookFile));
+                openingBook.open(p);
             } catch (java.io.IOException e) {
-                LOG.warn("Could not open book file '{}': {}", bookFile, e.getMessage());
+                LOG.warn("Could not open book file '{}': {}", safeLog, e.getMessage());
             }
+            if (!openingBook.isOpen()) {
+                LOG.warn("Book file not found at absolute path '{}' — book disabled", safeLog);
+            }
+            return;
+        }
+
+        // Step 2: relative to the JAR directory (covers GUI launchers with arbitrary CWD).
+        try {
+            java.nio.file.Path jarLoc = java.nio.file.Path.of(
+                UciApplication.class.getProtectionDomain().getCodeSource().getLocation().toURI()
+            );
+            java.nio.file.Path jarDir = jarLoc.getParent();
+            if (jarDir != null) {
+                try {
+                    openingBook.open(jarDir.resolve(bookFile));
+                } catch (java.io.IOException ignored) { /* fall through */ }
+                if (openingBook.isOpen()) return;
+            }
+        } catch (Exception ignored) {
+            // getCodeSource() can return null, or URI may be malformed — fall through.
+        }
+
+        // Step 3: relative to the working directory.
+        try {
+            openingBook.open(p);
+        } catch (java.io.IOException ignored) { /* fall through */ }
+        if (openingBook.isOpen()) return;
+
+        // Step 4: classpath resource (only allow plain filenames, no directory traversal).
+        if (!bookFile.contains("/") && !bookFile.contains("\\")) {
+            openingBook.openFromClasspath("books/" + bookFile);
+        }
+
+        if (!openingBook.isOpen()) {
+            LOG.warn("Book file '{}' not found at any location — book disabled", safeLog);
         }
     }
 
@@ -493,10 +545,10 @@ public class UciApplication {
             boolean isPonder = contains(parts, "ponder");
 
             // Opening book probe — skip when pondering (we're searching the opponent's position).
+            // Book is guaranteed open if handlePosition() ran before this go (see reopen guard there).
             if (ownBook && !isPonder) {
                 int halfMoves = searchBoard.boardStates.size() - 1;
                 if (halfMoves < bookDepth * 2) {
-                    if (!openingBook.isOpen()) openNewBook();
                     Move bookMove = openingBook.probe(searchBoard);
                     if (bookMove != null) {
                         bestMoveToEmit = bookMove;

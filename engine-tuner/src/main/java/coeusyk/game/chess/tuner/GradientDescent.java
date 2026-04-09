@@ -211,13 +211,16 @@ public final class GradientDescent {
      * @param k            sigmoid scaling constant (from {@link KFinder})
      * @param maxIters     iteration cap
      * @param recalibrateK if {@code true}, re-runs {@link KFinder} after each iteration
+     * @param groupMask    optional mask; if non-null only {@code true} indices are updated
+     *                     (null = update all params, fully backward compatible)
      * @return tuned parameter array
      */
     public static double[] tuneWithFeatures(List<PositionFeatures> features,
                                             double[] initialParams,
                                             double k,
                                             int maxIters,
-                                            boolean recalibrateK) {
+                                            boolean recalibrateK,
+                                            boolean[] groupMask) {
         int n = initialParams.length;
         double[] params = initialParams.clone();
 
@@ -252,6 +255,7 @@ public final class GradientDescent {
 
             for (int i = 0; i < n; i++) {
                 if (EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i]) continue;
+                if (groupMask != null && !groupMask[i]) continue;  // skip params outside the active group
 
                 m[i] = BETA1 * m[i] + (1 - BETA1) * grad[i];
                 v[i] = BETA2 * v[i] + (1 - BETA2) * grad[i] * grad[i];
@@ -306,13 +310,24 @@ public final class GradientDescent {
     }
 
     /**
-     * Convenience overload for feature-based tuning with
-     * {@link #DEFAULT_MAX_ITERATIONS}.
+     * Convenience overload for feature-based tuning with {@link #DEFAULT_MAX_ITERATIONS}
+     * and no group mask (all params updated).
      */
     public static double[] tuneWithFeatures(List<PositionFeatures> features,
                                             double[] initialParams,
                                             double k) {
-        return tuneWithFeatures(features, initialParams, k, DEFAULT_MAX_ITERATIONS, true);
+        return tuneWithFeatures(features, initialParams, k, DEFAULT_MAX_ITERATIONS, true, null);
+    }
+
+    /**
+     * Convenience overload without a group mask (all params updated).
+     */
+    public static double[] tuneWithFeatures(List<PositionFeatures> features,
+                                            double[] initialParams,
+                                            double k,
+                                            int maxIters,
+                                            boolean recalibrateK) {
+        return tuneWithFeatures(features, initialParams, k, maxIters, recalibrateK, null);
     }
 
     /**
@@ -433,7 +448,8 @@ public final class GradientDescent {
                                                  double[] initialParams,
                                                  double k,
                                                  int maxIters,
-                                                 boolean recalibrateK) {
+                                                 boolean recalibrateK,
+                                                 boolean[] groupMask) {
         final int n = initialParams.length;
         final int m = LBFGS_M;
 
@@ -518,9 +534,12 @@ public final class GradientDescent {
             // --- Update float accumulator ---
             double[] newAccum = new double[n];
             for (int i = 0; i < n; i++) {
-                newAccum[i] = (EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i])
-                        ? accum[i]
-                        : accum[i] - q[i];  // step size α = 1.0 (standard L-BFGS trial step)
+                if (EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i]
+                        || (groupMask != null && !groupMask[i])) {
+                    newAccum[i] = accum[i];  // frozen or outside active group
+                } else {
+                    newAccum[i] = accum[i] - q[i];  // step size α = 1.0 (standard L-BFGS trial step)
+                }
             }
 
             // --- Discretize and clamp (same logic as Adam path) ---
@@ -587,12 +606,24 @@ public final class GradientDescent {
     }
 
     /**
-     * Convenience overload for L-BFGS with {@link #DEFAULT_MAX_ITERATIONS}.
+     * Convenience overload for L-BFGS with {@link #DEFAULT_MAX_ITERATIONS}
+     * and no group mask (all params updated).
      */
     public static double[] tuneWithFeaturesLBFGS(List<PositionFeatures> features,
                                                  double[] initialParams,
                                                  double k) {
-        return tuneWithFeaturesLBFGS(features, initialParams, k, DEFAULT_MAX_ITERATIONS, true);
+        return tuneWithFeaturesLBFGS(features, initialParams, k, DEFAULT_MAX_ITERATIONS, true, null);
+    }
+
+    /**
+     * Convenience overload without a group mask (all params updated).
+     */
+    public static double[] tuneWithFeaturesLBFGS(List<PositionFeatures> features,
+                                                 double[] initialParams,
+                                                 double k,
+                                                 int maxIters,
+                                                 boolean recalibrateK) {
+        return tuneWithFeaturesLBFGS(features, initialParams, k, maxIters, recalibrateK, null);
     }
 
     // -------------------------------------------------------------------------
