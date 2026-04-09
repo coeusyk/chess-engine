@@ -7,13 +7,7 @@ public final class KingSafety {
 
     private KingSafety() {}
 
-    private static final int SHIELD_RANK_2_BONUS = 12;
-    private static final int SHIELD_RANK_3_BONUS = 7;
-
-    private static final int OPEN_FILE_PENALTY = 45;
-    private static final int HALF_OPEN_FILE_PENALTY = 13;
-
-    private static final int[] ATTACKER_WEIGHT = new int[7];
+    // Shield/open-file/attacker constants are now read from EvalParams (overrideable at startup).
 
     private static final long[] WHITE_KING_ZONE = new long[64];
     private static final long[] BLACK_KING_ZONE = new long[64];
@@ -22,11 +16,6 @@ public final class KingSafety {
     private static final int BLACK_G8 = 6,  BLACK_H8 = 7,  BLACK_C8 = 2,  BLACK_B8 = 1;
 
     static {
-        ATTACKER_WEIGHT[Piece.Knight] = 6;
-        ATTACKER_WEIGHT[Piece.Bishop] = 5;
-        ATTACKER_WEIGHT[Piece.Rook]   = 5;
-        ATTACKER_WEIGHT[Piece.Queen]  = 6;
-
         for (int sq = 0; sq < 64; sq++) {
             int row = sq / 8;
             int file = sq % 8;
@@ -98,9 +87,9 @@ public final class KingSafety {
             int f = file + df;
             if (f < 0 || f > 7) continue;
             if (r1 >= 0 && r1 < 8 && (friendlyPawns & (1L << (r1 * 8 + f))) != 0)
-                bonus += SHIELD_RANK_2_BONUS;
+                bonus += EvalParams.SHIELD_RANK2;
             if (r2 >= 0 && r2 < 8 && (friendlyPawns & (1L << (r2 * 8 + f))) != 0)
-                bonus += SHIELD_RANK_3_BONUS;
+                bonus += EvalParams.SHIELD_RANK3;
         }
         return bonus;
     }
@@ -116,7 +105,7 @@ public final class KingSafety {
             if (f < 0 || f > 7) continue;
             long fileMask = 0x0101010101010101L << f;
             if ((friendly & fileMask) == 0) {
-                penalty -= (enemy & fileMask) == 0 ? OPEN_FILE_PENALTY : HALF_OPEN_FILE_PENALTY;
+                penalty -= (enemy & fileMask) == 0 ? EvalParams.OPEN_FILE_PENALTY : EvalParams.HALF_OPEN_FILE_PENALTY;
             }
         }
         return penalty;
@@ -132,10 +121,10 @@ public final class KingSafety {
         long eQueens  = white ? board.getBlackQueens()   : board.getWhiteQueens();
 
         int w = 0;
-        w += countAttackers(eKnights, Piece.Knight, zone, allOcc) * ATTACKER_WEIGHT[Piece.Knight];
-        w += countAttackers(eBishops, Piece.Bishop, zone, allOcc) * ATTACKER_WEIGHT[Piece.Bishop];
-        w += countAttackers(eRooks,   Piece.Rook,   zone, allOcc) * ATTACKER_WEIGHT[Piece.Rook];
-        w += countAttackers(eQueens,  Piece.Queen,  zone, allOcc) * ATTACKER_WEIGHT[Piece.Queen];
+        w += countAttackers(eKnights, Piece.Knight, zone, allOcc) * EvalParams.ATK_WEIGHT_KNIGHT;
+        w += countAttackers(eBishops, Piece.Bishop, zone, allOcc) * EvalParams.ATK_WEIGHT_BISHOP;
+        w += countAttackers(eRooks,   Piece.Rook,   zone, allOcc) * EvalParams.ATK_WEIGHT_ROOK;
+        w += countAttackers(eQueens,  Piece.Queen,  zone, allOcc) * EvalParams.ATK_WEIGHT_QUEEN;
 
         return -(w * w / 4);
     }

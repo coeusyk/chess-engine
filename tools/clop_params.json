@@ -1,0 +1,44 @@
+[
+  {
+    "name": "ATK_WEIGHT_KNIGHT",
+    "current": 6,
+    "min": 1,
+    "max": 15,
+    "step": 1
+  },
+  {
+    "name": "ATK_WEIGHT_BISHOP",
+    "current": 5,
+    "min": 1,
+    "max": 15,
+    "step": 1
+  },
+  {
+    "name": "ATK_WEIGHT_ROOK",
+    "current": 5,
+    "min": 1,
+    "max": 15,
+    "step": 1
+  },
+  {
+    "name": "ATK_WEIGHT_QUEEN",
+    "current": 6,
+    "min": 1,
+    "max": 15,
+    "step": 1
+  },
+  {
+    "name": "HANGING_PENALTY",
+    "current": 50,
+    "min": 10,
+    "max": 100,
+    "step": 1
+  },
+  {
+    "name": "TEMPO",
+    "current": 21,
+    "min": 5,
+    "max": 40,
+    "step": 1
+  }
+]

@@ -1,5 +1,6 @@
 package coeusyk.game.chess.uci;
 
+import coeusyk.game.chess.core.eval.EvalParams;
 import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Move;
 import coeusyk.game.chess.core.movegen.MovesGenerator;
@@ -98,6 +99,17 @@ public class UciApplication {
     private static final int BENCH_HASH_MB = 16;
 
     public static void main(String[] args) throws IOException {
+        // Apply eval-parameter overrides before any Evaluator is constructed so that
+        // Evaluator.DEFAULT_CONFIG picks up the new TEMPO value at class-init time.
+        for (int i = 0; i < args.length - 1; i++) {
+            if ("--param-overrides".equals(args[i])) {
+                java.nio.file.Path p = java.nio.file.Paths.get(args[i + 1]);
+                if (java.nio.file.Files.exists(p)) {
+                    EvalParams.loadOverrides(p);
+                }
+                break;
+            }
+        }
         UciApplication app = new UciApplication();
         for (int i = 0; i < args.length; i++) {
             if ("--bench".equals(args[i])) {

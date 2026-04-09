@@ -5869,3 +5869,87 @@ SPRT running (LLR 0.13/2.94, verdict pending).
 - Run 100-iter eval-mode: record start/end MSE_cp² vs WDL baseline MSE
 - Build fat JAR and launch SPRT vs `tools/engine-uci-0.4.9.jar` (H0=0, H1=5)
 - Issue #142: CLOP tuning (`EvalParams.loadOverrides` + `clop_tune.ps1`)
+
+**WDL 100-Iter Results (Issue #141):**
+
+- Dataset: quiet-labeled.epd — 703,755 positions (21,245 filtered)
+- Start MSE (WDL): 0.05827519 (K=1.520762)
+- End MSE at iter 100: 0.06083344 (K=1.145696)
+- Note: K drifted from 1.52 → 1.15 over 100 iters (Adam jointly optimises params + K). MSE
+  values are not directly comparable across K changes; the optimizer explored a different
+  region of K-space where material/PST values changed significantly.
+- Key scalar param changes vs pre-tuning defaults: TEMPO 21→30, BISHOP_PAIR MG/EG 29/52→60/80,
+  ROOK_OPEN_FILE MG 50→50 (unchanged), CONNECTED_PAWN 9/4→21/17
+- Full parameter set written to `tools/wdl_tuned_params.txt`
+
+---
+
+### [2026-04-09] Phase 13 — CLOP King Safety Tuning: EvalParams Override Mechanism (Issue #142)
+
+**What Was Built:**
+
+Implemented the runtime eval-parameter override mechanism (EvalParams.loadOverrides) plus
+CLOP tuning infrastructure for position-sparse king-safety terms.
+
+**Files Changed:**
+
+- `engine-core/src/main/java/.../eval/EvalParams.java` (NEW): Runtime override class with
+  10 public static int fields:  SHIELD_RANK2, SHIELD_RANK3, OPEN_FILE_PENALTY,
+  HALF_OPEN_FILE_PENALTY, ATK_WEIGHT_KNIGHT, ATK_WEIGHT_BISHOP, ATK_WEIGHT_ROOK,
+  ATK_WEIGHT_QUEEN, HANGING_PENALTY, TEMPO. `loadOverrides(Path)` reads KEY=VALUE and uses
+  a switch statement to set matching fields (no reflection, unknown keys silently ignored).
+- `engine-core/.../eval/KingSafety.java`: Removed private static finals (SHIELD_RANK_2_BONUS,
+  SHIELD_RANK_3_BONUS, OPEN_FILE_PENALTY, HALF_OPEN_FILE_PENALTY, ATTACKER_WEIGHT[]). All
+  usages replaced with EvalParams.* references. Removed the static initializer block for the
+  ATTACKER_WEIGHT array. Method signatures unchanged — no test breakage.
+- `engine-core/.../eval/Evaluator.java`: Removed `private static final int HANGING_PENALTY = 50`.
+  Replaced usage with `EvalParams.HANGING_PENALTY`. Changed `DEFAULT_CONFIG = new EvalConfig(21,
+  ...)` to use `EvalParams.TEMPO` — so if loadOverrides is called before Evaluator class loads,
+  DEFAULT_CONFIG.tempo() picks up the new value.
+- `engine-uci/.../UciApplication.java`: Added `EvalParams` import. Added `--param-overrides <path>`
+  parsing BEFORE `new UciApplication()` so that Evaluator.DEFAULT_CONFIG is not yet initialised
+  when loadOverrides fires. Reads file only if the path exists (no crash on missing file).
+- `tools/clop_tune.ps1` (NEW): Simplified CLOP loop. Accepts --Params (JSON), --Games (default
+  200), --Iterations (default 50), --BaselineJar, --CandidateJar, --TimeControl (default
+  tc=10+0.1). Iter 1 uses current param values; subsequent iters sample Gaussian(bestValues,
+  std=(max-min)/6). Writes eval_params_override.txt, runs cutechess-cli with --param-overrides
+  passed to candidate JAR, parses W/D/L, computes Elo = 400·log10((W+D/2)/(L+D/2)), updates
+  best if improved, appends row to clop_results.csv.
+- `tools/clop_params.json` (NEW): 6 CLOP target parameters: ATK_WEIGHT_KNIGHT(6,1-15),
+  ATK_WEIGHT_BISHOP(5,1-15), ATK_WEIGHT_ROOK(5,1-15), ATK_WEIGHT_QUEEN(6,1-15),
+  HANGING_PENALTY(50,10-100), TEMPO(21,5-40). PAWN_STORM_PENALTY omitted — no pawn storm
+  evaluation logic exists in engine-core; tracked separately.
+- `tools/annotate_corpus.ps1`: Fixed regex for Stockfish 18 eval output format. SF18 outputs
+  `Final evaluation       +0.15 (white side) [with scaled NNUE, ...]` (no colon, additional
+  trailing text). Old regex `'Final evaluation:\s+...'` never matched — corpus annotation was
+  silently producing 0 lines. Fixed: `'Final evaluation[:\s]+([+-]?\d+\.?\d*)\s+\(white side\)'`.
+
+**Decisions Made:**
+
+- Public static mutable fields on EvalParams (not a record/bean) chosen deliberately: written
+  once at startup before any search thread, then read-only during play. SMP safe under the
+  Java memory model's happens-before from main-thread init to thread-pool submission.
+- No test changes required: KingSafety.evaluate(Board) signature unchanged, EvalParams fields
+  initialised to previous hard-coded default values, so all 161 tests pass unchanged.
+- TEMPO kept dual-tracked: in EvalConfig for backward-compat with tests calling
+  `Evaluator.DEFAULT_CONFIG.tempo()`, and in EvalParams for CLOP override. They stay in sync
+  because DEFAULT_CONFIG is built with `EvalParams.TEMPO` at Evaluator class-load time.
+
+**Broke / Fixed:**
+
+- Stockfish 18 eval format bug: SF18 removed the colon in "Final evaluation:" — 20 minutes of
+  annotation produced 0 lines. Detected by checking the sf-eval-corpus.txt after ~20 min still
+  0 bytes. Fixed regex + restarted annotation.
+
+**Measurements:**
+
+- All 161 engine-core tests pass (2 pre-existing skips, 0 failures). Engine-tuner: 2
+  pre-existing failures (rook7th MG=0 from prior tuning run asserting >0) unchanged.
+
+**Next:**
+
+- Corpus annotation running: `tools/sf-eval-corpus.txt` (~703k positions, ETA ~10 min with fix)
+- After annotation: run eval-mode 100-iter, record MSE_cp² start/end
+- SPRT #141-wdl and #141-eval: both param sets vs tools/engine-uci-0.4.9.jar (H0=0, H1=5)
+- CLOP 50 iterations (200 games each = 10k games): record clop_results.csv
+- SPRT #142: CLOP best params vs tools/engine-uci-0.4.9.jar

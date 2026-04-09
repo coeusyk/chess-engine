@@ -163,8 +163,9 @@ foreach ($rawLine in $lines) {
 
         if ($null -eq $evalLine) { break }
 
-        # "Final evaluation: +0.47 (white side)" - value in pawns
-        if ($evalLine -match 'Final evaluation:\s+([+-]?\d+\.?\d*)\s+\(white side\)') {
+        # "Final evaluation       +0.15 (white side) [...]" — SF18 format (no colon)
+        # Also matches older format "Final evaluation: +0.47 (white side)"
+        if ($evalLine -match 'Final evaluation[:\s]+([+-]?\d+\.?\d*)\s+\(white side\)') {
             $pawns   = [double]$Matches[1]
             $cpValue = [int][Math]::Round($pawns * 100.0)
             break

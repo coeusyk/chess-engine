@@ -22,8 +22,7 @@ public class Evaluator {
     private static final int[] PHASE_WEIGHTS = new int[7];
     private static final int[] MG_MATERIAL = new int[7];
     private static final int[] EG_MATERIAL = new int[7];
-    /** Fixed penalty (cp) applied per undefended attacked non-king piece. */
-    private static final int HANGING_PENALTY = 50;
+    // HANGING_PENALTY is now read from EvalParams.HANGING_PENALTY (overrideable at startup).
     /**
      * Enable pawn-hash hit/miss statistics collection. Off by default (zero overhead);
      * enabled in NpsBenchmarkTest and similar diagnostic callers.
@@ -43,7 +42,7 @@ public class Evaluator {
      * No runtime injection — this is the single live config used by all Evaluator instances.
      */
     public static final EvalConfig DEFAULT_CONFIG = new EvalConfig(
-        /* tempo              */ 21,
+        /* tempo              */ EvalParams.TEMPO,
         /* bishopPairMg/Eg   */ 29, 52,
         /* rook7thMg/Eg      */ 0, 32,
         /* rookOpenMg/Eg     */ 50, 0,
@@ -302,7 +301,7 @@ public class Evaluator {
             }
         }
 
-        return (Long.bitCount(blackHanging) - Long.bitCount(whiteHanging)) * HANGING_PENALTY;
+        return (Long.bitCount(blackHanging) - Long.bitCount(whiteHanging)) * EvalParams.HANGING_PENALTY;
     }
 
     /**
