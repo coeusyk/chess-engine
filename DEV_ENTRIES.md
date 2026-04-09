@@ -5816,3 +5816,56 @@ Effect of wrong flip:
 After 20 games: 6W-4L-10D [0.550], Elo +34.9 ±111.3, LOS 73.6%, DrawRatio 50%.
 Black score: 4W-2L-4D [0.600] — confirms Black collapse is resolved.
 SPRT running (LLR 0.13/2.94, verdict pending).
+
+### [2026-04-09] Phase 13 — Stockfish Eval Regression Mode (Issue #141)
+
+**Built:**
+
+- `tools/annotate_corpus.ps1`: PowerShell script that drives Stockfish via UCI, uses `eval`
+  command (static eval, depth 0) to score each EPD position, outputs `<FEN-6-field> <cp_int>`.
+  Skips mate positions (`Final evaluation: none`). Progress logged every 10,000 positions.
+- `LabelledPosition.java`: extended 1-field record to 3-field record with new `sfEvalCp` field.
+  Added backward-compat 2-arg constructor so all existing WDL callers are unaffected.
+- `PositionLoader.java`: added `loadSfEval(Path)` + `loadSfEval(Path, int)` and private
+  `tryParseSfEvalLine(String)` for the `<FEN 6-field> <cp_int>` format.
+- `TunerEvaluator.java`: added `computeMseEvalMode(features, sfEvalCps, params)` —
+  `mean((pf.eval(params) − sfEvalCps[i])²)` using `IntStream.range(0,N).parallel()`.
+- `GradientDescent.java`: added `tuneWithFeaturesEvalMode` (full Adam loop, no sigmoid, no K
+  calibration) and `computeGradientEvalMode` (factor = `pf.eval(params) − sfEvalCps[i]`).
+  Leverages existing `PositionFeatures.accumulateGradient(grad, params, factor)` which already
+  accepts arbitrary per-position error terms.
+- `TunerMain.java`: added `--label-mode wdl|eval` CLI flag. Eval path: loads via
+  `PositionLoader.loadSfEval`, skips K calibration, uses eval-mode Adam, sets `finalK=0.0`.
+- Tests: 4 new `GradientDescentTest` eval-mode tests + 6 new `PositionLoaderTest` sf-eval
+  format tests. All 42 affected tests pass (0 failures).
+
+**Decisions Made:**
+
+- Eval-mode uses MSE in raw centipawn² — not normalised. This is intentional: the gradient
+  magnitude is naturally calibrated to the centipawn scale and needs no sigmoid chain rule.
+- `PositionFeatures.accumulateGradient` already takes an arbitrary `factor` parameter, so
+  eval-mode needed no changes to the inner per-feature accumulation kernel.
+- `sfEvalCps[]` array built sequentially from `positions.stream()` before `PositionFeatures.
+  buildList()` (which is parallel but order-preserving for ordered List sources). Indexed
+  parallel access via `IntStream.range(0,N).parallel()` then correctly pairs features ↔ cp.
+- Depth-0 (static eval) rather than search depth: faster annotation (~5ms/pos vs 200ms+),
+  and we want to teach the tuner to match SF's *static* evaluation, not game-outcome.
+
+**Broke / Fixed:**
+
+- Nothing broken. Existing test baseline (161 total, 0 failures, 2 skipped — pre-existing
+  rook-7th-rank param issues) unchanged.
+
+**Measurements:**
+
+- Eval-mode Adam on 4-position micro-corpus: start MSE_cp² = 541,367 → iter 2 = 506,534
+  (expected: decreasing, no divergence observed). ✓
+- No SPRT yet — corpus annotation step pending (requires running annotate_corpus.ps1 on
+  tools/quiet-labeled.epd, ~703k positions, ~1-2h with Stockfish).
+
+**Next:**
+
+- Annotate corpus: `.\tools\annotate_corpus.ps1 -InputEpd tools\quiet-labeled.epd -Output tools\sf-eval-corpus.txt -StockfishPath C:\Tools\stockfish-18\...`
+- Run 100-iter eval-mode: record start/end MSE_cp² vs WDL baseline MSE
+- Build fat JAR and launch SPRT vs `tools/engine-uci-0.4.9.jar` (H0=0, H1=5)
+- Issue #142: CLOP tuning (`EvalParams.loadOverrides` + `clop_tune.ps1`)

@@ -5,6 +5,7 @@ import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Piece;
 
 import java.util.List;
+import java.util.stream.IntStream;
 
 /**
  * Static evaluator that accepts a parameter array instead of hardcoded constants.
@@ -1184,6 +1185,34 @@ public final class TunerEvaluator {
                 .mapToDouble(pf -> {
                     double sig = sigmoid(pf.eval(params), k);
                     double err = pf.outcome - sig;
+                    return err * err;
+                })
+                .average()
+                .orElse(0.0);
+    }
+
+    // =========================================================================
+    // Eval-mode MSE (Issue #141)
+    // =========================================================================
+
+    /**
+     * Mean squared error in eval mode: loss = mean((vex_eval − sf_eval_cp)²).
+     *
+     * <p>No sigmoid — operates directly in centipawn space. Used when
+     * {@code --label-mode eval} is active.
+     *
+     * @param features    precomputed feature vectors
+     * @param sfEvalCps   Stockfish eval labels in centipawns, parallel to {@code features}
+     * @param params      current parameter array
+     * @return mean squared centipawn error
+     */
+    public static double computeMseEvalMode(List<PositionFeatures> features,
+                                           double[] sfEvalCps,
+                                           double[] params) {
+        int N = features.size();
+        return IntStream.range(0, N).parallel()
+                .mapToDouble(i -> {
+                    double err = features.get(i).eval(params) - sfEvalCps[i];
                     return err * err;
                 })
                 .average()

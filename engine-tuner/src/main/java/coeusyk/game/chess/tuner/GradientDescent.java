@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.stream.IntStream;
 
 /**
  * Adam gradient descent optimiser for Texel tuning.
@@ -745,6 +746,133 @@ public final class GradientDescent {
             grad[i] *= scale;
         }
 
+        return grad;
+    }
+
+    // =========================================================================
+    // Eval-mode Adam (Issue #141)
+    // =========================================================================
+
+    /**
+     * Runs Adam in eval mode using direct centipawn MSE loss (no sigmoid, no K).
+     *
+     * <p>Loss = mean((vex_eval(p) − SF_eval_cp(p))²).
+     * Gradient = (2/N) × Σ (vex_eval(p) − SF_eval_cp(p)) × ∂eval/∂params[i].
+     *
+     * <p>K calibration is not performed. All other Adam hyperparameters, logarithmic
+     * barrier, material ordering, and group masking behave identically to WDL mode.
+     *
+     * @param features    precomputed feature vectors
+     * @param sfEvalCps   Stockfish eval labels in centipawns, parallel to {@code features}
+     * @param initialParams starting point (length {@link EvalParams#TOTAL_PARAMS})
+     * @param maxIters    iteration cap
+     * @param groupMask   optional; if non-null only {@code true} indices are updated
+     * @return tuned parameter array
+     */
+    public static double[] tuneWithFeaturesEvalMode(List<PositionFeatures> features,
+                                                    double[] sfEvalCps,
+                                                    double[] initialParams,
+                                                    int maxIters,
+                                                    boolean[] groupMask) {
+        int n = initialParams.length;
+        double[] params = initialParams.clone();
+        for (int i = 0; i < n; i++) params[i] = EvalParams.clampOne(i, params[i]);
+
+        double[] accum = params.clone();
+        double[] m = new double[n];
+        double[] v = new double[n];
+
+        double currentMse = TunerEvaluator.computeMseEvalMode(features, sfEvalCps, params);
+        LOG.info(String.format("[Adam/eval] start  MSE_cp2=%.4f  params=%d  positions=%d  threads=%d",
+                currentMse, n, features.size(), Runtime.getRuntime().availableProcessors()));
+
+        for (int iter = 1; iter <= maxIters; iter++) {
+            Instant iterStart = Instant.now();
+
+            double[] grad = computeGradientEvalMode(features, sfEvalCps, params);
+
+            // Logarithmic barrier — same as WDL mode (push scalar params away from PARAM_MIN)
+            double gamma = BARRIER_GAMMA_INIT * Math.pow(BARRIER_ANNEAL_RATE, iter - 1);
+            for (int i = 0; i < n; i++) {
+                if (!EvalParams.isScalarParam(i)) continue;
+                if (EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i]) continue;
+                double distance = params[i] - EvalParams.PARAM_MIN[i];
+                if (distance < 1e-4) distance = 1e-4;
+                grad[i] -= gamma / distance;
+            }
+
+            for (int i = 0; i < n; i++) {
+                if (EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i]) continue;
+                if (groupMask != null && !groupMask[i]) continue;
+
+                m[i] = BETA1 * m[i] + (1 - BETA1) * grad[i];
+                v[i] = BETA2 * v[i] + (1 - BETA2) * grad[i] * grad[i];
+
+                double mHat = m[i] / (1 - Math.pow(BETA1, iter));
+                double vHat = v[i] / (1 - Math.pow(BETA2, iter));
+
+                accum[i] -= LR * mHat / (Math.sqrt(vHat) + EPSILON);
+                if (EvalParams.isScalarParam(i)) {
+                    params[i] = Math.min(EvalParams.PARAM_MAX[i], Math.round(accum[i]));
+                } else {
+                    params[i] = EvalParams.clampOne(i, Math.round(accum[i]));
+                }
+            }
+
+            EvalParams.enforceMaterialOrdering(params);
+
+            for (int i = 0; i < n; i++) {
+                if (EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i]) accum[i] = params[i];
+            }
+
+            double newMse = TunerEvaluator.computeMseEvalMode(features, sfEvalCps, params);
+            long ms = Duration.between(iterStart, Instant.now()).toMillis();
+            LOG.info(String.format("[Adam/eval] iter %3d  MSE_cp2=%.4f  time=%dms", iter, newMse, ms));
+
+            if (currentMse > 0 && Math.abs(currentMse - newMse) / currentMse < CONVERGENCE_THRESHOLD) {
+                LOG.info(String.format("[Adam/eval] converged after %d iterations (MSE delta < %.1e)",
+                        iter, CONVERGENCE_THRESHOLD));
+                currentMse = newMse;
+                break;
+            }
+            currentMse = newMse;
+        }
+
+        return params;
+    }
+
+    /**
+     * Computes the analytical gradient of the eval-mode MSE objective.
+     *
+     * <p>For each position p:
+     * <pre>
+     *   dMSE/dParams[i] = (2/N) × Σ (vex_eval(p) − SF_eval_cp(p)) × dEval/dParams[i]
+     * </pre>
+     * Uses the same sparse feature-weight representation as the WDL gradient path.
+     * No sigmoid and no K factor — the loss is in raw centipawn space.
+     */
+    static double[] computeGradientEvalMode(List<PositionFeatures> features,
+                                            double[] sfEvalCps,
+                                            double[] params) {
+        int n = params.length;
+        int N = features.size();
+
+        double[] grad = IntStream.range(0, N).parallel()
+                .mapToObj(i -> {
+                    double[] localGrad = new double[n];
+                    PositionFeatures pf = features.get(i);
+                    double factor = pf.eval(params) - sfEvalCps[i];
+                    pf.accumulateGradient(localGrad, params, factor);
+                    return localGrad;
+                })
+                .collect(
+                    () -> new double[n],
+                    (acc, lg) -> { for (int j = 0; j < n; j++) acc[j] += lg[j]; },
+                    (a,   b)  -> { for (int j = 0; j < n; j++) a[j]  +=  b[j]; }
+                );
+
+        double scale = 2.0 / N;
+        for (int i = 0; i < n; i++) grad[i] *= scale;
         return grad;
     }
 }

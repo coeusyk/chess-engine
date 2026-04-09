@@ -246,4 +246,75 @@ class GradientDescentTest {
         assertTrue(mseAfter <= mseBefore * 2.0,
                 "L-BFGS MSE must not more than double (" + mseBefore + " \u2192 " + mseAfter + ")");
     }
+
+    // -----------------------------------------------------------------------
+    // Eval-mode Adam (Issue #141)
+    // -----------------------------------------------------------------------
+
+    /** Creates eval-mode positions labelled with Stockfish centipawn values. */
+    private static List<LabelledPosition> evalModePositions() {
+        Board startpos = new Board();
+        Board whiteUp  = new Board("rnb1kbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+        Board blackUp  = new Board("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNB1KBNR b KQkq - 0 1");
+        return List.of(
+                new LabelledPosition(TunerPosition.from(whiteUp),  0.0,  150.0),  // white up ~150cp
+                new LabelledPosition(TunerPosition.from(blackUp),  0.0, -150.0),  // black up ~150cp
+                new LabelledPosition(TunerPosition.from(startpos), 0.0,   0.0),   // balanced
+                new LabelledPosition(TunerPosition.from(startpos), 0.0,   0.0)
+        );
+    }
+
+    @Test
+    void evalModeMseIsNonNegative() {
+        double[] params    = EvalParams.extractFromCurrentEval();
+        List<LabelledPosition> positions = evalModePositions();
+        List<PositionFeatures> features  = PositionFeatures.buildList(positions);
+        double[] sfEvalCps = positions.stream().mapToDouble(LabelledPosition::sfEvalCp).toArray();
+
+        double mse = TunerEvaluator.computeMseEvalMode(features, sfEvalCps, params);
+
+        assertTrue(mse >= 0.0, "Eval-mode MSE must be non-negative, got " + mse);
+    }
+
+    @Test
+    void evalModeTuneDoesNotDiverge() {
+        double[] params    = EvalParams.extractFromCurrentEval();
+        List<LabelledPosition> positions = evalModePositions();
+        List<PositionFeatures> features  = PositionFeatures.buildList(positions);
+        double[] sfEvalCps = positions.stream().mapToDouble(LabelledPosition::sfEvalCp).toArray();
+
+        double mseBefore = TunerEvaluator.computeMseEvalMode(features, sfEvalCps, params);
+        double[] tuned   = GradientDescent.tuneWithFeaturesEvalMode(features, sfEvalCps, params, 3, null);
+        double mseAfter  = TunerEvaluator.computeMseEvalMode(features, sfEvalCps, tuned);
+
+        // On a tiny corpus the barrier can dominate; allow 4× before declaring divergence
+        assertTrue(mseAfter <= mseBefore * 4.0,
+                "Eval-mode MSE must not diverge (" + mseBefore + " \u2192 " + mseAfter + ")");
+    }
+
+    @Test
+    void evalModeReturnedArrayHasSameLengthAsInput() {
+        double[] params    = EvalParams.extractFromCurrentEval();
+        List<LabelledPosition> positions = evalModePositions();
+        List<PositionFeatures> features  = PositionFeatures.buildList(positions);
+        double[] sfEvalCps = positions.stream().mapToDouble(LabelledPosition::sfEvalCp).toArray();
+
+        double[] tuned = GradientDescent.tuneWithFeaturesEvalMode(features, sfEvalCps, params, 2, null);
+
+        assertEquals(params.length, tuned.length,
+                "Eval-mode tune must return array of same length as input params");
+    }
+
+    @Test
+    void evalModeInputArrayIsNotModified() {
+        double[] params    = EvalParams.extractFromCurrentEval();
+        double[] snapshot  = params.clone();
+        List<LabelledPosition> positions = evalModePositions();
+        List<PositionFeatures> features  = PositionFeatures.buildList(positions);
+        double[] sfEvalCps = positions.stream().mapToDouble(LabelledPosition::sfEvalCp).toArray();
+
+        GradientDescent.tuneWithFeaturesEvalMode(features, sfEvalCps, params, 2, null);
+
+        assertArrayEquals(snapshot, params, "tuneWithFeaturesEvalMode must not modify the input params array");
+    }
 }

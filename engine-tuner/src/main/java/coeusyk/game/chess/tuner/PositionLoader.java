@@ -346,4 +346,82 @@ public final class PositionLoader {
             }
         };
     }
+
+    // =========================================================================
+    // SF-eval format (Issue #141)
+    // =========================================================================
+
+    /**
+     * Loads all positions from a Stockfish-annotated eval corpus.
+     *
+     * @param file path to the annotated file (one {@code "<FEN> <cp_int>"} per line)
+     * @return list of positions with {@link LabelledPosition#sfEvalCp()} set
+     * @throws IOException if the file cannot be read
+     */
+    public static List<LabelledPosition> loadSfEval(Path file) throws IOException {
+        return loadSfEval(file, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Loads up to {@code maxPositions} positions from a Stockfish-annotated eval corpus
+     * created by {@code tools/annotate_corpus.ps1}.
+     *
+     * <p>Expected format: one {@code "<FEN 6-field> <cp_int>"} line per position.
+     * Mate scores and parse failures are silently skipped.
+     *
+     * @param file         path to the annotated file
+     * @param maxPositions cap on positions loaded
+     * @return list of positions with {@link LabelledPosition#sfEvalCp()} set,
+     *         {@code outcome} fixed at 0.0 (not used in eval mode)
+     * @throws IOException if the file cannot be read
+     */
+    public static List<LabelledPosition> loadSfEval(Path file, int maxPositions) throws IOException {
+        List<LabelledPosition> result = new ArrayList<>();
+        int skipped = 0;
+        try (BufferedReader reader = new BufferedReader(new FileReader(file.toFile()))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.strip();
+                if (line.isEmpty() || line.startsWith("#")) continue;
+
+                LabelledPosition lp = tryParseSfEvalLine(line);
+                if (lp != null) {
+                    result.add(lp);
+                    if (result.size() >= maxPositions) break;
+                } else {
+                    skipped++;
+                }
+            }
+        }
+        if (skipped > 0) {
+            LOG.info(String.format("[PositionLoader] SF-eval: skipped %,d lines (mate/parse failure)", skipped));
+        }
+        return result;
+    }
+
+    /**
+     * Parses one SF-eval line: {@code "<FEN 6-field> <cp_int>"}.
+     * Returns {@code null} on mate scores or any parse failure.
+     */
+    private static LabelledPosition tryParseSfEvalLine(String line) {
+        try {
+            // A valid line has at least 7 whitespace-separated tokens:
+            // pieces  color  castling  ep  halfmove  fullmove  cp_int
+            String[] tokens = line.split("\\s+");
+            if (tokens.length < 7) return null;
+
+            double sfEvalCp = Double.parseDouble(tokens[tokens.length - 1]);
+            if (!Double.isFinite(sfEvalCp)) return null;
+
+            // Join the first 6 tokens as the FEN
+            String fen = tokens[0] + " " + tokens[1] + " " + tokens[2] + " "
+                       + tokens[3] + " " + tokens[4] + " " + tokens[5];
+            TunerPosition pos = parseFen(fen);
+            if (pos == null) return null;
+
+            return new LabelledPosition(pos, 0.0, sfEvalCp);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
 }
