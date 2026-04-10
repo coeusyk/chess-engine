@@ -1,0 +1,67 @@
+# Win-At-Chess regression suite for Vex chess engine
+# Format: <fen-4-fields> bm <san>[...]; id "<id>";
+# bm uses SAN notation. Multiple accepted moves are separated by spaces.
+# EPD parser: SearchRegressionSuite.java — converts bm SAN to UCI via SanConverter.
+
+# ── Forced mates ──────────────────────────────────────────────────────────────
+# T01: Back-rank mate. White Rook e1 → e8# (Black King g8 trapped by own pawns f7/g7/h7).
+6k1/5ppp/8/8/8/8/5PPP/4R1K1 w - - bm Re8; id "wac.t01";
+
+# T02: Back-rank mate. White Rook d1 → d8# (White King g6 covers f7/g7/h7).
+7k/8/6K1/8/8/8/8/3R4 w - - bm Rd8; id "wac.t02";
+
+# T03: King activation sets up forced Rh8#. Kf6 (not Rh8+, which allows Kxh6).
+6k1/8/6KR/8/8/8/8/8 w - - bm Kf6; id "wac.t03";
+
+# T04: Back-rank mate. White Rook b2 → b1# (White King g3 covers g2/h2; Rb1 covers rank 1).
+8/8/8/8/8/6K1/1R6/7k w - - bm Rb1; id "wac.t04";
+
+# T05: Pawn promotes to Queen with check. a7-a8=Q+ (Black King a1 trapped by White King c1).
+8/P7/8/8/8/8/8/k1K5 w - - bm a8=Q; id "wac.t05";
+
+# T11: Queen back-rank mate. White Queen e1 → e8# (Black King g8 trapped by own pawns f7/g7/h7).
+6k1/5ppp/8/8/8/8/5PPP/4Q1K1 w - - bm Qe8; id "wac.t11";
+
+# ── Free-piece capture: Queen wins material ───────────────────────────────────
+# T06: Queen captures undefended Rook. Qd1 × Rd2 (Black King f6 does not defend d2).
+8/8/5k2/8/8/8/3r4/K2Q4 w - - bm Qxd2; id "wac.t06";
+
+# T12: Queen captures undefended Queen. Qf1 × Qd1 (Black King e8 does not defend d1).
+4k3/8/8/8/8/8/8/3q1QK1 w - - bm Qxd1; id "wac.t12";
+
+# T13: Queen captures undefended Rook. Qd1 × Ra1 (Black King e6 does not defend a1).
+8/8/4k3/8/8/8/8/r2Q2K1 w - - bm Qxa1; id "wac.t13";
+
+# T17: Rook captures undefended Queen. Re1 × Qe4 (Black King e6 does not defend e4).
+8/8/4k3/8/4q3/8/8/4R1K1 w - - bm Rxe4; id "wac.t17";
+
+# T18: Pawn captures undefended Queen. Pd2 × Qc3 (Black King e8 does not defend c3).
+4k3/8/8/8/8/2q5/3P4/1K6 w - - bm dxc3; id "wac.t18";
+
+# ── Free-piece capture: Bishop/Rook/Knight wins material ─────────────────────
+# T07: Bishop captures undefended Bishop. Bf1 × Bc4 (Black King e6 does not defend c4).
+8/8/4k3/8/2b5/8/8/4KB2 w - - bm Bxc4; id "wac.t07";
+
+# T08: Rook captures undefended Rook. Re1 × Re3 (Black King e6 does not defend e3).
+8/8/4k3/8/8/4r3/8/4R1K1 w - - bm Rxe3; id "wac.t08";
+
+# T09: Knight captures undefended Knight. Nd3 × Nf4 (Black King e6 does not defend f4).
+8/8/4k3/8/5n2/3N4/8/4K3 w - - bm Nxf4; id "wac.t09";
+
+# T10: Rook captures undefended Bishop. Rd1 × Bd3 (White King e1 supports; Black King e6 too far).
+8/8/4k3/8/8/3b4/8/3RK3 w - - bm Rxd3; id "wac.t10";
+
+# T14: Rook captures undefended Bishop. Rc1 × Bc2 (Black King e6 does not defend c2).
+8/8/4k3/8/8/8/2b5/2R1K3 w - - bm Rxc2; id "wac.t14";
+
+# T15: Rook captures undefended Knight. Rd3 × Nc3 (Black King e6 does not defend c3).
+8/8/4k3/8/8/2nR4/8/4K3 w - - bm Rxc3; id "wac.t15";
+
+# T16: Knight captures undefended Queen. Nd3 × Qf4 (Black King e8 does not defend f4).
+4k3/8/8/8/5q2/3N4/8/4K3 w - - bm Nxf4; id "wac.t16";
+
+# T19: Bishop captures undefended Rook. Bd1 × Rf3 (Black King e8 does not defend f3).
+4k3/8/8/8/8/5r2/8/3B1K2 w - - bm Bxf3; id "wac.t19";
+
+# T20: Bishop captures undefended Queen. Bb1 × Qe4 (Black King e8 does not defend e4).
+4k3/8/8/8/4q3/8/8/1B2K3 w - - bm Bxe4; id "wac.t20";

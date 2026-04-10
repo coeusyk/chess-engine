@@ -48,6 +48,7 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
                 <configuration>
+                    <excludedGroups>search-regression</excludedGroups>
                     <systemPropertyVariables>
                         <benchmark.depth>${benchmark.depth}</benchmark.depth>
                     </systemPropertyVariables>
@@ -55,5 +56,29 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <id>search-regression</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <version>3.2.5</version>
+                        <configuration combine.self="override">
+                            <includes>
+                                <include>**/SearchRegressionSuite.java</include>
+                            </includes>
+                            <systemPropertyVariables>
+                                <update-baseline>${update-baseline}</update-baseline>
+                                <benchmark.depth>${benchmark.depth}</benchmark.depth>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>
 

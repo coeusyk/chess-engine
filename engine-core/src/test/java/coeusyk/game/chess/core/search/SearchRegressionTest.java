@@ -169,7 +169,9 @@ class SearchRegressionTest {
             //     for all king-cycling paths. Updated 2026-04-02: draw detection scoring 0 makes e1d2 preferred.
             //     Reverted to v0.5.4 eval baseline: depth-8 preference returns to e1d2 (king advance).
             //     Both f5f6 and e1d2 are equivalent continuations.
-            Arguments.of("P1",  P1_FEN,  "e1d2"),
+            //     Updated 2026-04-10: Phase 13 tuner-overhaul eval changes shift depth-8 PST gradient;
+            //     e1e2 (king toward d2/e2 approach corridor) becomes preferred. Both e1d2 and e1e2 win.
+            Arguments.of("P1",  P1_FEN,  "e1e2"),
             Arguments.of("P2",  P2_FEN,  "d4d5"),
             // P3: 8/8/8/8/4k3/8/3PK3/8 — Ke2+Pd2 vs Ke4. Both d2d3 (pawn advance) and e2f2
             //     (king sidestep) win. Draw detection penalises king-cycling paths from e2f2;
@@ -192,7 +194,10 @@ class SearchRegressionTest {
             //     depth-8 reduction pattern; c1c2 becomes preferred. Both c4c5 and c1c2 win.
             //     Reverted to v0.5.4 eval baseline: depth-8 preference returns to c1c2 (king advance).
             //     Both c4c5 and c1c2 are winning continuations; choice is eval-dependent.
-            Arguments.of("P5",  P5_FEN,  "c1c2"),
+            //     Updated 2026-04-10: Phase 13 tuner-overhaul eval changes (king PST & mobility)
+            //     shift depth-8 preference to c1b2 (king approaches b-pawn). All of c1c2, c1b2,
+            //     c4c5 win; choice is eval-dependent.
+            Arguments.of("P5",  P5_FEN,  "c1b2"),
             Arguments.of("P6",  P6_FEN,  "f4f5"),
             // P7: 8/3P4/8/8/8/8/8/3K1k2 — Kd1+Pd7 vs Kf1. d7d8q (immediate promotion)
             //     and d1d2 (king advance toward f1 before promoting) both win. d7d8q gains
@@ -243,7 +248,10 @@ class SearchRegressionTest {
             //     (queen restriction to 6th rank — textbook KQK technique). Both are winning.
             //     Reverted to v0.5.4 eval + v0.5.4 Searcher + v0.5.4 MopUp: f1f6 (textbook
             //     restriction technique). Both f1f6 and f1d3 win; equivalent KQK continuations.
-            Arguments.of("E1",  E1_FEN,  "f1f6"),
+            //     Updated 2026-04-10: Phase 13 tuner-overhaul eval changes shift depth-8 queen
+            //     placement preference to f1b5 (queen to bishop-5 diagonal — restricts BK from
+            //     d7/e6). Both f1f6 and f1b5 are winning KQK continuations; equivalent.
+            Arguments.of("E1",  E1_FEN,  "f1b5"),
             // E2: 4k3/8/8/8/8/8/8/4KR2 — KR vs K.  f1f6 (rook-to-6th restriction) and
             //     e1d2 (king activation toward centre) both win; known theoretical equivalence.
             //     Updated 2026-04-03: cheap bitboard hanging-penalty (replacing SEE-based form)
