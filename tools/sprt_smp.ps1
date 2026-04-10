@@ -2,7 +2,7 @@
 .SYNOPSIS
     SMP SPRT: Vex-NThread vs Vex-1Thread (same JAR).
     Tests whether Lazy SMP with N threads genuinely improves strength.
-    H0=0, H1=50, alpha=0.05, beta=0.05, TC=5+0.05
+    H0=0, H1=20, alpha=0.05, beta=0.05, TC=5+0.05
 
 .PARAMETER Jar
     Path to the engine JAR to test (both sides use the same JAR, different thread counts).
@@ -57,7 +57,7 @@ if (-not (Test-Path $ResultsDir)) { New-Item -ItemType Directory -Path $ResultsD
 $TS     = Get-Date -Format 'yyyyMMdd_HHmmss'
 $PgnOut = Join-Path $ResultsDir "sprt_smp_${Threads}T_$TS.pgn"
 
-Write-Host "SPRT SMP: Vex-${Threads}T vs Vex-1T  H0=0 H1=50 alpha=0.05 beta=0.05  TC=5+0.05"
+Write-Host "SPRT SMP: Vex-${Threads}T vs Vex-1T  H0=0 H1=20 alpha=0.05 beta=0.05  TC=5+0.05"
 Write-Host "JAR     : $($JarResolved.Path)"
 Write-Host "PGN     : $PgnOut"
 Write-Host ""
@@ -71,7 +71,7 @@ Write-Host ""
     -recover `
     -resign movecount=5 score=600 `
     -draw movenumber=40 movecount=8 score=10 `
-    -sprt elo0=0 elo1=50 alpha=0.05 beta=0.05 `
+    -sprt elo0=0 elo1=20 alpha=0.05 beta=0.05 `
     -concurrency 1 `
     -ratinginterval 10 `
     @openingsArgs `

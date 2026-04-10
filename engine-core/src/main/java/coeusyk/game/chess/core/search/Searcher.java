@@ -98,7 +98,12 @@ public class Searcher {
     private final int[][] correctionHistory = new int[2][CORRECTION_HISTORY_SIZE];
     private final int[] staticEvalStack = new int[MAX_PLY + 2];
     // Not final: can be replaced with a shared instance for Lazy SMP multi-threaded search.
-    private TranspositionTable transpositionTable = new TranspositionTable();
+    // Initialised with a 1 MB placeholder so that UciApplication's call to
+    // setSharedTranspositionTable() does not orphan a full 64 MB array on every
+    // search (main thread + each helper).  Any code that uses Searcher standalone
+    // (tests, tuner) gets a working but small private TT; the UCI path always
+    // replaces it with sharedTT before searching.
+    private TranspositionTable transpositionTable = new TranspositionTable(1);
     private final int[][] lmrReductions = precomputeLmrReductions();
 
     // Per-thread pre-allocated move lists — one slot per ply level (MAX_PLY) plus
