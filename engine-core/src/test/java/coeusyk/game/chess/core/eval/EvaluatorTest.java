@@ -108,28 +108,32 @@ class EvaluatorTest {
     void pstTableLookupCorrect() {
         // Tables stored in display order: a8=0, h1=63
         // Board also uses a8=0, so white PST lookup is direct (no mirror).
-        // White knight on e4 → board sq 36 → table index 36
-        // MG_KNIGHT row 4 (32-39): {-8,14,14,14,19,13,18,-8} → col 4 = 19 (v0.5.6-tuned)
-        assertEquals(19, PieceSquareTables.mg(2, 36));
-        // EG_KNIGHT row 4 (32-39): {-19,-9,14,23,14,16,5,-23} → col 4 = 14 (v0.5.6-tuned)
-        assertEquals(14, PieceSquareTables.eg(2, 36));
-        // MG_PAWN row 4 (32-39): {-29,-26,-4,7,14,10,-9,-31} → col 4 = 14 (v0.5.6-tuned)
-        assertEquals(14, PieceSquareTables.mg(1, 36));
+        // White knight on e4 → board sq 36 → table index 36 (row 4, col 4)
+        // Updated 2026-04-10: eval-converged Texel run (Issue #141) produced new PST values.
+        // MG_KNIGHT row 4 (32-39): {-21,-10,7,17,20,5,21,-20} → col 4 = 20 (eval-converged #141)
+        assertEquals(20, PieceSquareTables.mg(2, 36));
+        // EG_KNIGHT row 4 (32-39): {-18,-7,1,5,1,-1,-11,-26} → col 4 = 1 (eval-converged #141)
+        assertEquals(1, PieceSquareTables.eg(2, 36));
+        // MG_PAWN row 4 (32-39): {-62,-63,-52,-31,-32,-31,-36,-56} → col 4 = -32 (eval-converged #141)
+        assertEquals(-32, PieceSquareTables.mg(1, 36));
     }
 
     @Test
     void mgAndEgMaterialValuesAreCorrect() {
+        // Updated 2026-04-10: eval-converged Texel run (Issue #141) produced new material values.
+        // SF-eval corpus minimizes prediction error vs SF cp, folding tactical bonuses into
+        // raw material; values diverge significantly from classical HCE baselines.
         assertEquals(100, Evaluator.mgMaterialValue(1));   // Pawn   (unchanged)
-        assertEquals(391, Evaluator.mgMaterialValue(2));   // Knight (v0.5.4)
-        assertEquals(428, Evaluator.mgMaterialValue(3));   // Bishop (v0.5.4)
-        assertEquals(558, Evaluator.mgMaterialValue(4));   // Rook   (v0.5.4)
-        assertEquals(1200, Evaluator.mgMaterialValue(5));  // Queen  (v0.5.4)
+        assertEquals(262, Evaluator.mgMaterialValue(2));   // Knight (eval-converged #141)
+        assertEquals(276, Evaluator.mgMaterialValue(3));   // Bishop (eval-converged #141)
+        assertEquals(362, Evaluator.mgMaterialValue(4));   // Rook   (eval-converged #141)
+        assertEquals(912, Evaluator.mgMaterialValue(5));   // Queen  (eval-converged #141)
 
-        assertEquals(89, Evaluator.egMaterialValue(1));    // Pawn   (v0.5.4)
-        assertEquals(287, Evaluator.egMaterialValue(2));   // Knight (v0.5.4)
-        assertEquals(311, Evaluator.egMaterialValue(3));   // Bishop (v0.5.4)
-        assertEquals(555, Evaluator.egMaterialValue(4));   // Rook   (v0.5.4)
-        assertEquals(1040, Evaluator.egMaterialValue(5));  // Queen  (v0.5.4)
+        assertEquals(85,  Evaluator.egMaterialValue(1));   // Pawn   (eval-converged #141)
+        assertEquals(217, Evaluator.egMaterialValue(2));   // Knight (eval-converged #141)
+        assertEquals(257, Evaluator.egMaterialValue(3));   // Bishop (eval-converged #141)
+        assertEquals(476, Evaluator.egMaterialValue(4));   // Rook   (eval-converged #141)
+        assertEquals(756, Evaluator.egMaterialValue(5));   // Queen  (eval-converged #141)
     }
 
     @Test
@@ -293,8 +297,12 @@ class EvaluatorTest {
         int[] scoreDoubled = PawnStructure.evaluate(doubled, 0L);
         int[] scoreSpread = PawnStructure.evaluate(spread, 0L);
 
-        assertTrue(scoreSpread[0] >= scoreDoubled[0],
-                "Doubled pawns MG: spread >= doubled (DOUBLED_MG=0 in v0.5.4; EG penalty=13 enforces correctness)");
+        // Updated 2026-04-10: eval-converged Texel run (Issue #141) set DOUBLED_MG=-2 (tuner
+        // found a tiny MG bonus for doubled pawns, likely absorbing a structural trade-off).
+        // mg -= (wd-bd) * (-2) = mg += 2 for the doubled position. Doubled MG >= spread MG.
+        // The doubled-pawn downside is captured entirely by DOUBLED_EG=23 (penalty).
+        assertTrue(scoreDoubled[0] >= scoreSpread[0],
+                "Doubled pawns MG: with DOUBLED_MG=-2 (tuned tiny bonus), doubled >= spread");
         assertTrue(scoreSpread[1] > scoreDoubled[1],
                 "Doubled pawns should score lower in EG");
     }
