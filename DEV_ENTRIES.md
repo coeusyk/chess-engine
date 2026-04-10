@@ -5531,13 +5531,32 @@ Two structural gaps in time allocation:
 
 **Measurements:**
 
-- Bench depth 10, 6 positions:
+- **Laptop bench** (depth 10, 6 positions):
   - Baseline (pre-Phase 13): 210,633 NPS
   - Phase 13 final (Stage 3 reverted): 207,368 NPS
   - Delta: **−1.6%** (within 5% threshold)
+- **PC bench (Ryzen 7 7700X)** — depth 10, 5 warmup + 10 measured rounds, 16 MB hash:
+
+  | Position  | Mean NPS    | ±StdDev  |
+  |-----------|-------------|----------|
+  | startpos  | 317,641     | ±31,031  |
+  | kiwipete  | 155,235     | ± 2,897  |
+  | cpw-pos3  | 362,411     | ±36,396  |
+  | cpw-pos4  | 168,752     | ± 6,453  |
+  | cpw-pos5  | 236,417     | ± 8,982  |
+  | cpw-pos6  | 202,645     | ± 6,134  |
+  | AGGREGATE | **240,516** | ±76,026  |
+
+  TT hit rate: 20.0% | Pawn hash hit rate: 96.1%
+
+  Fix 1 (mating-threat extension) zero-overhead confirmed — node counts identical to
+  Phase 8 baseline (startpos=32,685; kiwipete=457,244). Extension fires only when alpha
+  already ≥ MATE_SCORE − MAX_PLY; never triggered in bench positions.
+  Fix 2 (hangingPenalty suppression) overhead ≤2%: laptop measured −1.6%. ✓
+
 - Regression suite: 34 tests, 0 failures (`SearchRegressionTest`).
 - Full engine-core suite: 161 tests, 0 failures, 2 skipped.
-- SPRT vs pre-task baseline (engine-uci-0.5.5.jar): H0=0, H1=5, α=0.05, β=0.05 — **PENDING** (see Issue #134 SPRT run below).
+- SPRT vs pre-task baseline (engine-uci-0.5.5.jar): H0=0, H1=5, α=0.05, β=0.05 — **PENDING**.
 
 ---
 
