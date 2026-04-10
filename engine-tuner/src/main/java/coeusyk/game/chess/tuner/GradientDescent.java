@@ -31,6 +31,8 @@ public final class GradientDescent {
 
     /** Default maximum number of iterations (passes over all parameters). */
     public static final int DEFAULT_MAX_ITERATIONS = 500;
+    /** Default iteration cap for eval-mode tuning (higher because eval labels converge more slowly). */
+    public static final int DEFAULT_MAX_ITERATIONS_EVAL_MODE = 1500;
 
     // Adam hyperparameters
     private static final double LR      = 1.0;
@@ -38,8 +40,10 @@ public final class GradientDescent {
     private static final double BETA2   = 0.999;
     private static final double EPSILON = 1e-8;
 
-    /** Early-stop if relative MSE improvement falls below this threshold. */
-    private static final double CONVERGENCE_THRESHOLD = 1e-9;
+    /** Early-stop if relative MSE improvement falls below this threshold for CONVERGENCE_PATIENCE consecutive iterations. */
+    private static final double CONVERGENCE_THRESHOLD = 5e-4;  // 0.05% per iteration
+    /** Number of consecutive iterations that must see MSE delta below CONVERGENCE_THRESHOLD before stopping. */
+    private static final int    CONVERGENCE_PATIENCE   = 10;
 
     // Logarithmic barrier hyperparameters (Issue #134)
     // Barrier pushes scalar params away from PARAM_MIN, replacing the hard lower-bound clamp.
@@ -105,6 +109,7 @@ public final class GradientDescent {
         LOG.info(String.format("[Adam] start  MSE=%.8f  params=%d  positions=%d  threads=%d",
                 currentMse, n, positions.size(), Runtime.getRuntime().availableProcessors()));
 
+        int belowThresholdCount = 0;
         for (int iter = 1; iter <= maxIters; iter++) {
             Instant iterStart = Instant.now();
 
@@ -174,12 +179,17 @@ public final class GradientDescent {
             LOG.info(String.format("[Adam] iter %3d  K=%.6f  MSE=%.8f  time=%dms",
                     iter, k, newMse, ms));
 
-            // Convergence check
+            // Convergence check (patience window: must hold for CONVERGENCE_PATIENCE consecutive iters)
             if (currentMse > 0 && Math.abs(currentMse - newMse) / currentMse < CONVERGENCE_THRESHOLD) {
-                LOG.info(String.format("[Adam] converged after %d iterations (MSE delta < %.1e)",
-                        iter, CONVERGENCE_THRESHOLD));
-                currentMse = newMse;
-                break;
+                belowThresholdCount++;
+                if (belowThresholdCount >= CONVERGENCE_PATIENCE) {
+                    LOG.info(String.format("[Adam] converged after %d iterations (MSE delta < %.1e for %d consecutive iters)",
+                            iter, CONVERGENCE_THRESHOLD, CONVERGENCE_PATIENCE));
+                    currentMse = newMse;
+                    break;
+                }
+            } else {
+                belowThresholdCount = 0;
             }
             currentMse = newMse;
         }
@@ -238,6 +248,7 @@ public final class GradientDescent {
         LOG.info(String.format("[Adam/fast] start  MSE=%.8f  params=%d  positions=%d  threads=%d",
                 currentMse, n, features.size(), Runtime.getRuntime().availableProcessors()));
 
+        int belowThresholdCount = 0;
         for (int iter = 1; iter <= maxIters; iter++) {
             Instant iterStart = Instant.now();
 
@@ -299,10 +310,15 @@ public final class GradientDescent {
                     iter, k, newMse, ms));
 
             if (currentMse > 0 && Math.abs(currentMse - newMse) / currentMse < CONVERGENCE_THRESHOLD) {
-                LOG.info(String.format("[Adam/fast] converged after %d iterations (MSE delta < %.1e)",
-                        iter, CONVERGENCE_THRESHOLD));
-                currentMse = newMse;
-                break;
+                belowThresholdCount++;
+                if (belowThresholdCount >= CONVERGENCE_PATIENCE) {
+                    LOG.info(String.format("[Adam/fast] converged after %d iterations (MSE delta < %.1e for %d consecutive iters)",
+                            iter, CONVERGENCE_THRESHOLD, CONVERGENCE_PATIENCE));
+                    currentMse = newMse;
+                    break;
+                }
+            } else {
+                belowThresholdCount = 0;
             }
             currentMse = newMse;
         }
@@ -329,6 +345,20 @@ public final class GradientDescent {
                                             int maxIters,
                                             boolean recalibrateK) {
         return tuneWithFeatures(features, initialParams, k, maxIters, recalibrateK, null);
+    }
+
+    /**
+     * Metrics-collecting overload — metrics parameter accepted for API
+     * symmetry with eval-mode; WDL convergence metrics are not yet instrumented.
+     */
+    public static double[] tuneWithFeatures(List<PositionFeatures> features,
+                                            double[] initialParams,
+                                            double k,
+                                            int maxIters,
+                                            boolean recalibrateK,
+                                            boolean[] groupMask,
+                                            TunerRunMetrics metrics) {
+        return tuneWithFeatures(features, initialParams, k, maxIters, recalibrateK, groupMask);
     }
 
     /**
@@ -474,6 +504,7 @@ public final class GradientDescent {
 
         // Compute initial gradient (barrier included) — reused in first iteration
         double[] prevGrad = computeBarrierGradient(features, params, k, 1);
+        int belowThresholdCount = 0;
 
         for (int iter = 1; iter <= maxIters; iter++) {
             Instant iterStart = Instant.now();
@@ -594,11 +625,16 @@ public final class GradientDescent {
             LOG.info(String.format("[L-BFGS] iter %3d  K=%.6f  MSE=%.8f  ||\u2207L||=%.2e  time=%dms",
                     iter, k, newMse, gradNorm, ms));
 
-            // MSE flat-line secondary convergence check
+            // MSE flat-line secondary convergence check (patience window)
             if (currentMse > 0 && Math.abs(currentMse - newMse) / currentMse < CONVERGENCE_THRESHOLD) {
-                LOG.info(String.format("[L-BFGS] converged after %d iterations (MSE delta < %.1e)",
-                        iter, CONVERGENCE_THRESHOLD));
-                break;
+                belowThresholdCount++;
+                if (belowThresholdCount >= CONVERGENCE_PATIENCE) {
+                    LOG.info(String.format("[L-BFGS] converged after %d iterations (MSE delta < %.1e for %d consecutive iters)",
+                            iter, CONVERGENCE_THRESHOLD, CONVERGENCE_PATIENCE));
+                    break;
+                }
+            } else {
+                belowThresholdCount = 0;
             }
             currentMse = newMse;
         }
@@ -625,6 +661,20 @@ public final class GradientDescent {
                                                  int maxIters,
                                                  boolean recalibrateK) {
         return tuneWithFeaturesLBFGS(features, initialParams, k, maxIters, recalibrateK, null);
+    }
+
+    /**
+     * Metrics-collecting overload — metrics parameter accepted for API
+     * symmetry with eval-mode; L-BFGS convergence metrics are not yet instrumented.
+     */
+    public static double[] tuneWithFeaturesLBFGS(List<PositionFeatures> features,
+                                                 double[] initialParams,
+                                                 double k,
+                                                 int maxIters,
+                                                 boolean recalibrateK,
+                                                 boolean[] groupMask,
+                                                 TunerRunMetrics metrics) {
+        return tuneWithFeaturesLBFGS(features, initialParams, k, maxIters, recalibrateK, groupMask);
     }
 
     // -------------------------------------------------------------------------
@@ -774,6 +824,22 @@ public final class GradientDescent {
                                                     double[] initialParams,
                                                     int maxIters,
                                                     boolean[] groupMask) {
+        return tuneWithFeaturesEvalMode(features, sfEvalCps, initialParams, maxIters, groupMask, null);
+    }
+
+    /**
+     * Runs Adam in eval mode with optional convergence statistics collection.
+     *
+     * @param metrics if non-null, populated with run statistics for
+     *                {@link TunerPostRunValidator} (hitIterCap, itersCompleted, finalMse,
+     *                minMse, per-iteration relDeltas)
+     */
+    public static double[] tuneWithFeaturesEvalMode(List<PositionFeatures> features,
+                                                    double[] sfEvalCps,
+                                                    double[] initialParams,
+                                                    int maxIters,
+                                                    boolean[] groupMask,
+                                                    TunerRunMetrics metrics) {
         int n = initialParams.length;
         double[] params = initialParams.clone();
         for (int i = 0; i < n; i++) params[i] = EvalParams.clampOne(i, params[i]);
@@ -786,6 +852,13 @@ public final class GradientDescent {
         LOG.info(String.format("[Adam/eval] start  MSE_cp2=%.4f  params=%d  positions=%d  threads=%d",
                 currentMse, n, features.size(), Runtime.getRuntime().availableProcessors()));
 
+        int belowThresholdCount = 0;
+        int lastCompletedIter = 0; // tracks which iteration last finished fully
+        // Plateau early-stop: ring buffer of the last 20 relative deltas.
+        // If ALL 20 are < 1e-5 the optimizer has flatlined — stop early.
+        final int PLATEAU_WINDOW = 20;
+        double[] recentRelDeltas = new double[PLATEAU_WINDOW];
+        int plateauHead = 0;
         for (int iter = 1; iter <= maxIters; iter++) {
             Instant iterStart = Instant.now();
 
@@ -827,15 +900,53 @@ public final class GradientDescent {
 
             double newMse = TunerEvaluator.computeMseEvalMode(features, sfEvalCps, params);
             long ms = Duration.between(iterStart, Instant.now()).toMillis();
-            LOG.info(String.format("[Adam/eval] iter %3d  MSE_cp2=%.4f  time=%dms", iter, newMse, ms));
+            double relDelta = currentMse > 0 ? Math.abs(currentMse - newMse) / currentMse : 0.0;
+            LOG.info(String.format("[Adam/eval] iter %3d  MSE_cp2=%.4f  relDelta=%.6f  time=%dms", iter, newMse, relDelta, ms));
 
-            if (currentMse > 0 && Math.abs(currentMse - newMse) / currentMse < CONVERGENCE_THRESHOLD) {
-                LOG.info(String.format("[Adam/eval] converged after %d iterations (MSE delta < %.1e)",
-                        iter, CONVERGENCE_THRESHOLD));
-                currentMse = newMse;
-                break;
+            if (metrics != null) {
+                metrics.recordRelDelta(relDelta);
+                if (newMse < metrics.minMse) metrics.minMse = newMse;
             }
+
+            // Standard patience-window convergence check
+            if (currentMse > 0 && relDelta < CONVERGENCE_THRESHOLD) {
+                belowThresholdCount++;
+                if (belowThresholdCount >= CONVERGENCE_PATIENCE) {
+                    LOG.info(String.format("[Adam/eval] converged after %d iterations (MSE delta < %.1e for %d consecutive iters)",
+                            iter, CONVERGENCE_THRESHOLD, CONVERGENCE_PATIENCE));
+                    lastCompletedIter = iter;
+                    currentMse = newMse;
+                    break;
+                }
+            } else {
+                belowThresholdCount = 0;
+            }
+
+            // Plateau early-stop: all 20 recent relDeltas < 1e-5
+            recentRelDeltas[plateauHead % PLATEAU_WINDOW] = relDelta;
+            plateauHead++;
+            if (plateauHead >= PLATEAU_WINDOW) {
+                boolean plateau = true;
+                for (double d : recentRelDeltas) {
+                    if (d >= 1e-5) { plateau = false; break; }
+                }
+                if (plateau) {
+                    LOG.info(String.format("[Adam/eval] plateau early-stop after %d iters (all %d recent relDelta < 1e-5)",
+                            iter, PLATEAU_WINDOW));
+                    lastCompletedIter = iter;
+                    currentMse = newMse;
+                    break;
+                }
+            }
+
+            lastCompletedIter = iter;
             currentMse = newMse;
+        }
+
+        if (metrics != null) {
+            metrics.itersCompleted = lastCompletedIter;
+            metrics.hitIterCap = (lastCompletedIter == maxIters);
+            metrics.finalMse = currentMse;
         }
 
         return params;

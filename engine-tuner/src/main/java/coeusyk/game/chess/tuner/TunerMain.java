@@ -3,6 +3,7 @@ package coeusyk.game.chess.tuner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
@@ -42,7 +43,7 @@ public final class TunerMain {
 
     public static void main(String[] args) throws Exception {
         if (args.length < 1) {
-        LOG.error("Usage: engine-tuner <dataset> [maxPositions] [maxIterations] [--optimizer adam|coordinate|lbfgs] [--label-mode wdl|eval] [--param-group material|pst|pawn-structure|king-safety|mobility|scalars] [--corpus-format csv|epd] [--no-recalibrate-k] [--freeze-k] [--freeze-params] [--corpus <csv>] [--coverage-audit]");
+        LOG.error("Usage: engine-tuner <dataset> [maxPositions] [maxIterations] [--optimizer adam|coordinate|lbfgs] [--label-mode wdl|eval] [--param-group material|pst|pawn-structure|king-safety|mobility|scalars] [--corpus-format csv|epd] [--no-recalibrate-k] [--freeze-k] [--k <value>] [--freeze-params] [--corpus <csv>] [--coverage-audit]");
             System.exit(1);
         }
 
@@ -53,11 +54,17 @@ public final class TunerMain {
         boolean recalibrateK  = true;
         boolean freezeK       = false; // --freeze-k:      Phase B — keep K fixed during Adam
         boolean freezeParams  = false; // --freeze-params: Phase A — calibrate K only, skip optimizer
+        double  initialK      = Double.NaN; // --k <value>: supply K directly, skipping KFinder
         boolean coverageAudit = false;
         Path   corpusPath     = null;  // #130: optional Stockfish-annotated CSV
         String corpusFormat   = "auto"; // #140: "auto", "csv", "epd"
         String paramGroup     = null;  // --param-group: restrict optimizer to one parameter group
         String labelMode      = "wdl"; // #141: "wdl" (Texel sigmoid) | "eval" (direct CP MSE)
+        boolean skipSmoke      = false; // --skip-smoke
+        boolean skipSanity     = false; // --skip-sanity
+        boolean skipConvergence = false; // --skip-convergence
+        int smokeGames         = 100;  // --smoke-games N
+        int smokeDepth         = 3;    // --smoke-depth N
 
         // Parse remaining positional args and named flags
         for (int i = 1; i < args.length; i++) {
@@ -76,6 +83,16 @@ public final class TunerMain {
             } else if ("--freeze-k".equals(args[i])) {
                 freezeK = true;
                 recalibrateK = false;
+            } else if ("--k".equals(args[i])) {
+                if (i + 1 >= args.length) {
+                    LOG.error("--k requires a numeric value, e.g. --k 1.145");
+                    System.exit(1);
+                }
+                initialK = Double.parseDouble(args[++i]);
+                if (initialK <= 0) {
+                    LOG.error("--k value must be positive, got: {}", initialK);
+                    System.exit(1);
+                }
             } else if ("--freeze-params".equals(args[i])) {
                 freezeParams = true;
             } else if ("--coverage-audit".equals(args[i])) {
@@ -123,6 +140,24 @@ public final class TunerMain {
                     LOG.error("Unknown label-mode: {} (valid: wdl, eval)", labelMode);
                     System.exit(1);
                 }
+            } else if ("--skip-smoke".equals(args[i])) {
+                skipSmoke = true;
+            } else if ("--skip-sanity".equals(args[i])) {
+                skipSanity = true;
+            } else if ("--skip-convergence".equals(args[i])) {
+                skipConvergence = true;
+            } else if ("--smoke-games".equals(args[i])) {
+                if (i + 1 >= args.length) {
+                    LOG.error("--smoke-games requires a numeric value");
+                    System.exit(1);
+                }
+                smokeGames = Integer.parseInt(args[++i]);
+            } else if ("--smoke-depth".equals(args[i])) {
+                if (i + 1 >= args.length) {
+                    LOG.error("--smoke-depth requires a numeric value");
+                    System.exit(1);
+                }
+                smokeDepth = Integer.parseInt(args[++i]);
             } else if (maxPositions == Integer.MAX_VALUE) {
                 maxPositions = Integer.parseInt(args[i]);
             } else if (maxIters == -1) {
@@ -132,9 +167,13 @@ public final class TunerMain {
 
         // Apply optimizer-specific defaults for maxIters
         if (maxIters == -1) {
-            maxIters = "coordinate".equals(optimizer)
-                    ? CoordinateDescent.DEFAULT_MAX_ITERATIONS
-                    : GradientDescent.DEFAULT_MAX_ITERATIONS;  // adam and lbfgs share the same cap
+            if ("coordinate".equals(optimizer)) {
+                maxIters = CoordinateDescent.DEFAULT_MAX_ITERATIONS;
+            } else if ("eval".equals(labelMode)) {
+                maxIters = GradientDescent.DEFAULT_MAX_ITERATIONS_EVAL_MODE;  // eval labels need more iters
+            } else {
+                maxIters = GradientDescent.DEFAULT_MAX_ITERATIONS;
+            }
         }
 
         LOG.info("[TunerMain] Dataset:       {}", datasetPath.toAbsolutePath());
@@ -186,8 +225,13 @@ public final class TunerMain {
         // --- Find optimal K using fast feature-based MSE (WDL mode only) ---
         double k = 0.0;
         if (!"eval".equals(labelMode)) {
-            LOG.info("[TunerMain] Finding optimal K...");
-            k = KFinder.findKFromFeatures(features, params);
+            if (!Double.isNaN(initialK)) {
+                k = initialK;
+                LOG.info("[TunerMain] K supplied via --k: {}", k);
+            } else {
+                LOG.info("[TunerMain] Finding optimal K...");
+                k = KFinder.findKFromFeatures(features, params);
+            }
         } else {
             LOG.info("[TunerMain] Eval mode: K calibration skipped.");
         }
@@ -231,21 +275,22 @@ public final class TunerMain {
         // --- Run chosen optimizer ---
         double[] tuned;
         boolean[] groupMask = (paramGroup != null) ? EvalParams.buildGroupMask(paramGroup) : null;
+        TunerRunMetrics metrics = new TunerRunMetrics();
         if ("eval".equals(labelMode)) {
             // #141: eval mode — direct centipawn MSE, no sigmoid, no K
             double[] sfEvalCps = positions.stream().mapToDouble(LabelledPosition::sfEvalCp).toArray();
             double startMse = TunerEvaluator.computeMseEvalMode(features, sfEvalCps, params);
             LOG.info(String.format("[TunerMain/eval] Start MSE_cp2 = %.4f  (%.2f cp RMS)", startMse, Math.sqrt(startMse)));
             LOG.info(String.format("[TunerMain] Running Adam eval mode (maxIters=%d)...", maxIters));
-            tuned = GradientDescent.tuneWithFeaturesEvalMode(features, sfEvalCps, params, maxIters, groupMask);
+            tuned = GradientDescent.tuneWithFeaturesEvalMode(features, sfEvalCps, params, maxIters, groupMask, metrics);
             double endMse = TunerEvaluator.computeMseEvalMode(features, sfEvalCps, tuned);
             LOG.info(String.format("[TunerMain/eval] End MSE_cp2 = %.4f  (%.2f cp RMS)", endMse, Math.sqrt(endMse)));
         } else if ("adam".equals(optimizer)) {
             LOG.info(String.format("[TunerMain] Running Adam gradient descent (K=%.6f, maxIters=%d, fast-path)...", k, maxIters));
-            tuned = GradientDescent.tuneWithFeatures(features, params, k, maxIters, recalibrateK, groupMask);
+            tuned = GradientDescent.tuneWithFeatures(features, params, k, maxIters, recalibrateK, groupMask, metrics);
         } else if ("lbfgs".equals(optimizer)) {
             LOG.info(String.format("[TunerMain] Running L-BFGS (K=%.6f, maxIters=%d, m=10, ||\u2207L||<1e-5 convergence)...", k, maxIters));
-            tuned = GradientDescent.tuneWithFeaturesLBFGS(features, params, k, maxIters, recalibrateK, groupMask);
+            tuned = GradientDescent.tuneWithFeaturesLBFGS(features, params, k, maxIters, recalibrateK, groupMask, metrics);
         } else {
             LOG.info(String.format("[TunerMain] Running coordinate descent (K=%.6f, maxIters=%d)...", k, maxIters));
             tuned = CoordinateDescent.tune(positions, params, k, maxIters, recalibrateK);
@@ -262,10 +307,26 @@ public final class TunerMain {
             LOG.info(String.format("[TunerMain] Final K = %.6f", finalK));
         }
 
-        // --- Write results ---
+        // --- Post-run validation gate ---
+        TunerPostRunValidator.ValidatorConfig vConfig = new TunerPostRunValidator.ValidatorConfig(
+                skipConvergence, skipSanity, skipSmoke, smokeGames, smokeDepth, 0.30);
+        TunerPostRunValidator.ValidationResult vResult =
+                TunerPostRunValidator.validate(params, tuned, metrics, vConfig);
+
+        // Always write the validation report (pass or fail)
+        Path reportPath = Paths.get("validator-report.txt");
+        Files.writeString(reportPath, vResult.reportText());
+        LOG.info("[TunerMain] Validation report written to: {}", reportPath.toAbsolutePath());
+
+        // --- Write results (only on validation pass) ---
         Path outputPath = Paths.get("tuned_params.txt");
-        EvalParams.writeToFile(tuned, finalK, outputPath);
-        LOG.info("[TunerMain] Tuned parameters written to: {}", outputPath.toAbsolutePath());
-        LOG.info("[TunerMain] Copy values manually from tuned_params.txt into engine-core source files.");
+        if (vResult.passed()) {
+            EvalParams.writeToFile(tuned, finalK, outputPath);
+            LOG.info("[TunerMain] Tuned parameters written to: {}", outputPath.toAbsolutePath());
+            LOG.info("[TunerMain] Copy values manually from tuned_params.txt into engine-core source files.");
+        } else {
+            LOG.error("[TunerMain] Validation FAILED — tuned_params.txt NOT written. See validator-report.txt.");
+            System.exit(2);
+        }
     }
 }
