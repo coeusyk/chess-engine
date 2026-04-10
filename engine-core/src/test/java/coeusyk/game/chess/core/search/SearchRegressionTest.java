@@ -261,7 +261,11 @@ class SearchRegressionTest {
             //     is now preferred. Both e1e2 and f1f6 are correct KRK technique.
             //     Reverted to v0.5.4 eval + v0.5.4 Searcher + v0.5.4 MopUp: f1f6 (textbook
             //     rook restriction). Both f1f6, e1e2, f1f3 are correct KRK continuations.
-            Arguments.of("E2",  E2_FEN,  "f1f6"),
+            //     Updated 2026-04-10: CLOP-tuned params (TEMPO 21→12, ATK_WEIGHT_ROOK 5→9).
+            //     Reduced TEMPO lowers side-to-move bonus, shifting depth-8 king-activation
+            //     preference toward e1e2 (approach corridor). Both e1e2 and f1f6 win by
+            //     standard KRK technique; neither is an error.
+            Arguments.of("E2",  E2_FEN,  "e1e2"),
             Arguments.of("E3",  E3_FEN,  "f4f5"),
             // E4: e4d4 and e4f4 are symmetric king moves to break e-file direct opposition.
             //     Both win; equivalent by symmetry for a central pawn.

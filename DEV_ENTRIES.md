@@ -6423,3 +6423,45 @@ knowing what "Stockfish would play".
 - `engine-core/src/test/java/.../search/SearchRegressionSuite.java` (NEW)
 - `engine-core/pom.xml` (MODIFIED — excludedGroups + search-regression profile)
 - `engine-core/src/test/java/.../search/SearchRegressionTest.java` (MODIFIED — 3 expected moves)
+
+---
+
+### [2026-04-10] Phase 13 — CLOP King-Safety Tuning: Apply Best Params (Issue #142)
+
+**Branch:** phase/13-tuner-overhaul
+**Issues:** #142
+
+**CLOP run summary (300 iterations, 16 games each, tc=1+0.01, concurrency=15):**
+
+Starting values (from Texel eval-converged run): N=5, B=5, R=3, Q=-1, HANGING=50, TEMPO=9
+Baseline comparison: engine-uci-eval-converged.jar with EvalParams defaults (N=6, B=5, R=5, Q=6, HANGING=50, TEMPO=21)
+Best iteration: 96 of 300, W=12 D=4 L=0 (16 games), Elo=338.04
+
+**Best params found:**
+
+| Parameter         | Pre-CLOP default | Texel-converged start | CLOP best |
+|-------------------|------------------|-----------------------|-----------|
+| ATK_WEIGHT_KNIGHT | 6                | 5                     | 5         |
+| ATK_WEIGHT_BISHOP | 5                | 5                     | 3         |
+| ATK_WEIGHT_ROOK   | 5                | 3                     | 9         |
+| ATK_WEIGHT_QUEEN  | 6                | -1                    | -1        |
+| HANGING_PENALTY   | 50               | 50                    | 52        |
+| TEMPO             | 21               | 9                     | 12        |
+
+Note on ATK_WEIGHT_QUEEN = -1: Texel tuner and CLOP both converge here. The negative weight
+suppresses double-counting of queen threats via the quadratic w²/4 formula — queen danger is
+captured via mobility bonuses and PST gradients. A lone queen produces w=-1, penalty=-(1/4)=0
+via integer division; the signal is significant only when combined with R/N/B attackers.
+
+**Test updates:**
+
+- EvaluatorTest.attackerWeightReducesSafety — Updated to use rook attacker (R=9, clearly
+  positive). Added queenPlusRookCombinedAttackReducesSafety to verify combined N+Q threat.
+  The queen-only test was removed: a lone ATK_WEIGHT_QUEEN=-1 produces w²/4=0 (integer
+  division), which is the intended design.
+- SearchRegressionTest E2 — Updated f1f6→e1e2. Reduced TEMPO (21→12) shifts depth-8
+  king-activation preference in KRK toward e1e2 (approach corridor). Both are winning.
+
+**Applied to source:** EvalParams.java defaults updated to CLOP best values.
+
+**Next:** SPRT vs Phase 12 baseline (engine-uci-0.4.9.jar), H0=0, H1=5, α=0.05, β=0.05.

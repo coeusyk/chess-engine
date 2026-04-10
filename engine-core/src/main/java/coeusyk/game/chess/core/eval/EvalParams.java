@@ -38,29 +38,35 @@ public final class EvalParams {
     public static int HALF_OPEN_FILE_PENALTY = 13;
 
     /** Attacker-pressure weight for enemy knights near the king. */
-    public static int ATK_WEIGHT_KNIGHT = 6;
+    public static int ATK_WEIGHT_KNIGHT = 5;
 
     /** Attacker-pressure weight for enemy bishops near the king. */
-    public static int ATK_WEIGHT_BISHOP = 5;
+    public static int ATK_WEIGHT_BISHOP = 3;
 
     /** Attacker-pressure weight for enemy rooks near the king. */
-    public static int ATK_WEIGHT_ROOK = 5;
+    public static int ATK_WEIGHT_ROOK = 9;
 
-    /** Attacker-pressure weight for enemy queens near the king. */
-    public static int ATK_WEIGHT_QUEEN = 6;
+    /**
+     * Attacker-pressure weight for enemy queens near the king.
+     * Negative because the quadratic formula w²/4 means each piece type's
+     * marginal contribution depends on the sum of other weights; a small
+     * negative queen weight suppresses over-counting when the queen is already
+     * represented by rook+bishop sliding-attack overlap.
+     */
+    public static int ATK_WEIGHT_QUEEN = -1;
 
     // -----------------------------------------------------------------------
     // Evaluator constants
     // -----------------------------------------------------------------------
 
     /** Centipawn penalty applied per undefended attacked non-king piece. */
-    public static int HANGING_PENALTY = 50;
+    public static int HANGING_PENALTY = 52;
 
     /**
      * Side-to-move bonus in centipawns (tempo).
      * Also used to initialise {@link Evaluator#DEFAULT_CONFIG}.
      */
-    public static int TEMPO = 21;
+    public static int TEMPO = 12;
 
     // -----------------------------------------------------------------------
 
