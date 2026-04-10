@@ -280,7 +280,7 @@ function Apply-KingSafety {
         if ($l -match '^OPEN_FILE=(\d+)\s+HALF_OPEN_FILE=(\d+)') {
             $opf=[int]$Matches[1]; $hof=[int]$Matches[2]
         }
-        if ($l -match '^ATTACKER_WEIGHTS\s+N=(\d+)\s+B=(\d+)\s+R=(\d+)\s+Q=(\d+)') {
+        if ($l -match '^ATTACKER_WEIGHTS\s+N=(-?\d+)\s+B=(-?\d+)\s+R=(-?\d+)\s+Q=(-?\d+)') {
             $atkN=[int]$Matches[1]; $atkB=[int]$Matches[2]; $atkR=[int]$Matches[3]; $atkQ=[int]$Matches[4]
         }
     }
@@ -293,10 +293,10 @@ function Apply-KingSafety {
         $lines[$i] = $lines[$i] -replace '(private static final int SHIELD_RANK_3_BONUS = )(\d+);', "`${1}$sh3;"
         $lines[$i] = $lines[$i] -replace '(private static final int OPEN_FILE_PENALTY = )(\d+);',   "`${1}$opf;"
         $lines[$i] = $lines[$i] -replace '(private static final int HALF_OPEN_FILE_PENALTY = )(\d+);', "`${1}$hof;"
-        $lines[$i] = $lines[$i] -replace '(ATTACKER_WEIGHT\[Piece\.Knight\] = )(\d+);', "`${1}$atkN;"
-        $lines[$i] = $lines[$i] -replace '(ATTACKER_WEIGHT\[Piece\.Bishop\] = )(\d+);', "`${1}$atkB;"
-        $lines[$i] = $lines[$i] -replace '(ATTACKER_WEIGHT\[Piece\.Rook\]\s*= )(\d+);', "`${1}$atkR;"
-        $lines[$i] = $lines[$i] -replace '(ATTACKER_WEIGHT\[Piece\.Queen\] = )(\d+);',  "`${1}$atkQ;"
+        if ($atkN -ne $null) { $lines[$i] = $lines[$i] -replace '(ATTACKER_WEIGHT\[Piece\.Knight\] = )(-?\d+);', "`${1}$atkN;" }
+        if ($atkB -ne $null) { $lines[$i] = $lines[$i] -replace '(ATTACKER_WEIGHT\[Piece\.Bishop\] = )(-?\d+);', "`${1}$atkB;" }
+        if ($atkR -ne $null) { $lines[$i] = $lines[$i] -replace '(ATTACKER_WEIGHT\[Piece\.Rook\]\s*= )(-?\d+);', "`${1}$atkR;" }
+        if ($atkQ -ne $null) { $lines[$i] = $lines[$i] -replace '(ATTACKER_WEIGHT\[Piece\.Queen\] = )(-?\d+);',  "`${1}$atkQ;" }
     }
     Set-Content $kingsafePath $lines
     Write-Host "[apply-tuned-params] Updated : KingSafety.java"
@@ -307,10 +307,10 @@ function Apply-KingSafety {
         $ep[$i] = $ep[$i] -replace '(p\[IDX_SHIELD_RANK3\]\s*= )(\d+);',   "`${1}$sh3;"
         $ep[$i] = $ep[$i] -replace '(p\[IDX_OPEN_FILE\]\s*= )(\d+);',      "`${1}$opf;"
         $ep[$i] = $ep[$i] -replace '(p\[IDX_HALF_OPEN_FILE\] = )(\d+);',   "`${1}$hof;"
-        $ep[$i] = $ep[$i] -replace '(p\[IDX_ATK_KNIGHT\]\s*= )(\d+);',     "`${1}$atkN;"
-        $ep[$i] = $ep[$i] -replace '(p\[IDX_ATK_BISHOP\]\s*= )(\d+);',     "`${1}$atkB;"
-        $ep[$i] = $ep[$i] -replace '(p\[IDX_ATK_ROOK\]\s*= )(\d+);',       "`${1}$atkR;"
-        $ep[$i] = $ep[$i] -replace '(p\[IDX_ATK_QUEEN\]\s*= )(\d+);',      "`${1}$atkQ;"
+        if ($atkN -ne $null) { $ep[$i] = $ep[$i] -replace '(p\[IDX_ATK_KNIGHT\]\s*= )(-?\d+);', "`${1}$atkN;" }
+        if ($atkB -ne $null) { $ep[$i] = $ep[$i] -replace '(p\[IDX_ATK_BISHOP\]\s*= )(-?\d+);', "`${1}$atkB;" }
+        if ($atkR -ne $null) { $ep[$i] = $ep[$i] -replace '(p\[IDX_ATK_ROOK\]\s*= )(-?\d+);',   "`${1}$atkR;" }
+        if ($atkQ -ne $null) { $ep[$i] = $ep[$i] -replace '(p\[IDX_ATK_QUEEN\]\s*= )(-?\d+);',  "`${1}$atkQ;" }
     }
     Set-Content $evalParamsPath $ep
     Write-Host "[apply-tuned-params] Updated : EvalParams.java (king-safety baseline)"

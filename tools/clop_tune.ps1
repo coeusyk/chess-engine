@@ -126,25 +126,46 @@ function Run-Match {
 
     Write-OverrideFile $candidateValues
 
-    # Build engine arguments
-    $candidateEngineArgs = "cmd=`"$JavaPath`" arg=`"-jar`" arg=`"$CandidateJar`" arg=`"--param-overrides`" arg=`"$overrideFile`" proto=uci"
-    $baselineEngineArgs  = "cmd=`"$JavaPath`" arg=`"-jar`" arg=`"$BaselineJar`" proto=uci"
+    # Resolve java executable (same logic as sprt.ps1)
+    $java = if ($env:JAVA) { $env:JAVA } elseif ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME 'bin\java.exe' } else { 'java' }
 
+    # Auto-detect opening book if not specified (same logic as sprt.ps1)
+    $book = $OpeningBook
+    if ([string]::IsNullOrEmpty($book)) {
+        $defaultBook = Join-Path $PSScriptRoot 'noob_3moves.epd'
+        if (Test-Path $defaultBook) { $book = $defaultBook }
+    }
+
+    # Each key=value must be a separate argument for cutechess-cli
     $cutechessArgs = @(
-        "-engine", $candidateEngineArgs,
-        "-engine", $baselineEngineArgs,
+        "-engine", "name=Vex-candidate", "cmd=$java", "arg=-jar", "arg=$CandidateJar", "arg=--param-overrides", "arg=$overrideFile", "proto=uci",
+        "-engine", "name=Vex-baseline",  "cmd=$java", "arg=-jar", "arg=$BaselineJar",  "proto=uci",
         "-each", $TimeControl,
         "-games", $Games,
-        "-repeat"
+        "-repeat",
+        "-recover",
+        "-resign",  "movecount=5", "score=600",
+        "-draw",    "movenumber=40", "movecount=8", "score=10",
+        "-concurrency", "2"
     )
 
-    if (-not [string]::IsNullOrEmpty($OpeningBook) -and (Test-Path $OpeningBook)) {
-        $cutechessArgs += @("-openings", "file=`"$OpeningBook`"", "format=bin", "order=random")
+    if (-not [string]::IsNullOrEmpty($book) -and (Test-Path $book)) {
+        $cutechessArgs += @("-openings", "file=$book", "format=epd", "order=random", "plies=4")
     }
 
     $output = & $CutechessPath @cutechessArgs 2>&1 | Out-String
 
-    # Parse "Score of X vs Y: W - D - L  [...]"
+    # Parse last "Score of X vs Y: W - D - L  [...]" line (intermediate lines possible with -ratinginterval)
+    $matchResult = ([regex]"Score of .+?: (\d+) - (\d+) - (\d+)").Matches($output) | Select-Object -Last 1
+    if ($matchResult) {
+        $g = $matchResult.Groups
+        return @{
+            wins   = [int]$g[1].Value
+            draws  = [int]$g[2].Value
+            losses = [int]$g[3].Value
+        }
+    }
+    # Legacy fallback (single match)
     if ($output -match "Score of .+?: (\d+) - (\d+) - (\d+)") {
         return @{
             wins   = [int]$Matches[1]
