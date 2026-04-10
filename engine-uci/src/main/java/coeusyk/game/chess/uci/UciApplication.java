@@ -38,6 +38,7 @@ public class UciApplication {
     private int pawnHashSizeMb = 1;
     private int threads = 1;
     private long moveOverheadMs = 30;
+    @SuppressWarnings("unused") // UCI setoption stub — wired up when local Syzygy probing is added
     private String syzygyPath = "";
     private boolean syzygyOnline = false;
     private int syzygyProbeDepth = 1;
@@ -49,6 +50,7 @@ public class UciApplication {
     private String bookFile = "Performance.bin";
     private int bookDepth = 20;
     private int bookVariance = 50;
+    @SuppressWarnings("unused") // UCI setoption stub — applied to search when contempt is wired up
     private int contempt = 50;
 
     // Pondering

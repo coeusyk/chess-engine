@@ -48,12 +48,10 @@ public final class EvalParams {
 
     /**
      * Attacker-pressure weight for enemy queens near the king.
-     * Negative because the quadratic formula w²/4 means each piece type's
-     * marginal contribution depends on the sum of other weights; a small
-     * negative queen weight suppresses over-counting when the queen is already
-     * represented by rook+bishop sliding-attack overlap.
+     * Fixed from -1 (semantically inverted — queen was reducing pressure) to a
+     * positive value. +5 is the clean baseline before CLOP re-tuning.
      */
-    public static int ATK_WEIGHT_QUEEN = -1;
+    public static int ATK_WEIGHT_QUEEN = 5;
 
     // -----------------------------------------------------------------------
     // Evaluator constants
@@ -64,9 +62,9 @@ public final class EvalParams {
 
     /**
      * Side-to-move bonus in centipawns (tempo).
-     * Also used to initialise {@link Evaluator#DEFAULT_CONFIG}.
+     * 17 cp is historically reasonable (engines typically use 12–25 cp).
      */
-    public static int TEMPO = 12;
+    public static int TEMPO = 17;
 
     // -----------------------------------------------------------------------
 

@@ -1268,6 +1268,10 @@ public class Searcher {
         return checkExtensionsApplied;
     }
 
+    long getMatingThreatExtensionsAppliedForTesting() {
+        return matingThreatExtensionsApplied;
+    }
+
     int getMaxCheckExtensionsForTesting(int initialDepth) {
         return getMaxCheckExtensionsForDepth(initialDepth);
     }

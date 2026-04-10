@@ -24,9 +24,6 @@ public final class SmokeTestRunner {
     /** Maximum plies per game before the game is adjudicated as a draw. */
     private static final int MAX_PLIES = 200;
 
-    /** Fixed depth used for each search call (shallow for speed). */
-    private static final int DEFAULT_DEPTH = 3;
-
     /** Score magnitude (from side-to-move's perspective) at which the game is
      *  adjudicated as a win for the leading side (+/- 600 cp). */
     private static final int ADJUDICATION_CP = 600;

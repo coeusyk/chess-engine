@@ -52,7 +52,8 @@ param(
     [int]$Elo0 = 0,
     [int]$Elo1 = 50,
     [string]$OpeningsFile = "",  # Default: auto-detect noob_3moves.epd next to script
-    [string]$Tag = ""            # Optional descriptive tag for PGN filename (e.g. "phase13-material-group")
+    [string]$Tag = "",           # Optional descriptive tag for PGN filename (e.g. "phase13-material-group")
+    [string]$ParamOverrides = "" # Optional path to eval_params_override.txt from CLOP
 )
 
 Set-StrictMode -Version Latest
@@ -79,7 +80,7 @@ if (-not $Cutechess -or -not (Test-Path $Cutechess)) {
     exit 1
 }
 
-$Java = if ($env:JAVA) { $env:JAVA } else { 'java' }
+$Java = if ($env:JAVA) { Join-Path $env:JAVA 'bin\java.exe' } elseif ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME 'bin\java.exe' } else { 'java' }
 
 # --- Resolve opening book (auto-detect noob_3moves.epd if not specified) ---
 if ($OpeningsFile -eq "") {
@@ -114,8 +115,16 @@ Write-Host "OLD : $($OldResolved.Path)"
 Write-Host "PGN : $PgnOut"
 Write-Host ""
 
+$newEngineArgs = @("name=Vex-new", "cmd=$Java", "arg=-jar", "arg=$($NewResolved.Path)")
+if ($ParamOverrides -ne '' -and (Test-Path $ParamOverrides)) {
+    $poResolved = (Resolve-Path $ParamOverrides).Path
+    $newEngineArgs += @("arg=--param-overrides", "arg=$poResolved")
+    Write-Host "Param overrides: $poResolved"
+}
+$newEngineArgs += @("proto=uci")
+
 & $Cutechess `
-    -engine "name=Vex-new" "cmd=$Java" "arg=-jar" "arg=$($NewResolved.Path)" proto=uci `
+    -engine @newEngineArgs `
     -engine "name=Vex-old" "cmd=$Java" "arg=-jar" "arg=$($OldResolved.Path)" proto=uci `
     -each tc=$TC `
     -games $MaxGames `

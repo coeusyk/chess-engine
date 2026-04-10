@@ -201,7 +201,14 @@ class SearchRegressionTest {
             //     c4c5 win; choice is eval-dependent.
             //     Reverted 2026-04-10: eval-mode PSTs reverted (issue #141 post-mortem); depth-8
             //     preference returns to c1c2. All of c1c2, c1b2, c4c5 win; equivalent.
-            Arguments.of("P5",  P5_FEN,  "c1c2"),
+            //     Updated 2026-04-10: CLOP phase-13 params baked in (K=2,B=1,R=7,Q=3,H=73,T=17).
+            //     Eval shift causes depth-8 preference to move to b4b5 (pawn push). All of
+            //     c1c2, c1b2, c4c5, b4b5 win; choice is eval-dependent.
+            //     Updated 2026-04-10: Reverted king safety weights to pre-CLOP (K=5,B=3,R=9);
+            //     fixed ATK_WEIGHT_QUEEN from -1 to +5; kept TEMPO=17, HANGING=52.
+            //     Depth-8 preference shifts to c1d2 (king activation). All of c1c2, c1d2,
+            //     c1b2, c4c5, b4b5 win; choice is eval-dependent.
+            Arguments.of("P5",  P5_FEN,  "c1d2"),
             Arguments.of("P6",  P6_FEN,  "f4f5"),
             // P7: 8/3P4/8/8/8/8/8/3K1k2 — Kd1+Pd7 vs Kf1. d7d8q (immediate promotion)
             //     and d1d2 (king advance toward f1 before promoting) both win. d7d8q gains
@@ -230,7 +237,10 @@ class SearchRegressionTest {
             //     centralises toward d5 key square). All of d3d4, d3e4, d3c4 win; equivalent.
             //     Reverted 2026-04-10: eval-mode PSTs reverted (issue #141 post-mortem); depth-8
             //     preference shifts to d3e4 (escort). All of d3d4, d3e4, d3c4 win; equivalent.
-            Arguments.of("P9",  P9_FEN,  "d3e4"),
+            //     Updated 2026-04-10: CLOP phase-13 params baked in (K=2,B=1,R=7,Q=3,H=73,T=17).
+            //     Eval shift returns depth-8 preference to d3d4 (centralise toward d5 key square).
+            //     All of d3d4, d3e4, d3c4 win; equivalent.
+            Arguments.of("P9",  P9_FEN,  "d3d4"),
             // P10: e3d3 and e3f3 are symmetric king moves to break direct e-file opposition.
             //      Both win; choice is eval-dependent (d3/f3 equidistant for central pawn).
             //      Updated 2026-04-03: SEE-based hanging-piece penalty reverted to cheap
@@ -275,6 +285,13 @@ class SearchRegressionTest {
             //     standard KRK technique; neither is an error.
             //     Reverted 2026-04-10: eval-mode PSTs reverted (issue #141 post-mortem); depth-8
             //     preference returns to f1f6 (textbook 6th-rank restriction). Both win; equivalent.
+            //     Updated 2026-04-10: CLOP phase-13 params baked in (K=2,B=1,R=7,Q=3,H=73,T=17).
+            //     Higher TEMPO (12→17) and lower R/higher Q shift depth-8 king-activation
+            //     preference to e1e2 (approach corridor). Both e1e2 and f1f6 win; equivalent.
+            //     Updated 2026-04-10: Reverted king safety weights to pre-CLOP (K=5,B=3,R=9);
+            //     fixed ATK_WEIGHT_QUEEN from -1 to +5; kept TEMPO=17, HANGING=52.
+            //     Depth-8 preference returns to f1f6 (textbook 6th-rank restriction).
+            //     Both e1e2 and f1f6 are correct KRK technique; equivalent.
             Arguments.of("E2",  E2_FEN,  "f1f6"),
             Arguments.of("E3",  E3_FEN,  "f4f5"),
             // E4: e4d4 and e4f4 are symmetric king moves to break e-file direct opposition.
@@ -284,7 +301,9 @@ class SearchRegressionTest {
             //     Updated Phase 13 PST tuning: symmetric preference shifts to e4f4. Both win.
             //     Reverted 2026-04-10: eval-mode PSTs reverted (issue #141 post-mortem); depth-8
             //     preference returns to e4d4 (symmetric equivalent; both win by opposition).
-            Arguments.of("E4",  E4_FEN,  "e4d4"),
+            //     Updated 2026-04-10: CLOP phase-13 params baked in (K=2,B=1,R=7,Q=3,H=73,T=17).
+            //     Eval shift returns preference to e4f4. Both e4d4 and e4f4 win; equivalent.
+            Arguments.of("E4",  E4_FEN,  "e4f4"),
             Arguments.of("E5",  E5_FEN,  "a2e2"),
             // E6: 8/8/8/5k2/1PP5/8/2K5/8 — Kc2+Pb4c4 vs Kf5. Both b4b5 and c4c5 advance
             //     connected pawns; BK on f5 is far from both.
@@ -306,7 +325,10 @@ class SearchRegressionTest {
             //     Updated Phase 10 #10.5: Texel-tuned piece bonuses (rook7thEg 23→32) shift
             //     depth-8 preference to h2h4. Both g1g5/g1g6 and h2h4 are winning continuations.
             //     Updated Phase 13 PST tuning: preference shifts back to g1g5. Both are winning.
-            Arguments.of("E8",  E8_FEN,  "g1g5"),
+            //     Updated 2026-04-10: Reverted king safety weights to pre-CLOP (K=5,B=3,R=9);
+            //     fixed ATK_WEIGHT_QUEEN from -1 to +5; kept TEMPO=17, HANGING=52.
+            //     Depth-8 preference shifts to h2h4 (pawn race). Both g1g5 and h2h4 win; equivalent.
+            Arguments.of("E8",  E8_FEN,  "h2h4"),
             Arguments.of("E9",  E9_FEN,  "d3e3"),
             Arguments.of("E10", E10_FEN, "a2a6")
         );

@@ -291,15 +291,12 @@ public final class PositionLoader {
             } else {
                 // c0 or c9 annotation format
                 String stripped = line.endsWith(";") ? line.substring(0, line.length() - 1).strip() : line;
-                String marker;
                 int markerIdx;
                 int c0Idx = stripped.indexOf("c0");
                 int c9Idx = stripped.indexOf("c9");
                 if (c0Idx >= 0 && (c9Idx < 0 || c0Idx <= c9Idx)) {
-                    marker    = "c0";
                     markerIdx = c0Idx;
                 } else if (c9Idx >= 0) {
-                    marker    = "c9";
                     markerIdx = c9Idx;
                 } else {
                     return null;

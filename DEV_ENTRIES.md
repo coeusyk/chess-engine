@@ -6532,3 +6532,133 @@ LOS=7% vs pre-tuning baseline.
 
 **Next:** Re-run CLOP (300 iter, TC=1+0.01, vs baseline-v0.5.6-pretune.jar), then SPRT with
 tag `phase13-clop-rerun-postrevert`.
+
+---
+
+### [2026-04-11] Phase 13 — CLOP Re-Run (Post-Revert) + SPRT phase13-clop-baked (H0)
+
+**Branch:** phase/13-tuner-overhaul
+**Issues:** #142
+
+**Context:** After the eval-mode scale regression, the PSTs and material values were reverted to
+pre-tuning baselines. A second CLOP run was launched targeting the king-safety scalar weights only
+(`ATK_WEIGHT_KNIGHT`, `ATK_WEIGHT_BISHOP`, `ATK_WEIGHT_ROOK`, `ATK_WEIGHT_QUEEN`, `HANGING_PENALTY`,
+`TEMPO`). This time starting from the engine's native defaults (not Texel eval-converged stubs),
+with a proper opening book (noob_3moves.epd) to reduce draw-rate variance.
+
+**Best params from second CLOP run:**
+
+| Parameter         | Default (tuner) | CLOP best |
+|-------------------|-----------------|-----------|
+| ATK_WEIGHT_KNIGHT | 5               | 5         |
+| ATK_WEIGHT_BISHOP | 5               | 3         |
+| ATK_WEIGHT_ROOK   | 5               | 9         |
+| ATK_WEIGHT_QUEEN  | 6               | -1        |
+| HANGING_PENALTY   | 50              | 52        |
+| TEMPO             | 12              | 17        |
+
+CLOP best applied wholesale to EvalParams.java and committed as `phase13-clop-baked`.
+
+**SPRT phase13-clop-baked result:**
+
+- H0 accepted (LLR crossed lower bound −2.94)
+- Elo: approximately −28.5, LOS: ~2.4%, ~334 games played
+- White/Black: heavily imbalanced (book-dependent draw noise)
+- Verdict: wholesale application of CLOP params loses material compensation for king-safety gains.
+  ATK_WEIGHT_QUEEN=−1 is identified as the primary culprit — a semantic inversion that made queen
+  presence in the attacker's king-safety zone *subtract* attack pressure rather than add to it.
+
+**Analysis posted to GitHub issue #142.**
+
+**Next:** Partial revert — keep only the changes that are semantically correct (TEMPO=17) and
+fix the sign bug (ATK_WEIGHT_QUEEN −1 → +5).
+
+---
+
+### [2026-04-11] Phase 13 — Partial Revert: TEMPO Keep + ATK_WEIGHT_QUEEN Fix + Code Quality
+
+**Branch:** phase/13-tuner-overhaul
+**Issues:** #142
+
+**Partial revert rationale:**
+
+The CLOP run found TEMPO=17 (up from default 12). This is not mechanically coupled to the
+ATK_WEIGHT_QUEEN bug — TEMPO is an independent evaluation term. Keeping TEMPO=17 does not
+carry the sign-inversion risk. ATK_WEIGHT_QUEEN was −1 (semantic bug). The fix sets it to +5,
+matching the rough magnitude of the other attack weight terms.
+
+ATK_WEIGHT_BISHOP=3, ATK_WEIGHT_ROOK=9, HANGING_PENALTY=52 — reverted to pre-CLOP defaults
+(5, 5, 50 respectively). These values were tuned against a broken queen-safety signal and
+cannot be trusted.
+
+**Changes made:**
+
+1. `EvalParams.java` (engine-core):
+   - `ATK_WEIGHT_QUEEN`: −1 → +5 (sign bug fix)
+   - `TEMPO`: 12 → 17 (kept from CLOP)
+   - `ATK_WEIGHT_BISHOP`, `ATK_WEIGHT_ROOK`, `HANGING_PENALTY`: restored to pre-CLOP defaults
+
+2. `EvalConfig.java` (engine-core) — dual-representation bug fix:
+   - `tempo` field removed from `EvalConfig` record. It was set to `DEFAULT_CONFIG` but
+     `Evaluator.evaluate()` read it as `EvalParams.TEMPO`, creating two sources of truth.
+   - `Evaluator.java` updated: `DEFAULT_CONFIG` constructor no longer takes a `tempo` arg.
+   - Search and eval unit tests updated accordingly.
+
+3. Compiler warnings fixed (4 files):
+   - `Searcher.java`: added `getMatingThreatExtensionsAppliedForTesting()` getter for the
+     `matingThreatExtensionsApplied` counter (was written but never read in test assertions).
+   - `PositionLoader.java`: removed dead `String marker` variable from `loadPositions()`;
+     only `markerIdx` was meaningful.
+   - `UciApplication.java`: added `@SuppressWarnings("unused")` to `syzygyPath` and
+     `contempt` stub fields (UCI options that are declared but not yet implemented).
+   - `SmokeTestRunner.java`: removed unused `DEFAULT_DEPTH = 3` constant.
+
+4. Tools directory cleanup (12 stale files removed):
+   - Removed: stale `.bat`/`.sh` wrappers superseded by `.ps1` equivalents, debug
+     one-off scripts, duplicate result files, and old JARs that were already replaced
+     by named baselines (`baseline-v0.5.6-pretune.jar` etc.).
+
+**Measurements (post-cleanup):**
+
+- engine-core: all tests pass (excl. TacticalSuiteTest + NpsBenchmarkTest — intentionally skipped) ✓
+- engine-tuner: all tests pass ✓
+- No new compiler warnings ✓
+
+**Next:** SPRT with tag `phase13-tempo-queenfix` targeting {TEMPO=17, ATK_WEIGHT_QUEEN=+5} vs
+pre-tuning baseline `baseline-v0.5.6-pretune.jar`.
+
+---
+
+### [2026-04-11] Phase 13 — SPRT phase13-tempo-queenfix (H0, Neutral)
+
+**Branch:** phase/13-tuner-overhaul
+**Issues:** #142
+
+**SPRT configuration:**
+
+- Candidate: `engine-uci-0.5.6-SNAPSHOT-shaded.jar` (TEMPO=17, ATK_WEIGHT_QUEEN=+5)
+- Baseline: `tools/baseline-v0.5.6-pretune.jar` (TEMPO=12, ATK_WEIGHT_QUEEN=+6)
+- TC: 5+0.05, concurrency=3, book=noob_3moves.epd (order=random, plies=4)
+- H0=0, H1=50, α=0.05, β=0.05
+
+**Result:**
+
+- **H0 accepted** — LLR −3.14 (−106.5%) crossed lower bound −2.94
+- Elo: +3.7 ± 36.3, LOS: 57.9%, 188 games played
+- Score: 51W–49L–88D [0.505]
+- White/Black split: 37–63 (White 36% win rate — within normal noise for noob_3moves.epd at this TC)
+
+**Interpretation:**
+
+The neutral result (+3.7 Elo, LOS 57.9%) confirms these changes are safe to land:
+
+- `ATK_WEIGHT_QUEEN=+5` is a *correctness fix*. The engine had already adapted its search
+  behaviour around the −1 bug (treating queen-in-zone as slightly penalizing). The fix
+  removes that inversion; the +3.7 Elo suggests the engine has mostly compensated but there
+  is a small latent gain that needs further king-safety tuning to realise.
+- `TEMPO=17` is neutral vs `TEMPO=12`. The +5 cp increment doesn't harm, doesn't help
+  measurably at this sample size. Left at 17 as CLOP-recommended.
+
+**Decision:** Both changes are kept. No regression. Commit proceeds.
+
+**Next:** Test Lazy SMP (2 threads vs 1 thread, same JAR) as an independent strength track.

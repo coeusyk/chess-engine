@@ -149,6 +149,8 @@ if ($null -eq $parsedTC) {
     Write-Error "Cannot parse TimeControl '$TimeControl'.  Expected format: tc=BASE+INC (e.g. tc=1+0.01)."
     exit 1
 }
+# Normalise: cutechess-cli -each requires the "tc=" prefix
+if ($TimeControl -notmatch '^tc=') { $TimeControl = "tc=$TimeControl" }
 
 if (-not $SlowMode) {
     if ($Games -gt 50) {
@@ -271,8 +273,8 @@ function Run-Match {
 
     Write-OverrideFile $candidateValues
 
-    # Resolve java executable (same logic as sprt.ps1)
-    $java = if ($env:JAVA) { $env:JAVA } elseif ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME 'bin\java.exe' } else { 'java' }
+    # Resolve java executable: explicit -JavaPath takes precedence over env vars
+    $java = if ($JavaPath -ne 'java') { $JavaPath } elseif ($env:JAVA) { Join-Path $env:JAVA 'bin\java.exe' } elseif ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME 'bin\java.exe' } else { 'java' }
 
     # Auto-detect opening book if not specified (same logic as sprt.ps1)
     $book = $OpeningBook

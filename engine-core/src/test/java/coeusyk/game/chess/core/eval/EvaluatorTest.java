@@ -3,6 +3,8 @@ package coeusyk.game.chess.core.eval;
 import coeusyk.game.chess.core.models.Board;
 import org.junit.jupiter.api.Test;
 
+import static coeusyk.game.chess.core.eval.EvalParams.TEMPO;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 class EvaluatorTest {
@@ -14,8 +16,8 @@ class EvaluatorTest {
         Board board = new Board();
         int score = evaluator.evaluate(board);
         // Equal material + PSTs are symmetric, so the only offset is the TEMPO bonus
-        // for the side to move (+15 for White at the start position).
-        assertEquals(Evaluator.DEFAULT_CONFIG.tempo(), score, "Starting position should evaluate to TEMPO cp (side-to-move bonus only)");
+        // for the side to move (EvalParams.TEMPO cp for White at the start position).
+        assertEquals(TEMPO, score, "Starting position should evaluate to TEMPO cp (side-to-move bonus only)");
     }
 
     @Test
@@ -28,7 +30,7 @@ class EvaluatorTest {
         // Position with equal material, White to move — eval equals TEMPO (side-to-move bonus).
         Board extraPawn = new Board("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
         int equalMaterial = evaluator.evaluate(extraPawn);
-        assertEquals(Evaluator.DEFAULT_CONFIG.tempo(), equalMaterial, "Equal material should evaluate to TEMPO cp (side-to-move bonus)");
+        assertEquals(TEMPO, equalMaterial, "Equal material should evaluate to TEMPO cp (side-to-move bonus)");
     }
 
     @Test
@@ -48,7 +50,7 @@ class EvaluatorTest {
         Board board = new Board();
         int whiteScore = evaluator.evaluate(board);
         // Starting position is materially/positionally symmetric; eval = TEMPO (side-to-move bonus).
-        assertEquals(Evaluator.DEFAULT_CONFIG.tempo(), whiteScore);
+        assertEquals(TEMPO, whiteScore);
     }
 
     @Test
@@ -164,12 +166,12 @@ class EvaluatorTest {
         Board endgame = new Board("4k3/pppppppp/8/8/8/8/PPPPPPPP/4K3 w - - 0 1");
         int endgameScore = evaluator.evaluate(endgame);
         // Equal material, symmetric → eval = TEMPO (side-to-move bonus only)
-        assertEquals(Evaluator.DEFAULT_CONFIG.tempo(), endgameScore);
+        assertEquals(TEMPO, endgameScore);
 
         // Starting position: phase = 24 → pure middlegame score
         Board startPos = new Board();
         int startScore = evaluator.evaluate(startPos);
-        assertEquals(Evaluator.DEFAULT_CONFIG.tempo(), startScore);
+        assertEquals(TEMPO, startScore);
     }
 
     @Test
@@ -357,14 +359,7 @@ class EvaluatorTest {
     @Test
     void attackerWeightReducesSafety() {
         // Black rook on f3 attacks white king zone on g1.
-        // ATK_WEIGHT_ROOK = 9 (clearly positive), so a rook attack always reduces safety.
-        //
-        // Note — queen deliberately excluded: ATK_WEIGHT_QUEEN = -1 (CLOP / Texel-converged
-        // value). With a lone queen, w = -1, w²/4 = 0 via integer division → zero penalty.
-        // This is intentional: the negative weight suppresses double-counting of queen threats
-        // that are already captured via mobility and PST bonuses. The queen's contribution is
-        // meaningful only in combination with other attackers (where w stays large and positive).
-        // A separate test below validates the multi-piece combined-threat scenario.
+        // ATK_WEIGHT_ROOK = 7 (clearly positive), so a rook attack always reduces safety.
         Board rookAttacks = new Board("6k1/5ppp/8/8/8/5r2/5PPP/6K1 w - - 0 1");
         Board noAttacker  = new Board("6k1/5ppp/8/8/8/8/5PPP/6K1 w - - 0 1");
 
@@ -372,14 +367,13 @@ class EvaluatorTest {
         int safetyClean    = KingSafety.evaluate(noAttacker);
 
         assertTrue(safetyClean > safetyAttacked,
-                "Enemy rook attacking king zone should reduce safety (ATK_WEIGHT_ROOK=9)");
+                "Enemy rook attacking king zone should reduce safety (ATK_WEIGHT_ROOK=7)");
     }
 
     @Test
     void queenPlusRookCombinedAttackReducesSafety() {
         // Black rook+queen on f3/e3 both attacking white king zone on g1.
-        // Combined w = ATK_WEIGHT_ROOK + ATK_WEIGHT_QUEEN = 9 + (-1) = 8 → penalty = -16.
-        // Even with Q=-1, the combined threat is significant.
+        // Combined w = ATK_WEIGHT_ROOK + ATK_WEIGHT_QUEEN = 7 + 3 = 10 → penalty = -25.
         Board comboAttacks = new Board("6k1/5ppp/8/8/8/4qr2/5PPP/6K1 w - - 0 1");
         Board noAttacker   = new Board("6k1/5ppp/8/8/8/8/5PPP/6K1 w - - 0 1");
 

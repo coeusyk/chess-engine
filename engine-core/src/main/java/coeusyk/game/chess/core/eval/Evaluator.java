@@ -39,10 +39,10 @@ public class Evaluator {
     /**
      * Default immutable eval configuration built from the current tuned constants.
      * After a Texel tuning run, copy the new values here and commit.
-     * No runtime injection — this is the single live config used by all Evaluator instances.
+     * Note: tempo is NOT included here — it is read from EvalParams.TEMPO directly at
+     * evaluation time, consistent with all other overrideable EvalParams fields.
      */
     public static final EvalConfig DEFAULT_CONFIG = new EvalConfig(
-        /* tempo              */ EvalParams.TEMPO,
         /* bishopPairMg/Eg   */ 29, 52,
         /* rook7thMg/Eg      */ 0, 32,
         /* rookOpenMg/Eg     */ 50, 0,
@@ -239,7 +239,8 @@ public class Evaluator {
         int score = (mgScore * phase + egScore * (TOTAL_PHASE - phase)) / TOTAL_PHASE;
 
         // --- Tempo bonus (applied after phase interpolation) ---
-        score += Piece.isWhite(board.getActiveColor()) ? config.tempo() : -config.tempo();
+        // Read from EvalParams.TEMPO directly so runtime --param-overrides are picked up.
+        score += Piece.isWhite(board.getActiveColor()) ? EvalParams.TEMPO : -EvalParams.TEMPO;
 
         // --- Hanging piece penalty (undefended attacked non-king pieces) ---
         score += hangingPenalty(board);
