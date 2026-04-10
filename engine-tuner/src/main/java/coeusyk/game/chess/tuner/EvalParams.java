@@ -157,7 +157,7 @@ public final class EvalParams {
         lo[IDX_ROOK_7TH_MG]   = 0;   // Rook on 7th MG >= 0
         lo[IDX_ROOK_7TH_EG]   = 0;   // Rook on 7th EG >= 0
         lo[IDX_ROOK_OPEN_FILE_MG]  = 0;   // Rook open file MG >= 0
-        lo[IDX_ROOK_OPEN_FILE_EG]  = 0;   // Rook open file EG >= 0
+        lo[IDX_ROOK_OPEN_FILE_EG]  = -5;  // Rook open file EG >= -5 (engine uses -2)
         lo[IDX_ROOK_SEMI_OPEN_MG]  = 0;   // Rook semi-open file MG >= 0
         lo[IDX_ROOK_SEMI_OPEN_EG]  = 0;   // Rook semi-open file EG >= 0
         lo[IDX_KNIGHT_OUTPOST_MG]  = 0;   // Knight outpost MG >= 0
@@ -165,7 +165,7 @@ public final class EvalParams {
         lo[IDX_CONNECTED_PAWN_MG]  = 0;   // Connected pawn MG >= 0
         lo[IDX_CONNECTED_PAWN_EG]  = 0;   // Connected pawn EG >= 0
         lo[IDX_BACKWARD_PAWN_MG]   = 0;   // Backward pawn penalty MG >= 0
-        lo[IDX_BACKWARD_PAWN_EG]   = 0;   // Backward pawn penalty EG >= 0
+        lo[IDX_BACKWARD_PAWN_EG]   = -5;  // Backward pawn penalty EG >= -5 (engine uses -1)
         lo[IDX_ROOK_BEHIND_PASSER_MG] = 0;  // Rook behind passer MG >= 0
         lo[IDX_ROOK_BEHIND_PASSER_EG] = 0;  // Rook behind passer EG >= 0
         return lo;
@@ -543,11 +543,11 @@ public final class EvalParams {
         p[IDX_MOB_MG_START + 1] = 7;  // Bishop
         p[IDX_MOB_MG_START + 2] = 4;  // Rook
         p[IDX_MOB_MG_START + 3] = 15;  // Queen
-        // EG: N=1, B=3, R=2, Q=6
+        // EG: N=1, B=3, R=2, Q=6 (sync with EG_MOBILITY constants in Evaluator.java)
         p[IDX_MOB_EG_START]     = 1;  // Knight
         p[IDX_MOB_EG_START + 1] = 3;  // Bishop
         p[IDX_MOB_EG_START + 2] = 2;  // Rook
-        p[IDX_MOB_EG_START + 3] = -4;  // Queen
+        p[IDX_MOB_EG_START + 3] = 6;  // Queen (was -4 from a non-merged tuning run; engine baseline is 6)
 
         // --- Bonus eval terms ---
         p[IDX_TEMPO]          = 9;   // Tempo bonus
