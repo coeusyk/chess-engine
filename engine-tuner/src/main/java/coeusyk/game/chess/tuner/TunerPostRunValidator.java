@@ -140,6 +140,16 @@ public final class TunerPostRunValidator {
         if (!convergencePassed) allPassed = false;
         report.append(convergenceVerdict).append('\n');
 
+        // --- Material absolute bounds: mandatory, cannot be skipped ---
+        // Catches eval-mode scale compression (e.g. Rook MG 558→362 in issue #141 post-mortem).
+        String materialBoundsVerdict = checkMaterialAbsoluteBounds(tunedParams);
+        if (materialBoundsVerdict != null) {
+            allPassed = false;
+            report.append(materialBoundsVerdict).append('\n');
+        } else {
+            report.append("[MaterialBounds] PASS\n");
+        }
+
         // --- Gate 2: Param sanity ---
         String sanityVerdict;
         if (config.skipSanityCheck()) {
@@ -222,6 +232,44 @@ public final class TunerPostRunValidator {
     // -----------------------------------------------------------------------
     // Gate 2: Param sanity
     // -----------------------------------------------------------------------
+
+    // -----------------------------------------------------------------------
+    // Material absolute bounds — mandatory, non-skippable.
+    // Catches scale-compression artifacts from eval-mode tuning.
+    // Indices map to EvalParams constants: PAWN_MG=0, PAWN_EG=1, KNIGHT_MG=2, ...
+    // -----------------------------------------------------------------------
+    private static final int[][] MATERIAL_BOUNDS = {
+        // { MG_min, MG_max, EG_min, EG_max }
+        {  80,  130,  80,  130 }, // Pawn   [0][1]
+        { 280,  420, 260,  400 }, // Knight [2][3]
+        { 290,  430, 270,  410 }, // Bishop [4][5]
+        { 430,  650, 430,  650 }, // Rook   [6][7]
+        { 900, 1400, 900, 1400 }, // Queen  [8][9]
+    };
+    private static final String[] MATERIAL_PIECE_NAMES = {"Pawn", "Knight", "Bishop", "Rook", "Queen"};
+
+    static String checkMaterialAbsoluteBounds(double[] params) {
+        StringBuilder failures = new StringBuilder();
+        for (int i = 0; i < MATERIAL_BOUNDS.length; i++) {
+            int mgIdx = i * 2;
+            int egIdx = i * 2 + 1;
+            int mgMin = MATERIAL_BOUNDS[i][0], mgMax = MATERIAL_BOUNDS[i][1];
+            int egMin = MATERIAL_BOUNDS[i][2], egMax = MATERIAL_BOUNDS[i][3];
+            String name = MATERIAL_PIECE_NAMES[i];
+            if (params[mgIdx] < mgMin || params[mgIdx] > mgMax) {
+                failures.append(String.format(
+                        "%s MG=%.0f outside bounds [%d,%d]; ", name, params[mgIdx], mgMin, mgMax));
+            }
+            if (params[egIdx] < egMin || params[egIdx] > egMax) {
+                failures.append(String.format(
+                        "%s EG=%.0f outside bounds [%d,%d]; ", name, params[egIdx], egMin, egMax));
+            }
+        }
+        if (failures.length() > 0) {
+            return "[MaterialBounds] FAIL — " + failures;
+        }
+        return null;
+    }
 
     static String checkSanity(double[] params) {
         StringBuilder sb = new StringBuilder("[Sanity] ");

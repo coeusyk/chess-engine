@@ -6484,3 +6484,51 @@ via integer division; the signal is significant only when combined with R/N/B at
 **Applied to source:** EvalParams.java defaults updated to CLOP best values.
 
 **Next:** SPRT vs Phase 12 baseline (engine-uci-0.4.9.jar), H0=0, H1=5, α=0.05, β=0.05.
+
+### [2026-04-10] Phase 13 — Eval-Mode Regression Post-Mortem: Revert + Gate2 Absolute Bounds (Issue #141)
+
+**Branch:** phase/13-tuner-overhaul
+**Issues:** #141
+
+**Root cause identified:** Commit `9b72bba` applied Texel params from the `--label-mode eval` run
+directly to `Evaluator.java`. Eval-mode uses Stockfish centipawn scale (~550 for a rook) not the
+engine's native material scale (~560 for a rook after tuning). The validator Gate 2 checked only
+ordering (Rook MG < Queen MG ✓) but not absolute magnitudes. SPRT #142 result: –43.7 Elo,
+LOS=7% vs pre-tuning baseline.
+
+**What was reverted:**
+
+- `Evaluator.java`, `PawnStructure.java`, `PieceSquareTables.java` — restored to `9b72bba^` values.
+  Material: Knight MG 391 (was 262), Rook MG 558 (was 362), Queen MG 1200 (was 912).
+  TT packed-long refactor and UciApplication heap check from `9b72bba` preserved.
+
+**Safety guards added:**
+
+- `TunerPostRunValidator.checkMaterialAbsoluteBounds()` — mandatory material bounds check (runs
+  even with `--skip-sanity`). Bounds: Pawn [80,130], Knight MG [280,420], Rook MG [430,650],
+  Queen MG [900,1400], etc. Catches eval-mode scale collapse at Gate 2 before params are written.
+- `--label-mode eval` gated behind `--experimental` flag in `TunerMain.java`. Engine exits with
+  an error explaining why eval-mode regresses on native-scale engines. The feature code
+  (`tuneWithFeaturesEvalMode`, `annotate_corpus.ps1`) is preserved, just gated.
+
+**Test fixes:**
+
+- `TunerValidatorTest.sanity_fail_when_rook_mg_collapsed_by_eval_mode` — new regression test.
+  Verifies Rook MG=362 fails bounds check even with `--skip-sanity=true`.
+- `TunerValidatorTest.validate_passes_when_skip_flags_override_failures` — fixed ordering-
+  violation to use Bishop MG < Knight MG (stays within material bounds, still exercises skip logic).
+- `EvalParamsTest.newTermInitialValuesArePositive` — ROOK_7TH_MG check relaxed to `>= 0`
+  (reverted engine has MG=0 for rook-on-7th; EG=32 is the real bonus).
+- `SearchRegressionTest` — 6 bestmoves updated after PST revert (P1, P5, P9, E1, E2, E4).
+  Each has a detailed comment explaining the revert history.
+- `EvalParams.extractFromCurrentEval()` — full snapshot updated (all 12 PST tables + all scalar
+  sections: pawn structure, king safety, mobility, bonus terms) to match reverted eval source.
+
+**Measurements:**
+
+- engine-core: 177 tests, 0 failures, 2 skipped (TacticalSuiteTest + NpsBenchmarkTest) ✓
+- engine-tuner: 116 tests, 0 failures, 1 skipped ✓
+- SPRT #142 (pre-fix): 18W/30L/34D, LOS=7%, Elo=–43.7 — KILLED.
+
+**Next:** Re-run CLOP (300 iter, TC=1+0.01, vs baseline-v0.5.6-pretune.jar), then SPRT with
+tag `phase13-clop-rerun-postrevert`.

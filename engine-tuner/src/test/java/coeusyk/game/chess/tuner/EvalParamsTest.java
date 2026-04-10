@@ -57,7 +57,7 @@ class EvalParamsTest {
         assertTrue(params[EvalParams.IDX_TEMPO] > 0, "Tempo should be positive");
         assertTrue(params[EvalParams.IDX_BISHOP_PAIR_MG] > 0, "Bishop pair MG should be positive");
         assertTrue(params[EvalParams.IDX_BISHOP_PAIR_EG] > 0, "Bishop pair EG should be positive");
-        assertTrue(params[EvalParams.IDX_ROOK_7TH_MG] > 0, "Rook 7th MG should be positive");
+        assertTrue(params[EvalParams.IDX_ROOK_7TH_MG] >= 0, "Rook 7th MG should be non-negative");
         assertTrue(params[EvalParams.IDX_ROOK_7TH_EG] > 0, "Rook 7th EG should be positive");
     }
 

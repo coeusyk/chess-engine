@@ -109,31 +109,33 @@ class EvaluatorTest {
         // Tables stored in display order: a8=0, h1=63
         // Board also uses a8=0, so white PST lookup is direct (no mirror).
         // White knight on e4 → board sq 36 → table index 36 (row 4, col 4)
-        // Updated 2026-04-10: eval-converged Texel run (Issue #141) produced new PST values.
-        // MG_KNIGHT row 4 (32-39): {-21,-10,7,17,20,5,21,-20} → col 4 = 20 (eval-converged #141)
-        assertEquals(20, PieceSquareTables.mg(2, 36));
-        // EG_KNIGHT row 4 (32-39): {-18,-7,1,5,1,-1,-11,-26} → col 4 = 1 (eval-converged #141)
-        assertEquals(1, PieceSquareTables.eg(2, 36));
-        // MG_PAWN row 4 (32-39): {-62,-63,-52,-31,-32,-31,-36,-56} → col 4 = -32 (eval-converged #141)
-        assertEquals(-32, PieceSquareTables.mg(1, 36));
+        // Restored 2026-04-10: eval-converged PSTs reverted (see EvaluatorTest.mgAndEgMaterialValuesAreCorrect).
+        // MG_KNIGHT row 4 (32-39): {-21,-10,7,17,19,5,21,-20} → col 4 = 19
+        assertEquals(19, PieceSquareTables.mg(2, 36));
+        // EG_KNIGHT row 4 (32-39): reverted from eval-converged PSTs → col 4 = 14
+        assertEquals(14, PieceSquareTables.eg(2, 36));
+        // MG_PAWN row 4 (32-39): reverted from eval-converged PSTs → col 4 = 14
+        assertEquals(14, PieceSquareTables.mg(1, 36));
     }
 
     @Test
     void mgAndEgMaterialValuesAreCorrect() {
-        // Updated 2026-04-10: eval-converged Texel run (Issue #141) produced new material values.
-        // SF-eval corpus minimizes prediction error vs SF cp, folding tactical bonuses into
-        // raw material; values diverge significantly from classical HCE baselines.
-        assertEquals(100, Evaluator.mgMaterialValue(1));   // Pawn   (unchanged)
-        assertEquals(262, Evaluator.mgMaterialValue(2));   // Knight (eval-converged #141)
-        assertEquals(276, Evaluator.mgMaterialValue(3));   // Bishop (eval-converged #141)
-        assertEquals(362, Evaluator.mgMaterialValue(4));   // Rook   (eval-converged #141)
-        assertEquals(912, Evaluator.mgMaterialValue(5));   // Queen  (eval-converged #141)
+        // Restored 2026-04-10: eval-converged params from Issue #141 were reverted because
+        // eval-mode Texel minimizes raw cp² MSE against Stockfish's internal scale, which
+        // differs from Vex's. This collapsed all piece values by ~35% (Rook MG: 558→362),
+        // causing ~−44 Elo regression versus the pre-tuning baseline (SPRT #142 post-mortem).
+        // eval-mode tuning is now gated behind --experimental. (See issue tracker.)
+        assertEquals(100,  Evaluator.mgMaterialValue(1));  // Pawn
+        assertEquals(391,  Evaluator.mgMaterialValue(2));  // Knight
+        assertEquals(428,  Evaluator.mgMaterialValue(3));  // Bishop
+        assertEquals(558,  Evaluator.mgMaterialValue(4));  // Rook
+        assertEquals(1200, Evaluator.mgMaterialValue(5));  // Queen
 
-        assertEquals(85,  Evaluator.egMaterialValue(1));   // Pawn   (eval-converged #141)
-        assertEquals(217, Evaluator.egMaterialValue(2));   // Knight (eval-converged #141)
-        assertEquals(257, Evaluator.egMaterialValue(3));   // Bishop (eval-converged #141)
-        assertEquals(476, Evaluator.egMaterialValue(4));   // Rook   (eval-converged #141)
-        assertEquals(756, Evaluator.egMaterialValue(5));   // Queen  (eval-converged #141)
+        assertEquals(89,   Evaluator.egMaterialValue(1));  // Pawn
+        assertEquals(287,  Evaluator.egMaterialValue(2));  // Knight
+        assertEquals(311,  Evaluator.egMaterialValue(3));  // Bishop
+        assertEquals(555,  Evaluator.egMaterialValue(4));  // Rook
+        assertEquals(1040, Evaluator.egMaterialValue(5));  // Queen
     }
 
     @Test

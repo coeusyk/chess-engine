@@ -43,7 +43,7 @@ public final class TunerMain {
 
     public static void main(String[] args) throws Exception {
         if (args.length < 1) {
-        LOG.error("Usage: engine-tuner <dataset> [maxPositions] [maxIterations] [--optimizer adam|coordinate|lbfgs] [--label-mode wdl|eval] [--param-group material|pst|pawn-structure|king-safety|mobility|scalars] [--corpus-format csv|epd] [--no-recalibrate-k] [--freeze-k] [--k <value>] [--freeze-params] [--corpus <csv>] [--coverage-audit]");
+        LOG.error("Usage: engine-tuner <dataset> [maxPositions] [maxIterations] [--optimizer adam|coordinate|lbfgs] [--label-mode wdl|eval --experimental] [--param-group material|pst|pawn-structure|king-safety|mobility|scalars] [--corpus-format csv|epd] [--no-recalibrate-k] [--freeze-k] [--k <value>] [--freeze-params] [--corpus <csv>] [--coverage-audit]");
             System.exit(1);
         }
 
@@ -65,6 +65,7 @@ public final class TunerMain {
         boolean skipConvergence = false; // --skip-convergence
         int smokeGames         = 100;  // --smoke-games N
         int smokeDepth         = 3;    // --smoke-depth N
+        boolean experimental   = false; // --experimental: required for --label-mode eval
 
         // Parse remaining positional args and named flags
         for (int i = 1; i < args.length; i++) {
@@ -158,11 +159,23 @@ public final class TunerMain {
                     System.exit(1);
                 }
                 smokeDepth = Integer.parseInt(args[++i]);
+            } else if ("--experimental".equals(args[i])) {
+                experimental = true;
             } else if (maxPositions == Integer.MAX_VALUE) {
                 maxPositions = Integer.parseInt(args[i]);
             } else if (maxIters == -1) {
                 maxIters = Integer.parseInt(args[i]);
             }
+        }
+
+        // Gate --label-mode eval behind --experimental
+        if ("eval".equals(labelMode) && !experimental) {
+            LOG.error("ERROR: --label-mode eval requires --experimental flag.");
+            LOG.error("Eval-mode tuning regresses against Stockfish's centipawn scale, which differs");
+            LOG.error("from Vex's internal scale. Without scale normalization, piece values collapse");
+            LOG.error("by ~35%. This mode is disabled until scale normalization is implemented.");
+            LOG.error("Use --label-mode wdl (default) for all production tuning runs.");
+            System.exit(1);
         }
 
         // Apply optimizer-specific defaults for maxIters

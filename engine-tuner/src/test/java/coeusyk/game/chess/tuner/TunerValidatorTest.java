@@ -246,7 +246,7 @@ class TunerValidatorTest {
         for (int i = 0; i < 20; i++) m.recordRelDelta(5e-3); // would fail convergence
 
         double[] badParams = validParams.clone();
-        badParams[8] = badParams[6] - 10; // would fail sanity
+        badParams[4] = badParams[2] - 10; // Bishop MG < Knight MG: violates ordering but stays in bounds
 
         // Skip all checks → should pass
         TunerPostRunValidator.ValidatorConfig allSkip =
@@ -256,6 +256,26 @@ class TunerValidatorTest {
                 TunerPostRunValidator.validate(validParams, badParams, m, allSkip);
 
         assertTrue(result.passed(), "All-skipped validate should PASS: " + result.reportText());
+    }
+
+    @Test
+    void sanity_fail_when_rook_mg_collapsed_by_eval_mode() {
+        // Rook MG = 362 replicates the eval-mode compression from issue #141 post-mortem.
+        // Min bound is 430. Must fail even when --skip-sanity is active (non-negotiable).
+        double[] p = validParams.clone();
+        p[6] = 362.0; // ROOK_MG index (params[6])
+
+        TunerPostRunValidator.ValidatorConfig skipSanity =
+                new TunerPostRunValidator.ValidatorConfig(false, true, true, 100, 3, 0.30);
+
+        TunerPostRunValidator.ValidationResult result =
+                TunerPostRunValidator.validate(validParams, p, buildGoodMetrics(), skipSanity);
+
+        assertFalse(result.passed(),
+                "Collapsed Rook MG=362 must fail material bounds even with --skip-sanity: "
+                + result.reportText());
+        assertTrue(result.reportText().contains("Rook"),
+                "Report must name the violating piece: " + result.reportText());
     }
 
     // =========================================================================

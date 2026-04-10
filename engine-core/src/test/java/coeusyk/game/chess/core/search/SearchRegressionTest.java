@@ -171,7 +171,9 @@ class SearchRegressionTest {
             //     Both f5f6 and e1d2 are equivalent continuations.
             //     Updated 2026-04-10: Phase 13 tuner-overhaul eval changes shift depth-8 PST gradient;
             //     e1e2 (king toward d2/e2 approach corridor) becomes preferred. Both e1d2 and e1e2 win.
-            Arguments.of("P1",  P1_FEN,  "e1e2"),
+            //     Reverted 2026-04-10: eval-mode PSTs reverted (issue #141 post-mortem); depth-8
+            //     preference returns to e1d2. Both e1d2 and e1e2 are equivalent king advances.
+            Arguments.of("P1",  P1_FEN,  "e1d2"),
             Arguments.of("P2",  P2_FEN,  "d4d5"),
             // P3: 8/8/8/8/4k3/8/3PK3/8 — Ke2+Pd2 vs Ke4. Both d2d3 (pawn advance) and e2f2
             //     (king sidestep) win. Draw detection penalises king-cycling paths from e2f2;
@@ -197,7 +199,9 @@ class SearchRegressionTest {
             //     Updated 2026-04-10: Phase 13 tuner-overhaul eval changes (king PST & mobility)
             //     shift depth-8 preference to c1b2 (king approaches b-pawn). All of c1c2, c1b2,
             //     c4c5 win; choice is eval-dependent.
-            Arguments.of("P5",  P5_FEN,  "c1b2"),
+            //     Reverted 2026-04-10: eval-mode PSTs reverted (issue #141 post-mortem); depth-8
+            //     preference returns to c1c2. All of c1c2, c1b2, c4c5 win; equivalent.
+            Arguments.of("P5",  P5_FEN,  "c1c2"),
             Arguments.of("P6",  P6_FEN,  "f4f5"),
             // P7: 8/3P4/8/8/8/8/8/3K1k2 — Kd1+Pd7 vs Kf1. d7d8q (immediate promotion)
             //     and d1d2 (king advance toward f1 before promoting) both win. d7d8q gains
@@ -224,7 +228,9 @@ class SearchRegressionTest {
             //     depth-8 reduction pattern; d3d4 becomes preferred. Both d3d4 and d3e4 win.
             //     Reverted to v0.5.4 eval baseline: depth-8 preference returns to d3d4 (king
             //     centralises toward d5 key square). All of d3d4, d3e4, d3c4 win; equivalent.
-            Arguments.of("P9",  P9_FEN,  "d3d4"),
+            //     Reverted 2026-04-10: eval-mode PSTs reverted (issue #141 post-mortem); depth-8
+            //     preference shifts to d3e4 (escort). All of d3d4, d3e4, d3c4 win; equivalent.
+            Arguments.of("P9",  P9_FEN,  "d3e4"),
             // P10: e3d3 and e3f3 are symmetric king moves to break direct e-file opposition.
             //      Both win; choice is eval-dependent (d3/f3 equidistant for central pawn).
             //      Updated 2026-04-03: SEE-based hanging-piece penalty reverted to cheap
@@ -251,7 +257,9 @@ class SearchRegressionTest {
             //     Updated 2026-04-10: Phase 13 tuner-overhaul eval changes shift depth-8 queen
             //     placement preference to f1b5 (queen to bishop-5 diagonal — restricts BK from
             //     d7/e6). Both f1f6 and f1b5 are winning KQK continuations; equivalent.
-            Arguments.of("E1",  E1_FEN,  "f1b5"),
+            //     Reverted 2026-04-10: eval-mode PSTs reverted (issue #141 post-mortem); depth-8
+            //     preference returns to f1f6 (textbook 6th-rank restriction). Both win; equivalent.
+            Arguments.of("E1",  E1_FEN,  "f1f6"),
             // E2: 4k3/8/8/8/8/8/8/4KR2 — KR vs K.  f1f6 (rook-to-6th restriction) and
             //     e1d2 (king activation toward centre) both win; known theoretical equivalence.
             //     Updated 2026-04-03: cheap bitboard hanging-penalty (replacing SEE-based form)
@@ -265,14 +273,18 @@ class SearchRegressionTest {
             //     Reduced TEMPO lowers side-to-move bonus, shifting depth-8 king-activation
             //     preference toward e1e2 (approach corridor). Both e1e2 and f1f6 win by
             //     standard KRK technique; neither is an error.
-            Arguments.of("E2",  E2_FEN,  "e1e2"),
+            //     Reverted 2026-04-10: eval-mode PSTs reverted (issue #141 post-mortem); depth-8
+            //     preference returns to f1f6 (textbook 6th-rank restriction). Both win; equivalent.
+            Arguments.of("E2",  E2_FEN,  "f1f6"),
             Arguments.of("E3",  E3_FEN,  "f4f5"),
             // E4: e4d4 and e4f4 are symmetric king moves to break e-file direct opposition.
             //     Both win; equivalent by symmetry for a central pawn.
             //     Updated 2026-04-03: cheap bitboard hanging-penalty (replacing SEE-based form)
             //     reverts depth-8 preference to e4d4. Equivalent by symmetry.
             //     Updated Phase 13 PST tuning: symmetric preference shifts to e4f4. Both win.
-            Arguments.of("E4",  E4_FEN,  "e4f4"),
+            //     Reverted 2026-04-10: eval-mode PSTs reverted (issue #141 post-mortem); depth-8
+            //     preference returns to e4d4 (symmetric equivalent; both win by opposition).
+            Arguments.of("E4",  E4_FEN,  "e4d4"),
             Arguments.of("E5",  E5_FEN,  "a2e2"),
             // E6: 8/8/8/5k2/1PP5/8/2K5/8 — Kc2+Pb4c4 vs Kf5. Both b4b5 and c4c5 advance
             //     connected pawns; BK on f5 is far from both.
