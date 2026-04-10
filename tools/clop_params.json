@@ -8,14 +8,14 @@
   },
   {
     "name": "ATK_WEIGHT_BISHOP",
-    "current": 5,
+    "current": 3,
     "min": 1,
     "max": 20,
     "step": 1
   },
   {
     "name": "ATK_WEIGHT_ROOK",
-    "current": 3,
+    "current": 9,
     "min": 1,
     "max": 20,
     "step": 1
@@ -29,14 +29,14 @@
   },
   {
     "name": "HANGING_PENALTY",
-    "current": 50,
+    "current": 52,
     "min": 10,
     "max": 100,
     "step": 1
   },
   {
     "name": "TEMPO",
-    "current": 9,
+    "current": 12,
     "min": 5,
     "max": 50,
     "step": 1
