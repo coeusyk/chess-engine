@@ -99,6 +99,19 @@ public class UciApplication {
     private static final int BENCH_HASH_MB = 16;
 
     public static void main(String[] args) throws IOException {
+        // Heap cap sanity check — must run before any large allocation.
+        // Written to stderr with "info string" prefix so GUI logs see it without
+        // breaking the UCI protocol (UCI parsers ignore unrecognised info tokens
+        // and never read stderr).
+        long maxHeapBytes = Runtime.getRuntime().maxMemory();
+        final long WARN_THRESHOLD = 256L * 1024L * 1024L; // 256 MB
+        if (maxHeapBytes < WARN_THRESHOLD) {
+            long maxHeapMb = maxHeapBytes / (1024L * 1024L);
+            System.err.println("info string WARNING: JVM heap cap is only " + maxHeapMb
+                    + "mb. Recommend -Xmx512m or higher."
+                    + " GC pauses may degrade search under multi-threading.");
+        }
+
         // Apply eval-parameter overrides before any Evaluator is constructed so that
         // Evaluator.DEFAULT_CONFIG picks up the new TEMPO value at class-init time.
         for (int i = 0; i < args.length - 1; i++) {

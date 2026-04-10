@@ -43,14 +43,14 @@ public class Evaluator {
      */
     public static final EvalConfig DEFAULT_CONFIG = new EvalConfig(
         /* tempo              */ EvalParams.TEMPO,
-        /* bishopPairMg/Eg   */ 29, 52,
-        /* rook7thMg/Eg      */ 0, 32,
-        /* rookOpenMg/Eg     */ 50, 0,
-        /* rookSemiMg/Eg     */ 18, 19,
+        /* bishopPairMg/Eg   */ 60, 26,
+        /* rook7thMg/Eg      */ 1, 5,
+        /* rookOpenMg/Eg     */ 50, -2,
+        /* rookSemiMg/Eg     */ 25, 13,
         /* knightOutpostMg/Eg*/ 40, 30,
-        /* connectedPawnMg/Eg*/ 9, 4,
-        /* backwardPawnMg/Eg */ 0, 0,
-        /* rookBehindMg/Eg   */ 12, 4
+        /* connectedPawnMg/Eg*/ 5, 4,
+        /* backwardPawnMg/Eg */ 1, -1,
+        /* rookBehindMg/Eg   */ 7, 7
     );
 
     private final EvalConfig config;
@@ -72,22 +72,22 @@ public class Evaluator {
         PHASE_WEIGHTS[Piece.Queen]  = 4;
 
         MG_MATERIAL[Piece.Pawn]   = 100;
-        MG_MATERIAL[Piece.Knight] = 391;
-        MG_MATERIAL[Piece.Bishop] = 428;
-        MG_MATERIAL[Piece.Rook]   = 558;
-        MG_MATERIAL[Piece.Queen]  = 1200;
+        MG_MATERIAL[Piece.Knight] = 262;
+        MG_MATERIAL[Piece.Bishop] = 276;
+        MG_MATERIAL[Piece.Rook]   = 362;
+        MG_MATERIAL[Piece.Queen]  = 912;
         MG_MATERIAL[Piece.King]   = 0;
 
-        EG_MATERIAL[Piece.Pawn]   = 89;
-        EG_MATERIAL[Piece.Knight] = 287;
-        EG_MATERIAL[Piece.Bishop] = 311;
-        EG_MATERIAL[Piece.Rook]   = 555;
-        EG_MATERIAL[Piece.Queen]  = 1040;
+        EG_MATERIAL[Piece.Pawn]   = 85;
+        EG_MATERIAL[Piece.Knight] = 217;
+        EG_MATERIAL[Piece.Bishop] = 257;
+        EG_MATERIAL[Piece.Rook]   = 476;
+        EG_MATERIAL[Piece.Queen]  = 756;
         EG_MATERIAL[Piece.King]   = 0;
 
-        MG_MOBILITY[Piece.Knight] = 7;
-        MG_MOBILITY[Piece.Bishop] = 8;
-        MG_MOBILITY[Piece.Rook]   = 7;
+        MG_MOBILITY[Piece.Knight] = 4;
+        MG_MOBILITY[Piece.Bishop] = 7;
+        MG_MOBILITY[Piece.Rook]   = 4;
         MG_MOBILITY[Piece.Queen]  = 2;
 
         EG_MOBILITY[Piece.Knight] = 1;
