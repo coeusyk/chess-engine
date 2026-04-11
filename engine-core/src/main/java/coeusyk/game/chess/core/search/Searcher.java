@@ -42,6 +42,12 @@ public class Searcher {
     private static final int TB_WIN_SCORE = MATE_SCORE - 2 * MAX_PLY;
     private static final int TB_LOSS_SCORE = -(MATE_SCORE - 2 * MAX_PLY);
 
+    // Minimum material+PST advantage (white-positive, centipawns, MG scale) required for
+    // contempt to activate.  Below this threshold the position is close enough to equal
+    // that a draw score of 0 is more appropriate.  Prevents balanced middlegames from
+    // being distorted by a non-zero contempt penalty.
+    private static final int CONTEMPT_THRESHOLD = 150;
+
     // Correction history: maps pawn structure to a static-eval bias.
     // Stored at GRAIN scale; applied as: adjustedEval = rawEval + ch[color][key] / GRAIN.
     private static final int CORRECTION_HISTORY_SIZE = 1024;
@@ -138,6 +144,12 @@ public class Searcher {
 
     private boolean aborted;
 
+    // Penalty applied to draw-by-repetition and 50-move-rule draws when the side to move
+    // has a clear material advantage (> CONTEMPT_THRESHOLD cp).  A positive value makes the
+    // engine avoid draws when winning and accept them when losing.  Set via setContempt();
+    // defaults to 0 (neutral) so that tests using new Searcher() are unaffected.
+    private int contemptCp = 0;
+
     public Searcher() {
         this(true, true, true, true, true, true);
     }
@@ -187,6 +199,20 @@ public class Searcher {
         this.lmrEnabled = lmrEnabled;
         this.futilityRazoringEnabled = futilityRazoringEnabled;
         this.checkExtensionsEnabled = checkExtensionsEnabled;
+    }
+
+    /**
+     * Sets the draw-contempt value in centipawns.
+     * When the side to move has a material+PST advantage exceeding {@code CONTEMPT_THRESHOLD},
+     * repetition and 50-move-rule draws return {@code -cp} (bad for the winning side).
+     * When the side to move is behind by the same margin, they return {@code +cp} (good for
+     * the losing side).  Balanced positions always return 0 regardless of this setting.
+     * Insufficient-material draws always return 0 (they are genuine draws).
+     *
+     * @param cp contempt in centipawns; clamped to [0, 200]
+     */
+    public void setContempt(int cp) {
+        this.contemptCp = Math.max(0, Math.min(200, cp));
     }
 
     public void setMultiPV(int multiPV) {
@@ -714,11 +740,14 @@ public class Searcher {
             return alpha;
         }
 
-        // Draw detection: return 0 for any recognized draw condition (skip at root so we
-        // always return a bestMove from searchRoot, never a raw draw score).
+        // Draw detection: return a contempt-adjusted score for avoidable draws, 0 for genuine draws.
+        // (Skip at root so searchRoot always returns a bestMove, never a raw draw score.)
         if (ply > 0) {
-            if (board.isRepetitionDraw() || board.isFiftyMoveRuleDraw() || board.isInsufficientMaterial()) {
-                return 0;
+            if (board.isInsufficientMaterial()) {
+                return 0; // genuine draw — always neutral
+            }
+            if (board.isRepetitionDraw() || board.isFiftyMoveRuleDraw()) {
+                return contemptScore(board);
             }
         }
 
@@ -1608,6 +1637,27 @@ public class Searcher {
 
     private int evaluate(Board board) {
         return evaluator.evaluate(board);
+    }
+
+    /**
+     * Returns the draw score adjusted for contempt.
+     * Uses the incrementally maintained MG material+PST score (O(1), already computed by Board).
+     * <ul>
+     *   <li>If the side to move is winning by &gt; CONTEMPT_THRESHOLD: returns {@code -contemptCp}
+     *       (draw is bad for them — engine avoids it).</li>
+     *   <li>If the side to move is losing by &gt; CONTEMPT_THRESHOLD: returns {@code +contemptCp}
+     *       (draw is acceptable for them — engine accepts it).</li>
+     *   <li>Otherwise: returns 0 (balanced — no contempt distortion).</li>
+     * </ul>
+     */
+    private int contemptScore(Board board) {
+        if (contemptCp == 0) return 0;
+        // incMgScore is white-positive; flip sign for black to get side-to-move advantage.
+        int incMg = board.getIncMgScore();
+        int sideToMoveAdv = Piece.isWhite(board.getActiveColor()) ? incMg : -incMg;
+        if (sideToMoveAdv >  CONTEMPT_THRESHOLD) return -contemptCp;
+        if (sideToMoveAdv < -CONTEMPT_THRESHOLD) return  contemptCp;
+        return 0;
     }
 
     private int wdlToScore(WDLResult.WDL wdl) {
