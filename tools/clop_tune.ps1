@@ -275,10 +275,21 @@ function Compute-Elo {
 
 # -----------------------------------------------------------------------
 # 4. Helper: write override file
+# Merges tuned values with any params already in the file that are NOT
+# being tuned this phase (e.g. ATK_WEIGHT_QUEEN locked from Phase A).
 # -----------------------------------------------------------------------
 function Write-OverrideFile {
     param([hashtable]$values)
-    $lines = $values.Keys | Sort-Object | ForEach-Object { "$_=$($values[$_])" }
+    $merged = [ordered]@{}
+    # Preserve existing params not in the current tuning set
+    if (Test-Path $overrideFile) {
+        foreach ($line in (Get-Content $overrideFile)) {
+            if ($line -match '^(\w+)=(.+)$') { $merged[$Matches[1]] = $Matches[2] }
+        }
+    }
+    # Apply / override with current iteration values
+    foreach ($k in $values.Keys) { $merged[$k] = $values[$k] }
+    $lines = $merged.Keys | ForEach-Object { "$_=$($merged[$_])" }
     Set-Content $overrideFile ($lines -join "`n")
 }
 
