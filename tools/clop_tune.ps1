@@ -44,7 +44,8 @@
 .PARAMETER Games
     Games per candidate evaluation.  Default 16.
     CLOP learns best from many cheap samples — keep this LOW (10–20).
-    Hard error if > 50 unless -SlowMode is set.
+    Hard error if > 64 unless -SlowMode is set.  64 is the upper bound for
+    single-parameter phases at TC 3+0.03; multi-param phases should use 16–32.
 
 .PARAMETER Iterations
     Number of CLOP iterations.  Default 300.
@@ -115,12 +116,27 @@ param(
     [string] $OpeningBook   = "",
     [string] $JavaPath      = "java",
     [string] $OutputDir     = $PSScriptRoot,
+    [string] $CsvFile       = "clop_results.csv",  # override per-phase: e.g. clop_queen_results.csv
     [int]    $Concurrency   = 0,   # 0 = auto-detect
     [switch] $SlowMode             # bypass guardrails; for final confirmation only
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+# Resolve cutechess-cli: -CutechessPath takes precedence, then $env:CUTECHESS, then PATH.
+if ($CutechessPath -eq "cutechess-cli") {
+    if ($env:CUTECHESS -and (Test-Path $env:CUTECHESS)) {
+        $CutechessPath = $env:CUTECHESS
+    } else {
+        $resolved = (Get-Command 'cutechess-cli' -ErrorAction SilentlyContinue)?.Source
+        if ($resolved) { $CutechessPath = $resolved }
+    }
+}
+if (-not (Test-Path $CutechessPath -ErrorAction SilentlyContinue) -and -not (Get-Command $CutechessPath -ErrorAction SilentlyContinue)) {
+    Write-Error "cutechess-cli not found at '$CutechessPath'. Set `$env:CUTECHESS or add cutechess-cli.exe to PATH."
+    exit 1
+}
 
 # -----------------------------------------------------------------------
 # 1a. Helper: parse "tc=BASE+INC" or "BASE+INC" → @{base=float; inc=float}
@@ -153,10 +169,11 @@ if ($null -eq $parsedTC) {
 if ($TimeControl -notmatch '^tc=') { $TimeControl = "tc=$TimeControl" }
 
 if (-not $SlowMode) {
-    if ($Games -gt 50) {
-        Write-Error ("Games=$Games exceeds the CLOP fast-tuning limit of 50. " +
+    if ($Games -gt 64) {
+        Write-Error ("Games=$Games exceeds the CLOP fast-tuning limit of 64. " +
             "CLOP learns from many cheap samples, not a few precise ones. " +
-            "Use -Games 16 (recommended) or add -SlowMode to bypass this check.")
+            "Use -Games 16-64 (64 is the ceiling for single-param phases at TC 3+0.03). " +
+            "Add -SlowMode to bypass — FOR FINAL CONFIRMATION ONLY.")
         exit 1
     }
     if ($parsedTC.base -gt 3.0 -or $parsedTC.inc -gt 0.03) {
@@ -206,7 +223,7 @@ foreach ($p in $paramDefs) {
 # 2. Resolve output paths
 # -----------------------------------------------------------------------
 $overrideFile  = Join-Path $OutputDir "eval_params_override.txt"
-$csvPath       = Join-Path $OutputDir "clop_results.csv"
+$csvPath       = Join-Path $OutputDir $CsvFile
 $BaselineJar   = (Resolve-Path $BaselineJar).Path
 $CandidateJar  = (Resolve-Path $CandidateJar).Path
 
@@ -273,8 +290,16 @@ function Run-Match {
 
     Write-OverrideFile $candidateValues
 
-    # Resolve java executable: explicit -JavaPath takes precedence over env vars
-    $java = if ($JavaPath -ne 'java') { $JavaPath } elseif ($env:JAVA) { Join-Path $env:JAVA 'bin\java.exe' } elseif ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME 'bin\java.exe' } else { 'java' }
+    # Resolve java executable.  When -JavaPath is left at its default ('java'),
+    # use PATH resolution only — avoids JAVA_HOME paths that contain spaces
+    # breaking cutechess-cli's cmd= key-value parsing.
+    $java = if ($JavaPath -ne 'java') {
+        $JavaPath
+    } elseif ($env:JAVA -and (Test-Path (Join-Path $env:JAVA 'bin\java.exe'))) {
+        Join-Path $env:JAVA 'bin\java.exe'
+    } else {
+        'java'  # let PATH resolve — works when java.exe is on PATH without spaces
+    }
 
     # Auto-detect opening book if not specified (same logic as sprt.ps1)
     $book = $OpeningBook

@@ -6662,3 +6662,73 @@ The neutral result (+3.7 Elo, LOS 57.9%) confirms these changes are safe to land
 **Decision:** Both changes are kept. No regression. Commit proceeds.
 
 **Next:** Test Lazy SMP (2 threads vs 1 thread, same JAR) as an independent strength track.
+
+---
+
+### [2026-04-11] Phase 13 — CLOP Phase A: ATK_WEIGHT_QUEEN (Issue #142)
+
+**Branch:** phase/13-tuner-overhaul
+**Issues:** #142
+
+**Context:** Lazy SMP SPRT was run and killed at H0 (SMP-contaminated games caused the prior
+99-iteration CLOP run to search a tainted signal). The contaminated CLOP CSV
+(`clop_results_run1_smp.csv`) has been archived. A clean two-phase CLOP restart is underway.
+
+**Why two phases:**
+- Phase A tunes `ATK_WEIGHT_QUEEN` in isolation. The prior run found Q=−1 (sign bug) and
+  Q=+3 (post-fix best guess from 99 SMP-tainted iterations). Neither is trustworthy.
+  Isolating the queen weight first avoids cross-parameter interference from K/B/R/HANGING
+  while the queen signal is still noisy.
+- Phase B (pending) tunes `ATK_WEIGHT_KNIGHT`, `ATK_WEIGHT_BISHOP`, `ATK_WEIGHT_ROOK`, and
+  `HANGING_PENALTY` with the queen weight locked to the Phase A optimum.
+  `TEMPO` excluded — converged at 17 in prior Texel run (#141) and confirmed neutral by SPRT.
+
+**Infrastructure changes:**
+
+1. `tools/clop_queen_params.json` (new): single-param file for Phase A.
+   `ATK_WEIGHT_QUEEN`, current=5, min=−10, max=20, step=1.
+
+2. `tools/clop_kbrh_params.json` (new): Phase B param file.
+   `ATK_WEIGHT_KNIGHT` (5, 1–20), `ATK_WEIGHT_BISHOP` (3, 1–20),
+   `ATK_WEIGHT_ROOK` (9, 1–20), `HANGING_PENALTY` (52, 10–150).
+
+3. `tools/eval_params_override.txt` reset to clean `EvalParams.java` defaults:
+   `ATK_WEIGHT_KNIGHT=5 / BISHOP=3 / ROOK=9 / QUEEN=5 / HANGING_PENALTY=52 / TEMPO=17`.
+
+4. `tools/clop_tune.ps1` changes:
+   - Games guardrail lifted 50 → 64 (single-param phase at TC 3+0.03 justified).
+   - `-CsvFile` optional parameter added (default `clop_results.csv`) — enables per-phase
+     named output files (`clop_queen_results.csv`, `clop_kbrh_results.csv`).
+   - `$env:CUTECHESS` auto-resolve: if `-CutechessPath` is default and `$env:CUTECHESS`
+     is set and points to an existing file, uses it automatically. Avoids manual `-CutechessPath`
+     on every invocation.
+   - `Run-Match` java resolution fixed: removed JAVA_HOME fallback. JAVA_HOME on this machine
+     is `C:\Program Files\OpenLogic\jdk-21.0.6.7-hotspot` (path contains spaces), which breaks
+     cutechess-cli's `cmd=` engine argument parsing. Now uses `$env:JAVA` (if set) or bare
+     `java` from PATH (`C:\Tools\Java\zulu-21\bin\java.exe` — no spaces). Mirrors SPRT script
+     path handling.
+
+**CLOP Phase A configuration:**
+
+- Param: `ATK_WEIGHT_QUEEN` (current=5, min=−10, max=20)
+- Same JAR for both baseline and candidate: `engine-uci-0.5.6-SNAPSHOT-shaded.jar`
+  Candidate receives `--param-overrides eval_params_override.txt`; baseline does not.
+  This isolates pure override signal against the compiled-in defaults.
+- TC: 3+0.03, concurrency=15, 64 games/iter, 300 iterations
+- Output CSV: `tools/clop_queen_results.csv`
+
+**Phase A early results (5 iterations in):**
+
+| Iter | ATK_WEIGHT_QUEEN | W  | D  | L  | Elo    |
+|------|------------------|----|----|----|--------|
+| 1    | 5 (current)      | 28 | 26 | 10 | 100.42 |
+| 2    | 9                | 22 | 31 | 11 |  60.31 |
+| 3    | 4                | 21 | 32 | 11 |  54.74 |
+| 4    | 3                | 25 | 23 | 16 |  49.18 |
+| 5    | 9                | in progress… |
+
+All results positive (baseline = same JAR with no override = ATK_WEIGHT_QUEEN=5 compiled-in;
+variance expected at 64 games). CLOP is exploring; convergence expected after ~150+ iterations.
+
+**Next:** Phase A to run to completion (300 iter, ~3.8 hr). Read `clop_queen_results.csv` for
+best Q value. Lock Q in `eval_params_override.txt` and launch Phase B with `clop_kbrh_params.json`.

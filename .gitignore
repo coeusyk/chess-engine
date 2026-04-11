@@ -51,6 +51,11 @@ data/texel_corpus.csv
 data/texel_corpus.epd
 data/quiet-labeled.epd
 data/*.log
+tools/sf-eval-corpus.txt
+
+### Tuner runtime logs (generated — never commit) ###
+tools/*_run_log.txt
+tools/*_converge_log.txt
 
 ### Logs ###
 *.log

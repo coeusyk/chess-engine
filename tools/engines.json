@@ -3,14 +3,14 @@
     {
       "name": "Vex-new",
       "command": "java",
-      "arguments": ["-jar", "engine-uci/target/engine-uci-0.4.2-SNAPSHOT-shaded.jar"],
+      "arguments": ["-jar", "engine-uci/target/engine-uci-0.5.6-SNAPSHOT-shaded.jar"],
       "protocol": "uci",
       "workingDirectory": "."
     },
     {
       "name": "Vex-old",
       "command": "java",
-      "arguments": ["-jar", "engine-uci/target/engine-uci-0.4.1-SNAPSHOT-shaded.jar"],
+      "arguments": ["-jar", "tools/baseline-v0.5.6-pretune.jar"],
       "protocol": "uci",
       "workingDirectory": "."
     }
