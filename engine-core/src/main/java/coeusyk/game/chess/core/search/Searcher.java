@@ -54,6 +54,13 @@ public class Searcher {
     private static final int CORRECTION_HISTORY_GRAIN = 256;
     private static final int CORRECTION_HISTORY_MAX = CORRECTION_HISTORY_GRAIN * 32;
 
+    // LMR reduction formula divisor: 2*(ln2)^2 ≈ 0.961.
+    // R = max(1, floor(1 + ln(depth)*ln(moveIndex) / LMR_LOG_DIVISOR)).
+    // NOTE: the experiment registry (C-2) describes this as "2*ln(2) ≈ 1.386" — that is wrong.
+    // The actual value is 2*(ln(2))^2 ≈ 0.961 (more aggressive: larger R at equal depth/move).
+    // C-2 SPRT candidates test LARGER divisors (1.386, 1.7, 2.0) = LESS aggressive LMR.
+    private static final double LMR_LOG_DIVISOR = 2.0 * Math.log(2) * Math.log(2);
+
     // Delta pruning thresholds used in quiescence search.
     // Values mirror the SEE piece table to keep material reasoning consistent.
     private static final int DELTA_MARGIN = 200;
@@ -1259,15 +1266,13 @@ public class Searcher {
     private int[][] precomputeLmrReductions() {
         // Formula: R = max(1, floor(1 + log2(depth) * log2(moveIndex) / 2))
         // log2(x) = ln(x) / ln(2).  Rewritten in terms of natural log:
-        //   R = max(1, floor(1 + ln(depth)*ln(moveIndex) / (2 * LN2 * LN2)))
-        // where LN2 = ln(2) ≈ 0.6931.
-        double ln2Sq2 = 2.0 * Math.log(2) * Math.log(2); // 2 * ln(2)^2 ≈ 0.961
+        //   R = max(1, floor(1 + ln(depth)*ln(moveIndex) / LMR_LOG_DIVISOR))
         int[][] reductions = new int[MAX_PLY][MAX_LEGAL_MOVES];
         for (int depth = 1; depth < MAX_PLY; depth++) {
             for (int moveIndex = 1; moveIndex < MAX_LEGAL_MOVES; moveIndex++) {
                 int reduction = Math.max(
                         1,
-                        (int) (1.0 + (Math.log(depth) * Math.log(moveIndex)) / ln2Sq2)
+                        (int) (1.0 + (Math.log(depth) * Math.log(moveIndex)) / LMR_LOG_DIVISOR)
                 );
                 reductions[depth][moveIndex] = reduction;
             }
