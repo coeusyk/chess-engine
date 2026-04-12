@@ -39,11 +39,11 @@
     next to the script. Pass an empty string ("") to explicitly disable.
 
 .EXAMPLE
-    .\tools\sprt.ps1 -New engine-uci\target\engine-uci.jar -Old tools\engine-uci-0.4.9.jar
+    .\tools\sprt.ps1 -New engine-uci\target\engine-uci.jar -Old tools\baseline-v0.5.6-pretune.jar
 .EXAMPLE
     .\tools\sprt.ps1 -New engine-uci\target\engine-uci.jar -Old tools\engine-uci-0.5.5.jar -Elo1 5
 .EXAMPLE
-    .\tools\sprt.ps1 -New engine-uci\target\engine-uci.jar -Old tools\engine-uci-0.4.9.jar -BonferroniM 5
+    .\tools\sprt.ps1 -New engine-uci\target\engine-uci.jar -Old tools\baseline-v0.5.6-pretune.jar -BonferroniM 5
 #>
 param(
     [Parameter(Mandatory)][string]$New,

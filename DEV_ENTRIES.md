@@ -7279,3 +7279,57 @@ All acceptance criteria met. Issue #149 closed.
 - C-1 SPRT started (via tools/run_c1_sprt.ps1): Tests delta=25, 40, 75 with BonferroniM=3. Running async.
 - Wait for #137 SPRT verdict, then close/update #137.
 - After both SPRTs done: run Phase C CLOP (tools/clop_tune.ps1 with defaults).
+
+
+---
+
+### [2026-04-13] Phase 13 — C-6 SPRT Corrected: H0 ACCEPTED, Revert Applied
+
+**Branch:** phase/13-tuner-overhaul
+
+**CORRECTION — Prior C-6 Entry Was Invalid**
+
+The 2026-04-13 entry above claiming "C-6 SPRT H1 ACCEPTED (+85.2 Elo)" was invalid.
+That SPRT tested v0.5.6-SNAPSHOT against `engine-uci-0.4.9.jar` — a ~300 Elo weaker
+engine that was never the correct Phase 13 baseline. The +85.2 result was a baseline
+artifact, not a validation of the C-6 correction history changes.
+
+**C-6 Re-SPRT — VERDICT: H0 ACCEPTED**
+
+Tested against the correct baseline: `baseline-v0.5.6-pretune.jar`.
+
+| Parameter | Value |
+|---|---|
+| New | engine-uci-0.5.6-SNAPSHOT.jar (with C-6: SIZE=4096, key>>>52, depth-weighted updates) |
+| Old | baseline-v0.5.6-pretune.jar |
+| TC | 5+0.05 |
+| H0 / H1 | 0 / 50 |
+| α / β | 0.05 / 0.05 |
+| Book | noob_3moves.epd |
+| Tag | phase13-c6-correction-history-v2 |
+
+Final result (86 games):
+- Score: W=24, L=31, D=31 [0.459]
+- Elo: **-28.3 ± 59.3**
+- LOS: 17.3%
+- DrawRatio: 36.0%
+- LLR: -2.99 — **H0 ACCEPTED** (at -101.6%, crossed -2.94 lower bound)
+
+**C-6 Revert Applied to Searcher.java:**
+
+1. `CORRECTION_HISTORY_SIZE`: 4096 → 1024 (removed "12-bit key" comment)
+2. Pawn key shift: `>>> 52` → `>>> 54` (matches 1024-entry table, 10-bit key)
+3. Update weight: `Math.min(GRAIN, effectiveDepth * 16)` → `GRAIN / Math.max(1, effectiveDepth)` (original shallow-weights-more formula)
+
+**Other actions:**
+
+- #149 re-opened with corrective comment documenting the invalid baseline and H0 result.
+- D-1 tuner leak audit: PASSED. Zero tuner-module references in engine-core/engine-uci. No System.out in production hot path.
+- #138 analysis: Fix 2 (hangingPenalty suppression) already in codebase via D-3. Fix 3 (contempt=50) already wired. Fix 1 (Q-search quiet checks) blocked by EXP-N1 NPS buffer requirement. Q1 regression test PASSES at depth 12.
+- Tests: 161 run, 0 failures, 0 errors, 1 skipped (TacticalSuiteTest). BUILD SUCCESS.
+
+**Next:**
+
+- Commit C-6 revert and baseline script fixes.
+- Launch C-1 SPRT (aspiration delta: 25/40/75, Bonferroni m=3).
+- CLOP re-SPRT against correct baseline (prior 48-game run was interrupted and against wrong baseline).

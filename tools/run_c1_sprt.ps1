@@ -4,7 +4,8 @@
 
 .DESCRIPTION
     Tests aspiration window initial delta values 25, 40, and 75 cp against the
-    baseline JAR (0.4.9). Uses Bonferroni correction for 3 simultaneous hypotheses.
+    baseline JAR (baseline-v0.5.6-pretune). Uses Bonferroni correction for 3
+    simultaneous hypotheses.
     ASPIRATION_INITIAL_DELTA_CP is restored to 50 at the end regardless of outcome.
 
     Run from the chess-engine/ directory:
@@ -32,7 +33,7 @@ $SearcherFile  = "engine-core\src\main\java\coeusyk\game\chess\core\search\Searc
 $OriginalValue = 50
 $BaseLine      = '    private static final int ASPIRATION_INITIAL_DELTA_CP = '
 $ExpectedOrig  = "${BaseLine}${OriginalValue};"
-$BaselineJar   = "tools\engine-uci-0.4.9.jar"
+$BaselineJar   = "tools\baseline-v0.5.6-pretune.jar"
 $VersionSuffix = "0.5.6-SNAPSHOT"
 
 if (-not (Test-Path $SearcherFile)) {
