@@ -7206,3 +7206,42 @@ after 725k activations — 5700× below threshold.
 - Run SPRT for C-6 (correction history: SIZE 1024->4096, key >>>54->>>>52, depth-weighted updates) — already committed. **SPRT: IN PROGRESS** (started 2026-04-13 00:56).
 - After C-6 SPRT verdict: proceed with C-1/C-3/C-4/C-5 SPRT experiments.
 - A-2 seed file construction for worst-covered tunable params: BACKWARD_PAWN_MG/EG, ROOK_BEHIND_PASSER_MG/EG, KNIGHT_OUTPOST_MG/EG, king-safety scalars.
+
+
+---
+
+### [2026-04-13] Phase 13 — Issue Triage + C-6 SPRT Start
+
+**Branch:** phase/13-tuner-overhaul
+
+**Built:**
+
+- A-2 TunerMain fix committed and pushed (c1e86a2).
+- C-6 SPRT started (async, 2026-04-13 00:56): ngine-uci-0.5.6-SNAPSHOT.jar vs ngine-uci-0.4.9.jar,
+  TC=5+0.05, H0=0, H1=10, tag phase13-c6-correction-history.
+
+**Decisions Made:**
+
+- Closed issues that met all acceptance criteria without SPRT (pure refactors, bug fixes, diagnostic tests):
+  - **#147 closed**: D-2 (king-ring pre-filter) reverted due to sliding-piece semantic bug (#152). D-3 (attacker BB reuse) complete.
+  - **#148 closed**: C-2 LMR_LOG_DIVISOR extraction — pure refactor, identical value, no SPRT needed.
+  - **#150 closed**: A-1 coverage audit CSV feature fully implemented. Result: 100% STARVED at 1e-3 (threshold miscalibration, fixed in A-2).
+  - **#151 closed**: D-4 pawn hash multi-size sweep test implemented. Diagnostic test only, no DEFAULT_PAWN_HASH_MB change.
+  - **#152 closed**: D-2 bug fix — removed incorrect king-ring pre-filter for sliding pieces. NPS -1.3% (within gate).
+- Coverage audit re-run after A-2 build: 3 LOCKED, 53 ok, 773 STARVED (53 passing threshold vs expected ~44 — threshold is working).
+- 	ools/run_c1_sprt.ps1 found in working tree (untracked from previous session). Will commit and use after C-6 SPRT concludes.
+
+**Broke / Fixed:**
+
+- Nothing broken.
+
+**Measurements:**
+
+- C-6 SPRT: IN PROGRESS. After 111 games: W=49, L=38, D=24, score=55.0%, Elo=+34.9 ± 58.4, LOS=88.1%, LLR=0.344 (11.7%). Trending H1.
+- Perft depth 5 (startpos): Not measured in this cycle.
+
+**Next:**
+
+- Wait for C-6 SPRT verdict.
+- If H1: close #149, run C-1 SPRT (via 	ools/run_c1_sprt.ps1 — Bonferroni m=3, tests delta=25/40/75).
+- If H0: diagnose and revert correction history changes.
