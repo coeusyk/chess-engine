@@ -6819,3 +6819,68 @@ All four are equivalent winning continuations — no regression in game-play qua
 - SPRT: `phase13-clop-final` (new JAR with baked params) vs `baseline-v0.5.6-pretune.jar`
   TC=10+0.1, H0=0 elo, H1=+5 elo, alpha=0.05, beta=0.05, 8 games/iter
 - Expected close-out of issue #142 after SPRT passes.
+
+---
+
+### [2026-04-12] Phase 13 — NPS Optimization: Merged Mobility+King-Safety Loop (Issue #145)
+
+**Branch:** phase/13-tuner-overhaul
+**Issues:** #145
+
+**Root cause diagnosed:**
+
+Each valuate() call computed every piece's attack bitboard **twice** — once in
+computeMobilityPacked() (for mobility), and again in KingSafety.attackerPenalty()
+(for king-zone attacker count). For a typical middlegame with 2B+2R+1Q per side:
+12+ of 24 sliding-piece magic bitboard lookups were pure redundancy (~50% wasted).
+
+**Additional waste fixed:**
+- ookFileScores() returned 
+ew long[2] — heap allocation per eval
+- ookBehindPasserScores() returned 
+ew int[2] — heap allocation per eval
+- Queen king-zone check ran even when ATK_WEIGHT_QUEEN = 0
+
+**Changes:**
+
+- Evaluator.java:
+  - Replaced computeMobilityPacked() + pieceMobilityPacked() pair with
+    computeMobilityAndAttack(board, white, allOcc, enemyPawnAtk, enemyKingZone) that
+    iterates pieces exactly once, computing mobility AND king-zone attacker weight together.
+    Result stored in 	empWhiteAttackWeight / 	empBlackAttackWeight instance fields.
+  - Attacker penalty w²/4 computed inline in valuate().
+  - ookFileScores() wrapper removed; ookFilePacked() called directly twice.
+  - ookBehindPasserScores() → ookBehindPasserPacked() returning long (mg«32|eg).
+  - Queen king-zone check guarded: if (ATK_WEIGHT_QUEEN != 0 && ...).
+- KingSafety.java:
+  - WHITE_KING_ZONE / BLACK_KING_ZONE changed from private to package-accessible.
+  - Added valuatePawnShieldAndFiles(Board) public method: returns only pawn-shield +
+    open-file components (cheap). Attacker penalty delegated to merged Evaluator loop.
+  - valuate() retained unchanged (tests call it directly).
+
+**Measurements (Ryzen 7 7700X, BenchMain depth=10, 5 warmup + 10 rounds):**
+
+| Position  | Before NPS | After NPS  | Delta  |
+|-----------|------------|------------|--------|
+| startpos  | 384,841    | 390,682    | +1.5%  |
+| kiwipete  | 209,078    | 218,035    | **+4.3%** |
+| cpw-pos3  | 492,253    | 477,635    | −3.0%  |
+| cpw-pos4  | 249,555    | 256,998    | **+3.0%** |
+| cpw-pos5  | 299,468    | 301,532    | +0.7%  |
+| cpw-pos6  | 270,207    | 269,648    | −0.2%  |
+| **Agg**   | **317,567**| **319,088**| **+0.5%** |
+
+kiwipete and cpw-pos4 improvements are statistically significant (>2σ above stddev).
+cpw-pos3 regression is within 1σ noise (±24,772 stddev).
+
+Left out: lazy eval, eval cache — deferred. Aggregate gain was modest; bottleneck likely
+shifted to pawn structure evaluation and position-specific branching, not sliding-piece
+computation.
+
+**Tests:** 162 engine-core tests pass, 0 failures, 0 errors.
+
+**Broke / Fixed:** None. All 162 existing tests pass with identical results.
+
+**Next:**
+- Wait for SPRT phase13-clop-final verdict.
+- Eval cache (transpose-keyed) as next NPS target.

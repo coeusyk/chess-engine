@@ -9,8 +9,8 @@ public final class KingSafety {
 
     // Shield/open-file/attacker constants are now read from EvalParams (overrideable at startup).
 
-    private static final long[] WHITE_KING_ZONE = new long[64];
-    private static final long[] BLACK_KING_ZONE = new long[64];
+    static final long[] WHITE_KING_ZONE = new long[64];
+    static final long[] BLACK_KING_ZONE = new long[64];
 
     private static final int WHITE_G1 = 62, WHITE_H1 = 63, WHITE_C1 = 58, WHITE_B1 = 57;
     private static final int BLACK_G8 = 6,  BLACK_H8 = 7,  BLACK_C8 = 2,  BLACK_B8 = 1;
@@ -53,6 +53,21 @@ public final class KingSafety {
 
     public static int evaluate(Board board) {
         return evaluateSide(board, true) - evaluateSide(board, false);
+    }
+
+    /**
+     * Returns only the pawn shield + open-file components of king safety (white minus black),
+     * mg-only. Attacker penalties are computed in Evaluator's merged mobility pass.
+     */
+    public static int evaluatePawnShieldAndFiles(Board board) {
+        return evaluateCheapSide(board, true) - evaluateCheapSide(board, false);
+    }
+
+    private static int evaluateCheapSide(Board board, boolean white) {
+        long kingBb = white ? board.getWhiteKing() : board.getBlackKing();
+        if (kingBb == 0) return 0;
+        int kingSq = Long.numberOfTrailingZeros(kingBb);
+        return pawnShield(board, white, kingSq) + openFiles(board, white, kingSq);
     }
 
     private static int evaluateSide(Board board, boolean white) {

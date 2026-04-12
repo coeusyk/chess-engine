@@ -30,6 +30,11 @@ public class Evaluator {
     private boolean pawnHashStatsEnabled = false;
     private long pawnTableHits, pawnTableMisses;
 
+    // Temporary attacker weights set during computeMobilityAndAttack(); one per side.
+    // Safe: each Searcher owns its own Evaluator instance (single-threaded per search).
+    private int tempWhiteAttackWeight;
+    private int tempBlackAttackWeight;
+
     // Mobility bonus per safe square (centipawns)
     private static final int[] MG_MOBILITY = new int[7];
     private static final int[] EG_MOBILITY = new int[7];
@@ -161,8 +166,18 @@ public class Evaluator {
         long whitePawnAtk = Attacks.whitePawnAttacks(board.getWhitePawns());
         long blackPawnAtk = Attacks.blackPawnAttacks(board.getBlackPawns());
 
-        long whiteMobility = computeMobilityPacked(board, true, allOccupancy, blackPawnAtk);
-        long blackMobility = computeMobilityPacked(board, false, allOccupancy, whitePawnAtk);
+        // Compute king zones for the merged mobility + attacker-weight pass.
+        int wKingSq = board.getWhiteKing() != 0L ? Long.numberOfTrailingZeros(board.getWhiteKing()) : -1;
+        int bKingSq = board.getBlackKing() != 0L ? Long.numberOfTrailingZeros(board.getBlackKing()) : -1;
+        long wKingZone = wKingSq >= 0 ? KingSafety.WHITE_KING_ZONE[wKingSq] : 0L;
+        long bKingZone = bKingSq >= 0 ? KingSafety.BLACK_KING_ZONE[bKingSq] : 0L;
+
+        // Single pass over each side's pieces: computes mobility AND counts how many
+        // of those pieces attack the enemy king zone — eliminating the redundant attack
+        // bitboard computations that previously happened in both computeMobilityPacked
+        // and KingSafety.attackerPenalty (50% of all sliding-piece magic BB lookups saved).
+        long whiteMobility = computeMobilityAndAttack(board, true,  allOccupancy, blackPawnAtk, bKingZone);
+        long blackMobility = computeMobilityAndAttack(board, false, allOccupancy, whitePawnAtk, wKingZone);
 
         mgScore += unpackMg(whiteMobility) - unpackMg(blackMobility);
         egScore += unpackEg(whiteMobility) - unpackEg(blackMobility);
@@ -186,7 +201,9 @@ public class Evaluator {
         mgScore += pawnMg;
         egScore += pawnEg;
 
-        mgScore += KingSafety.evaluate(board);
+        mgScore += KingSafety.evaluatePawnShieldAndFiles(board)
+                 + (tempWhiteAttackWeight * tempWhiteAttackWeight / 4)
+                 - (tempBlackAttackWeight * tempBlackAttackWeight / 4);
 
         // --- Bishop pair bonus ---
         if (Long.bitCount(board.getWhiteBishops()) >= 2) {
@@ -205,10 +222,10 @@ public class Evaluator {
         egScore += (wRook7 - bRook7) * config.rook7thEg();
 
         // --- Rook on open / semi-open file bonus ---
-        long[] rookFiles = rookFileScores(board.getWhiteRooks(), board.getBlackRooks(),
-                board.getWhitePawns(), board.getBlackPawns());
-        mgScore += (int) (rookFiles[0] >> 32) - (int) (rookFiles[1] >> 32);
-        egScore += (int) rookFiles[0] - (int) rookFiles[1];
+        long wRookFilePacked = rookFilePacked(board.getWhiteRooks(), board.getWhitePawns(), board.getBlackPawns());
+        long bRookFilePacked = rookFilePacked(board.getBlackRooks(), board.getBlackPawns(), board.getWhitePawns());
+        mgScore += (int) (wRookFilePacked >> 32) - (int) (bRookFilePacked >> 32);
+        egScore += (int) wRookFilePacked - (int) bRookFilePacked;
 
         // --- Knight outpost bonus ---
         int wOutpost = Long.bitCount(board.getWhiteKnights() & WHITE_OUTPOST_ZONE & ~blackPawnAtk);
@@ -229,10 +246,10 @@ public class Evaluator {
         egScore -= (wBack - bBack) * config.backwardPawnEg();
 
         // --- Rook behind passed pawn bonus ---
-        int[] rookBehind = rookBehindPasserScores(board.getWhiteRooks(), board.getBlackRooks(),
+        long rookBehindPacked = rookBehindPasserPacked(board.getWhiteRooks(), board.getBlackRooks(),
                 board.getWhitePawns(), board.getBlackPawns());
-        mgScore += rookBehind[0];
-        egScore += rookBehind[1];
+        mgScore += (int) (rookBehindPacked >> 32);
+        egScore += (int) rookBehindPacked;
 
         int phase = computePhase(board);
         egScore += MopUp.evaluate(board, phase);
@@ -331,13 +348,8 @@ public class Evaluator {
     /**
      * Returns a 2-element array: [0] = white packed MG/EG, [1] = black packed MG/EG.
      * Each element packs MG score in the upper 32 bits and EG score in the lower 32 bits.
+     * @deprecated Inlined in evaluate() to eliminate heap allocation. Kept only for test helpers.
      */
-    private long[] rookFileScores(long whiteRooks, long blackRooks, long whitePawns, long blackPawns) {
-        long wPacked = rookFilePacked(whiteRooks, whitePawns, blackPawns);
-        long bPacked = rookFilePacked(blackRooks, blackPawns, whitePawns);
-        return new long[]{ wPacked, bPacked };
-    }
-
     private long rookFilePacked(long rooks, long friendlyPawns, long enemyPawns) {
         int mg = 0, eg = 0;
         long temp = rooks;
@@ -359,59 +371,76 @@ public class Evaluator {
         return ((long) mg << 32) | (eg & 0xFFFFFFFFL);
     }
 
-    private long computeMobilityPacked(Board board, boolean white, long allOccupancy, long enemyPawnAttacks) {
+    /**
+     * Single-pass: computes piece mobility for {@code white} AND counts how many of those
+     * pieces attack {@code enemyKingZone} (for the king-safety attacker-weight penalty).
+     *
+     * <p>This replaces the old separate {@code computeMobilityPacked} + {@code KingSafety.attackerPenalty}
+     * pair.  Previously each piece's attack bitboard was computed twice per {@code evaluate()} call —
+     * once for mobility, once for king safety.  The merged loop computes it once and reuses it
+     * for both purposes, eliminating ~50% of all sliding-piece magic bitboard lookups.
+     *
+     * <p>Side effect: stores the accumulated attacker weight in {@code tempWhiteAttackWeight}
+     * (when {@code white=true}) or {@code tempBlackAttackWeight} (when {@code white=false}).
+     */
+    private long computeMobilityAndAttack(Board board, boolean white, long allOccupancy,
+                                          long enemyPawnAttacks, long enemyKingZone) {
         long friendly = white ? board.getWhiteOccupancy() : board.getBlackOccupancy();
         long safeMask = ~friendly & ~enemyPawnAttacks;
+        int mgMob = 0, egMob = 0, atkWeight = 0;
 
-        int mgMob = 0;
-        int egMob = 0;
-
-        long kn = pieceMobilityPacked(white ? board.getWhiteKnights() : board.getBlackKnights(),
-            Piece.Knight, allOccupancy, safeMask);
-        mgMob += unpackMg(kn);
-        egMob += unpackEg(kn);
-
-        long bi = pieceMobilityPacked(white ? board.getWhiteBishops() : board.getBlackBishops(),
-            Piece.Bishop, allOccupancy, safeMask);
-        mgMob += unpackMg(bi);
-        egMob += unpackEg(bi);
-
-        long ro = pieceMobilityPacked(white ? board.getWhiteRooks() : board.getBlackRooks(),
-            Piece.Rook, allOccupancy, safeMask);
-        mgMob += unpackMg(ro);
-        egMob += unpackEg(ro);
-
-        long qu = pieceMobilityPacked(white ? board.getWhiteQueens() : board.getBlackQueens(),
-            Piece.Queen, allOccupancy, safeMask);
-        mgMob += unpackMg(qu);
-        egMob += unpackEg(qu);
-
-        return packMobility(mgMob, egMob);
-    }
-
-        private long pieceMobilityPacked(long pieces, int pieceType, long allOccupancy, long safeMask) {
-        int mgBonus = MG_MOBILITY[pieceType];
-        int egBonus = EG_MOBILITY[pieceType];
-        int baseline = MOBILITY_BASELINE[pieceType];
-        int mgTotal = 0;
-        int egTotal = 0;
+        // Knights
+        long pieces = white ? board.getWhiteKnights() : board.getBlackKnights();
         while (pieces != 0) {
             int sq = Long.numberOfTrailingZeros(pieces);
-            long attacks;
-            switch (pieceType) {
-                case Piece.Knight: attacks = Attacks.knightAttacks(sq); break;
-                case Piece.Bishop: attacks = Attacks.bishopAttacks(sq, allOccupancy); break;
-                case Piece.Rook:   attacks = Attacks.rookAttacks(sq, allOccupancy); break;
-                case Piece.Queen:  attacks = Attacks.queenAttacks(sq, allOccupancy); break;
-                default: attacks = 0L;
-            }
-            int safeSquares = Long.bitCount(attacks & safeMask);
-            int delta = safeSquares - baseline;
-            mgTotal += delta * mgBonus;
-            egTotal += delta * egBonus;
+            long attacks = Attacks.knightAttacks(sq);
+            int delta = Long.bitCount(attacks & safeMask) - MOBILITY_BASELINE[Piece.Knight];
+            mgMob += delta * MG_MOBILITY[Piece.Knight];
+            egMob += delta * EG_MOBILITY[Piece.Knight];
+            if ((attacks & enemyKingZone) != 0) atkWeight += EvalParams.ATK_WEIGHT_KNIGHT;
             pieces &= pieces - 1;
         }
-        return packMobility(mgTotal, egTotal);
+
+        // Bishops
+        pieces = white ? board.getWhiteBishops() : board.getBlackBishops();
+        while (pieces != 0) {
+            int sq = Long.numberOfTrailingZeros(pieces);
+            long attacks = Attacks.bishopAttacks(sq, allOccupancy);
+            int delta = Long.bitCount(attacks & safeMask) - MOBILITY_BASELINE[Piece.Bishop];
+            mgMob += delta * MG_MOBILITY[Piece.Bishop];
+            egMob += delta * EG_MOBILITY[Piece.Bishop];
+            if ((attacks & enemyKingZone) != 0) atkWeight += EvalParams.ATK_WEIGHT_BISHOP;
+            pieces &= pieces - 1;
+        }
+
+        // Rooks
+        pieces = white ? board.getWhiteRooks() : board.getBlackRooks();
+        while (pieces != 0) {
+            int sq = Long.numberOfTrailingZeros(pieces);
+            long attacks = Attacks.rookAttacks(sq, allOccupancy);
+            int delta = Long.bitCount(attacks & safeMask) - MOBILITY_BASELINE[Piece.Rook];
+            mgMob += delta * MG_MOBILITY[Piece.Rook];
+            egMob += delta * EG_MOBILITY[Piece.Rook];
+            if ((attacks & enemyKingZone) != 0) atkWeight += EvalParams.ATK_WEIGHT_ROOK;
+            pieces &= pieces - 1;
+        }
+
+        // Queens — guard king-zone check so the short-circuit fires when ATK_WEIGHT_QUEEN = 0
+        pieces = white ? board.getWhiteQueens() : board.getBlackQueens();
+        while (pieces != 0) {
+            int sq = Long.numberOfTrailingZeros(pieces);
+            long attacks = Attacks.queenAttacks(sq, allOccupancy);
+            int delta = Long.bitCount(attacks & safeMask) - MOBILITY_BASELINE[Piece.Queen];
+            mgMob += delta * MG_MOBILITY[Piece.Queen];
+            egMob += delta * EG_MOBILITY[Piece.Queen];
+            if (EvalParams.ATK_WEIGHT_QUEEN != 0 && (attacks & enemyKingZone) != 0)
+                atkWeight += EvalParams.ATK_WEIGHT_QUEEN;
+            pieces &= pieces - 1;
+        }
+
+        if (white) tempWhiteAttackWeight = atkWeight;
+        else       tempBlackAttackWeight = atkWeight;
+        return packMobility(mgMob, egMob);
     }
 
     private static long packMobility(int mg, int eg) {
@@ -493,10 +522,11 @@ public class Evaluator {
     }
 
     /**
-     * Score rook-behind-passed-pawn bonus. Returns [mg, eg] net score (white - black).
+     * Score rook-behind-passed-pawn bonus. Returns net score (white - black) packed as
+     * mg in the upper 32 bits and eg in the lower 32 bits; avoids int[] heap allocation.
      */
-    private int[] rookBehindPasserScores(long whiteRooks, long blackRooks,
-                                          long whitePawns, long blackPawns) {
+    private long rookBehindPasserPacked(long whiteRooks, long blackRooks,
+                                        long whitePawns, long blackPawns) {
         int mg = 0, eg = 0;
         // White rooks behind white passers
         long temp = whiteRooks;
@@ -532,6 +562,6 @@ public class Evaluator {
             }
             temp &= temp - 1;
         }
-        return new int[]{mg, eg};
+        return ((long) mg << 32) | (eg & 0xFFFFFFFFL);
     }
 }
