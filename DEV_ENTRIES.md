@@ -7596,3 +7596,30 @@ near their PARAMMAX upper bounds, which can silently cap gradient-driven optimiz
   [0, 120] in commit 32de53a.
 
 **Measurements:** N/A — bounds-only change, no runtime impact.
+
+### [2026-04-13] Phase 13 — C-1 Aspiration Delta: Final Disposition
+
+**Context:**
+
+C-1 tested three alternative aspiration window deltas (25, 40, 75 cp) against the
+baseline delta=50, using Bonferroni-corrected SPRT (m=3, per-test α/β=0.0167,
+LLR bounds ±4.08, H0=0 vs H1=50 Elo).
+
+**Results:**
+
+| Delta | Games | W–L–D       | Score | Elo ± SE         | LOS   | LLR   | Verdict |
+|-------|-------|-------------|-------|------------------|-------|-------|---------|
+| 25    | 100   | —           | —     | +28 trend         | —     | —     | Terminated early by user |
+| 40    | 783   | 225–184–374 | 52.6% | +18.2 ± 17.6     | 97.9% | −4.25 | H0 accepted |
+| 75    | 37    | 5–19–13     | 31.1% | −138.3 ± 96.2    | 0.2%  | −4.08 | H0 accepted |
+
+**Decisions Made:**
+
+- **Keep ASPIRATION_INITIAL_DELTA_CP = 50** (no change to Searcher.java).
+- Delta=40 showed a positive Elo trend (+18) but the SPRT correctly identified it as
+  closer to H0=0 than H1=50. At best a marginal improvement, not worth the risk.
+- Delta=75 was clearly harmful (−138 Elo). Large initial windows cause excessive
+  re-searches and lose time.
+- Delta=25 was terminated early but trended similarly to delta=40 — modest gain at best.
+
+**Next:** C-2 (LMR log divisor).
