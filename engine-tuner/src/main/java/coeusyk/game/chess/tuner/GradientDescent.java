@@ -139,13 +139,9 @@ public final class GradientDescent {
                 // Update float accumulator
                 accum[i] -= LR * mHat / (Math.sqrt(vHat) + EPSILON);
 
-                // Discretize and clamp. For scalar params the barrier enforces the lower bound,
-                // so only the upper bound is hard-clamped; PSTs use the full two-sided clamp.
-                if (EvalParams.isScalarParam(i)) {
-                    params[i] = Math.min(EvalParams.PARAM_MAX[i], Math.round(accum[i]));
-                } else {
-                    params[i] = EvalParams.clampOne(i, Math.round(accum[i]));
-                }
+                // Discretize and clamp to [PARAM_MIN, PARAM_MAX].
+                // Barrier provides soft push away from lower bound; hard clamp is the backstop.
+                params[i] = EvalParams.clampOne(i, Math.round(accum[i]));
             }
 
             // Enforce material ordering after full update
@@ -273,12 +269,9 @@ public final class GradientDescent {
                 double vHat = v[i] / (1 - Math.pow(BETA2, iter));
 
                 accum[i] -= LR * mHat / (Math.sqrt(vHat) + EPSILON);
-                // Barrier enforces lower bound for scalar params; only hard-clamp upper bound.
-                if (EvalParams.isScalarParam(i)) {
-                    params[i] = Math.min(EvalParams.PARAM_MAX[i], Math.round(accum[i]));
-                } else {
-                    params[i] = EvalParams.clampOne(i, Math.round(accum[i]));
-                }
+                // Discretize and clamp to [PARAM_MIN, PARAM_MAX].
+                // Barrier provides soft push away from lower bound; hard clamp is the backstop.
+                params[i] = EvalParams.clampOne(i, Math.round(accum[i]));
             }
 
             EvalParams.enforceMaterialOrdering(params);

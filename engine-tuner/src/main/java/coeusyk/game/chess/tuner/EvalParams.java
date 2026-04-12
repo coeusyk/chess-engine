@@ -176,7 +176,7 @@ public final class EvalParams {
         // Material: pawn MG hard-pinned at 100 (min==max), king MG/EG pinned at 0.
         // All other material values float freely with reasonable upper bounds.
         //           P-MG  P-EG  N-MG  N-EG  B-MG  B-EG  R-MG  R-EG  Q-MG   Q-EG  K-MG K-EG
-        double[] matHi = { 100, 130,  450,  400,  450,  400,  600,  650,  1200, 1100, 0,   0 };
+        double[] matHi = { 100, 130,  450,  400,  450,  400,  600,  650,  1400, 1100, 0,   0 };
         System.arraycopy(matHi, 0, hi, 0, 12);
         Arrays.fill(hi, IDX_PST_START, IDX_PASSED_MG_START, 200);   // PST
         Arrays.fill(hi, IDX_PASSED_MG_START, IDX_PASSED_EG_START, 150); // Passed pawn MG
@@ -190,12 +190,12 @@ public final class EvalParams {
         hi[IDX_BISHOP_PAIR_EG] = 80;   // Bishop pair EG <= 80cp
         hi[IDX_ROOK_7TH_MG]   = 50;   // Rook on 7th MG <= 50cp
         hi[IDX_ROOK_7TH_EG]   = 50;   // Rook on 7th EG <= 50cp
-        hi[IDX_ROOK_OPEN_FILE_MG]  = 50;   // Rook open file MG <= 50cp
+        hi[IDX_ROOK_OPEN_FILE_MG]  = 80;   // Rook open file MG <= 80cp
         hi[IDX_ROOK_OPEN_FILE_EG]  = 50;   // Rook open file EG <= 50cp
         hi[IDX_ROOK_SEMI_OPEN_MG]  = 30;   // Rook semi-open file MG <= 30cp
         hi[IDX_ROOK_SEMI_OPEN_EG]  = 30;   // Rook semi-open file EG <= 30cp
-        hi[IDX_KNIGHT_OUTPOST_MG]  = 40;   // Knight outpost MG <= 40cp
-        hi[IDX_KNIGHT_OUTPOST_EG]  = 30;   // Knight outpost EG <= 30cp
+        hi[IDX_KNIGHT_OUTPOST_MG]  = 60;   // Knight outpost MG <= 60cp
+        hi[IDX_KNIGHT_OUTPOST_EG]  = 50;   // Knight outpost EG <= 50cp
         hi[IDX_CONNECTED_PAWN_MG]  = 25;   // Connected pawn MG <= 25cp
         hi[IDX_CONNECTED_PAWN_EG]  = 20;   // Connected pawn EG <= 20cp
         hi[IDX_BACKWARD_PAWN_MG]   = 25;   // Backward pawn penalty MG <= 25cp
@@ -536,7 +536,7 @@ public final class EvalParams {
         p[IDX_ATK_KNIGHT]     = 5;
         p[IDX_ATK_BISHOP]     = 3;
         p[IDX_ATK_ROOK]       = 9;
-        p[IDX_ATK_QUEEN]      = -1;
+        p[IDX_ATK_QUEEN]      = 3;   // engine-core uses 0 (CLOP-baked) but tuner floor is 3
 
         // --- Mobility ---
         // MG: N=7, B=8, R=7, Q=2

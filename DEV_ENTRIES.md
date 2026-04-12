@@ -7333,3 +7333,34 @@ Final result (86 games):
 - Commit C-6 revert and baseline script fixes.
 - Launch C-1 SPRT (aspiration delta: 25/40/75, Bonferroni m=3).
 - CLOP re-SPRT against correct baseline (prior 48-game run was interrupted and against wrong baseline).
+
+---
+
+### A-1 Coverage Audit — Bounds Fixes
+
+**A-1 coverage audit results (773/826 STARVED)** identified 4 critical parameter issues:
+
+1. **ATK_QUEEN default = -1** — violates its own lower bound of 3. The `extractFromCurrentEval()` method
+   set -1 (engine-core uses 0, CLOP-baked), which is below the floor. Fixed: default → 3 (lower bound).
+   Root cause: engine-core value (0) is also below the tuner floor (3), so extractFromCurrentEval was
+   using a stale/incorrect value.
+
+2. **One-sided scalar clamp bug** — `GradientDescent` only hard-clamped the upper bound for scalar
+   params (`Math.min(PARAM_MAX, ...)`), relying on the logarithmic barrier for the lower bound.
+   The barrier (γ=0.001, anneal=0.99) is too weak to prevent MSE-gradient-driven drift below PARAM_MIN,
+   especially for underrepresented params. Fixed: both Adam methods now use two-sided
+   `clampOne(i, Math.round(accum[i]))` for all params (scalar and PST alike). The barrier remains
+   as soft guidance; the hard clamp is the backstop.
+
+3. **Params pinned at max** — 4 params had defaults exactly at their upper bound, preventing the
+   optimizer from exploring higher values:
+   - QUEEN_MG: 1200 → cap raised to 1400
+   - ROOK_OPEN_FILE_MG: 50 → cap raised to 80
+   - KNIGHT_OUTPOST_MG: 40 → cap raised to 60
+   - KNIGHT_OUTPOST_EG: 30 → cap raised to 50
+
+4. **STARVED threshold audit** — COVERAGE_STARVED_THRESHOLD = 1.753763e-8 (TEMPO_FISHER / 10)
+   is correctly calibrated. The 773/826 STARVED count reflects genuine corpus sparsity in
+   quiet-start self-play, not a broken threshold. Resolution: corpus enrichment via A-2 seed EPDs.
+
+Tuner tests: PASS. Engine-core SearchRegressionTest E1 failure is pre-existing (unrelated to tuner changes).
