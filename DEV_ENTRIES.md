@@ -7409,3 +7409,29 @@ concentrated subset with high feature activation, not for aggregate coverage imp
 - LOS: 85.1%
 - Draw rate: 46.4%
 - Trajectory: LLR peaked at 2.79 at ~84 games, now negative at 143. Classic variance signature.
+
+---
+
+### [2026-04-13] Phase 13 — D-2/D-3: hangingPenalty Branchless Optimization
+
+**Built:**
+
+- Replaced per-piece while-loops in `hangingPenalty()` (both white and black sections) with
+  single branchless bitwise AND operations: `whiteHanging &= ~tempWhiteKingRingAttackers`.
+  The `tempWhiteKingRingAttackers` / `tempBlackKingRingAttackers` bitboards were already
+  precomputed in `computeMobilityAndAttack()` (D-3 from prior commit). The old loops iterated
+  over each hanging piece and tested membership in the attacker set one square at a time — this
+  is algebraically identical to a single `&= ~` mask.
+- Removed dead `allOcc` variable from `hangingPenalty()` (was only used by the now-removed
+  `pieceAttacks()` dispatch).
+- Removed dead `pieceAttacks(Board, int, boolean, long)` method (20 lines). No remaining callers.
+
+**Measurements:**
+- NPS (Ryzen 7 7700X, depth 10, 2 runs):
+  - Run 1: **339,038 NPS** aggregate
+  - Run 2: **340,144 NPS** aggregate
+  - vs previous: 309,259 → ~340k (+10.0%)
+  - vs official baseline 319,088 → ~340k (+6.6%)
+  - Per-position: kiwipete +6.2%, cpw-pos3 +11.5%, cpw-pos5 +10.1%, cpw-pos6 +10.4%
+- Tests: 162 run, 1 failure (pre-existing E1 from user's delta=40 change), 2 skipped.
+  No new regressions.

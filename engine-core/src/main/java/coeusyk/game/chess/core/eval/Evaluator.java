@@ -34,9 +34,9 @@ public class Evaluator {
     // Safe: each Searcher owns its own Evaluator instance (single-threaded per search).
     private int  tempWhiteAttackWeight;
     private int  tempBlackAttackWeight;
-    // D-3: which pieces (by square bit) attack the exact enemy king ring (KING_ATTACKS).
-    // Set during computeMobilityAndAttack(); consumed by hangingPenalty() to avoid
-    // re-computing pieceAttacks() per hanging piece when bEscapes/wEscapes <= 1.
+    // D-2/D-3: bitboard of pieces (by square) that attack the exact enemy king ring.
+    // Set during computeMobilityAndAttack(); consumed by hangingPenalty() via a single
+    // branchless AND to suppress hanging penalty for mating-net pieces.
     private long tempWhiteKingRingAttackers;
     private long tempBlackKingRingAttackers;
 
@@ -285,7 +285,6 @@ public class Evaluator {
      * (e.g. a knight on g4 covering h2 as part of a forced mate sequence).
      */
     private int hangingPenalty(Board board) {
-        long allOcc       = board.getAllOccupancy();
         long whiteNonKing = board.getWhiteOccupancy() & ~board.getWhiteKing();
         long blackNonKing = board.getBlackOccupancy() & ~board.getBlackKing();
         long whiteHanging = whiteNonKing & board.getAttackedByBlack() & ~board.getAttackedByWhite();
@@ -299,17 +298,11 @@ public class Evaluator {
             int  bEscapes  = Long.bitCount(bKingRing
                     & ~board.getBlackOccupancy() & ~board.getAttackedByWhite());
             if (bEscapes <= 1) {
-                // D-3: use the king-ring attacker bitboard precomputed during
-                // computeMobilityAndAttack() instead of recomputing per hanging piece.
-                // Suppress penalty only for pieces that actively attack the trapped king ring;
-                // distant hanging pieces (including sliding pieces far away) are NOT suppressed.
-                long tmp = whiteHanging;
-                while (tmp != 0L) {
-                    int  sq  = Long.numberOfTrailingZeros(tmp);
-                    tmp &= tmp - 1;
-                    if ((tempWhiteKingRingAttackers & (1L << sq)) != 0L)
-                        whiteHanging &= ~(1L << sq);
-                }
+                // D-2/D-3: suppress hanging penalty for pieces that actively attack
+                // the trapped king ring, using the precomputed attacker bitboard
+                // from computeMobilityAndAttack().  Single branchless AND replaces
+                // the former per-piece while-loop.
+                whiteHanging &= ~tempWhiteKingRingAttackers;
             }
         }
 
@@ -321,41 +314,12 @@ public class Evaluator {
             int  wEscapes  = Long.bitCount(wKingRing
                     & ~board.getWhiteOccupancy() & ~board.getAttackedByBlack());
             if (wEscapes <= 1) {
-                // D-3: use precomputed attacker bitboard (symmetric with above)
-                long tmp = blackHanging;
-                while (tmp != 0L) {
-                    int  sq  = Long.numberOfTrailingZeros(tmp);
-                    tmp &= tmp - 1;
-                    if ((tempBlackKingRingAttackers & (1L << sq)) != 0L)
-                        blackHanging &= ~(1L << sq);
-                }
+                // D-2/D-3: symmetric suppression for black (see white block above)
+                blackHanging &= ~tempBlackKingRingAttackers;
             }
         }
 
         return (Long.bitCount(blackHanging) - Long.bitCount(whiteHanging)) * EvalParams.HANGING_PENALTY;
-    }
-
-    /**
-     * Returns the attack bitboard for the piece on {@code sq}, dispatching by piece type.
-     * Used exclusively by {@link #hangingPenalty} to check whether a hanging piece
-     * covers a square in the enemy king ring.
-     */
-    private static long pieceAttacks(Board board, int sq, boolean white, long allOcc) {
-        long bit = 1L << sq;
-        if (white) {
-            if ((board.getWhiteKnights() & bit) != 0L) return Attacks.knightAttacks(sq);
-            if ((board.getWhiteBishops() & bit) != 0L) return Attacks.bishopAttacks(sq, allOcc);
-            if ((board.getWhiteRooks()   & bit) != 0L) return Attacks.rookAttacks(sq, allOcc);
-            if ((board.getWhiteQueens()  & bit) != 0L) return Attacks.queenAttacks(sq, allOcc);
-            if ((board.getWhitePawns()   & bit) != 0L) return Attacks.whitePawnAttacks(bit);
-        } else {
-            if ((board.getBlackKnights() & bit) != 0L) return Attacks.knightAttacks(sq);
-            if ((board.getBlackBishops() & bit) != 0L) return Attacks.bishopAttacks(sq, allOcc);
-            if ((board.getBlackRooks()   & bit) != 0L) return Attacks.rookAttacks(sq, allOcc);
-            if ((board.getBlackQueens()  & bit) != 0L) return Attacks.queenAttacks(sq, allOcc);
-            if ((board.getBlackPawns()   & bit) != 0L) return Attacks.blackPawnAttacks(bit);
-        }
-        return 0L;
     }
 
     /**
