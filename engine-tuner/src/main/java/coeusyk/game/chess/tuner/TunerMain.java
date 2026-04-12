@@ -219,24 +219,46 @@ public final class TunerMain {
         if (coverageAudit) {
             LOG.info("[CoverageAudit] Computing Fisher diagonal over {} positions...", features.size());
             double[] fisherDiag = GradientDescent.computeFisherDiagonal(features, params, k);
+            long[]   activationCounts = GradientDescent.computeActivationCounts(features, EvalParams.TOTAL_PARAMS);
             Integer[] indices = new Integer[EvalParams.TOTAL_PARAMS];
             for (int i = 0; i < indices.length; i++) indices[i] = i;
             java.util.Arrays.sort(indices,
                     (a, b) -> Double.compare(fisherDiag[a], fisherDiag[b]));
             int starvedCount = 0;
-            System.out.printf("%-32s  %4s  %10s  %8s  %8s  %s%n",
-                    "PARAMETER", "IDX", "FISHER", "VALUE", "MIN", "STATUS");
-            System.out.println("-".repeat(80));
+            System.out.printf("%-32s  %4s  %10s  %12s  %8s  %8s  %s%n",
+                    "PARAMETER", "IDX", "FISHER", "ACTIVATIONS", "VALUE", "MIN", "STATUS");
+            System.out.println("-".repeat(90));
             for (int idx : indices) {
-                boolean starved = fisherDiag[idx] < 1e-4;
+                boolean starved = fisherDiag[idx] < 1e-3;
                 if (starved) starvedCount++;
-                System.out.printf("%-32s  %4d  %10.3e  %8.1f  %8.1f  %s%n",
+                System.out.printf("%-32s  %4d  %10.3e  %12d  %8.1f  %8.1f  %s%n",
                         EvalParams.getParamName(idx), idx, fisherDiag[idx],
-                        params[idx], EvalParams.PARAM_MIN[idx],
+                        activationCounts[idx], params[idx], EvalParams.PARAM_MIN[idx],
                         starved ? "*** STARVED ***" : "ok");
             }
-            System.out.println("-".repeat(80));
+            System.out.println("-".repeat(90));
             LOG.info("[CoverageAudit] STARVED parameters: {} / {}", starvedCount, EvalParams.TOTAL_PARAMS);
+            // Write CSV report file (A-1 acceptance criterion)
+            Path reportPath = Paths.get("coverage-audit-report.csv");
+            try {
+                StringBuilder sb = new StringBuilder();
+                sb.append("param_name,idx,fisher_diagonal,activation_count,value,min_value,max_value,status\n");
+                for (int idx : indices) {
+                    boolean starved = fisherDiag[idx] < 1e-3;
+                    sb.append(EvalParams.getParamName(idx)).append(',')
+                      .append(idx).append(',')
+                      .append(String.format("%.6e", fisherDiag[idx])).append(',')
+                      .append(activationCounts[idx]).append(',')
+                      .append(String.format("%.1f", params[idx])).append(',')
+                      .append(String.format("%.1f", EvalParams.PARAM_MIN[idx])).append(',')
+                      .append(String.format("%.1f", EvalParams.PARAM_MAX[idx])).append(',')
+                      .append(starved ? "STARVED" : "ok").append('\n');
+                }
+                Files.writeString(reportPath, sb.toString());
+                LOG.info("[CoverageAudit] Report written to: {}", reportPath.toAbsolutePath());
+            } catch (java.io.IOException e) {
+                LOG.warn("[CoverageAudit] Failed to write report file: {}", e.getMessage());
+            }
             System.exit(0);
         }
 

@@ -6,7 +6,6 @@ import org.slf4j.LoggerFactory;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
-import java.util.stream.IntStream;
 
 /**
  * Adam gradient descent optimiser for Texel tuning.
@@ -445,6 +444,38 @@ public final class GradientDescent {
 
     // =========================================================================
     // L-BFGS optimizer (Issue #137)
+    // =========================================================================
+
+    /**
+     * Counts how many positions activate each parameter (i.e. have a non-zero
+     * feature contribution for that parameter index).
+     *
+     * <p>For sparse linear parameters: position activates index {@code i} iff
+     * {@code i} appears in {@link PositionFeatures#indices}.
+     * For the four ATK parameters: position activates {@code IDX_ATK_X} iff
+     * the corresponding white or black attacker count is non-zero.
+     *
+     * @param features precomputed position feature list
+     * @param n        total number of parameters ({@link EvalParams#TOTAL_PARAMS})
+     * @return long[] of activation counts, one per parameter
+     */
+    public static long[] computeActivationCounts(List<PositionFeatures> features, int n) {
+        return features.parallelStream()
+                .collect(
+                    () -> new long[n],
+                    (acc, pf) -> {
+                        for (int k = 0; k < pf.indices.length; k++) {
+                            acc[pf.indices[k]]++;
+                        }
+                        if (pf.wN > 0 || pf.bN > 0) acc[EvalParams.IDX_ATK_KNIGHT]++;
+                        if (pf.wB > 0 || pf.bB > 0) acc[EvalParams.IDX_ATK_BISHOP]++;
+                        if (pf.wR > 0 || pf.bR > 0) acc[EvalParams.IDX_ATK_ROOK]++;
+                        if (pf.wQ > 0 || pf.bQ > 0) acc[EvalParams.IDX_ATK_QUEEN]++;
+                    },
+                    (a, b) -> { for (int i = 0; i < n; i++) a[i] += b[i]; }
+                );
+    }
+
     // =========================================================================
 
     /** L-BFGS history length (number of (s, y) curvature pairs to retain). */
