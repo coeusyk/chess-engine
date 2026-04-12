@@ -7038,3 +7038,60 @@ documents WDL-only tuning, K_SF=340.0, and removal of eval mode.
 - Run SPRT for C-6 correction history tuning vs. baseline.
 - Run --coverage-audit with Phase 13 corpus to generate coverage-audit-report.csv and inspect STARVED params.
 - Proceed with C-1/C-3/C-4/C-5 SPRT experiments as outlined in experiment registry.
+
+---
+
+### [2026-04-12] Phase 13 — D-2 Semantic Bug Fix: Remove King-Ring Pre-filter
+
+**Branch:** phase/13-tuner-overhaul
+
+**Problem discovered:**
+
+D-2 (committed in #147) added a one-step dilation pre-filter to `hangingPenalty()`:
+
+```java
+long bKingRingExp = bKingRing | (bKingRing << 8) | (bKingRing >>> 8)
+        | ((bKingRing & NOT_A_FILE) >>> 1) | ((bKingRing & NOT_H_FILE) << 1);
+whiteHanging &= bKingRingExp;
+```
+
+The premise was "no piece more than 2 squares from the king ring can attack it". This is
+**false for sliding pieces**: a rook on a1 can attack a king ring square on h8 with nothing
+in between. The filter incorrectly removed distant hanging rooks/bishops/queens from the
+`whiteHanging` mask before the D-3 king-ring-attacker suppression loop, causing those
+pieces to incur **no** hanging penalty when the king was nearly trapped — a silent eval
+regression for positions with distant sliding pieces.
+
+**Fix (#152):**
+
+Removed both the `bKingRingExp` (white side) and `wKingRingExp` (black side) pre-filter
+blocks. The D-3 attacker bitboard reuse (bit test via `tempWhiteKingRingAttackers`) is
+unaffected and correct — it only suppresses pieces that actually attack the king ring.
+Comment updated to clarify the suppression semantics explicitly.
+
+**Hard Stop Rule compliance:**
+
+- Rule 1 (NPS gate): BenchMain run after fix. Aggregate **314,956 NPS** vs. baseline
+  319,088 NPS (−1.3%). Gate is 303,134 NPS (5% floor). **PASSES.**
+  - startpos:  391,874 ± 12,008 NPS (+0.3%)
+  - kiwipete:  212,531 ± 7,004 NPS (−2.5%)
+  - cpw-pos3:  468,592 ± 16,448 NPS (−1.9%)
+  - cpw-pos4:  242,767 ± 19,821 NPS (−5.5%, high variance — not reliable signal)
+  - cpw-pos5:  297,027 ± 9,153 NPS (−1.5%)
+  - cpw-pos6:  276,950 ± 12,680 NPS (+2.7%)
+- Rule 4 (SPRT before merge):
+  - **C-6 (#149) requires SPRT before merge to `develop`**: correction history SIZE 1024→4096,
+    key >>>54→>>>52, weight formula GRAIN/depth→min(GRAIN,depth*16). These are search
+    constant changes — they affect search behavior, not pure refactors.
+  - C-2 (#148): pure refactor (extracted constant, identical value) — no SPRT needed.
+  - D-3 (#147): pure optimization (identical eval output, bit test replaces pieceAttacks()
+    call) — no SPRT needed.
+
+**Tests:** 162 engine-core tests, 0 failures, 2 skipped (benchmark-tagged tests excluded
+from normal `mvnw test` run, as expected).
+
+**Next:**
+
+- Run SPRT for C-6 (correction history changes) before merging to `develop`.
+- Run --coverage-audit with Phase 13 corpus to inspect STARVED params.
+- Proceed with C-1/C-3/C-4/C-5 SPRT experiments as outlined in experiment registry.

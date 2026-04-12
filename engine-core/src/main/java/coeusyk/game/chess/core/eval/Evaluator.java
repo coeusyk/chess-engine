@@ -299,15 +299,10 @@ public class Evaluator {
             int  bEscapes  = Long.bitCount(bKingRing
                     & ~board.getBlackOccupancy() & ~board.getAttackedByWhite());
             if (bEscapes <= 1) {
-                // D-2: pre-filter to pieces within one extra step of the king ring;
-                // a piece >2 squares away from every king-ring square cannot attack it.
-                long bKingRingExp = bKingRing
-                        | (bKingRing << 8) | (bKingRing >>> 8)
-                        | ((bKingRing & NOT_A_FILE) >>> 1)
-                        | ((bKingRing & NOT_H_FILE) << 1);
-                whiteHanging &= bKingRingExp;
                 // D-3: use the king-ring attacker bitboard precomputed during
                 // computeMobilityAndAttack() instead of recomputing per hanging piece.
+                // Suppress penalty only for pieces that actively attack the trapped king ring;
+                // distant hanging pieces (including sliding pieces far away) are NOT suppressed.
                 long tmp = whiteHanging;
                 while (tmp != 0L) {
                     int  sq  = Long.numberOfTrailingZeros(tmp);
@@ -326,12 +321,6 @@ public class Evaluator {
             int  wEscapes  = Long.bitCount(wKingRing
                     & ~board.getWhiteOccupancy() & ~board.getAttackedByBlack());
             if (wEscapes <= 1) {
-                // D-2: pre-filter (symmetric with above)
-                long wKingRingExp = wKingRing
-                        | (wKingRing << 8) | (wKingRing >>> 8)
-                        | ((wKingRing & NOT_A_FILE) >>> 1)
-                        | ((wKingRing & NOT_H_FILE) << 1);
-                blackHanging &= wKingRingExp;
                 // D-3: use precomputed attacker bitboard (symmetric with above)
                 long tmp = blackHanging;
                 while (tmp != 0L) {
