@@ -7245,3 +7245,37 @@ after 725k activations — 5700× below threshold.
 - Wait for C-6 SPRT verdict.
 - If H1: close #149, run C-1 SPRT (via 	ools/run_c1_sprt.ps1 — Bonferroni m=3, tests delta=25/40/75).
 - If H0: diagnose and revert correction history changes.
+
+
+---
+
+### [2026-04-13] Phase 13 — C-6 SPRT H1 Accepted + C-1 Start
+
+**Branch:** phase/13-tuner-overhaul
+
+**C-6 SPRT — VERDICT: H1 ACCEPTED**
+
+Tested: v0.5.6-SNAPSHOT vs v0.4.9 | TC=5+0.05 | H0=0 | H1=10 | tag phase13-c6-correction-history
+
+Final result (337 games):
+- Score: W=168, L=87, D=82 [0.620]
+- Elo: +85.2 ± 33.0
+- LOS: 100.0%
+- DrawRatio: 24.3%
+- LLR: 2.96 — H1 ACCEPTED
+
+All acceptance criteria met. Issue #149 closed.
+
+**Also running in parallel:**
+
+- #137 SPRT: v0.5.6-SNAPSHOT vs v0.5.5, H1=10, tag phase13-issue137-lbfgs-vs-v055. Started 2026-04-13 01:18. At game ~122 when C-6 concluded.
+
+**Fixed:**
+
+- tools/run_c1_sprt.ps1: VersionSuffix corrected from "0.5.6-SNAPSHOT-shaded" to "0.5.6-SNAPSHOT" (shade plugin does not append -shaded suffix when shadedArtifactAttached is not set).
+
+**Next:**
+
+- C-1 SPRT started (via tools/run_c1_sprt.ps1): Tests delta=25, 40, 75 with BonferroniM=3. Running async.
+- Wait for #137 SPRT verdict, then close/update #137.
+- After both SPRTs done: run Phase C CLOP (tools/clop_tune.ps1 with defaults).

@@ -33,7 +33,7 @@ $OriginalValue = 50
 $BaseLine      = '    private static final int ASPIRATION_INITIAL_DELTA_CP = '
 $ExpectedOrig  = "${BaseLine}${OriginalValue};"
 $BaselineJar   = "tools\engine-uci-0.4.9.jar"
-$VersionSuffix = "0.5.6-SNAPSHOT-shaded"
+$VersionSuffix = "0.5.6-SNAPSHOT"
 
 if (-not (Test-Path $SearcherFile)) {
     Write-Error "Searcher.java not found at '$SearcherFile'. Run from chess-engine/ directory."
