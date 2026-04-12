@@ -7494,3 +7494,59 @@ concentrated subset with high feature activation, not for aggregate coverage imp
 **Measurements:**
 - engine-tuner: 106 tests, 0 failures, 1 skipped. BUILD SUCCESS.
 - TOTAL_PARAMS: 829 → 830. IDX_HANGING_PENALTY = 829.
+
+---
+
+### [2026-04-13] Phase 13 — A-2 Formal Disposition: 2× Criterion Waived
+
+**Context:**
+
+A-2 acceptance criterion: "Every previously-starved scalar shows Fisher diagonal
+improvement ≥ 2× vs A-1 result" after augmenting corpus with seed EPDs.
+
+**A-2 Augmented Corpus Results (770k positions = 725k quiet-labeled + 45k seeds):**
+- Total params: 829 (pre-HANGING_PENALTY wiring). STARVED: 772, ok: 54, LOCKED: 3.
+- vs A-1 baseline (703k positions): STARVED 773 → 772 (1 param improved).
+- Fisher diagonal improvement on previously-starved scalars: 1–6% (far below 2×).
+
+**Why the 2× Criterion is Unachievable:**
+1. Seeds are subsets of the same quiet-labeled corpus — adding them back duplicates
+   positions, slightly increasing activation counts but not changing the per-position
+   Fisher diagonal structure.
+2. The 772 STARVED params are almost entirely PST entries (indices 12–779 = 768 params).
+   PST entries are inherently sparse: each square×piece×phase combination activates in
+   only a fraction of positions. No amount of same-distribution seed augmentation fixes this.
+3. Genuine 2× improvement would require positions from a structurally different distribution
+   (e.g., professional games, endgame tablebases, tactical puzzles) — out of scope for
+   Phase 13.
+
+**Why B-Track Can Proceed Despite A-2 Formal Failure:**
+All B-track target parameters have Fisher diagonals well above STARVED threshold
+(1.753763e-8):
+
+| Parameter | Fisher Diagonal | Status | B-Track? |
+|---|---|---|---|
+| ATK_KNIGHT (800) | 4.121e-07 | ok | B-1 |
+| ATK_BISHOP (801) | 3.707e-07 | ok | B-1 |
+| ATK_ROOK (802) | 4.625e-07 | ok | B-1 |
+| ATK_QUEEN (803) | 2.237e-07 | ok | B-1 |
+| SHIELD_RANK2 (796) | 9.192e-08 | ok | B-1 |
+| SHIELD_RANK3 (797) | 2.248e-08 | ok | B-1 |
+| MOB_MG_KNIGHT (804) | 3.694e-07 | ok | B-3 |
+| MOB_MG_BISHOP (805) | 8.741e-07 | ok | B-3 |
+| MOB_MG_ROOK (806) | 8.476e-07 | ok | B-3 |
+| MOB_MG_QUEEN (807) | 1.060e-06 | ok | B-3 |
+| MOB_EG_* (808–811) | 1.3e-07–6.7e-07 | ok | B-3 |
+| CONNECTED_PAWN_MG (823) | 1.757e-07 | ok | B-2 |
+| CONNECTED_PAWN_EG (824) | 1.124e-07 | ok | B-2 |
+| BACKWARD_PAWN_MG (825) | 4.977e-08 | ok | B-2 |
+| BACKWARD_PAWN_EG (826) | 2.934e-08 | ok | B-2 |
+| TEMPO (812) | 1.761e-07 | ok | — |
+
+Only 3 non-PST scalars remain STARVED: KNIGHT_OUTPOST_EG (1.467e-08),
+ROOK_BEHIND_PASSER_MG (1.645e-08), ROOK_BEHIND_PASSER_EG (6.675e-09). These are
+not in the primary B-track groups and can be addressed in a future corpus expansion.
+
+**Decision:** A-2 2× criterion formally waived. B-track proceeds using `--freeze-psts`
+(frozen PSTs eliminate the 768 STARVED PST entries from the optimizer). All target
+B-track scalars have adequate gradient coverage.
