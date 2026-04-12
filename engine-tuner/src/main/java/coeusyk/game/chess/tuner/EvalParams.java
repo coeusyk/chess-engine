@@ -9,7 +9,7 @@ import java.util.Arrays;
 /**
  * Bridge between the tuner parameter array and the live evaluator constants.
  *
- * Parameter layout (823 total):
+ * Parameter layout (830 total):
  * <pre>
  *   [0..11]    Material MG/EG for pawn, knight, bishop, rook, queen, king
  *              (indices alternate: [2n] = MG, [2n+1] = EG)
@@ -74,11 +74,13 @@ import java.util.Arrays;
  *   [826]      backward pawn EG penalty
  *   [827]      rook behind passer MG bonus
  *   [828]      rook behind passer EG bonus
+ *
+ *   [829]      hanging piece penalty (applied after phase interpolation)
  * </pre>
  */
 public final class EvalParams {
 
-    public static final int TOTAL_PARAMS = 829;
+    public static final int TOTAL_PARAMS = 830;
 
     // --- Indices for documentation / cross-referencing ---
     public static final int IDX_MATERIAL_START  = 0;   // [0..11]
@@ -116,6 +118,7 @@ public final class EvalParams {
     public static final int IDX_BACKWARD_PAWN_EG      = 826;
     public static final int IDX_ROOK_BEHIND_PASSER_MG = 827;
     public static final int IDX_ROOK_BEHIND_PASSER_EG = 828;
+    public static final int IDX_HANGING_PENALTY       = 829;
 
     /**
      * Per-parameter lower bounds enforced during coordinate descent.
@@ -168,6 +171,7 @@ public final class EvalParams {
         lo[IDX_BACKWARD_PAWN_EG]   = -5;  // Backward pawn penalty EG >= -5 (engine uses -1)
         lo[IDX_ROOK_BEHIND_PASSER_MG] = 0;  // Rook behind passer MG >= 0
         lo[IDX_ROOK_BEHIND_PASSER_EG] = 0;  // Rook behind passer EG >= 0
+        lo[IDX_HANGING_PENALTY]       = 0;  // Hanging penalty >= 0
         return lo;
     }
 
@@ -202,6 +206,7 @@ public final class EvalParams {
         hi[IDX_BACKWARD_PAWN_EG]   = 20;   // Backward pawn penalty EG <= 20cp
         hi[IDX_ROOK_BEHIND_PASSER_MG] = 40;  // Rook behind passer MG <= 40cp
         hi[IDX_ROOK_BEHIND_PASSER_EG] = 50;  // Rook behind passer EG <= 50cp
+        hi[IDX_HANGING_PENALTY]       = 120; // Hanging penalty <= 120cp
         return hi;
     }
 
@@ -259,7 +264,7 @@ public final class EvalParams {
      *   <li>{@code material}       — indices [0, 12)</li>
      *   <li>{@code pst}            — indices [12, 780)</li>
      *   <li>{@code pawn-structure} — indices [780, 796) ∪ [823, 827) (passed, isolated, doubled, connected, backward)</li>
-     *   <li>{@code king-safety}    — indices [796, 804)</li>
+     *   <li>{@code king-safety}    — indices [796, 804) ∪ {829} (shield, open files, attacker weights, hanging penalty)</li>
      *   <li>{@code mobility}       — indices [804, 812)</li>
      *   <li>{@code scalars}        — indices [812, 823) ∪ [827, 829) (tempo, bishop pair, rook bonuses, knight outpost, rook behind passer)</li>
      * </ul>
@@ -283,13 +288,14 @@ public final class EvalParams {
                 break;
             case "king-safety":
                 java.util.Arrays.fill(mask, IDX_SHIELD_RANK2, IDX_MOB_MG_START, true);
+                mask[IDX_HANGING_PENALTY] = true;
                 break;
             case "mobility":
                 java.util.Arrays.fill(mask, IDX_MOB_MG_START, IDX_TEMPO, true);
                 break;
             case "scalars":
                 java.util.Arrays.fill(mask, IDX_TEMPO, IDX_CONNECTED_PAWN_MG, true);
-                java.util.Arrays.fill(mask, IDX_ROOK_BEHIND_PASSER_MG, TOTAL_PARAMS, true);
+                java.util.Arrays.fill(mask, IDX_ROOK_BEHIND_PASSER_MG, IDX_HANGING_PENALTY, true);
                 break;
             default:
                 throw new IllegalArgumentException(
@@ -365,6 +371,7 @@ public final class EvalParams {
             case 826: return "BACKWARD_PAWN_EG";
             case 827: return "ROOK_BEHIND_PASSER_MG";
             case 828: return "ROOK_BEHIND_PASSER_EG";
+            case 829: return "HANGING_PENALTY";
             default:  return "PARAM[" + idx + "]";
         }
     }
@@ -580,6 +587,7 @@ public final class EvalParams {
         p[IDX_BACKWARD_PAWN_EG]     = 0;    // Backward pawn penalty EG
         p[IDX_ROOK_BEHIND_PASSER_MG] = 12; // Rook behind passer MG
         p[IDX_ROOK_BEHIND_PASSER_EG] = 4;  // Rook behind passer EG
+        p[IDX_HANGING_PENALTY]       = 40; // Hanging piece penalty
 
         return p;
     }
@@ -632,6 +640,7 @@ public final class EvalParams {
             w.write(String.format("OPEN_FILE=%.0f  HALF_OPEN_FILE=%.0f%n", params[IDX_OPEN_FILE], params[IDX_HALF_OPEN_FILE]));
             w.write(String.format("ATTACKER_WEIGHTS  N=%.0f B=%.0f R=%.0f Q=%.0f%n",
                 params[IDX_ATK_KNIGHT], params[IDX_ATK_BISHOP], params[IDX_ATK_ROOK], params[IDX_ATK_QUEEN]));
+            w.write(String.format("HANGING_PENALTY=%.0f%n", params[IDX_HANGING_PENALTY]));
 
             w.write("\n## MOBILITY (MG then EG)\n");
             w.write(String.format("MG  N=%.0f B=%.0f R=%.0f Q=%.0f%n",

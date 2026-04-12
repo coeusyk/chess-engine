@@ -1,5 +1,6 @@
 package coeusyk.game.chess.tuner;
 
+import coeusyk.game.chess.core.bitboard.AttackTables;
 import coeusyk.game.chess.core.eval.Attacks;
 import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Piece;
@@ -237,6 +238,9 @@ public final class TunerEvaluator {
         } else {
             score -= tempo;
         }
+
+        // --- Hanging piece penalty (applied after phase interpolation, like tempo) ---
+        score += hangingPenalty(pos, params);
 
         return score;
     }
@@ -513,6 +517,49 @@ public final class TunerEvaluator {
     }
 
     // =========================================================================
+    // Hanging penalty
+    // =========================================================================
+
+    /**
+     * Computes the aggregate attack bitboard for one side (all piece types).
+     * Used by {@link #hangingPenalty} to detect hanging pieces.
+     */
+    private static long computeAttackedBy(PositionData pos, boolean white, long allOcc) {
+        long atk = white
+                ? Attacks.whitePawnAttacks(pos.getWhitePawns())
+                : Attacks.blackPawnAttacks(pos.getBlackPawns());
+        long pieces;
+        pieces = white ? pos.getWhiteKnights() : pos.getBlackKnights();
+        while (pieces != 0) { atk |= Attacks.knightAttacks(Long.numberOfTrailingZeros(pieces)); pieces &= pieces - 1; }
+        pieces = white ? pos.getWhiteBishops() : pos.getBlackBishops();
+        while (pieces != 0) { atk |= Attacks.bishopAttacks(Long.numberOfTrailingZeros(pieces), allOcc); pieces &= pieces - 1; }
+        pieces = white ? pos.getWhiteRooks() : pos.getBlackRooks();
+        while (pieces != 0) { atk |= Attacks.rookAttacks(Long.numberOfTrailingZeros(pieces), allOcc); pieces &= pieces - 1; }
+        pieces = white ? pos.getWhiteQueens() : pos.getBlackQueens();
+        while (pieces != 0) { atk |= Attacks.queenAttacks(Long.numberOfTrailingZeros(pieces), allOcc); pieces &= pieces - 1; }
+        long king = white ? pos.getWhiteKing() : pos.getBlackKing();
+        if (king != 0) atk |= AttackTables.KING_ATTACKS[Long.numberOfTrailingZeros(king)];
+        return atk;
+    }
+
+    /**
+     * Hanging piece penalty from White's perspective (positive = Black has more
+     * hanging pieces). Mirrors the engine-core {@code Evaluator.hangingPenalty()}
+     * logic without the mating-net suppression (not needed for gradient signal).
+     */
+    private static int hangingPenalty(PositionData pos, double[] params) {
+        long allOcc = pos.getWhiteOccupancy() | pos.getBlackOccupancy();
+        long attackedByWhite = computeAttackedBy(pos, true,  allOcc);
+        long attackedByBlack = computeAttackedBy(pos, false, allOcc);
+        long whiteHanging = (pos.getWhiteOccupancy() & ~pos.getWhiteKing())
+                          & attackedByBlack & ~attackedByWhite;
+        long blackHanging = (pos.getBlackOccupancy() & ~pos.getBlackKing())
+                          & attackedByWhite & ~attackedByBlack;
+        return (Long.bitCount(blackHanging) - Long.bitCount(whiteHanging))
+             * (int) params[EvalParams.IDX_HANGING_PENALTY];
+    }
+
+    // =========================================================================
     // Bishop pair
     // =========================================================================
 
@@ -759,10 +806,13 @@ public final class TunerEvaluator {
         // 11. Rook behind passed pawn bonus (tapered)
         addRookBehindPasserFeatures(pos, tmp, mgTaper, egTaper);
 
-        // 12. Tempo bonus (not tapered – applied after phase interpolation)
+        // 12. Hanging piece penalty (not tapered — applied after phase interpolation)
+        addHangingPenaltyFeatures(pos, tmp);
+
+        // 13. Tempo bonus (not tapered – applied after phase interpolation)
         tmp[EvalParams.IDX_TEMPO] = Piece.isWhite(pos.getActiveColor()) ? 1.0f : -1.0f;
 
-        // 13. Convert dense tmp[] to sparse (indices + weights), skipping zeros.
+        // 14. Convert dense tmp[] to sparse (indices + weights), skipping zeros.
         int nnz = 0;
         for (int i = 0; i < EvalParams.TOTAL_PARAMS; i++) {
             if (tmp[i] != 0.0f) nnz++;
@@ -1165,6 +1215,25 @@ public final class TunerEvaluator {
                 passedOnFile &= passedOnFile - 1;
             }
             temp &= temp - 1;
+        }
+    }
+
+    /**
+     * Accumulates hanging-penalty feature weight (not tapered — applied after
+     * phase interpolation, like tempo). The coefficient is the net hanging count
+     * (positive = Black has more hanging pieces).
+     */
+    private static void addHangingPenaltyFeatures(PositionData pos, float[] tmp) {
+        long allOcc = pos.getWhiteOccupancy() | pos.getBlackOccupancy();
+        long attackedByWhite = computeAttackedBy(pos, true,  allOcc);
+        long attackedByBlack = computeAttackedBy(pos, false, allOcc);
+        long whiteHanging = (pos.getWhiteOccupancy() & ~pos.getWhiteKing())
+                          & attackedByBlack & ~attackedByWhite;
+        long blackHanging = (pos.getBlackOccupancy() & ~pos.getBlackKing())
+                          & attackedByWhite & ~attackedByBlack;
+        int net = Long.bitCount(blackHanging) - Long.bitCount(whiteHanging);
+        if (net != 0) {
+            tmp[EvalParams.IDX_HANGING_PENALTY] = net;
         }
     }
 

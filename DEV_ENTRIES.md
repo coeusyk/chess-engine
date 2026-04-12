@@ -7459,3 +7459,38 @@ concentrated subset with high feature activation, not for aggregate coverage imp
 
 **Measurements:**
 - engine-tuner: 106 tests, 0 failures, 1 skipped. BUILD SUCCESS.
+
+---
+
+### [2026-04-13] Phase 13 — B-1 Prep: Wire HANGING_PENALTY into Tuner
+
+**Built:**
+
+- `EvalParams.java` (engine-tuner): Added `IDX_HANGING_PENALTY = 829`, bumped
+  `TOTAL_PARAMS` from 829 → 830. Bounds: min=0, max=120. Default extracted from
+  engine-core `EvalParams.HANGING_PENALTY` (40). Added to `getParamName()` (case 829),
+  `writeToFile()` (KING SAFETY section), and `extractFromCurrentEval()`.
+- `buildGroupMask("king-safety")` now includes index 829 alongside the existing
+  ATK_WEIGHT range [800,804). `scalars` group adjusted to `fill(IDX_ROOK_BEHIND_PASSER_MG,
+  IDX_HANGING_PENALTY, true)` — stops before 829 so HANGING_PENALTY is not double-counted.
+- `TunerEvaluator.java`: Added `computeAttackedBy()` helper that builds aggregate attack
+  bitboards per side using pawn/knight/bishop/rook/queen/king attacks via `AttackTables`.
+  Added `hangingPenalty()` method — simplified version (no mating-net suppression) that
+  computes net hanging count × penalty, sufficient for gradient signal. Added
+  `addHangingPenaltyFeatures()` for sparse feature vector extraction. Both called post
+  phase-interpolation in `evaluateStatic()`, matching engine-core `Evaluator` placement.
+- `EvalParamsTest.java`: Updated `totalParamsIs830()` assertion from 829 → 830.
+
+**Decisions Made:**
+
+- Simplified tuner `hangingPenalty()` vs engine-core version: no mating-net suppression
+  (the `bEscapes <= 1` guard). The mating-net path adds complexity with minimal gradient
+  contribution — king-safety ATK_WEIGHT already handles mating attack scoring. The tuner
+  only needs the parameter to have a non-zero gradient; exact eval match is not required.
+- HANGING_PENALTY is not tapered (same as engine-core). Applied after phase-interpolation
+  like TEMPO.
+- Rebuilt tuner shaded JAR with all changes.
+
+**Measurements:**
+- engine-tuner: 106 tests, 0 failures, 1 skipped. BUILD SUCCESS.
+- TOTAL_PARAMS: 829 → 830. IDX_HANGING_PENALTY = 829.
