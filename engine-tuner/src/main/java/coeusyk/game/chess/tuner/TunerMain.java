@@ -39,6 +39,16 @@ public final class TunerMain {
 
     private static final Logger LOG = LoggerFactory.getLogger(TunerMain.class);
 
+    /**
+     * TEMPO-anchored Fisher threshold for coverage audit (A-2).
+     * Defined as TEMPO_FISHER / 10 = 1.753763e-7 / 10.
+     * Params below this threshold have less than 10% of the sensitivity of a term
+     * that fires every position — treated as STARVED.
+     * Params with PARAM_MIN == PARAM_MAX are intentionally fixed and reported as LOCKED,
+     * never STARVED, regardless of their Fisher value.
+     */
+    static final double COVERAGE_STARVED_THRESHOLD = 1.753763e-8;
+
     private TunerMain() {}
 
     public static void main(String[] args) throws Exception {
@@ -225,26 +235,34 @@ public final class TunerMain {
             java.util.Arrays.sort(indices,
                     (a, b) -> Double.compare(fisherDiag[a], fisherDiag[b]));
             int starvedCount = 0;
+            int lockedCount  = 0;
             System.out.printf("%-32s  %4s  %10s  %12s  %8s  %8s  %s%n",
                     "PARAMETER", "IDX", "FISHER", "ACTIVATIONS", "VALUE", "MIN", "STATUS");
             System.out.println("-".repeat(90));
             for (int idx : indices) {
-                boolean starved = fisherDiag[idx] < 1e-3;
+                boolean locked  = EvalParams.PARAM_MIN[idx] == EvalParams.PARAM_MAX[idx];
+                boolean starved = !locked && fisherDiag[idx] < COVERAGE_STARVED_THRESHOLD;
+                if (locked)  lockedCount++;
                 if (starved) starvedCount++;
+                String statusLabel = locked ? "*** LOCKED ***" : starved ? "*** STARVED ***" : "ok";
                 System.out.printf("%-32s  %4d  %10.3e  %12d  %8.1f  %8.1f  %s%n",
                         EvalParams.getParamName(idx), idx, fisherDiag[idx],
                         activationCounts[idx], params[idx], EvalParams.PARAM_MIN[idx],
-                        starved ? "*** STARVED ***" : "ok");
+                        statusLabel);
             }
             System.out.println("-".repeat(90));
-            LOG.info("[CoverageAudit] STARVED parameters: {} / {}", starvedCount, EvalParams.TOTAL_PARAMS);
+            LOG.info("[CoverageAudit] LOCKED parameters (min==max): {} / {}", lockedCount, EvalParams.TOTAL_PARAMS);
+            LOG.info("[CoverageAudit] STARVED parameters (Fisher < {}): {} / {}",
+                    String.format("%.3e", COVERAGE_STARVED_THRESHOLD), starvedCount, EvalParams.TOTAL_PARAMS - lockedCount);
             // Write CSV report file (A-1 acceptance criterion)
             Path reportPath = Paths.get("coverage-audit-report.csv");
             try {
                 StringBuilder sb = new StringBuilder();
                 sb.append("param_name,idx,fisher_diagonal,activation_count,value,min_value,max_value,status\n");
                 for (int idx : indices) {
-                    boolean starved = fisherDiag[idx] < 1e-3;
+                    boolean locked  = EvalParams.PARAM_MIN[idx] == EvalParams.PARAM_MAX[idx];
+                    boolean starved = !locked && fisherDiag[idx] < COVERAGE_STARVED_THRESHOLD;
+                    String csvStatus = locked ? "LOCKED" : starved ? "STARVED" : "ok";
                     sb.append(EvalParams.getParamName(idx)).append(',')
                       .append(idx).append(',')
                       .append(String.format("%.6e", fisherDiag[idx])).append(',')
@@ -252,7 +270,7 @@ public final class TunerMain {
                       .append(String.format("%.1f", params[idx])).append(',')
                       .append(String.format("%.1f", EvalParams.PARAM_MIN[idx])).append(',')
                       .append(String.format("%.1f", EvalParams.PARAM_MAX[idx])).append(',')
-                      .append(starved ? "STARVED" : "ok").append('\n');
+                      .append(csvStatus).append('\n');
                 }
                 Files.writeString(reportPath, sb.toString());
                 LOG.info("[CoverageAudit] Report written to: {}", reportPath.toAbsolutePath());

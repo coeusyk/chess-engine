@@ -7095,3 +7095,114 @@ from normal `mvnw test` run, as expected).
 - Run SPRT for C-6 (correction history changes) before merging to `develop`.
 - Run --coverage-audit with Phase 13 corpus to inspect STARVED params.
 - Proceed with C-1/C-3/C-4/C-5 SPRT experiments as outlined in experiment registry.
+
+---
+
+### [2026-04-12] Phase 13 — Coverage Audit A-1: 100% STARVED at Threshold 1e-3
+
+**Branch:** phase/13-tuner-overhaul
+
+**Built:**
+
+- Ran `--coverage-audit` against `chess-engine/tools/quiet-labeled.epd` (~703k positions, 40 MB)
+  using `engine-tuner-0.5.6-SNAPSHOT-shaded.jar`.
+- Command: `java -jar engine-tuner-0.5.6-SNAPSHOT-shaded.jar tools/quiet-labeled.epd --coverage-audit`
+- Report written to: `coverage-audit-report.csv` (workspace root — note: run from wrong CWD).
+
+**Decisions Made:**
+
+- No code changes in this entry. Audit is a diagnostic-only pass.
+
+**Broke / Fixed:**
+
+- Nothing broken.
+
+**Measurements:**
+
+- Corpus: 703,040 positions (quiet-labeled.epd, 40 MB).
+- Total parameters audited: 829.
+- **STARVED at threshold 1e-3: 829 / 829 (100%).**
+- Best Fisher diagonal observed: `MOB_MG_QUEEN` = 1.072e-06.
+- Threshold is 1e-3, which is **~934× higher than the best-observed value**.
+- To reach threshold 1e-3, `MOB_MG_QUEEN` would require approximately 656 million positions
+  (~934× more than the current 703k). This is infeasible with self-play generation.
+
+Coverage tier summary (sorted by best diagonal descending):
+
+| Tier | Range | Representative params |
+|---|---|---|
+| Best covered (still STARVED) | ~1e-6 to ~5e-7 | MOB_MG_QUEEN, MOB_MG_BISHOP, MOB_MG_ROOK |
+| Mid coverage | ~1e-7 to ~5e-8 | TEMPO, CONNECTED_PAWN_MG/EG, ATK_ROOK/BISHOP/KNIGHT |
+| Low coverage | ~5e-8 to ~1e-8 | PAWN_MG/EG, KNIGHT_MG/EG, BISHOP_MG/EG, ROOK_MG/EG |
+| Worst covered | < 1e-8 | Corner/edge PST squares, passed pawn rank 1/2 scalars |
+
+**Finding: Threshold Miscalibration**
+
+The 1e-3 threshold is not achievable with a ~700k-position corpus. The Fisher diagonal
+is an accumulated sum of squared gradient contributions; for quiet positions with nearly
+decisive WDL outcomes, each position contributes very little (sigmoid slope near 0 at
+extreme scores). Even `TEMPO`, which activates in every position, only reaches 1.754e-7
+after 725k activations — 5700× below threshold.
+
+**Corrective action (A-2):**
+
+1. **Recalibrate threshold** to a corpus-relative percentile rather than an absolute value.
+   A threshold around `5e-7` would separate the top ~5–10% of params from the rest,
+   giving a meaningful distinction between "adequately exercised" and "rarely seen".
+2. **A-2 targeted seed expansion** remains valid but is scale-limited: seed EPD files
+   targeting structural parameters (backward pawn, connected pawn, rook-behind-passer,
+   king safety) can improve coverage for those groups relative to others, but will not
+   lift any parameter to 1e-3 without an accompanying threshold recalibration.
+
+**Next:**
+
+- Recalibrate the `--coverage-audit` STARVED threshold in the tuner codebase to a
+  corpus-relative percentile (e.g., `topKPercent=90` mode or a fixed lower value like `5e-7`).
+- Run A-2 seed file construction for the structurally important but worst-covered params:
+  `BACKWARD_PAWN_MG/EG`, `ROOK_BEHIND_PASSER_MG/EG`, `KNIGHT_OUTPOST_MG/EG`, king-safety terms.
+- Proceed with C-track SPRTs (C-1, C-6, C-2, C-3, C-4, C-5) — these are independent of
+  the corpus and can run concurrently.
+- Run SPRT for C-6 first (already committed, Rule 4 compliance).
+
+
+---
+
+### [2026-04-13] Phase 13 — Coverage Audit A-2: LOCKED/STARVED Fix + TEMPO-Anchored Threshold
+
+**Branch:** phase/13-tuner-overhaul
+
+**Built:**
+
+- **#153 — A-2 audit reporter fix (tuner):** Two targeted changes to TunerMain.java:
+  1. **LOCKED vs STARVED distinction:** Parameters with PARAM_MIN == PARAM_MAX (e.g., KING_MG, KING_EG, back-rank and promotion-rank PAWN_PST squares) are now emitted as LOCKED in both the stdout table and the CSV report. These are intentionally fixed constants — they were always zero-activation by design, never tuning candidates. Previously all 829 params reported STARVED, making ~130 locked constants indistinguishable from genuinely signal-starved tunable params.
+  2. **TEMPO-anchored threshold:** COVERAGE_STARVED_THRESHOLD constant added at 1.753763e-8 (= TEMPO_FISHER / 10, where TEMPO_FISHER = 1.753763e-7 from the Phase 13 corpus run). The previous threshold was 1e-3 — ~5,700× above the best observed Fisher diagonal in a 703k-position corpus, making it unreachable. The new threshold is physically calibrated: a parameter must have at least 10% of the per-position sensitivity of TEMPO (which fires every position) to pass.
+
+**Decisions Made:**
+
+- Threshold = TEMPO_FISHER / 10 (Option A from analysis) — TEMPO-normalized, corpus-size-agnostic relative to the actual signal distribution, no percentile arithmetic needed, and gives ~44 params passing (~top 5%).
+- lockedCount and starvedCount are tracked and logged separately so audit summaries are unambiguous.
+- No change to computeFisherDiagonal() or computeActivationCounts() — the issue was purely in the reporting/classification layer.
+
+**Broke / Fixed:**
+
+- Nothing broken. Zero Java errors; no test changes required (no existing tests reference coverage threshold or status strings).
+
+**Measurements (actual re-run post-build, 2026-04-13 00:52):**
+
+- Corpus: 703,040 positions. Total parameters: 829.
+- **LOCKED: 3 / 829** — only parameters with PARAM_MIN == PARAM_MAX == 0 (KING_MG, KING_EG, + 1 other).
+  Note: PAWN_PST back-rank/promotion squares have PARAM_MIN=-200, PARAM_MAX=200, so NOT locked.
+  They are tunable params starting at 0 that never activate in the quiet corpus — correctly STARVED.
+- **STARVED: 773 / 826** (Fisher < 1.754e-8 among non-locked params).
+- **ok: 53 / 826** (~6.4% of tunable params pass the TEMPO/10 threshold).
+- Top-covered: MOB_MG_QUEEN (~1.07e-6), MOB_MG_BISHOP, MOB_MG_ROOK, TEMPO (~1.75e-7).
+- `chess-engine/coverage-audit-report.csv` written (2026-04-13 00:52).
+- Perft depth 5 (startpos): Not measured in this cycle.
+- Nodes/sec: Not measured in this cycle.
+- Elo vs. baseline: Not measured in this cycle.
+
+**Next:**
+
+- Run SPRT for C-6 (correction history: SIZE 1024->4096, key >>>54->>>>52, depth-weighted updates) — already committed. **SPRT: IN PROGRESS** (started 2026-04-13 00:56).
+- After C-6 SPRT verdict: proceed with C-1/C-3/C-4/C-5 SPRT experiments.
+- A-2 seed file construction for worst-covered tunable params: BACKWARD_PAWN_MG/EG, ROOK_BEHIND_PASSER_MG/EG, KNIGHT_OUTPOST_MG/EG, king-safety scalars.
