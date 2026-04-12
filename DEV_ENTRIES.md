@@ -7550,3 +7550,49 @@ not in the primary B-track groups and can be addressed in a future corpus expans
 **Decision:** A-2 2× criterion formally waived. B-track proceeds using `--freeze-psts`
 (frozen PSTs eliminate the 768 STARVED PST entries from the optimizer). All target
 B-track scalars have adequate gradient coverage.
+
+### [2026-04-13] Phase 13 — C-1 SPRT: delta=40 H0 Accepted
+
+**Context:**
+
+C-1 aspiration window initial delta experiment. Testing delta=40 vs baseline delta=50.
+Bonferroni m=3, per-test α=0.0167, SPRT bounds ±4.08.
+
+**Result:**
+- 783 games: 225W-184L-374D (52.6%), DrawRatio 47.8%
+- Elo: +18.2 ±17.6, LOS 97.9%
+- LLR: -4.25 (lbound -4.08, ubound 4.08) — **H0 accepted**
+- White/Black breakdown: White 113-96-183 (52.2%), Black 112-88-191 (53.1%)
+- PGN: `tools/results/sprt_phase13-c1-delta40_20260413_025441.pgn`
+
+**Interpretation:**
+Delta=40 shows a positive trend (+18 Elo, LOS 97.9%) but fails the H1=50 SPRT threshold.
+The true Elo gain is real but modest — closer to H0=0 than H1=50 from the SPRT's
+perspective. This doesn't mean delta=40 is bad; it means it isn't a 50 Elo improvement.
+
+**Disposition:** H0 accepted. Delta=40 not promoted. Delta=25 (terminated early at 100
+games, showed +28 Elo, LOS 99.7%) and delta=75 (in progress) remain to be evaluated.
+
+**Next:**
+- Wait for delta=75 SPRT verdict.
+- After all 3 deltas tested, determine C-1 final disposition.
+
+### [2026-04-13] Phase 13 — Coverage Audit Analysis: PARAMMAX Bound Audit
+
+**Context:**
+
+Coverage audit analysis (`docs/coverage-audit-analysis.md`) identified parameters at or
+near their PARAMMAX upper bounds, which can silently cap gradient-driven optimization.
+
+**Changes:**
+- `ROOK_OPEN_FILE_MG` (idx 817): max 80 → 100. Has been pushing against the cap in
+  previous tuning runs; current value is 50, suggesting true optimum may be higher.
+- `KNIGHT_OUTPOST_MG` (idx 821): max 60 → 80. Approaching cap at current value of 40.
+
+**Also verified (no changes needed):**
+- `KNIGHT_OUTPOST_EG` (idx 822): current value 30, max 50 — at mid-range, fine.
+- `OPENFILE_PENALTY` (idx 798): current value 45, max 80 — ~56% of cap, watching.
+- `HANGING_PENALTY` LOCKED status from audit CSV is stale — already wired with bounds
+  [0, 120] in commit 32de53a.
+
+**Measurements:** N/A — bounds-only change, no runtime impact.

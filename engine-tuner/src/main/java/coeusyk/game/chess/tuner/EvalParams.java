@@ -194,11 +194,11 @@ public final class EvalParams {
         hi[IDX_BISHOP_PAIR_EG] = 80;   // Bishop pair EG <= 80cp
         hi[IDX_ROOK_7TH_MG]   = 50;   // Rook on 7th MG <= 50cp
         hi[IDX_ROOK_7TH_EG]   = 50;   // Rook on 7th EG <= 50cp
-        hi[IDX_ROOK_OPEN_FILE_MG]  = 80;   // Rook open file MG <= 80cp
+        hi[IDX_ROOK_OPEN_FILE_MG]  = 100;  // Rook open file MG <= 100cp (raised from 80: value=50 pushing cap)
         hi[IDX_ROOK_OPEN_FILE_EG]  = 50;   // Rook open file EG <= 50cp
         hi[IDX_ROOK_SEMI_OPEN_MG]  = 30;   // Rook semi-open file MG <= 30cp
         hi[IDX_ROOK_SEMI_OPEN_EG]  = 30;   // Rook semi-open file EG <= 30cp
-        hi[IDX_KNIGHT_OUTPOST_MG]  = 60;   // Knight outpost MG <= 60cp
+        hi[IDX_KNIGHT_OUTPOST_MG]  = 80;   // Knight outpost MG <= 80cp (raised from 60: value=40 approaching cap)
         hi[IDX_KNIGHT_OUTPOST_EG]  = 50;   // Knight outpost EG <= 50cp
         hi[IDX_CONNECTED_PAWN_MG]  = 25;   // Connected pawn MG <= 25cp
         hi[IDX_CONNECTED_PAWN_EG]  = 20;   // Connected pawn EG <= 20cp
