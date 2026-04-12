@@ -6795,8 +6795,11 @@ Three positions whose `bestmove` changed as a direct consequence of the new eval
 - `E8` (`7k/p7/8/8/8/8/7P/6RK w`): `h2h4` → `g1g5`
   Higher ROOK weight (9→12) increases rook-activity value; rook activation g1g5 preferred
   over pawn push.
+- `E4` (symmetric king opposition): `e4d4` → `e4f4` — changed earlier this phase in the
+  PST-convention-fix commit; not caused by Phase B CLOP bake. See the
+  `[2026-04-10] Eval-Mode Regression Post-Mortem` entry for context.
 
-All three are equivalent winning continuations — no regression in game-play quality.
+All four are equivalent winning continuations — no regression in game-play quality.
 
 **Broke / Fixed:**
 

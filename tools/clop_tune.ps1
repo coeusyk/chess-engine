@@ -290,7 +290,7 @@ function Write-OverrideFile {
     # Apply / override with current iteration values
     foreach ($k in $values.Keys) { $merged[$k] = $values[$k] }
     $lines = $merged.Keys | ForEach-Object { "$_=$($merged[$_])" }
-    Set-Content $overrideFile ($lines -join "`n")
+    Set-Content $overrideFile $lines -Encoding UTF8
 }
 
 # -----------------------------------------------------------------------
@@ -370,6 +370,13 @@ $bestValues = @{}
 foreach ($p in $paramDefs) { $bestValues[$p.name] = [int]$p.current }
 $bestElo = $null
 
+# Single RNG instance hoisted above both loops so each parameter in each
+# iteration gets an independently-seeded random draw.  Creating [Random]::new()
+# inside the foreach loop would re-use the same TickCount seed for every
+# parameter in the same iteration, collapsing all displacements onto the
+# diagonal and degrading CLOP exploration.
+$rng = [System.Random]::new()
+
 for ($iter = 1; $iter -le $Iterations; $iter++) {
 
     # --- Sample candidate values ---
@@ -381,7 +388,7 @@ for ($iter = 1; $iter -le $Iterations; $iter++) {
         # Gaussian sample around current best, std = (max - min) / 6
         foreach ($p in $paramDefs) {
             $std   = ($p.max - $p.min) / 6.0
-            $raw   = $bestValues[$p.name] + [Random]::new().NextDouble() * $std * 2 - $std
+            $raw   = $bestValues[$p.name] + $rng.NextDouble() * $std * 2 - $std
             $step  = [int]$p.step
             $snapped = [int][Math]::Round($raw / $step) * $step
             $clamped = [Math]::Max($p.min, [Math]::Min($p.max, $snapped))

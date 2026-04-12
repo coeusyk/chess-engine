@@ -307,6 +307,8 @@ class SearchRegressionTest {
             //     preference returns to e4d4 (symmetric equivalent; both win by opposition).
             //     Updated 2026-04-10: CLOP phase-13 params baked in (K=2,B=1,R=7,Q=3,H=73,T=17).
             //     Eval shift returns preference to e4f4. Both e4d4 and e4f4 win; equivalent.
+            //     Updated 2026-04-12: final two-phase CLOP baked in (Q=0,K=6,B=2,R=12,H=40,T=17).
+            //     e4f4 preference confirmed preserved under final production params.
             Arguments.of("E4",  E4_FEN,  "e4f4"),
             Arguments.of("E5",  E5_FEN,  "a2e2"),
             // E6: 8/8/8/5k2/1PP5/8/2K5/8 — Kc2+Pb4c4 vs Kf5. Both b4b5 and c4c5 advance
@@ -327,8 +329,8 @@ class SearchRegressionTest {
             //     depth-8 preference shifts to d2f3 (knight to f3, attacks e5+h4). Both
             //     b2c3 and d2f3 are correct KBN technique; choice is eval-dependent.
             Arguments.of("E7",  E7_FEN,  "d2f3"),
-            // E8: 7k/p7/8/8/8/8/7P/6RK — Kh1+Rg1+Ph2 vs Kh8+Pa7. g1g6 (active rook,
-            //     restricts black king on rank 6) and h2h4 (pawn race) both win. Choice is eval-dependent.
+            // E8: 7k/p7/8/8/8/8/7P/6RK — Kh1+Rg1+Ph2 vs Kh8+Pa7. g1g5 (active rook,
+            //     centralises to 5th rank) and h2h4 (pawn race) both win. Choice is eval-dependent.
             //     Updated 2026-04-02: new terms shift preference to g1g5.
             //     Updated Phase 10 #10.5: Texel-tuned piece bonuses (rook7thEg 23→32) shift
             //     depth-8 preference to h2h4. Both g1g5/g1g6 and h2h4 are winning continuations.
@@ -426,10 +428,12 @@ class SearchRegressionTest {
         System.out.println("=== END DISCOVERY ===");
     }
 
-    // ── Helper ──────────────────────────────────────────────────────
-
     // ── Q-search horizon regression — Issue #138 ─────────────────────
-    // From FEN Q1_FEN: Black has forced mate-in-5 starting with 45...Bc2!
+    // From FEN Q1_FEN: Black bishop is already on c2 (the winning Bc2 move has been
+    // played). This is Black to move with a Ng4-based mating net in place. The engine
+    // must evaluate the resulting position as clearly winning for Black (> +200cp).
+    // Constructed from the regression game in Issue #138, where the engine missed the
+    // Bc2! continuation and drew by perpetual instead.
     // Engine must recognise it is clearly winning; eval must be > +200cp for Black.
     // (Score is returned in the active-side perspective, so positive = good for Black.)
     private static final int Q1_DEPTH = 12;
