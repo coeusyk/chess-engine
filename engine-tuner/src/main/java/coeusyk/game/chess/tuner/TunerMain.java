@@ -43,7 +43,7 @@ public final class TunerMain {
 
     public static void main(String[] args) throws Exception {
         if (args.length < 1) {
-        LOG.error("Usage: engine-tuner <dataset> [maxPositions] [maxIterations] [--optimizer adam|coordinate|lbfgs] [--label-mode wdl|eval --experimental] [--param-group material|pst|pawn-structure|king-safety|mobility|scalars] [--corpus-format csv|epd] [--no-recalibrate-k] [--freeze-k] [--k <value>] [--freeze-params] [--corpus <csv>] [--coverage-audit]");
+        LOG.error("Usage: engine-tuner <dataset> [maxPositions] [maxIterations] [--optimizer adam|coordinate|lbfgs] [--param-group material|pst|pawn-structure|king-safety|mobility|scalars] [--corpus-format csv|epd] [--no-recalibrate-k] [--freeze-k] [--k <value>] [--freeze-params] [--corpus <csv>] [--coverage-audit]");
             System.exit(1);
         }
 
@@ -59,13 +59,11 @@ public final class TunerMain {
         Path   corpusPath     = null;  // #130: optional Stockfish-annotated CSV
         String corpusFormat   = "auto"; // #140: "auto", "csv", "epd"
         String paramGroup     = null;  // --param-group: restrict optimizer to one parameter group
-        String labelMode      = "wdl"; // #141: "wdl" (Texel sigmoid) | "eval" (direct CP MSE)
         boolean skipSmoke      = false; // --skip-smoke
         boolean skipSanity     = false; // --skip-sanity
         boolean skipConvergence = false; // --skip-convergence
         int smokeGames         = 100;  // --smoke-games N
         int smokeDepth         = 3;    // --smoke-depth N
-        boolean experimental   = false; // --experimental: required for --label-mode eval
 
         // Parse remaining positional args and named flags
         for (int i = 1; i < args.length; i++) {
@@ -131,16 +129,6 @@ public final class TunerMain {
                     LOG.error("--corpus file not found: {}", corpusPath.toAbsolutePath());
                     System.exit(1);
                 }
-            } else if ("--label-mode".equals(args[i])) {
-                if (i + 1 >= args.length) {
-                    LOG.error("--label-mode requires a value: wdl|eval");
-                    System.exit(1);
-                }
-                labelMode = args[++i].toLowerCase();
-                if (!"wdl".equals(labelMode) && !"eval".equals(labelMode)) {
-                    LOG.error("Unknown label-mode: {} (valid: wdl, eval)", labelMode);
-                    System.exit(1);
-                }
             } else if ("--skip-smoke".equals(args[i])) {
                 skipSmoke = true;
             } else if ("--skip-sanity".equals(args[i])) {
@@ -159,8 +147,6 @@ public final class TunerMain {
                     System.exit(1);
                 }
                 smokeDepth = Integer.parseInt(args[++i]);
-            } else if ("--experimental".equals(args[i])) {
-                experimental = true;
             } else if (maxPositions == Integer.MAX_VALUE) {
                 maxPositions = Integer.parseInt(args[i]);
             } else if (maxIters == -1) {
@@ -168,22 +154,10 @@ public final class TunerMain {
             }
         }
 
-        // Gate --label-mode eval behind --experimental
-        if ("eval".equals(labelMode) && !experimental) {
-            LOG.error("ERROR: --label-mode eval requires --experimental flag.");
-            LOG.error("Eval-mode tuning regresses against Stockfish's centipawn scale, which differs");
-            LOG.error("from Vex's internal scale. Without scale normalization, piece values collapse");
-            LOG.error("by ~35%. This mode is disabled until scale normalization is implemented.");
-            LOG.error("Use --label-mode wdl (default) for all production tuning runs.");
-            System.exit(1);
-        }
-
         // Apply optimizer-specific defaults for maxIters
         if (maxIters == -1) {
             if ("coordinate".equals(optimizer)) {
                 maxIters = CoordinateDescent.DEFAULT_MAX_ITERATIONS;
-            } else if ("eval".equals(labelMode)) {
-                maxIters = GradientDescent.DEFAULT_MAX_ITERATIONS_EVAL_MODE;  // eval labels need more iters
             } else {
                 maxIters = GradientDescent.DEFAULT_MAX_ITERATIONS;
             }
@@ -194,7 +168,6 @@ public final class TunerMain {
                 maxPositions == Integer.MAX_VALUE ? "all" : String.format("%,d", maxPositions));
         LOG.info("[TunerMain] Max iters:     {}", maxIters);
         LOG.info("[TunerMain] Optimizer:     {}", optimizer);
-        LOG.info("[TunerMain] Label mode:    {}", labelMode);
         LOG.info("[TunerMain] Recalibrate K: {}", recalibrateK ? "yes" : "no (--no-recalibrate-k)");
         LOG.info("[TunerMain] Freeze K:      {}", freezeK      ? "yes (--freeze-k, Phase B)"      : "no");
         LOG.info("[TunerMain] Freeze params: {}", freezeParams ? "yes (--freeze-params, Phase A)"  : "no");
@@ -208,14 +181,11 @@ public final class TunerMain {
         // --- Load positions (streaming with early stop at maxPositions) ---
         Instant loadStart = Instant.now();
         List<LabelledPosition> positions;
-        if ("eval".equals(labelMode)) {
-            // #141: load Stockfish-annotated eval corpus: "<FEN> <cp_int>" per line
-            positions = PositionLoader.loadSfEval(datasetPath, maxPositions);
-        } else if ("epd".equals(corpusFormat)) {
+        if ("epd".equals(corpusFormat)) {
             // #140: load quiet-labeled.epd-compatible file with in-check and material filters
             positions = PositionLoader.loadEpd(datasetPath, maxPositions);
         } else if ("csv".equals(corpusFormat) || corpusPath != null) {
-            // #130: load Stockfish-annotated CSV
+            // #130: load Stockfish-annotated CSV; sf_cp converted to pseudo-WDL via sigmoid(cp/340)
             Path src = (corpusPath != null) ? corpusPath : datasetPath;
             positions = PositionLoader.loadCsv(src, maxPositions);
         } else {
@@ -235,18 +205,14 @@ public final class TunerMain {
         long featMs = Duration.between(featStart, Instant.now()).toMillis();
         LOG.info(String.format("[TunerMain] Feature vectors built in %,d ms", featMs));
 
-        // --- Find optimal K using fast feature-based MSE (WDL mode only) ---
-        double k = 0.0;
-        if (!"eval".equals(labelMode)) {
-            if (!Double.isNaN(initialK)) {
-                k = initialK;
-                LOG.info("[TunerMain] K supplied via --k: {}", k);
-            } else {
-                LOG.info("[TunerMain] Finding optimal K...");
-                k = KFinder.findKFromFeatures(features, params);
-            }
+        // --- Find optimal K using fast feature-based MSE ---
+        double k;
+        if (!Double.isNaN(initialK)) {
+            k = initialK;
+            LOG.info("[TunerMain] K supplied via --k: {}", k);
         } else {
-            LOG.info("[TunerMain] Eval mode: K calibration skipped.");
+            LOG.info("[TunerMain] Finding optimal K...");
+            k = KFinder.findKFromFeatures(features, params);
         }
 
         // --- Coverage audit: compute Fisher diagonal, report starved params, exit ---
@@ -289,16 +255,7 @@ public final class TunerMain {
         double[] tuned;
         boolean[] groupMask = (paramGroup != null) ? EvalParams.buildGroupMask(paramGroup) : null;
         TunerRunMetrics metrics = new TunerRunMetrics();
-        if ("eval".equals(labelMode)) {
-            // #141: eval mode — direct centipawn MSE, no sigmoid, no K
-            double[] sfEvalCps = positions.stream().mapToDouble(LabelledPosition::sfEvalCp).toArray();
-            double startMse = TunerEvaluator.computeMseEvalMode(features, sfEvalCps, params);
-            LOG.info(String.format("[TunerMain/eval] Start MSE_cp2 = %.4f  (%.2f cp RMS)", startMse, Math.sqrt(startMse)));
-            LOG.info(String.format("[TunerMain] Running Adam eval mode (maxIters=%d)...", maxIters));
-            tuned = GradientDescent.tuneWithFeaturesEvalMode(features, sfEvalCps, params, maxIters, groupMask, metrics);
-            double endMse = TunerEvaluator.computeMseEvalMode(features, sfEvalCps, tuned);
-            LOG.info(String.format("[TunerMain/eval] End MSE_cp2 = %.4f  (%.2f cp RMS)", endMse, Math.sqrt(endMse)));
-        } else if ("adam".equals(optimizer)) {
+        if ("adam".equals(optimizer)) {
             LOG.info(String.format("[TunerMain] Running Adam gradient descent (K=%.6f, maxIters=%d, fast-path)...", k, maxIters));
             tuned = GradientDescent.tuneWithFeatures(features, params, k, maxIters, recalibrateK, groupMask, metrics);
         } else if ("lbfgs".equals(optimizer)) {
@@ -309,16 +266,10 @@ public final class TunerMain {
             tuned = CoordinateDescent.tune(positions, params, k, maxIters, recalibrateK);
         }
 
-        // Final K after tuning (written to file per #95 AC; 0.0 sentinel for eval mode)
-        double finalK;
-        if ("eval".equals(labelMode)) {
-            finalK = 0.0; // not applicable in eval mode
-            LOG.info("[TunerMain/eval] Final K = 0.0 (sentinel; K not used in eval mode)");
-        } else {
-            LOG.info("[TunerMain] Computing final K...");
-            finalK = KFinder.findKFromFeatures(features, tuned);
-            LOG.info(String.format("[TunerMain] Final K = %.6f", finalK));
-        }
+        // Final K after tuning
+        LOG.info("[TunerMain] Computing final K...");
+        double finalK = KFinder.findKFromFeatures(features, tuned);
+        LOG.info(String.format("[TunerMain] Final K = %.6f", finalK));
 
         // --- Post-run validation gate ---
         TunerPostRunValidator.ValidatorConfig vConfig = new TunerPostRunValidator.ValidatorConfig(

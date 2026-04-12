@@ -151,13 +151,16 @@ public final class PositionLoader {
      *
      * <p>Expected CSV format (header row required):
      * <pre>
-     *   fen,wdl_stockfish,game_result
-     *   "rnbqkbnr/... w KQkq -",0.523456,0.5
+     *   fen,sf_cp,game_result
+     *   "rnbqkbnr/... w KQkq -",47,0.5
      * </pre>
      *
-     * <p>The {@code wdl_stockfish} column is used as the training label (more accurate
-     * than raw game outcomes). The {@code game_result} column is recorded but not used
-     * by the tuner. Lines with unparseable FENs or WDL values are silently skipped.
+     * <p>The {@code sf_cp} column is a raw Stockfish centipawn evaluation from White's
+     * perspective. It is converted in-place to a pseudo-WDL outcome via
+     * {@code sigmoid(sf_cp / K_SF)} where {@code K_SF = 340.0} (Stockfish
+     * NormalizeToPawnValue=328 + 3.6% Vex-scale correction). The {@code game_result}
+     * column is present in the file but not used by the tuner. Lines with unparseable
+     * FENs or cp values are silently skipped.
      *
      * @param csvPath      path to the CSV file
      * @param maxPositions maximum number of positions to load
@@ -194,12 +197,20 @@ public final class PositionLoader {
     }
 
     /**
-     * Parses one CSV row: {@code "fen",wdl_stockfish,game_result}
-     * Returns {@code null} if the row is malformed.
+     * K scaling factor for Stockfish cp → pseudo-WDL conversion.
+     * Derived from Stockfish NormalizeToPawnValue=328 with a 3.6% empirical
+     * correction for Vex's centipawn scale. Do not change without a K-fit audit.
+     */
+    private static final double K_SF = 340.0;
+
+    /**
+     * Parses one CSV row: {@code "fen",sf_cp,game_result}
+     * Converts the raw Stockfish centipawn value to a pseudo-WDL outcome via
+     * {@code sigmoid(sf_cp / K_SF)}. Returns {@code null} if the row is malformed.
      */
     private static LabelledPosition tryParseCsvLine(String line) {
         try {
-            // Handle optional quoted FEN field: "fen content",0.5,1.0
+            // Handle optional quoted FEN field: "fen content",47,1.0
             String fenPart;
             String rest;
             if (line.startsWith("\"")) {
@@ -214,15 +225,17 @@ public final class PositionLoader {
                 fenPart = line.substring(0, comma).strip();
                 rest    = line.substring(comma + 1);
             }
-            // Next field: wdl_stockfish
+            // Next field: sf_cp (raw Stockfish centipawn evaluation)
             int comma2 = rest.indexOf(',');
-            String wdlStr = comma2 >= 0 ? rest.substring(0, comma2).strip() : rest.strip();
-            double wdl = Double.parseDouble(wdlStr);
-            if (wdl < 0.0 || wdl > 1.0) return null;
+            String cpStr = comma2 >= 0 ? rest.substring(0, comma2).strip() : rest.strip();
+            double sfCp = Double.parseDouble(cpStr);
+            if (!Double.isFinite(sfCp)) return null;
+            // Convert to pseudo-WDL via sigmoid(sf_cp / K_SF)
+            double pseudoWdl = 1.0 / (1.0 + Math.exp(-sfCp / K_SF));
 
             TunerPosition pos = parseFen(fenPart);
             if (pos == null) return null;
-            return new LabelledPosition(pos, wdl);
+            return new LabelledPosition(pos, pseudoWdl);
         } catch (Exception ignored) {
             return null;
         }
@@ -344,81 +357,4 @@ public final class PositionLoader {
         };
     }
 
-    // =========================================================================
-    // SF-eval format (Issue #141)
-    // =========================================================================
-
-    /**
-     * Loads all positions from a Stockfish-annotated eval corpus.
-     *
-     * @param file path to the annotated file (one {@code "<FEN> <cp_int>"} per line)
-     * @return list of positions with {@link LabelledPosition#sfEvalCp()} set
-     * @throws IOException if the file cannot be read
-     */
-    public static List<LabelledPosition> loadSfEval(Path file) throws IOException {
-        return loadSfEval(file, Integer.MAX_VALUE);
-    }
-
-    /**
-     * Loads up to {@code maxPositions} positions from a Stockfish-annotated eval corpus
-     * created by {@code tools/annotate_corpus.ps1}.
-     *
-     * <p>Expected format: one {@code "<FEN 6-field> <cp_int>"} line per position.
-     * Mate scores and parse failures are silently skipped.
-     *
-     * @param file         path to the annotated file
-     * @param maxPositions cap on positions loaded
-     * @return list of positions with {@link LabelledPosition#sfEvalCp()} set,
-     *         {@code outcome} fixed at 0.0 (not used in eval mode)
-     * @throws IOException if the file cannot be read
-     */
-    public static List<LabelledPosition> loadSfEval(Path file, int maxPositions) throws IOException {
-        List<LabelledPosition> result = new ArrayList<>();
-        int skipped = 0;
-        try (BufferedReader reader = new BufferedReader(new FileReader(file.toFile()))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                line = line.strip();
-                if (line.isEmpty() || line.startsWith("#")) continue;
-
-                LabelledPosition lp = tryParseSfEvalLine(line);
-                if (lp != null) {
-                    result.add(lp);
-                    if (result.size() >= maxPositions) break;
-                } else {
-                    skipped++;
-                }
-            }
-        }
-        if (skipped > 0) {
-            LOG.info(String.format("[PositionLoader] SF-eval: skipped %,d lines (mate/parse failure)", skipped));
-        }
-        return result;
-    }
-
-    /**
-     * Parses one SF-eval line: {@code "<FEN 6-field> <cp_int>"}.
-     * Returns {@code null} on mate scores or any parse failure.
-     */
-    private static LabelledPosition tryParseSfEvalLine(String line) {
-        try {
-            // A valid line has at least 7 whitespace-separated tokens:
-            // pieces  color  castling  ep  halfmove  fullmove  cp_int
-            String[] tokens = line.split("\\s+");
-            if (tokens.length < 7) return null;
-
-            double sfEvalCp = Double.parseDouble(tokens[tokens.length - 1]);
-            if (!Double.isFinite(sfEvalCp)) return null;
-
-            // Join the first 6 tokens as the FEN
-            String fen = tokens[0] + " " + tokens[1] + " " + tokens[2] + " "
-                       + tokens[3] + " " + tokens[4] + " " + tokens[5];
-            TunerPosition pos = parseFen(fen);
-            if (pos == null) return null;
-
-            return new LabelledPosition(pos, 0.0, sfEvalCp);
-        } catch (Exception ignored) {
-            return null;
-        }
-    }
 }

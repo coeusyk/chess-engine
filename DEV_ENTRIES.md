@@ -6938,3 +6938,56 @@ treated as untrusted until confirmed by SPRT.
 
 - Run `.\clop_tune.ps1` from `tools/` with defaults for a correct Phase C run.
 - Confirm final params via SPRT before baking.
+
+---
+
+### [2026-04-12] Phase 13 — Eval Mode Removal + SF CSV Corpus Pipeline Fix
+
+**Branch:** phase/13-tuner-overhaul
+
+**Problem — `--label-mode eval` was unsound:**
+
+Eval mode regressed Vex's piece values directly against Stockfish centipawn evals. Stockfish
+uses NormalizeToPawnValue=328 to map its NNUE output to centipawns; Vex's material scale is
+different. Without an explicit scale normalization step, the loss gradient pulled piece values
+toward SF's numerical scale, collapsing them by ~35% (pawn from ~100cp to ~65cp after a
+short run). No valid use case existed. The gate comment in TunerMain.java had already flagged
+this with a hard error behind `--experimental`. This phase removes everything.
+
+**CSV corpus — sigmoid conversion moved to Java:**
+
+`PositionLoader.loadCsv` previously read a `wdl_stockfish` column that was already
+sigmoid-converted in the PowerShell corpus-generation script. The new pipeline reads the raw
+Stockfish centipawn (`sf_cp`) column directly and converts in-place via
+`sigmoid(sf_cp / K_SF)` where `K_SF = 340.0` (Stockfish NormalizeToPawnValue=328 with
++3.6% empirical Vex-scale correction). This keeps the positional signal from Stockfish while
+preventing scale corruption. The sigmoid is `1.0 / (1.0 + exp(-sf_cp / K_SF))`.
+
+**Removed:**
+
+- `LabelledPosition.java`: 3-arg record → 2-arg (removed `sfEvalCp` field and 2-arg
+  convenience constructor delegation).
+- `PositionLoader.java`: removed `loadSfEval(Path)`, `loadSfEval(Path, int)`,
+  `tryParseSfEvalLine(String)`. Updated `tryParseCsvLine` and its Javadoc.
+  Added `K_SF = 340.0` constant.
+- `TunerEvaluator.java`: removed `computeMseEvalMode(features, sfEvalCps, params)`.
+- `GradientDescent.java`: removed `DEFAULT_MAX_ITERATIONS_EVAL_MODE = 1500`,
+  `tuneWithFeaturesEvalMode` (both overloads), `computeGradientEvalMode`.
+- `TunerMain.java`: removed `--label-mode`/`--experimental` arg parsing, gate block,
+  eval mode maxIters branch, eval mode position loading branch, eval mode optimizer
+  dispatch, eval mode finalK sentinel, `LOG.info Label mode` line. K calibration block
+  simplified (always runs; no eval mode bypass). Usage string updated.
+- Test files: removed 4 eval mode tests in `GradientDescentTest.java` and 6 tests in
+  `PositionLoaderTest.java` (5 `loadSfEval` tests + 1 `sfEvalCp` accessor regression).
+
+**Tests:** 106 engine-tuner tests run, 0 failures, 1 skipped (DatasetLoadingTest requires
+real corpus file). Previous total was 116 (106 + 10 removed).
+
+**`copilot-instructions.instructions.md` updated:** Convergence Requirements section now
+documents WDL-only tuning, K_SF=340.0, and removal of eval mode.
+
+**Next:**
+
+- Update `generate_texel_corpus.ps1` to output raw `sf_cp` column instead of `wdl_stockfish`.
+- Re-run CLOP Phase C with fixed `clop_tune.ps1` baseline methodology.
+- SPRT the Texel WDL-tuned params vs. `baseline-v0.5.6-pretune.jar`.
