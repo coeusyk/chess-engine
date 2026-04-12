@@ -7364,3 +7364,48 @@ Final result (86 games):
    quiet-start self-play, not a broken threshold. Resolution: corpus enrichment via A-2 seed EPDs.
 
 Tuner tests: PASS. Engine-core SearchRegressionTest E1 failure is pre-existing (unrelated to tuner changes).
+
+---
+
+### A-2 Seed Extraction + NPS Benchmark + D-4 Pawn Hash
+
+**A-2 — Seed EPD extraction:** `SeedExtractor.java` utility created. Loads full corpus,
+builds PositionFeatures, filters by eval feature activation per parameter group. Extracted
+9 seed files from quiet-labeled.epd (5,000 positions each):
+
+| Seed file | Target params | Count |
+|---|---|---|
+| `passed_pawn_seeds.epd` | passed pawn MG/EG (idx 780–791) | 5,000 |
+| `rook_7th_seeds.epd` | rook on 7th (idx 815–816) | 5,000 |
+| `rook_open_file_seeds.epd` | rook open file (idx 817–818) | 5,000 |
+| `rook_semi_open_seeds.epd` | rook semi-open (idx 819–820) | 5,000 |
+| `knight_outpost_seeds.epd` | knight outpost (idx 821–822) | 5,000 |
+| `connected_pawn_seeds.epd` | connected pawn (idx 823–824) | 5,000 |
+| `backward_pawn_seeds.epd` | backward pawn (idx 825–826) | 5,000 |
+| `rook_behind_passer_seeds.epd` | rook behind passer (idx 827–828) | 5,000 |
+| `king_safety_seeds.epd` | ATK attackers in king zone | 5,000 |
+
+**Important limitation:** These are subsets of the existing quiet-labeled corpus, not new
+positions from different sources. Adding them back to the corpus for a combined coverage
+audit won't improve the per-position Fisher diagonal average (positions are duplicated).
+The seeds are useful for **per-group B-track tuning** where the optimizer runs on a
+concentrated subset with high feature activation, not for aggregate coverage improvement.
+
+**NPS benchmark** (Ryzen 7 7700X, depth 10, post C-6 revert):
+- Aggregate: **309,259 NPS** ± 55,795
+- vs baseline 319,088: -3.1% (within 5% gate, PASS)
+- Note: user's ASPIRATION_INITIAL_DELTA_CP change (50→40) is in working tree
+
+**D-4 — Pawn hash size sweep:**
+- 1 MB: 96.3% hit rate (≥ 92% ✓)
+- 2 MB: 96.6% hit rate
+- 4 MB: 96.8% hit rate
+- Conclusion: 1 MB is sufficient. No resize needed.
+
+**C-1 SPRT — delta=25 status** (in progress at ~143 games):
+- Score: 43-33-67 (53.5%)
+- Elo: +22.4 ± 42.3
+- LLR: -0.315 / 4.08 (negative — early strong start regressing toward mean)
+- LOS: 85.1%
+- Draw rate: 46.4%
+- Trajectory: LLR peaked at 2.79 at ~84 games, now negative at 143. Classic variance signature.
