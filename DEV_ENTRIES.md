@@ -6991,3 +6991,50 @@ documents WDL-only tuning, K_SF=340.0, and removal of eval mode.
 - Update `generate_texel_corpus.ps1` to output raw `sf_cp` column instead of `wdl_stockfish`.
 - Re-run CLOP Phase C with fixed `clop_tune.ps1` baseline methodology.
 - SPRT the Texel WDL-tuned params vs. `baseline-v0.5.6-pretune.jar`.
+
+---
+
+### [2026-04-12] Phase 13 — Eval Housekeeping: D-2/D-3/D-4 Perf Probes + C-2/C-6 Search Fixes + A-1 Coverage Audit
+
+**Branch:** phase/13-tuner-overhaul
+
+**Built:**
+
+- **#146 — Corpus script fix (tools):** generate_texel_corpus_debug.ps1 was writing wdl_stockfish (sigmoid float) to CSV but PositionLoader.loadCsv expects sf_cp (raw centipawns). Fixed: renamed field/header to sf_cp, removed the sigmoid lambda and dead $sigK variable. No Java changes.
+
+- **#147 — D-2/D-3 — hangingPenalty king-ring pre-filter + attacker BB reuse (eval):**
+  D-2: Added KingRingExp/wKingRingExp expanded-ring masks before the piece while-loops in hangingPenalty(); mask whiteHanging/lackHanging to skip pieces that can't reach the ring.
+  D-3: Extended computeMobilityAndAttack() with a sixth nemyKingRing parameter (KING_ATTACKS exact 8-sq ring, not the wider BLACK_KING_ZONE). Each piece accumulates into 	empWhiteKingRingAttackers/	empBlackKingRingAttackers instance fields when its attacks intersect the ring. hangingPenalty() then does a constant-time bit test instead of calling pieceAttacks(). pieceAttacks() now has zero call sites (left defined, @deprecated).
+
+- **#148 — C-2 — LMR_LOG_DIVISOR constant (search):** Extracted local ln2Sq2 into a named constant LMR_LOG_DIVISOR = 2.0 * Math.log(2) * Math.log(2) with a NOTE correcting the experiment registry description (registry said 2*ln(2)≈1.386; actual value is 2*(ln2)^2≈0.961).
+
+- **#149 — C-6 — Correction history: 4096 entries, fixed key width, depth-weighted updates (search):**
+  SIZE: 1024 → 4096. Key derivation: >>> 54 (10-bit) → >>> 52 (12-bit) to match. Weight formula: GRAIN/max(1,depth) → min(GRAIN, depth*16) so deep-search corrections get full grain weight instead of near-zero.
+
+- **#150 — A-1 — Coverage audit writes CSV report with activation counts (tuner):**
+  New GradientDescent.computeActivationCounts(features, n) parallel stream method; counts activations for sparse linear params (via pf.indices) and for the four ATK params (wN/bN, wB/bB, wR/bR, wQ/bQ). TunerMain coverage audit block updated: adds activation count column to stdout table, raises STARVED threshold 1e-4 → 1e-3, writes coverage-audit-report.csv with full param metadata.
+
+- **#151 — D-4 — Multi-size pawn hash sweep in NpsBenchmarkTest (test):**
+  Added sweep over {1, 2, 4} MB pawn hash sizes using fresh Searcher per size; prints hit rates, asserts at least one size achieves ≥92%.
+
+**Decisions Made:**
+
+- D-3 uses KING_ATTACKS (exact 8-sq ring) as the enemyKingRing parameter — not BLACK_KING_ZONE (wider) — because hangingPenalty was always checking the exact ring. This keeps D-3 a pure refactor with identical eval scores.
+- C-6 depth-weighted formula min(GRAIN, depth*16): depth 1 → 16/256 of GRAIN; depth 16+ → full GRAIN. This matches the intuition that eval corrections gained at higher depths are more reliable.
+- A-1 STARVED threshold moved to 1e-3 to match the experiment registry acceptance criterion (previous 1e-4 was too tight and would flag well-covered params).
+
+**Broke / Fixed:**
+
+- Nothing broken. BUILD SUCCESS, 0 failures, 0 errors across engine-core + engine-tuner.
+
+**Measurements:**
+
+- NPS not measured (D-2/D-3 are eval path changes; NPS impact to be confirmed by benchmark run separately).
+- Test counts: engine-core passes; engine-tuner 106 run, 0 failures, 1 skipped.
+
+**Next:**
+
+- Run NPS benchmark to confirm D-2/D-3 don't degrade eval call throughput.
+- Run SPRT for C-6 correction history tuning vs. baseline.
+- Run --coverage-audit with Phase 13 corpus to generate coverage-audit-report.csv and inspect STARVED params.
+- Proceed with C-1/C-3/C-4/C-5 SPRT experiments as outlined in experiment registry.
