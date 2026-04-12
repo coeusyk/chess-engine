@@ -6732,3 +6732,87 @@ variance expected at 64 games). CLOP is exploring; convergence expected after ~1
 
 **Next:** Phase A to run to completion (300 iter, ~3.8 hr). Read `clop_queen_results.csv` for
 best Q value. Lock Q in `eval_params_override.txt` and launch Phase B with `clop_kbrh_params.json`.
+
+---
+
+### [2026-04-12] Phase 13 — CLOP Phase B: K/B/R/HANGING + Param Bake (Issue #142)
+
+**Branch:** phase/13-tuner-overhaul
+**Issues:** #142
+
+**Phase A result (recap):**
+
+`ATK_WEIGHT_QUEEN=0` (was 5). Best Elo=149.78 at iteration 61/300, TC 3+0.03, 64 games/iter, same-JAR baseline. Locked into `eval_params_override.txt` before Phase B launched.
+
+**Phase B configuration:**
+
+- Params: `ATK_WEIGHT_KNIGHT` (current=5, 1–20), `ATK_WEIGHT_BISHOP` (current=3, 1–20),
+  `ATK_WEIGHT_ROOK` (current=9, 1–20), `HANGING_PENALTY` (current=52, 10–150)
+- `ATK_WEIGHT_QUEEN=0` locked in override file throughout Phase B
+- Same-JAR baseline (no override) vs candidate (override file)
+- TC: 3+0.03, concurrency=15, 64 games/iter, 300 iterations
+- Output CSV: `tools/clop_kbrh_results.csv`
+
+**Phase B best result:**
+
+| Iter | K  | B  | R  | H  | Elo    |
+|------|----|----|----|----|---------| 
+| 283  | 6  | 2  | 12 | 40 | 237.45 |
+
+Best single-iteration peak at iter 283. 300 total iterations complete.
+
+**Marginal analysis (rows in top-50% Elo band):**
+
+| Param  | Best Value | N samples | Avg Elo |
+|--------|-----------|-----------|---------|
+| BISHOP | 2         | 59        | +51.70  |
+| ROOK   | 12        | 41        | +51.02  |
+| KNIGHT | 6         | competitive (K=4–6 all strong) |
+| HANGING| 40        | consistent across top band |
+
+`ATK_WEIGHT_BISHOP=2` was the most robust single-param signal. `ATK_WEIGHT_ROOK=12` had a tight high-N cluster. K=6 emerged as modal best among the top-Elo iterations but K=4 and K=5 also appeared frequently — K=6 selected as the single-iteration peak.
+
+**Params baked into `EvalParams.java`:**
+
+| Parameter         | Old | New | Source      |
+|-------------------|-----|-----|-------------|
+| ATK_WEIGHT_KNIGHT | 5   | 6   | CLOP Phase B |
+| ATK_WEIGHT_BISHOP | 3   | 2   | CLOP Phase B |
+| ATK_WEIGHT_ROOK   | 9   | 12  | CLOP Phase B |
+| ATK_WEIGHT_QUEEN  | 5   | 0   | CLOP Phase A |
+| HANGING_PENALTY   | 52  | 40  | CLOP Phase B |
+| TEMPO             | 17  | 17  | unchanged (Texel-converged, SPRT-confirmed) |
+
+**`SearchRegressionTest.java` updates:**
+
+Three positions whose `bestmove` changed as a direct consequence of the new eval weights:
+
+- `P5` (`8/8/3k4/8/1PP5/8/8/2K5 w`): `c1d2` → `b4b5`
+  Lower HANGING_PENALTY (52→40) reduces king-advance urgency; higher ROOK_WEIGHT (9→12)
+  shifts ordering toward pawn-push activity.
+- `E7` (`8/8/8/4k3/8/8/1K1NB3/8 w`): `b2c3` → `d2f3`
+  KNIGHT weight bump (5→6) raises knight-centralisation scores; d2f3 attacks e5+h4.
+- `E8` (`7k/p7/8/8/8/8/7P/6RK w`): `h2h4` → `g1g5`
+  Higher ROOK weight (9→12) increases rook-activity value; rook activation g1g5 preferred
+  over pawn push.
+
+All three are equivalent winning continuations — no regression in game-play quality.
+
+**Broke / Fixed:**
+
+- `clop_tune.ps1 Write-OverrideFile`: prior phase-B runs were overwriting the locked Q=0
+  instead of merging. Fixed in commit `fdd2824`: Write-OverrideFile now reads the existing
+  file, updates/adds only the current parameter, and rewrites — preserving all locked params
+  from prior phases.
+
+**Measurements:**
+
+- engine-core tests: 162 run, 0 failures, 2 skipped ✓
+- engine-tuner tests: 116 run, 0 failures, 1 skipped ✓
+- Fat JAR: `engine-uci-0.5.6-SNAPSHOT-shaded.jar` (2.2 MB, rebuilt 2026-04-12 18:37)
+
+**Next:**
+
+- SPRT: `phase13-clop-final` (new JAR with baked params) vs `baseline-v0.5.6-pretune.jar`
+  TC=10+0.1, H0=0 elo, H1=+5 elo, alpha=0.05, beta=0.05, 8 games/iter
+- Expected close-out of issue #142 after SPRT passes.

@@ -208,7 +208,11 @@ class SearchRegressionTest {
             //     fixed ATK_WEIGHT_QUEEN from -1 to +5; kept TEMPO=17, HANGING=52.
             //     Depth-8 preference shifts to c1d2 (king activation). All of c1c2, c1d2,
             //     c1b2, c4c5, b4b5 win; choice is eval-dependent.
-            Arguments.of("P5",  P5_FEN,  "c1d2"),
+            //     Updated 2026-04-12: two-phase CLOP baked in (Q=0 K=6 B=2 R=12 H=40 T=17).
+            //     Lower hanging penalty (52→40) and higher rook attack weight (9→12) slightly
+            //     shift depth-8 king-advance ordering toward b4b5 (pawn push). All of
+            //     c1c2, c1d2, c1b2, c4c5, b4b5 win; choice is eval-dependent.
+            Arguments.of("P5",  P5_FEN,  "b4b5"),
             Arguments.of("P6",  P6_FEN,  "f4f5"),
             // P7: 8/3P4/8/8/8/8/8/3K1k2 — Kd1+Pd7 vs Kf1. d7d8q (immediate promotion)
             //     and d1d2 (king advance toward f1 before promoting) both win. d7d8q gains
@@ -318,7 +322,11 @@ class SearchRegressionTest {
             // E7: b2c3 (king advance toward enemy king on e5) is also valid KBN vs K
             //     technique. Both b2c3 and d2f3 (knight centralisation) win; move order
             //     is eval-dependent. Updated 2026-04-01: new eval terms prefer king advance.
-            Arguments.of("E7",  E7_FEN,  "b2c3"),
+            //     Updated 2026-04-12: two-phase CLOP baked in (Q=0 K=6 B=2 R=12 H=40 T=17).
+            //     Knight weight bump (5→6) slightly raises knight-centralisation scores;
+            //     depth-8 preference shifts to d2f3 (knight to f3, attacks e5+h4). Both
+            //     b2c3 and d2f3 are correct KBN technique; choice is eval-dependent.
+            Arguments.of("E7",  E7_FEN,  "d2f3"),
             // E8: 7k/p7/8/8/8/8/7P/6RK — Kh1+Rg1+Ph2 vs Kh8+Pa7. g1g6 (active rook,
             //     restricts black king on rank 6) and h2h4 (pawn race) both win. Choice is eval-dependent.
             //     Updated 2026-04-02: new terms shift preference to g1g5.
@@ -328,7 +336,11 @@ class SearchRegressionTest {
             //     Updated 2026-04-10: Reverted king safety weights to pre-CLOP (K=5,B=3,R=9);
             //     fixed ATK_WEIGHT_QUEEN from -1 to +5; kept TEMPO=17, HANGING=52.
             //     Depth-8 preference shifts to h2h4 (pawn race). Both g1g5 and h2h4 win; equivalent.
-            Arguments.of("E8",  E8_FEN,  "h2h4"),
+            //     Updated 2026-04-12: two-phase CLOP baked in (Q=0 K=6 B=2 R=12 H=40 T=17).
+            //     Higher rook weight (9→12) increases rook-activity evaluation; rook activation
+            //     g1g5 (centralising rook to 5th) is now preferred over pawn push h2h4.
+            //     Both g1g5 and h2h4 win; choice is eval-dependent.
+            Arguments.of("E8",  E8_FEN,  "g1g5"),
             Arguments.of("E9",  E9_FEN,  "d3e3"),
             Arguments.of("E10", E10_FEN, "a2a6")
         );

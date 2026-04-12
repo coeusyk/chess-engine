@@ -38,27 +38,27 @@ public final class EvalParams {
     public static int HALF_OPEN_FILE_PENALTY = 13;
 
     /** Attacker-pressure weight for enemy knights near the king. */
-    public static int ATK_WEIGHT_KNIGHT = 5;
+    public static int ATK_WEIGHT_KNIGHT = 6;
 
     /** Attacker-pressure weight for enemy bishops near the king. */
-    public static int ATK_WEIGHT_BISHOP = 3;
+    public static int ATK_WEIGHT_BISHOP = 2;
 
     /** Attacker-pressure weight for enemy rooks near the king. */
-    public static int ATK_WEIGHT_ROOK = 9;
+    public static int ATK_WEIGHT_ROOK = 12;
 
     /**
      * Attacker-pressure weight for enemy queens near the king.
      * Fixed from -1 (semantically inverted — queen was reducing pressure) to a
-     * positive value. +5 is the clean baseline before CLOP re-tuning.
+     * positive value. Two-phase CLOP (Phase A, 300 iter, TC 3+0.03) converged to 0.
      */
-    public static int ATK_WEIGHT_QUEEN = 5;
+    public static int ATK_WEIGHT_QUEEN = 0;
 
     // -----------------------------------------------------------------------
     // Evaluator constants
     // -----------------------------------------------------------------------
 
     /** Centipawn penalty applied per undefended attacked non-king piece. */
-    public static int HANGING_PENALTY = 52;
+    public static int HANGING_PENALTY = 40;
 
     /**
      * Side-to-move bonus in centipawns (tempo).
