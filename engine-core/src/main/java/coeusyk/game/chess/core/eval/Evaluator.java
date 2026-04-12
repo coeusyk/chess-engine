@@ -32,8 +32,13 @@ public class Evaluator {
 
     // Temporary attacker weights set during computeMobilityAndAttack(); one per side.
     // Safe: each Searcher owns its own Evaluator instance (single-threaded per search).
-    private int tempWhiteAttackWeight;
-    private int tempBlackAttackWeight;
+    private int  tempWhiteAttackWeight;
+    private int  tempBlackAttackWeight;
+    // D-3: which pieces (by square bit) attack the exact enemy king ring (KING_ATTACKS).
+    // Set during computeMobilityAndAttack(); consumed by hangingPenalty() to avoid
+    // re-computing pieceAttacks() per hanging piece when bEscapes/wEscapes <= 1.
+    private long tempWhiteKingRingAttackers;
+    private long tempBlackKingRingAttackers;
 
     // Mobility bonus per safe square (centipawns)
     private static final int[] MG_MOBILITY = new int[7];
@@ -171,13 +176,16 @@ public class Evaluator {
         int bKingSq = board.getBlackKing() != 0L ? Long.numberOfTrailingZeros(board.getBlackKing()) : -1;
         long wKingZone = wKingSq >= 0 ? KingSafety.WHITE_KING_ZONE[wKingSq] : 0L;
         long bKingZone = bKingSq >= 0 ? KingSafety.BLACK_KING_ZONE[bKingSq] : 0L;
+        // Exact king rings (KING_ATTACKS) for D-3 attacker bitboard accumulation.
+        long wKingRingExact = wKingSq >= 0 ? AttackTables.KING_ATTACKS[wKingSq] : 0L;
+        long bKingRingExact = bKingSq >= 0 ? AttackTables.KING_ATTACKS[bKingSq] : 0L;
 
         // Single pass over each side's pieces: computes mobility AND counts how many
         // of those pieces attack the enemy king zone — eliminating the redundant attack
         // bitboard computations that previously happened in both computeMobilityPacked
         // and KingSafety.attackerPenalty (50% of all sliding-piece magic BB lookups saved).
-        long whiteMobility = computeMobilityAndAttack(board, true,  allOccupancy, blackPawnAtk, bKingZone);
-        long blackMobility = computeMobilityAndAttack(board, false, allOccupancy, whitePawnAtk, wKingZone);
+        long whiteMobility = computeMobilityAndAttack(board, true,  allOccupancy, blackPawnAtk, bKingZone, bKingRingExact);
+        long blackMobility = computeMobilityAndAttack(board, false, allOccupancy, whitePawnAtk, wKingZone, wKingRingExact);
 
         mgScore += unpackMg(whiteMobility) - unpackMg(blackMobility);
         egScore += unpackEg(whiteMobility) - unpackEg(blackMobility);
@@ -291,11 +299,20 @@ public class Evaluator {
             int  bEscapes  = Long.bitCount(bKingRing
                     & ~board.getBlackOccupancy() & ~board.getAttackedByWhite());
             if (bEscapes <= 1) {
+                // D-2: pre-filter to pieces within one extra step of the king ring;
+                // a piece >2 squares away from every king-ring square cannot attack it.
+                long bKingRingExp = bKingRing
+                        | (bKingRing << 8) | (bKingRing >>> 8)
+                        | ((bKingRing & NOT_A_FILE) >>> 1)
+                        | ((bKingRing & NOT_H_FILE) << 1);
+                whiteHanging &= bKingRingExp;
+                // D-3: use the king-ring attacker bitboard precomputed during
+                // computeMobilityAndAttack() instead of recomputing per hanging piece.
                 long tmp = whiteHanging;
                 while (tmp != 0L) {
                     int  sq  = Long.numberOfTrailingZeros(tmp);
                     tmp &= tmp - 1;
-                    if ((pieceAttacks(board, sq, true, allOcc) & bKingRing) != 0L)
+                    if ((tempWhiteKingRingAttackers & (1L << sq)) != 0L)
                         whiteHanging &= ~(1L << sq);
                 }
             }
@@ -309,11 +326,18 @@ public class Evaluator {
             int  wEscapes  = Long.bitCount(wKingRing
                     & ~board.getWhiteOccupancy() & ~board.getAttackedByBlack());
             if (wEscapes <= 1) {
+                // D-2: pre-filter (symmetric with above)
+                long wKingRingExp = wKingRing
+                        | (wKingRing << 8) | (wKingRing >>> 8)
+                        | ((wKingRing & NOT_A_FILE) >>> 1)
+                        | ((wKingRing & NOT_H_FILE) << 1);
+                blackHanging &= wKingRingExp;
+                // D-3: use precomputed attacker bitboard (symmetric with above)
                 long tmp = blackHanging;
                 while (tmp != 0L) {
                     int  sq  = Long.numberOfTrailingZeros(tmp);
                     tmp &= tmp - 1;
-                    if ((pieceAttacks(board, sq, false, allOcc) & wKingRing) != 0L)
+                    if ((tempBlackKingRingAttackers & (1L << sq)) != 0L)
                         blackHanging &= ~(1L << sq);
                 }
             }
@@ -384,10 +408,12 @@ public class Evaluator {
      * (when {@code white=true}) or {@code tempBlackAttackWeight} (when {@code white=false}).
      */
     private long computeMobilityAndAttack(Board board, boolean white, long allOccupancy,
-                                          long enemyPawnAttacks, long enemyKingZone) {
+                                          long enemyPawnAttacks, long enemyKingZone,
+                                          long enemyKingRing) {
         long friendly = white ? board.getWhiteOccupancy() : board.getBlackOccupancy();
         long safeMask = ~friendly & ~enemyPawnAttacks;
         int mgMob = 0, egMob = 0, atkWeight = 0;
+        long kingRingAttackers = 0L;
 
         // Knights
         long pieces = white ? board.getWhiteKnights() : board.getBlackKnights();
@@ -398,6 +424,7 @@ public class Evaluator {
             mgMob += delta * MG_MOBILITY[Piece.Knight];
             egMob += delta * EG_MOBILITY[Piece.Knight];
             if ((attacks & enemyKingZone) != 0) atkWeight += EvalParams.ATK_WEIGHT_KNIGHT;
+            if ((attacks & enemyKingRing) != 0L) kingRingAttackers |= (1L << sq);
             pieces &= pieces - 1;
         }
 
@@ -410,6 +437,7 @@ public class Evaluator {
             mgMob += delta * MG_MOBILITY[Piece.Bishop];
             egMob += delta * EG_MOBILITY[Piece.Bishop];
             if ((attacks & enemyKingZone) != 0) atkWeight += EvalParams.ATK_WEIGHT_BISHOP;
+            if ((attacks & enemyKingRing) != 0L) kingRingAttackers |= (1L << sq);
             pieces &= pieces - 1;
         }
 
@@ -422,6 +450,7 @@ public class Evaluator {
             mgMob += delta * MG_MOBILITY[Piece.Rook];
             egMob += delta * EG_MOBILITY[Piece.Rook];
             if ((attacks & enemyKingZone) != 0) atkWeight += EvalParams.ATK_WEIGHT_ROOK;
+            if ((attacks & enemyKingRing) != 0L) kingRingAttackers |= (1L << sq);
             pieces &= pieces - 1;
         }
 
@@ -435,11 +464,17 @@ public class Evaluator {
             egMob += delta * EG_MOBILITY[Piece.Queen];
             if (EvalParams.ATK_WEIGHT_QUEEN != 0 && (attacks & enemyKingZone) != 0)
                 atkWeight += EvalParams.ATK_WEIGHT_QUEEN;
+            if ((attacks & enemyKingRing) != 0L) kingRingAttackers |= (1L << sq);
             pieces &= pieces - 1;
         }
 
-        if (white) tempWhiteAttackWeight = atkWeight;
-        else       tempBlackAttackWeight = atkWeight;
+        if (white) {
+            tempWhiteAttackWeight      = atkWeight;
+            tempWhiteKingRingAttackers = kingRingAttackers;
+        } else {
+            tempBlackAttackWeight      = atkWeight;
+            tempBlackKingRingAttackers = kingRingAttackers;
+        }
         return packMobility(mgMob, egMob);
     }
 
