@@ -1,65 +1,55 @@
 <#
 .SYNOPSIS
-    CLOP (Confident Local Optimization by Pair-comparisons) tuning loop.
+    CLOP (Confident Local Optimization) — fixed-baseline methodology.
 
 .DESCRIPTION
     Tunes evaluation parameters by running engine-vs-engine matches.  Each iteration:
-      1. Samples a candidate parameter vector (Gaussian around current best).
+      1. Samples a candidate parameter vector (Gaussian around current best, σ=(max-min)/6).
       2. Writes the vector to a temp override file.
-      3. Runs cutechess-cli between candidate and baseline.
+      3. Runs cutechess-cli: candidate (with --param-overrides) vs frozen baseline JAR.
       4. Parses W/D/L and computes a noisy Elo estimate.
       5. Updates the best vector if candidate is better.
       6. Appends a row to clop_results.csv.
 
-    DESIGN PRINCIPLE — why CLOP uses short, noisy iterations
-    ---------------------------------------------------------
-    CLOP is a response-surface optimizer, not a statistical hypothesis test.
-    It needs many cheap samples spread across the parameter space to estimate
-    the gradient, not a handful of high-confidence W/D/L counts per point.
+    METHODOLOGY — fixed baseline is mandatory
+    -----------------------------------------
+    The baseline JAR must be a frozen build that never changes across all iterations.
+    Candidate and baseline must NEVER be the same JAR — same-JAR self-play produces a
+    flat win-rate surface regardless of parameter values and makes all CLOP output noise.
 
-    A run with 300 iterations of 16 games each (4,800 games total) learns the
-    response surface far better than 50 iterations of 200 games (10,000 games)
-    even though it plays fewer total games, because the optimizer gets 6x more
-    gradient steps.  Each noisy observation still moves the estimate in the
-    right direction on average; the noise averages out over iterations.
+    CLOP is a response-surface optimizer, not a hypothesis test. Many cheap noisy
+    iterations beat a few expensive ones. Default: 300 iterations of 16 games each.
+    Do NOT increase GamesPerIteration to "improve accuracy" — use more iterations instead.
+    Confirm CLOP results with SPRT after convergence, not a longer CLOP run.
 
-    Do NOT increase Games to "improve accuracy".  That is the wrong tradeoff
-    for CLOP.  Use more iterations instead.  Do NOT treat CLOP like SPRT —
-    they solve different problems.  SPRT tests a fixed hypothesis; CLOP searches
-    for a better parameter vector.
-
-    If you need confirmation that the best parameters found by CLOP actually
-    improve the engine, run an SPRT after CLOP, not a slow CLOP.
-
-    SLOW MODE (--SlowMode)
-    ----------------------
-    The -SlowMode switch bypasses all guardrails and allows long time controls
-    and large game batches.  It exists solely for final confirmation runs after
-    CLOP has converged.  Do not use it for normal tuning.
+    --AllowSlowConfig
+    -----------------
+    Bypasses the GamesPerIteration > 50 and TC > 30+0.3 guardrails for
+    final confirmation runs only. Does NOT bypass the Iterations < 100 check.
 
 .PARAMETER Params
-    Path to a JSON file describing parameters.  Each entry must have:
+    Path to a JSON file describing parameters. Each entry must have:
     { "name": "TEMPO", "current": 21, "min": 5, "max": 40, "step": 1 }
-
-.PARAMETER Games
-    Games per candidate evaluation.  Default 16.
-    CLOP learns best from many cheap samples — keep this LOW (10–20).
-    Hard error if > 64 unless -SlowMode is set.  64 is the upper bound for
-    single-parameter phases at TC 3+0.03; multi-param phases should use 16–32.
-
-.PARAMETER Iterations
-    Number of CLOP iterations.  Default 300.
-    Warning if < 100 (too few for the optimizer to explore the surface).
+    Default: tools/clop_params.json (relative to script location).
 
 .PARAMETER BaselineJar
-    Path to the fixed baseline JAR.
+    Path to the frozen baseline JAR. Default: tools/baseline-v0.5.6-pretune.jar.
+    Hard error if this file does not exist.
 
 .PARAMETER CandidateJar
     Path to the candidate JAR (must support --param-overrides <path>).
+    Default: auto-detected from engine-uci/target/*-shaded.jar.
+
+.PARAMETER Iterations
+    Number of CLOP iterations. Default 300. Hard error if < 100.
+
+.PARAMETER GamesPerIteration
+    Games per candidate evaluation. Default 16.
+    Hard error if > 50 unless --AllowSlowConfig is set.
 
 .PARAMETER TimeControl
-    cutechess-cli time control string.  Default "tc=1+0.01".
-    Hard error if base time > 3s or increment > 0.03s unless -SlowMode is set.
+    cutechess-cli time control string. Default "10+0.1".
+    Hard error if base > 30s or increment > 0.3s unless --AllowSlowConfig is set.
 
 .PARAMETER CutechessPath
     Full path to cutechess-cli.exe (default "cutechess-cli").
@@ -68,57 +58,52 @@
     Path to opening book EPD (default: auto-detects noob_3moves.epd next to script).
 
 .PARAMETER JavaPath
-    Path to java executable (default: auto-resolved from JAVA_HOME or JAVA env).
+    Path to java executable (default: auto-resolved from JAVA env or PATH).
 
 .PARAMETER OutputDir
     Directory for output files (default: same directory as this script).
 
-.PARAMETER Concurrency
-    cutechess-cli -concurrency value.  Default 0 = auto-detect from logical cores.
-    Auto formula: max(2, logicalCores - 1).
+.PARAMETER CsvFile
+    Name of the results CSV file. Default: clop_results.csv.
 
-.PARAMETER SlowMode
-    Bypass all guardrails.  Allows Games > 50 and TC > 3+0.03.
-    FOR FINAL CONFIRMATION ONLY.  Do not use for normal CLOP tuning.
+.PARAMETER Concurrency
+    cutechess-cli -concurrency value. Default 0 = auto-detect (max(2, logicalCores - 1)).
+
+.PARAMETER AllowSlowConfig
+    Bypasses GamesPerIteration > 50 and TC > 30+0.3 guardrails.
+    FOR FINAL CONFIRMATION ONLY. Does not bypass Iterations < 100.
 
 .EXAMPLE
-    # Normal fast-noisy run (recommended)
-    .\clop_tune.ps1 `
-        -Params       .\clop_params.json `
-        -BaselineJar  .\engine-uci-baseline.jar `
-        -CandidateJar .\engine-uci-candidate.jar
+    # Standard run (recommended)
+    .\clop_tune.ps1
 
 .EXAMPLE
     # Explicit settings
     .\clop_tune.ps1 `
-        -Params       .\clop_params.json `
-        -BaselineJar  .\engine-uci-baseline.jar `
-        -CandidateJar .\engine-uci-candidate.jar `
-        -Games 16 -Iterations 500 -TimeControl "tc=2+0.02"
+        -Params              .\clop_params.json `
+        -BaselineJar         .\baseline-v0.5.6-pretune.jar `
+        -Iterations 500      -GamesPerIteration 16 `
+        -TimeControl "10+0.1"
 
 .EXAMPLE
-    # Slow confirmation run — NOT for tuning
-    .\clop_tune.ps1 `
-        -Params       .\clop_params.json `
-        -BaselineJar  .\engine-uci-baseline.jar `
-        -CandidateJar .\engine-uci-candidate.jar `
-        -SlowMode -Games 200 -TimeControl "tc=10+0.1" -Iterations 50
+    # Slow confirmation run after convergence
+    .\clop_tune.ps1 -AllowSlowConfig -GamesPerIteration 100 -TimeControl "30+0.3" -Iterations 50
 #>
 
 param(
-    [Parameter(Mandatory)] [string] $Params,
-    [int]    $Games         = 16,
-    [int]    $Iterations    = 300,
-    [Parameter(Mandatory)] [string] $BaselineJar,
-    [Parameter(Mandatory)] [string] $CandidateJar,
-    [string] $TimeControl   = "tc=1+0.01",
-    [string] $CutechessPath = "cutechess-cli",
-    [string] $OpeningBook   = "",
-    [string] $JavaPath      = "java",
-    [string] $OutputDir     = $PSScriptRoot,
-    [string] $CsvFile       = "clop_results.csv",  # override per-phase: e.g. clop_queen_results.csv
-    [int]    $Concurrency   = 0,   # 0 = auto-detect
-    [switch] $SlowMode             # bypass guardrails; for final confirmation only
+    [string] $Params              = "",   # default set below to PSScriptRoot-relative path
+    [string] $BaselineJar         = "",   # default: tools/baseline-v0.5.6-pretune.jar
+    [string] $CandidateJar        = "",   # default: auto-detect from engine-uci/target/*-shaded.jar
+    [int]    $Iterations          = 300,
+    [int]    $GamesPerIteration   = 16,
+    [string] $TimeControl         = "10+0.1",
+    [string] $CutechessPath       = "cutechess-cli",
+    [string] $OpeningBook         = "",
+    [string] $JavaPath            = "java",
+    [string] $OutputDir           = $PSScriptRoot,
+    [string] $CsvFile             = "clop_results.csv",
+    [int]    $Concurrency         = 0,
+    [switch] $AllowSlowConfig
 )
 
 Set-StrictMode -Version Latest
@@ -134,13 +119,50 @@ if ($CutechessPath -eq "cutechess-cli") {
     }
 }
 if (-not (Test-Path $CutechessPath -ErrorAction SilentlyContinue) -and -not (Get-Command $CutechessPath -ErrorAction SilentlyContinue)) {
-    Write-Error "cutechess-cli not found at '$CutechessPath'. Set `$env:CUTECHESS or add cutechess-cli.exe to PATH."
+    Write-Error "[CLOP] cutechess-cli not found at '$CutechessPath'. Set `$env:CUTECHESS or add cutechess-cli.exe to PATH."
     exit 1
 }
 
 # -----------------------------------------------------------------------
-# 1a. Helper: parse "tc=BASE+INC" or "BASE+INC" → @{base=float; inc=float}
-#     Returns $null if the format is not recognised.
+# 1a. Apply defaults for paths that were not specified
+# -----------------------------------------------------------------------
+if ([string]::IsNullOrEmpty($Params)) {
+    $Params = Join-Path $PSScriptRoot 'clop_params.json'
+}
+if ([string]::IsNullOrEmpty($BaselineJar)) {
+    $BaselineJar = Join-Path $PSScriptRoot 'baseline-v0.5.6-pretune.jar'
+}
+if ([string]::IsNullOrEmpty($CandidateJar)) {
+    $pattern = Join-Path $PSScriptRoot '..' 'engine-uci' 'target' '*-shaded.jar'
+    $found = Get-Item $pattern -ErrorAction SilentlyContinue | Select-Object -Last 1
+    if (-not $found) {
+        Write-Error "[CLOP] Candidate JAR not found at '$pattern'. Run 'mvnw package -pl engine-uci -DskipTests' first."
+        exit 1
+    }
+    $CandidateJar = $found.FullName
+}
+
+# -----------------------------------------------------------------------
+# 1b. Validate baseline JAR exists (hard error — frozen baseline is mandatory)
+# -----------------------------------------------------------------------
+if (-not (Test-Path $BaselineJar)) {
+    Write-Error "[CLOP] Baseline JAR not found: $BaselineJar`nThe baseline JAR must be a frozen build that never changes. Provide a valid --BaselineJar path."
+    exit 1
+}
+
+# -----------------------------------------------------------------------
+# 1c. Resolve absolute paths and guard against same-JAR self-play
+# -----------------------------------------------------------------------
+$BaselineJar  = (Resolve-Path $BaselineJar).Path
+$CandidateJar = (Resolve-Path $CandidateJar).Path
+
+if ($BaselineJar -eq $CandidateJar) {
+    Write-Error "[CLOP] Baseline and candidate JARs are the same file ('$BaselineJar').`nSame-JAR self-play produces a flat win-rate surface regardless of parameter values.`nProvide a frozen baseline via --BaselineJar (default: tools/baseline-v0.5.6-pretune.jar)."
+    exit 1
+}
+
+# -----------------------------------------------------------------------
+# 1d. Helper: parse "tc=BASE+INC" or "BASE+INC" → @{base=float; inc=float}
 # -----------------------------------------------------------------------
 function Parse-TimeControl {
     param([string]$tc)
@@ -151,185 +173,176 @@ function Parse-TimeControl {
     return $null
 }
 
-# -----------------------------------------------------------------------
-# 1b. Guardrails — reject configs that are wrong for CLOP
-#
-#     CLOP is a noisy response-surface optimizer, not a hypothesis test.
-#     Many cheap samples beat a few expensive ones.  Default limits:
-#       Games  ≤ 50   — more games per iteration is counterproductive
-#       TC base ≤ 3s  — long TCs slow down iteration without helping CLOP
-#     -SlowMode bypasses all guardrails for final confirmation runs only.
-# -----------------------------------------------------------------------
 $parsedTC = Parse-TimeControl $TimeControl
 if ($null -eq $parsedTC) {
-    Write-Error "Cannot parse TimeControl '$TimeControl'.  Expected format: tc=BASE+INC (e.g. tc=1+0.01)."
+    Write-Error "[CLOP] Cannot parse TimeControl '$TimeControl'. Expected format: BASE+INC (e.g. 10+0.1)."
     exit 1
 }
 # Normalise: cutechess-cli -each requires the "tc=" prefix
 if ($TimeControl -notmatch '^tc=') { $TimeControl = "tc=$TimeControl" }
 
-if (-not $SlowMode) {
-    if ($Games -gt 64) {
-        Write-Error ("Games=$Games exceeds the CLOP fast-tuning limit of 64. " +
-            "CLOP learns from many cheap samples, not a few precise ones. " +
-            "Use -Games 16-64 (64 is the ceiling for single-param phases at TC 3+0.03). " +
-            "Add -SlowMode to bypass — FOR FINAL CONFIRMATION ONLY.")
+# -----------------------------------------------------------------------
+# 1e. Guardrails
+#     --AllowSlowConfig bypasses GamesPerIteration and TC limits only.
+#     Iterations < 100 is always a hard error (no bypass).
+# -----------------------------------------------------------------------
+if ($Iterations -lt 100) {
+    Write-Error "[CLOP] Iterations=$Iterations is below the minimum of 100. The optimizer needs at least 100 iterations to explore the response surface. Set --Iterations 300 (default)."
+    exit 1
+}
+
+if (-not $AllowSlowConfig) {
+    if ($GamesPerIteration -gt 50) {
+        Write-Error ("[CLOP] GamesPerIteration=$GamesPerIteration exceeds the CLOP limit of 50. " +
+            "CLOP learns from many cheap samples — use 16 (default). Add --AllowSlowConfig to bypass (final confirmation only).")
         exit 1
     }
-    if ($parsedTC.base -gt 3.0 -or $parsedTC.inc -gt 0.03) {
-        Write-Error ("TimeControl '$TimeControl' exceeds the CLOP fast-tuning limit (base > 3s or inc > 0.03s). " +
-            "Use a short TC such as 'tc=1+0.01' or 'tc=2+0.02'. " +
-            "Add -SlowMode to bypass — but only for final confirmation, not for tuning.")
+    if ($parsedTC.base -gt 30.0 -or $parsedTC.inc -gt 0.3) {
+        Write-Error ("[CLOP] TimeControl '$TimeControl' exceeds the CLOP limit (base > 30s or inc > 0.3s). " +
+            "Use default 10+0.1. Add --AllowSlowConfig to bypass (final confirmation only).")
         exit 1
-    }
-    if ($Iterations -lt 100) {
-        Write-Warning ("Iterations=$Iterations is very low for CLOP. " +
-            "The optimizer needs at least 100 iterations to explore the response surface. " +
-            "Consider -Iterations 300 (default).")
     }
 } else {
-    Write-Warning "SLOW MODE active — guardrails bypassed.  Intended for final confirmation only."
+    Write-Warning "[CLOP] --AllowSlowConfig active — GamesPerIteration and TC guardrails bypassed."
 }
 
 # -----------------------------------------------------------------------
-# 1c. Auto-detect concurrency if not specified
-#     Formula: max(2, logicalCores - 1) so at least one core stays free
-#     for the OS and cutechess bookkeeping.  Capped at Games to avoid
-#     spinning up more worker slots than there are games to run.
+# 1f. Auto-detect concurrency
 # -----------------------------------------------------------------------
 if ($Concurrency -le 0) {
     $logicalCores = [System.Environment]::ProcessorCount
-    $Concurrency  = [Math]::Min($Games, [Math]::Max(2, $logicalCores - 1))
+    $Concurrency  = [Math]::Min($GamesPerIteration, [Math]::Max(2, $logicalCores - 1))
 }
 
 # -----------------------------------------------------------------------
-# 1d. Load and validate parameter definitions
+# 1g. Load and validate parameter definitions
 # -----------------------------------------------------------------------
 if (-not (Test-Path $Params)) {
-    Write-Error "Params file not found: $Params"
+    Write-Error "[CLOP] Params file not found: $Params"
     exit 1
 }
 $paramDefs = Get-Content $Params -Raw | ConvertFrom-Json
 if ($null -eq $paramDefs -or $paramDefs.Count -eq 0) {
-    Write-Error "Params file is empty or invalid JSON."
+    Write-Error "[CLOP] Params file is empty or invalid JSON."
     exit 1
 }
 foreach ($p in $paramDefs) {
-    if ([string]::IsNullOrEmpty($p.name)) { Write-Error "Each param entry must have a 'name' field."; exit 1 }
-    if ($p.min -ge $p.max) { Write-Error "Parameter '$($p.name)': min must be < max."; exit 1 }
+    if ([string]::IsNullOrEmpty($p.name)) { Write-Error "[CLOP] Each param entry must have a 'name' field."; exit 1 }
+    if ($p.min -ge $p.max) { Write-Error "[CLOP] Parameter '$($p.name)': min must be < max."; exit 1 }
 }
 
 # -----------------------------------------------------------------------
 # 2. Resolve output paths
 # -----------------------------------------------------------------------
-$overrideFile  = Join-Path $OutputDir "eval_params_override.txt"
-$csvPath       = Join-Path $OutputDir $CsvFile
-$BaselineJar   = (Resolve-Path $BaselineJar).Path
-$CandidateJar  = (Resolve-Path $CandidateJar).Path
+$overrideFile = Join-Path $OutputDir "eval_params_override.txt"
+$csvPath      = Join-Path $OutputDir $CsvFile
+$pgnPath      = Join-Path $OutputDir "clop_results.pgn"
 
-# CSV header
+# CSV header (write only if file does not exist)
 if (-not (Test-Path $csvPath)) {
-    $header = "iteration," + ($paramDefs | ForEach-Object { $_.name } | Join-String -Separator ",") + ",wins,draws,losses,elo,best_elo"
+    $header = "iteration," + ($paramDefs | ForEach-Object { $_.name } | Join-String -Separator ",") + ",wins,draws,losses,elo_estimate,is_best"
     Set-Content $csvPath $header
 }
 
 # -----------------------------------------------------------------------
-# 2b. Startup log — print estimated runtime before touching cutechess
-#
-#     Estimate: avg game duration = 2 * (base + avgHalfMoves * inc)
-#     where avgHalfMoves ≈ 80 (40 moves × 2 sides).
-#     With -concurrency C, throughput ≈ C games / avgGameSec.
+# 2b. Startup log
 # -----------------------------------------------------------------------
-$avgGameSec    = 2.0 * ($parsedTC.base + 80.0 * $parsedTC.inc)
-$gamesPerHour  = [Math]::Max(1, [int]($Concurrency * 3600.0 / $avgGameSec))
-$totalGames    = $Iterations * $Games
-$estHours      = $totalGames / [double]$gamesPerHour
-$estMinutes    = [Math]::Round($estHours * 60)
+$avgGameSec   = 2.0 * ($parsedTC.base + 80.0 * $parsedTC.inc)
+$gamesPerHour = [Math]::Max(1, [int]($Concurrency * 3600.0 / $avgGameSec))
+$totalGames   = $Iterations * $GamesPerIteration
+$estMinutes   = [Math]::Round($totalGames / [double]$gamesPerHour * 60)
 
-Write-Host "=== CLOP tuning startup ==="
-Write-Host "  Params file      : $Params ($($paramDefs.Count) parameters)"
-Write-Host "  Games / iter     : $Games"
-Write-Host "  Iterations       : $Iterations"
-Write-Host "  Time control     : $TimeControl"
-Write-Host "  Concurrency      : $Concurrency"
-Write-Host "  Total games      : $totalGames"
-Write-Host "  Est. games/hr    : ~$gamesPerHour"
-Write-Host "  Est. wall time   : ~$estMinutes min (~$([Math]::Round($estHours,1)) hr)"
-if ($SlowMode) { Write-Host "  *** SLOW MODE *** guardrails bypassed" }
-Write-Host "  Candidate JAR    : $CandidateJar"
-Write-Host "  Baseline JAR     : $BaselineJar"
-Write-Host "  Results CSV      : $csvPath"
+$paramRanges = ($paramDefs | ForEach-Object { "$($_.name) [$($_.min)..$($_.max)]" }) -join "  "
+
+Write-Host "[CLOP] Baseline JAR : $BaselineJar"
+Write-Host "[CLOP] Candidate JAR: $CandidateJar"
+Write-Host "[CLOP] Parameters   : $paramRanges"
+Write-Host "[CLOP] Iterations   : $Iterations  |  Games/iter: $GamesPerIteration  |  TC: $($TimeControl -replace '^tc=','')"
+Write-Host "[CLOP] Concurrency  : $Concurrency"
+Write-Host "[CLOP] Est. total games : $totalGames"
+Write-Host "[CLOP] Est. wall time   : ~$estMinutes minutes"
+if ($AllowSlowConfig) { Write-Host "[CLOP] *** --AllowSlowConfig active ***" }
 Write-Host ""
 
 # -----------------------------------------------------------------------
 # 3. Helper: compute Elo from W/D/L
-#    Uses W + D/2 vs D/2 + L to avoid zero-denominator for draws.
+#    Formula: 400 * log10((W + 0.5*D) / (L + 0.5*D))
+#    When W=0, use W_eff=0.5. When L=0, use L_eff=0.5 (floor to avoid log(0)).
 # -----------------------------------------------------------------------
 function Compute-Elo {
     param([int]$w, [int]$d, [int]$l)
-    $effectiveWins   = $w + $d / 2.0
-    $effectiveLosses = $l + $d / 2.0
-    if ($effectiveWins -le 0 -or $effectiveLosses -le 0) { return $null }
-    return [Math]::Round(400 * [Math]::Log10($effectiveWins / $effectiveLosses), 2)
+    # Floor at 0.5 only when numerator or denominator would be exactly zero (W=0,D=0 or L=0,D=0)
+    $wEff = [Math]::Max($w + $d / 2.0, 0.5)
+    $lEff = [Math]::Max($l + $d / 2.0, 0.5)
+    return [Math]::Round(400.0 * [Math]::Log10($wEff / $lEff), 1)
 }
 
 # -----------------------------------------------------------------------
 # 4. Helper: write override file
-# Merges tuned values with any params already in the file that are NOT
-# being tuned this phase (e.g. ATK_WEIGHT_QUEEN locked from Phase A).
+#    Merges tuned values with any params already in the file that are NOT
+#    being tuned this phase (e.g. ATK_WEIGHT_QUEEN locked from a prior phase).
 # -----------------------------------------------------------------------
 function Write-OverrideFile {
     param([hashtable]$values)
     $merged = [ordered]@{}
-    # Preserve existing params not in the current tuning set
     if (Test-Path $overrideFile) {
         foreach ($line in (Get-Content $overrideFile)) {
             if ($line -match '^(\w+)=(.+)$') { $merged[$Matches[1]] = $Matches[2] }
         }
     }
-    # Apply / override with current iteration values
     foreach ($k in $values.Keys) { $merged[$k] = $values[$k] }
     $lines = $merged.Keys | ForEach-Object { "$_=$($merged[$_])" }
     Set-Content $overrideFile $lines -Encoding UTF8
 }
 
 # -----------------------------------------------------------------------
-# 5. Helper: run cutechess-cli and parse W/D/L
+# 5. Helper: Box-Muller Gaussian sample
+# -----------------------------------------------------------------------
+function Sample-Gaussian {
+    param([double]$mean, [double]$sigma, [System.Random]$rng)
+    $u1 = [Math]::Max($rng.NextDouble(), 1e-10)   # guard against log(0)
+    $u2 = $rng.NextDouble()
+    $z  = [Math]::Sqrt(-2.0 * [Math]::Log($u1)) * [Math]::Cos(2.0 * [Math]::PI * $u2)
+    return $mean + $sigma * $z
+}
+
+# -----------------------------------------------------------------------
+# 6. Helper: run cutechess-cli and parse W/D/L
+#    Candidate receives --param-overrides <file>; baseline receives nothing.
 # -----------------------------------------------------------------------
 function Run-Match {
     param([hashtable]$candidateValues)
 
     Write-OverrideFile $candidateValues
 
-    # Resolve java executable.  When -JavaPath is left at its default ('java'),
-    # use PATH resolution only — avoids JAVA_HOME paths that contain spaces
-    # breaking cutechess-cli's cmd= key-value parsing.
+    # Resolve java executable — avoid JAVA_HOME paths with spaces that break cutechess cmd=
     $java = if ($JavaPath -ne 'java') {
         $JavaPath
     } elseif ($env:JAVA -and (Test-Path (Join-Path $env:JAVA 'bin\java.exe'))) {
         Join-Path $env:JAVA 'bin\java.exe'
     } else {
-        'java'  # let PATH resolve — works when java.exe is on PATH without spaces
+        'java'
     }
 
-    # Auto-detect opening book if not specified (same logic as sprt.ps1)
+    # Auto-detect opening book if not specified
     $book = $OpeningBook
     if ([string]::IsNullOrEmpty($book)) {
         $defaultBook = Join-Path $PSScriptRoot 'noob_3moves.epd'
         if (Test-Path $defaultBook) { $book = $defaultBook }
     }
 
-    # Each key=value must be a separate argument for cutechess-cli
     $cutechessArgs = @(
-        "-engine", "name=Vex-candidate", "cmd=$java", "arg=-jar", "arg=$CandidateJar", "arg=--param-overrides", "arg=$overrideFile", "proto=uci",
-        "-engine", "name=Vex-baseline",  "cmd=$java", "arg=-jar", "arg=$BaselineJar",  "proto=uci",
+        "-engine", "name=Vex-candidate", "cmd=$java", "arg=-jar", "arg=$CandidateJar",
+                   "arg=--param-overrides", "arg=$overrideFile", "proto=uci",
+        "-engine", "name=Vex-baseline",  "cmd=$java", "arg=-jar", "arg=$BaselineJar", "proto=uci",
         "-each", $TimeControl,
-        "-games", $Games,
+        "-games", $GamesPerIteration,
         "-repeat",
         "-recover",
         "-resign",  "movecount=5", "score=600",
         "-draw",    "movenumber=40", "movecount=8", "score=10",
-        "-concurrency", $Concurrency
+        "-concurrency", $Concurrency,
+        "-pgnout", $pgnPath
     )
 
     if (-not [string]::IsNullOrEmpty($book) -and (Test-Path $book)) {
@@ -338,27 +351,14 @@ function Run-Match {
 
     $output = & $CutechessPath @cutechessArgs 2>&1 | Out-String
 
-    # Parse last "Score of X vs Y: W - D - L  [...]" line (intermediate lines possible with -ratinginterval)
+    # Parse last "Score of X vs Y: W - D - L" line
     $matchResult = ([regex]"Score of .+?: (\d+) - (\d+) - (\d+)").Matches($output) | Select-Object -Last 1
     if ($matchResult) {
         $g = $matchResult.Groups
-        return @{
-            wins   = [int]$g[1].Value
-            draws  = [int]$g[2].Value
-            losses = [int]$g[3].Value
-        }
+        return @{ wins = [int]$g[1].Value; draws = [int]$g[2].Value; losses = [int]$g[3].Value }
     }
-    # Legacy fallback (single match)
-    if ($output -match "Score of .+?: (\d+) - (\d+) - (\d+)") {
-        return @{
-            wins   = [int]$Matches[1]
-            draws  = [int]$Matches[2]
-            losses = [int]$Matches[3]
-        }
-    }
-
-    Write-Warning "Could not parse W/D/L from cutechess output:`n$output"
-    return @{ wins = 0; draws = $Games; losses = 0 }
+    Write-Warning "[CLOP] Could not parse W/D/L from cutechess output:`n$output"
+    return @{ wins = 0; draws = $GamesPerIteration; losses = 0 }
 }
 
 # -----------------------------------------------------------------------
@@ -368,13 +368,13 @@ function Run-Match {
 # Initialise current best from param definitions
 $bestValues = @{}
 foreach ($p in $paramDefs) { $bestValues[$p.name] = [int]$p.current }
-$bestElo = $null
+$bestElo  = $null
+$bestIter = 0
 
-# Single RNG instance hoisted above both loops so each parameter in each
-# iteration gets an independently-seeded random draw.  Creating [Random]::new()
-# inside the foreach loop would re-use the same TickCount seed for every
-# parameter in the same iteration, collapsing all displacements onto the
-# diagonal and degrading CLOP exploration.
+# Single RNG instance — hoisted so each parameter gets independent draws.
+# Creating [Random]::new() inside the foreach would re-use the same TickCount
+# seed for every parameter in the same millisecond, collapsing all
+# displacements onto the diagonal and degrading exploration.
 $rng = [System.Random]::new()
 
 for ($iter = 1; $iter -le $Iterations; $iter++) {
@@ -382,57 +382,66 @@ for ($iter = 1; $iter -le $Iterations; $iter++) {
     # --- Sample candidate values ---
     $candidate = @{}
     if ($iter -eq 1) {
-        # First iteration: use current (baseline) values
+        # Iteration 1: use current (JSON "current") values exactly — anchors the surface
         foreach ($p in $paramDefs) { $candidate[$p.name] = [int]$p.current }
     } else {
-        # Gaussian sample around current best, std = (max - min) / 6
+        # Iterations 2+: Box-Muller Gaussian centred on current best, σ = (max-min)/6
         foreach ($p in $paramDefs) {
-            $std   = ($p.max - $p.min) / 6.0
-            $raw   = $bestValues[$p.name] + $rng.NextDouble() * $std * 2 - $std
-            $step  = [int]$p.step
-            $snapped = [int][Math]::Round($raw / $step) * $step
-            $clamped = [Math]::Max($p.min, [Math]::Min($p.max, $snapped))
-            $candidate[$p.name] = [int]$clamped
+            $sigma    = ($p.max - $p.min) / 6.0
+            $raw      = Sample-Gaussian -mean $bestValues[$p.name] -sigma $sigma -rng $rng
+            $step     = [int]$p.step
+            $snapped  = [int][Math]::Round($raw / $step) * $step
+            $clamped  = [Math]::Max([int]$p.min, [Math]::Min([int]$p.max, $snapped))
+            $candidate[$p.name] = $clamped
         }
     }
 
-    $paramStr = ($candidate.Keys | Sort-Object | ForEach-Object { "$_=$($candidate[$_])" }) -join " "
-    Write-Host "[$iter/$Iterations] Testing: $paramStr"
+    $paramStr = ($paramDefs | ForEach-Object { "$($_.name)=$($candidate[$_.name])" }) -join " "
+    $iterPad  = $iter.ToString().PadLeft(($Iterations.ToString().Length))
 
     # --- Run match ---
     $result = Run-Match $candidate
     $w = $result.wins; $d = $result.draws; $l = $result.losses
     $elo = Compute-Elo $w $d $l
 
-    $eloStr = if ($null -eq $elo) { "N/A" } else { $elo.ToString() }
-    Write-Host "  W=$w D=$d L=$l  Elo=$eloStr  (best so far: $(if ($null -eq $bestElo) { 'N/A' } else { $bestElo }))"
+    # Format Elo with explicit sign, e.g. +18.4 or -3.2
+    $eloSign = if ($elo -ge 0) { '+' } else { '' }
+    $eloStr  = "${eloSign}$elo"
 
     # --- Update best ---
-    if ($null -ne $elo -and ($null -eq $bestElo -or $elo -gt $bestElo)) {
-        $bestElo = $elo
+    $isBest = 0
+    if ($null -eq $bestElo -or $elo -gt $bestElo) {
+        $bestElo   = $elo
+        $bestIter  = $iter
         $bestValues = $candidate.Clone()
-        Write-Host "  --> New best! Elo=$bestElo"
+        $isBest    = 1
     }
 
-    # --- Log to CSV ---
+    $bestSign = if ($bestElo -ge 0) { '+' } else { '' }
+    $bestStr  = "${bestSign}$bestElo @ iter $bestIter"
+
+    Write-Host "[CLOP] Iter $iterPad/$Iterations | $paramStr | W:$w D:$d L:$l | Elo: $eloStr | Best: $bestStr"
+
+    # --- Append CSV row ---
     $valueFields = ($paramDefs | ForEach-Object { $candidate[$_.name] }) -join ","
-    $row = "$iter,$valueFields,$w,$d,$l,$eloStr,$(if ($null -eq $bestElo) { 'N/A' } else { $bestElo })"
-    Add-Content $csvPath $row
+    Add-Content $csvPath "$iter,$valueFields,$w,$d,$l,$elo,$isBest"
 }
 
 # -----------------------------------------------------------------------
 # 7. Summary
 # -----------------------------------------------------------------------
 Write-Host ""
-Write-Host "=== CLOP complete ==="
-Write-Host "Best Elo : $bestElo"
-Write-Host "Best params:"
-foreach ($k in $bestValues.Keys | Sort-Object) {
-    Write-Host "  $k = $($bestValues[$k])"
+Write-Host "[CLOP] Run complete."
+Write-Host "[CLOP]   Iterations      : $Iterations"
+Write-Host "[CLOP]   Best Elo        : $(if ($bestElo -ge 0) { '+' } else { '' })$bestElo  (iter $bestIter)"
+Write-Host "[CLOP]   Best params     :"
+foreach ($k in ($paramDefs | ForEach-Object { $_.name })) {
+    Write-Host "[CLOP]     $k = $($bestValues[$k])"
 }
+Write-Host "[CLOP]   Override file   : $overrideFile"
+Write-Host "[CLOP]   Results CSV     : $csvPath"
+Write-Host "[CLOP]   PGN archive     : $pgnPath"
 Write-Host ""
-Write-Host "Override file written to : $overrideFile"
-Write-Host "Full results in          : $csvPath"
 
-# Write best params to override file for downstream use
+# Write best params to override file for downstream SPRT / bake step
 Write-OverrideFile $bestValues

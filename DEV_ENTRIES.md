@@ -6835,9 +6835,11 @@ computeMobilityPacked() (for mobility), and again in KingSafety.attackerPenalty(
 12+ of 24 sliding-piece magic bitboard lookups were pure redundancy (~50% wasted).
 
 **Additional waste fixed:**
-- ookFileScores() returned 
+- 
+ookFileScores() returned 
 ew long[2] — heap allocation per eval
-- ookBehindPasserScores() returned 
+- 
+ookBehindPasserScores() returned 
 ew int[2] — heap allocation per eval
 - Queen king-zone check ran even when ATK_WEIGHT_QUEEN = 0
 
@@ -6849,8 +6851,12 @@ ew int[2] — heap allocation per eval
     iterates pieces exactly once, computing mobility AND king-zone attacker weight together.
     Result stored in 	empWhiteAttackWeight / 	empBlackAttackWeight instance fields.
   - Attacker penalty w²/4 computed inline in valuate().
-  - ookFileScores() wrapper removed; ookFilePacked() called directly twice.
-  - ookBehindPasserScores() → ookBehindPasserPacked() returning long (mg«32|eg).
+  - 
+ookFileScores() wrapper removed; 
+ookFilePacked() called directly twice.
+  - 
+ookBehindPasserScores() → 
+ookBehindPasserPacked() returning long (mg«32|eg).
   - Queen king-zone check guarded: if (ATK_WEIGHT_QUEEN != 0 && ...).
 - KingSafety.java:
   - WHITE_KING_ZONE / BLACK_KING_ZONE changed from private to package-accessible.
@@ -6884,3 +6890,51 @@ computation.
 **Next:**
 - Wait for SPRT phase13-clop-final verdict.
 - Eval cache (transpose-keyed) as next NPS target.
+
+---
+
+### [2026-04-12] Phase 13 — CLOP Methodology Fix: Fixed-Baseline Rewrite (Issue #142)
+
+**Branch:** phase/13-tuner-overhaul
+**Issues:** #142
+
+**Problem — same-JAR self-play (all Phase A/B CLOP results are invalid):**
+
+CLOP Phases A and B ran both the baseline and candidate from the same JAR file
+(`engine-uci-0.5.6-SNAPSHOT-shaded.jar`). The candidate received `--param-overrides`
+with a sampled vector; the baseline used compiled-in defaults — which were the same
+values since the override file was generated from the same `EvalParams`. Result: win
+rate ≈ 50% at every point in parameter space, giving a flat response surface. CLOP had
+no gradient signal to follow and all output was noise. The baked Phase B values
+(ATK_WEIGHT_KNIGHT=6, _BISHOP=2, _ROOK=12, _QUEEN=0, HANGING_PENALTY=40) should be
+treated as untrusted until confirmed by SPRT.
+
+**Fix — `tools/clop_tune.ps1` rewritten:**
+
+- `--BaselineJar` defaults to `tools/baseline-v0.5.6-pretune.jar` (frozen in git).
+  Hard error if the file does not exist.
+- `--CandidateJar` auto-detects from `engine-uci/target/*-shaded.jar`.
+- Same-JAR guard: hard error if resolved paths are equal.
+- Only the candidate receives `--param-overrides <tempfile>`. Baseline receives nothing.
+- Gaussian sampling: replaced uniform `mean ± std` perturbation with proper Box-Muller
+  transform, σ = (max − min) / 6, clamped to [min, max].
+- Elo formula: `400 × log10(max(W + D/2, 0.5) / max(L + D/2, 0.5))`.
+- Guardrails tightened: GamesPerIteration > 50 or TC > 30+0.3 → hard error
+  (bypass with `--AllowSlowConfig`); Iterations < 100 → always hard error, no bypass.
+- Per-iteration log: `[CLOP] Iter  12/300 | PARAM=val ... | W:9 D:4 L:3 | Elo: +18.4 | Best: +24.1 @ iter 7`
+- CSV: `is_best` column (0/1 flag) replaces `best_elo`. PGN archive written to `clop_results.pgn`.
+- End-of-run summary: `[CLOP] Run complete.` with indented param list.
+
+**Status of previous CLOP results:**
+
+- Phase A (ATK_WEIGHT_QUEEN only): **INVALID** — same-JAR flat surface.
+- Phase B (ATK_WEIGHT_KNIGHT/BISHOP/ROOK + HANGING_PENALTY): **INVALID** — same-JAR flat surface.
+- Baked values (K=6, B=2, R=12, Q=0, H=40) may still be improvements (gain comes from
+  Texel tuner, not CLOP), but have no valid CLOP evidence. SPRT running to confirm.
+
+**Tests:** 162 engine-core tests pass (no Java changes). Script is pure PowerShell.
+
+**Next:**
+
+- Run `.\clop_tune.ps1` from `tools/` with defaults for a correct Phase C run.
+- Confirm final params via SPRT before baking.
