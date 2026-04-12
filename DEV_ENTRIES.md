@@ -7435,3 +7435,27 @@ concentrated subset with high feature activation, not for aggregate coverage imp
   - Per-position: kiwipete +6.2%, cpw-pos3 +11.5%, cpw-pos5 +10.1%, cpw-pos6 +10.4%
 - Tests: 162 run, 1 failure (pre-existing E1 from user's delta=40 change), 2 skipped.
   No new regressions.
+
+### [2026-04-13] Phase 13 — B-2 Prep: Pawn-Structure Group Mask Fix + C-Track Script Prep
+
+**Built:**
+
+- Fixed `buildGroupMask("pawn-structure")` in tuner `EvalParams.java` to include
+  `connected_pawn` (indices 823–824) and `backward_pawn` (indices 825–826). Previously
+  these were lumped into the `scalars` catch-all group. Corresponding `scalars` group now
+  excludes those 4 indices via two non-contiguous fills.
+- Updated Javadoc to document the new non-contiguous group ranges.
+- Updated NPS baseline in copilot instructions: 319,088 → 340,144 (post D-2/D-3
+  hangingPenalty optimization). Regression gate now 323,000 (5% of 340k).
+- Created `run_c3_sprt.ps1` — futility margin depth-1 (125/175 vs 150), Bonferroni m=2.
+- Created `run_c4_sprt.ps1` — singular extension margin (4/2 vs 8 cp/ply), Bonferroni m=2.
+- Created `run_c5_sprt.ps1` — null move R=3 boundary (depth>5 vs depth>6), single SPRT.
+
+**Decisions Made:**
+
+- `rook_behind_passer` (827–828) stays in `scalars` — it's a rook bonus, not a pawn
+  structure term, despite being adjacent to `backward_pawn` in the index layout.
+- C-3/C-4/C-5 scripts follow the same pattern as C-1/C-2: patch, build, SPRT, restore.
+
+**Measurements:**
+- engine-tuner: 106 tests, 0 failures, 1 skipped. BUILD SUCCESS.
