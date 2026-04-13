@@ -112,11 +112,13 @@ if (-not (Test-Path $ResultsDir)) { New-Item -ItemType Directory -Path $ResultsD
 $TS      = Get-Date -Format 'yyyyMMdd_HHmmss'
 $tagPart = if ($Tag) { "${Tag}_" } else { "" }
 $PgnOut  = Join-Path $ResultsDir "sprt_${tagPart}$TS.pgn"
+$LogOut  = $PgnOut -replace '\.pgn$', '.log'
 
 Write-Host "SPRT: new vs old  ELO0=$Elo0 ELO1=$Elo1 alpha=$Alpha beta=$Beta  TC=$TC  concurrency=$Concurrency  threads/engine=$EngineThreads"
 Write-Host "NEW : $($NewResolved.Path)"
 Write-Host "OLD : $($OldResolved.Path)"
 Write-Host "PGN : $PgnOut"
+Write-Host "LOG : $LogOut"
 Write-Host ""
 
 $newEngineArgs = @("name=Vex-new", "cmd=$Java", "arg=-jar", "arg=$($NewResolved.Path)")
@@ -151,7 +153,8 @@ $sprtArgs = @("elo0=$Elo0", "elo1=$Elo1", "alpha=$Alpha", "beta=$Beta")
     -concurrency $Concurrency `
     -ratinginterval 10 `
     @openingsArgs `
-    -pgnout $PgnOut
+    -pgnout $PgnOut | Tee-Object -FilePath $LogOut
 
 Write-Host ""
 Write-Host "PGN saved to: $PgnOut"
+Write-Host "LOG saved to: $LogOut"
