@@ -7801,3 +7801,42 @@ worse, actively regressing below baseline.
 | `engine-core/…/search/Searcher.java` | SINGULAR_EXTENSION_MARGIN 0 → -10 |
 | `engine-core/…/search/SearcherTest.java` | Update singular margin test expectations |
 | `tools/run_c4_sprt.ps1` | Update OrigOffsetValue 0 → -10 (new baseline) |
+
+---
+
+### [2025-07-12] Phase 13 — C-5 Null Move Depth Threshold SPRT
+
+**Built:**
+
+- Ran C-5 SPRT experiment: tested NULL_MOVE_DEPTH_THRESHOLD values 2 and 4
+  against the current value of 3. The threshold controls when null move pruning
+  activates (`depth >= NULL_MOVE_DEPTH_THRESHOLD`).
+- Both candidates accepted H1 (Elo > 0 vs baseline):
+  - **threshold=2:** LLR 3.77, Elo +74.1 ±51.0, LOS 99.8%, DrawRatio 45.0%, 100 games
+  - **threshold=4:** LLR 3.77, Elo +90.3 ±60.0, LOS 99.8%, DrawRatio 54.2%, 59 games
+- Winner: threshold=4 (higher Elo). Raising the threshold delays NMP by one ply,
+  allowing deeper tactical verification before pruning. The higher draw ratio (54.2%
+  vs 45.0%) suggests more stable play.
+- Baked NULL_MOVE_DEPTH_THRESHOLD = 4 into Searcher.java.
+
+**Decisions:**
+
+- Selected threshold=4 over threshold=2: +90.3 vs +74.1 Elo. Both passed H1 but
+  threshold=4 converged faster (59 vs 100 games) with stronger signal.
+- SPRT config: H0=0, H1=50, alpha=0.025, beta=0.025, BonferroniM=2,
+  TC=60+0.6, concurrency=4, threads=2, minGames=600, opening book=noob_3moves.epd.
+
+**Broke / Fixed:**
+
+- No test failures. NULL_MOVE_DEPTH_THRESHOLD is not directly tested in SearcherTest.
+
+**Measurements:**
+
+- `engine-core` test suite: **163 run, 0 failures, 2 skipped** (TacticalSuiteTest + NpsBenchmarkTest).
+
+**Files changed:**
+
+| File | Change |
+|------|--------|
+| `engine-core/…/search/Searcher.java` | NULL_MOVE_DEPTH_THRESHOLD 3 → 4 |
+| `tools/run_c5_sprt.ps1` | Update OrigThreshValue 3 → 4 (new baseline) |

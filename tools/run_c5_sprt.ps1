@@ -30,7 +30,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $SearcherFile       = "engine-core\src\main\java\coeusyk\game\chess\core\search\Searcher.java"
-$OrigThreshValue    = 3
+$OrigThreshValue    = 4
 $ThreshConstant     = '    private static final int NULL_MOVE_DEPTH_THRESHOLD = '
 $ExpectedThresh     = "${ThreshConstant}${OrigThreshValue};"
 $BaselineJar        = "tools\baseline-v0.5.6-pretune.jar"
