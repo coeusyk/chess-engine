@@ -40,9 +40,9 @@ public class Searcher {
     private static final int SINGULAR_DEPTH_THRESHOLD = 8;
     private static final int SINGULAR_MARGIN_PER_PLY = 8;
     // Flat base offset added on top of depth*SINGULAR_MARGIN_PER_PLY.
-    // Current value = 0 (neutral). Positive → looser margin (fewer extensions);
-    // negative → tighter margin (more extensions). Exposed for C-4 SPRT.
-    private static final int SINGULAR_EXTENSION_MARGIN = 0;
+    // Negative → tighter margin (more extensions); positive → looser margin.
+    // C-4 SPRT result: -10 accepted H1 at +162 Elo (BonferroniM=2, TC=60+0.6).
+    private static final int SINGULAR_EXTENSION_MARGIN = -10;
     private static final int TB_WIN_SCORE = MATE_SCORE - 2 * MAX_PLY;
     private static final int TB_LOSS_SCORE = -(MATE_SCORE - 2 * MAX_PLY);
 

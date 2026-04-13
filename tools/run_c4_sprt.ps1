@@ -31,7 +31,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $SearcherFile       = "engine-core\src\main\java\coeusyk\game\chess\core\search\Searcher.java"
-$OrigOffsetValue    = 0
+$OrigOffsetValue    = -10
 $OffsetConstant     = '    private static final int SINGULAR_EXTENSION_MARGIN = '
 $ExpectedOffset     = "${OffsetConstant}${OrigOffsetValue};"
 $BaselineJar        = "tools\baseline-v0.5.6-pretune.jar"

@@ -7758,3 +7758,46 @@ worse, actively regressing below baseline.
 | `engine-core/src/test/resources/regression/draw_failures.epd` | Add seed #3 (KRN FEN) |
 | `engine-core/…/search/SearchRegressionTest.java` | Set contempt in draw-failure test |
 | `engine-core/…/search/SearcherTest.java` | Fix stale LMR expected value 2 → 1 |
+
+---
+
+### [2025-07-12] Phase 13 — C-4 Singular Extension Margin SPRT
+
+**Built:**
+
+- Ran C-4 SPRT experiment: tested SINGULAR_EXTENSION_MARGIN offsets of -10 and +10
+  against the baseline value of 0. The singular margin formula is
+  `depth * SINGULAR_MARGIN_PER_PLY + SINGULAR_EXTENSION_MARGIN` (i.e. `depth * 8 + offset`).
+- Both candidates accepted H1 (Elo > 0 vs baseline):
+  - **neg10 (offset = -10):** LLR 3.75, Elo +162.3 ±93.8, 100% LOS, 35.9% draws
+  - **pos10 (offset = +10):** LLR 3.73, Elo +116.2 ±72.2, 99.9% LOS, 35.5% draws
+- Winner: neg10 (higher Elo). A tighter margin triggers more singular extensions,
+  which strengthens tactical resolution in the search tree.
+- Baked SINGULAR_EXTENSION_MARGIN = -10 into Searcher.java.
+- Updated `singularMarginScalesByDepth` test expectations:
+  `getSingularMargin(8)` = 54 (was 64), `getSingularMargin(10)` = 70 (was 80).
+
+**Decisions:**
+
+- Selected neg10 over pos10 despite both passing H1: +162 Elo vs +116 Elo.
+  The tighter margin means singular extensions fire more often at shallower depths,
+  which is consistent with the engine's aggressive pruning profile.
+- SPRT config: H0=0, H1=50, alpha=0.05, beta=0.05, BonferroniM=2,
+  TC=60+0.6, concurrency=4, threads=2, minGames=600, opening book=noob_3moves.epd.
+
+**Broke / Fixed:**
+
+- `singularMarginScalesByDepth` test failed after baking -10 offset (expected 64, got 54).
+  Updated expected values to match new formula: 8×8−10=54, 10×8−10=70.
+
+**Measurements:**
+
+- `engine-core` test suite: **163 run, 0 failures, 2 skipped** (TacticalSuiteTest + NpsBenchmarkTest).
+
+**Files changed:**
+
+| File | Change |
+|------|--------|
+| `engine-core/…/search/Searcher.java` | SINGULAR_EXTENSION_MARGIN 0 → -10 |
+| `engine-core/…/search/SearcherTest.java` | Update singular margin test expectations |
+| `tools/run_c4_sprt.ps1` | Update OrigOffsetValue 0 → -10 (new baseline) |

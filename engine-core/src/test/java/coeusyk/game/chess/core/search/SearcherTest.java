@@ -432,8 +432,8 @@ class SearcherTest {
     void singularMarginScalesByDepth() {
         Searcher searcher = new Searcher();
 
-        assertEquals(64, searcher.getSingularMarginForTesting(8));
-        assertEquals(80, searcher.getSingularMarginForTesting(10));
+        assertEquals(54, searcher.getSingularMarginForTesting(8));
+        assertEquals(70, searcher.getSingularMarginForTesting(10));
     }
 
     @Test
