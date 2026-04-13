@@ -7623,3 +7623,46 @@ LLR bounds ±4.08, H0=0 vs H1=50 Elo).
 - Delta=25 was terminated early but trended similarly to delta=40 — modest gain at best.
 
 **Next:** C-2 (LMR log divisor).
+
+---
+
+### [2026-04-13] Phase 13 — C-2 LMR Divisor: Final Disposition
+
+**Context:**
+
+C-2 tested three alternative `LMR_LOG_DIVISOR` values against the baseline
+(`2*(ln 2)²  ≈ 0.961`).  A larger divisor shrinks the reduction `R`, making LMR
+less aggressive.  A separate threshold test then checked whether lowering the
+move-index guard from `moveIndex >= 4` to `moveIndex >= 3` adds further value
+when used together with the winning divisor.
+
+Formula: `R = max(1, floor(1 + ln(depth)·ln(moveIndex) / LMR_LOG_DIVISOR))`
+
+**Divisor SPRT** — Bonferroni m=3, bounds ±4.08, H0=0 vs H1=50:
+
+| Divisor | Games | W–L–D        | Score | Elo ± SE       | LOS   | LLR   | Verdict |
+|---------|-------|--------------|-------|----------------|-------|-------|---------|
+| 1.386   | 126   | 31–38–57     | 47.2% | −22.1 (approx) | —     | —     | H0 accepted |
+| **1.7** | 319   | 103–65–151   | 55.9% | **+41.6** (approx) | — | — | **H1 accepted** |
+| 2.0     | 417   | 125–81–211   | 55.3% | +36.8 ± 23.4   | —     | +4.12 | H1 accepted |
+
+Best divisor: **1.7** (largest Elo gain, fewest games to converge).
+
+**Threshold SPRT** — single test, bounds ±2.94, H0=0 vs H1=50:
+
+| Config                | Games | W–L–D    | Score | Elo ± SE     | LOS   | LLR   | Verdict |
+|-----------------------|-------|----------|-------|--------------|-------|-------|---------|
+| div=1.7 + thresh>=3 vs thresh>=4 | 43 | 8–17–18 | 41.9% | −73.8 ± 81.2 | 3.6% | −3.1 | H0 accepted |
+
+Lowering the move-index guard from 4 to 3 is harmful at divisor=1.7.
+
+**Decisions Made:**
+
+- **`LMR_LOG_DIVISOR = 1.7`** applied permanently to `Searcher.java` (line 62).
+- **`moveIndex >= 4`** guard unchanged.
+- PGN artefacts: `tools/results/sprt_phase13-c2-div1_386_*.pgn`,
+  `tools/results/sprt_phase13-c2-div1_7_*.pgn`,
+  `tools/results/sprt_phase13-c2-div2_*.pgn`,
+  `tools/results/sprt_phase13-c2-thresh3_*.pgn`
+
+**Next:** C-3 (futility margin).

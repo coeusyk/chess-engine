@@ -58,8 +58,8 @@ public class Searcher {
     // R = max(1, floor(1 + ln(depth)*ln(moveIndex) / LMR_LOG_DIVISOR)).
     // NOTE: the experiment registry (C-2) describes this as "2*ln(2) ≈ 1.386" — that is wrong.
     // The actual value is 2*(ln(2))^2 ≈ 0.961 (more aggressive: larger R at equal depth/move).
-    // C-2 SPRT candidates test LARGER divisors (1.386, 1.7, 2.0) = LESS aggressive LMR.
-    private static final double LMR_LOG_DIVISOR = 2.0 * Math.log(2) * Math.log(2);
+    // C-2 SPRT (phase13): divisor=1.7 H1 accepted (+41.6 Elo, 319 games). moveIndex>=4 unchanged.
+    private static final double LMR_LOG_DIVISOR = 1.7;
 
     // Delta pruning thresholds used in quiescence search.
     // Values mirror the SEE piece table to keep material reasoning consistent.
