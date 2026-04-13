@@ -169,7 +169,7 @@ public class UciApplication {
                 System.out.println("option name BookFile type string default Performance.bin");
                 System.out.println("option name BookDepth type spin default 20 min 0 max 50");
                 System.out.println("option name BookVariance type spin default 50 min 0 max 100");
-                System.out.println("option name Contempt type spin default 50 min 0 max 100");
+                System.out.println("option name Contempt type spin default 50 min 0 max 200");
                 System.out.println("uciok");
             } else if ("isready".equals(line)) {
                 System.out.println("readyok");
@@ -384,7 +384,7 @@ public class UciApplication {
             }
         } else if ("contempt".equals(optionNameLower)) {
             try {
-                contempt = Math.max(0, Math.min(100, Integer.parseInt(valuePart)));
+                contempt = Math.max(0, Math.min(200, Integer.parseInt(valuePart)));
             } catch (NumberFormatException ignored) {
             }
         }

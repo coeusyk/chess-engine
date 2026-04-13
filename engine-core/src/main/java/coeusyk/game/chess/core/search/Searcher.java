@@ -39,6 +39,10 @@ public class Searcher {
     private static final int MAX_CHECK_EXTENSIONS = 16;
     private static final int SINGULAR_DEPTH_THRESHOLD = 8;
     private static final int SINGULAR_MARGIN_PER_PLY = 8;
+    // Flat base offset added on top of depth*SINGULAR_MARGIN_PER_PLY.
+    // Current value = 0 (neutral). Positive → looser margin (fewer extensions);
+    // negative → tighter margin (more extensions). Exposed for C-4 SPRT.
+    private static final int SINGULAR_EXTENSION_MARGIN = 0;
     private static final int TB_WIN_SCORE = MATE_SCORE - 2 * MAX_PLY;
     private static final int TB_LOSS_SCORE = -(MATE_SCORE - 2 * MAX_PLY);
 
@@ -47,6 +51,10 @@ public class Searcher {
     // that a draw score of 0 is more appropriate.  Prevents balanced middlegames from
     // being distorted by a non-zero contempt penalty.
     private static final int CONTEMPT_THRESHOLD = 150;
+    // Default contempt value (centipawns) used by the UCI interface and the draw-failure
+    // regression tests.  Exposed as a public constant so tests can reference it without
+    // hard-coding the magic number 50.
+    public static final int DEFAULT_CONTEMPT_CP = 50;
 
     // Correction history: maps pawn structure to a static-eval bias.
     // Stored at GRAIN scale; applied as: adjustedEval = rawEval + ch[color][key] / GRAIN.
@@ -1323,7 +1331,7 @@ public class Searcher {
     }
 
     private int getSingularMargin(int depth) {
-        return depth * SINGULAR_MARGIN_PER_PLY;
+        return depth * SINGULAR_MARGIN_PER_PLY + SINGULAR_EXTENSION_MARGIN;
     }
 
     private boolean shouldApplyPawnPromotionExtension(

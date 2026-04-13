@@ -7696,3 +7696,65 @@ worse, actively regressing below baseline.
 - PGN artefacts: `tools/results/sprt_phase13-c3-fut125_*.pgn`, `tools/results/sprt_phase13-c3-fut175_*.pgn`
 
 **Next:** C-4 (singular extension margin).
+
+---
+
+### [2026-04-13] Phase 13 — Repetition Contempt + Draw-Failure Regression Pipeline
+
+**Built:**
+
+- `Searcher.java`: Added `public static final int DEFAULT_CONTEMPT_CP = 50` named constant
+  so tests and tooling can reference the default value without a hard-coded literal.
+  `contemptScore(Board)` and `setContempt(int)` were already wired in; constant is the
+  only new code.
+- `engine-uci/UciApplication.java`: Corrected `Contempt` UCI spin option from
+  `max 100` → `max 200` to match the spec (allows values up to 200 cp via GUI sliders).
+  Corresponding `Math.min(100, …)` clamp in `setoption` handler updated to
+  `Math.min(200, …)` so values 101–200 are now accepted without silently capping.
+- `draw_failures.epd`: Added seed #3 — KR vs KRN+passed-pawn position (Black to move,
+  FEN `7R/4p3/8/2r1K3/5bNk/1P6/8/8 b - - 1 74`). This is the KR–KRN endgame from Issue
+  #125 where Stockfish identifies a forced win but the pre-contempt engine cycled via
+  3-fold repetition and drew. Note: the spec contained a transcription error (`8R7`
+  summed to 16 per rank); the canonical corrected FEN (`7R/...`) is used.
+- `SearchRegressionTest.java` (`engineDoesNotDrawFromWinningPosition`): Updated to create
+  a `Searcher` with `setContempt(Searcher.DEFAULT_CONTEMPT_CP)` before searching.
+  Without this, the test used `contemptCp=0` (Searcher default), which meant the KRN
+  seed would cycle and return 0 even after the fix — defeating the test's purpose.
+- `SearcherTest.java` (`lmrReductionTableIsPrecomputed`): Fixed the stale expected value
+  from `2` to `1`. The Phase 13 C-2 experiment changed `LMR_LOG_DIVISOR` from `0.961`
+  (2*(ln 2)²) to `1.7`, making R = max(1, floor(1 + ln(3)·ln(3)/1.7)) = 1 at
+  (depth=3, move=3). The old expected value of 2 has been wrong since C-2 landed.
+
+**Decisions Made:**
+
+- Kept `Searcher()` default `contemptCp = 0` (unchanged). Tests that want contempt must
+  call `setContempt()` explicitly; this avoids silently changing best-move outputs in
+  the 30-position `SearchRegressionTest` stability suite.
+- Contempt is applied to `isRepetitionDraw()` and `isFiftyMoveRuleDraw()` paths only;
+  `isInsufficientMaterial()` always returns 0 (genuine draw, not avoidable).
+- CONTEMPT_THRESHOLD = 150 unchanged. The threshold prevents distorting balanced
+  middlegames; typical game positions that trigger the draw-failure heuristic are  
+  ≥ 300 cp in advantage (well above threshold).
+- Spec FEN `8R7/...` has a transcription error (rank-8 field sums to 16); corrected to
+  `7R/...` (White Rook on h8). Noted in EPD comment.
+
+**Broke / Fixed:**
+
+- `lmrReductionTableIsPrecomputed`: pre-existing failure since Phase 13 C-2 changed the
+  LMR formula. Fixed alongside this entry.
+
+**Measurements:**
+
+- `engine-core` test suite: **163 run, 0 failures, 2 skipped** (same as baseline).
+  - `engineDoesNotDrawFromWinningPosition`: 3 tests (KQvK, KRvK, KRvsKRN) pass.
+  - `lmrReductionTableIsPrecomputed`: now passes with expected value corrected to 1.
+
+**Files changed:**
+
+| File | Change |
+|------|--------|
+| `engine-core/…/search/Searcher.java` | Add `DEFAULT_CONTEMPT_CP = 50` constant |
+| `engine-uci/…/uci/UciApplication.java` | Contempt UCI option max 100 → 200 |
+| `engine-core/src/test/resources/regression/draw_failures.epd` | Add seed #3 (KRN FEN) |
+| `engine-core/…/search/SearchRegressionTest.java` | Set contempt in draw-failure test |
+| `engine-core/…/search/SearcherTest.java` | Fix stale LMR expected value 2 → 1 |

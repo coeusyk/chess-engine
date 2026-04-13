@@ -360,7 +360,11 @@ class SearchRegressionTest {
     @Tag("regression")
     void engineDoesNotDrawFromWinningPosition(String label, String fen) {
         Board board = new Board(fen);
-        SearchResult result = new Searcher().searchDepth(board, DRAW_FAILURE_DEPTH);
+        Searcher searcher = new Searcher();
+        // Contempt must be active: repetition draws return ±contemptCp instead of 0,
+        // nudging the engine away from cycling in clearly winning positions.
+        searcher.setContempt(Searcher.DEFAULT_CONTEMPT_CP);
+        SearchResult result = searcher.searchDepth(board, DRAW_FAILURE_DEPTH);
         assertNotEquals(0, result.scoreCp(),
                 "Engine returned draw score 0 for draw-failure position: " + label + " | " + fen);
     }
