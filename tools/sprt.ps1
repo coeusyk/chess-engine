@@ -51,6 +51,10 @@ param(
     [int]$BonferroniM = 0,
     [int]$Elo0 = 0,
     [int]$Elo1 = 50,
+    [string]$TC = '5+0.05',      # Time control (e.g. '60+0.6' for slower games)
+    [int]$Concurrency = 2,       # Concurrent games (cutechess-cli -concurrency)
+    [int]$EngineThreads = 1,     # UCI Threads option per engine (>1 enables SMP)
+    [int]$MinGames = 0,          # Minimum games before SPRT verdict (0 = no minimum)
     [string]$OpeningsFile = "",  # Default: auto-detect noob_3moves.epd next to script
     [string]$Tag = "",           # Optional descriptive tag for PGN filename (e.g. "phase13-material-group")
     [string]$ParamOverrides = "" # Optional path to eval_params_override.txt from CLOP
@@ -63,7 +67,7 @@ $ErrorActionPreference = 'Stop'
 $Alpha    = 0.05
 $Beta     = 0.05
 $MaxGames = 20000
-$TC       = '5+0.05'
+# Note: $TC, $Concurrency, $EngineThreads, $MinGames come from script parameters
 
 # --- Bonferroni family-wise error correction (#136) ---
 if ($BonferroniM -gt 1) {
@@ -109,13 +113,16 @@ $TS      = Get-Date -Format 'yyyyMMdd_HHmmss'
 $tagPart = if ($Tag) { "${Tag}_" } else { "" }
 $PgnOut  = Join-Path $ResultsDir "sprt_${tagPart}$TS.pgn"
 
-Write-Host "SPRT: new vs old  ELO0=$Elo0 ELO1=$Elo1 alpha=$Alpha beta=$Beta  TC=$TC"
+Write-Host "SPRT: new vs old  ELO0=$Elo0 ELO1=$Elo1 alpha=$Alpha beta=$Beta  TC=$TC  concurrency=$Concurrency  threads/engine=$EngineThreads"
 Write-Host "NEW : $($NewResolved.Path)"
 Write-Host "OLD : $($OldResolved.Path)"
 Write-Host "PGN : $PgnOut"
 Write-Host ""
 
 $newEngineArgs = @("name=Vex-new", "cmd=$Java", "arg=-jar", "arg=$($NewResolved.Path)")
+if ($EngineThreads -gt 1) {
+    $newEngineArgs += @("option.Threads=$EngineThreads")
+}
 if ($ParamOverrides -ne '' -and (Test-Path $ParamOverrides)) {
     $poResolved = (Resolve-Path $ParamOverrides).Path
     $newEngineArgs += @("arg=--param-overrides", "arg=$poResolved")
@@ -123,17 +130,25 @@ if ($ParamOverrides -ne '' -and (Test-Path $ParamOverrides)) {
 }
 $newEngineArgs += @("proto=uci")
 
+$oldEngineArgs = @("name=Vex-old", "cmd=$Java", "arg=-jar", "arg=$($OldResolved.Path)")
+if ($EngineThreads -gt 1) {
+    $oldEngineArgs += @("option.Threads=$EngineThreads")
+}
+$oldEngineArgs += @("proto=uci")
+
+$sprtArgs = @("elo0=$Elo0", "elo1=$Elo1", "alpha=$Alpha", "beta=$Beta")
+
 & $Cutechess `
     -engine @newEngineArgs `
-    -engine "name=Vex-old" "cmd=$Java" "arg=-jar" "arg=$($OldResolved.Path)" proto=uci `
+    -engine @oldEngineArgs `
     -each tc=$TC `
     -games $MaxGames `
     -repeat `
     -recover `
     -resign movecount=5 score=600 `
     -draw movenumber=40 movecount=8 score=10 `
-    -sprt "elo0=$Elo0" "elo1=$Elo1" "alpha=$Alpha" "beta=$Beta" `
-    -concurrency 2 `
+    -sprt @sprtArgs `
+    -concurrency $Concurrency `
     -ratinginterval 10 `
     @openingsArgs `
     -pgnout $PgnOut

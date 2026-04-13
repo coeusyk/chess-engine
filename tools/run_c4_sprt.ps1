@@ -3,36 +3,39 @@
     Build and run SPRT tests for C-4: Singular Extension Margin Tuning.
 
 .DESCRIPTION
-    Tests SINGULAR_MARGIN_PER_PLY values 4 and 2 against the current 8 cp.
-    Then optionally tests SINGULAR_DEPTH_THRESHOLD = 6 vs current 8 at the
-    best margin.
+    Tests SINGULAR_EXTENSION_MARGIN base offsets -10 and +10 against the
+    current baseline value of 0 cp (effective margin = depth*8 + offset).
+
+    Candidate A: offset = -10  (tighter margin → more singular extensions)
+    Candidate B: offset = +10  (looser  margin → fewer singular extensions)
+
+    SPRT settings per the Phase 13 spec:
+      H0=0 Elo, H1=50 Elo, α=β=0.025 (Bonferroni M=2, ±3.66 bounds)
+      TC: 60+0.6 — Concurrency: 4 games, 2 threads/engine — Min 600 games
 
     Run from the chess-engine/ directory:
         .\tools\run_c4_sprt.ps1
 
-.PARAMETER Margins
-    One or more margin-per-ply values to test. Default: 4, 2.
+.PARAMETER Offsets
+    One or more SINGULAR_EXTENSION_MARGIN offsets to test. Default: -10, 10.
 
 .PARAMETER SkipBuild
     If set, skips the Maven build and reuses JAR files already present in tools/.
 #>
 param(
-    [int[]]$Margins = @(4, 2),
+    [int[]]$Offsets = @(-10, 10),
     [switch]$SkipBuild
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$SearcherFile     = "engine-core\src\main\java\coeusyk\game\chess\core\search\Searcher.java"
-$OrigMarginValue  = 8
-$MarginBaseLine   = '    private static final int SINGULAR_MARGIN_PER_PLY = '
-$ExpectedMargin   = "${MarginBaseLine}${OrigMarginValue};"
-$OrigThreshValue  = 8
-$ThreshBaseLine   = '    private static final int SINGULAR_DEPTH_THRESHOLD = '
-$ExpectedThresh   = "${ThreshBaseLine}${OrigThreshValue};"
-$BaselineJar      = "tools\baseline-v0.5.6-pretune.jar"
-$VersionSuffix    = "0.5.6-SNAPSHOT"
+$SearcherFile       = "engine-core\src\main\java\coeusyk\game\chess\core\search\Searcher.java"
+$OrigOffsetValue    = 0
+$OffsetConstant     = '    private static final int SINGULAR_EXTENSION_MARGIN = '
+$ExpectedOffset     = "${OffsetConstant}${OrigOffsetValue};"
+$BaselineJar        = "tools\baseline-v0.5.6-pretune.jar"
+$VersionSuffix      = "0.5.6-SNAPSHOT"
 
 if (-not (Test-Path $SearcherFile)) {
     Write-Error "Searcher.java not found at '$SearcherFile'. Run from chess-engine/ directory."
@@ -44,80 +47,84 @@ if (-not (Test-Path $BaselineJar)) {
 }
 
 $currentContent = Get-Content $SearcherFile -Raw
-if ($currentContent -notmatch [regex]::Escape($ExpectedMargin)) {
-    Write-Error "SINGULAR_MARGIN_PER_PLY not at expected value ($OrigMarginValue). Restore Searcher.java before running."
+if ($currentContent -notmatch [regex]::Escape($ExpectedOffset)) {
+    Write-Error "SINGULAR_EXTENSION_MARGIN not at expected value ($OrigOffsetValue). Restore Searcher.java before running."
     exit 1
 }
 
 Write-Host "C-4 SPRT Experiment — Singular Extension Margin Tuning"
 Write-Host "-------------------------------------------------------"
-Write-Host "Margins to test  : $($Margins -join ', ')"
-Write-Host "Current margin   : $OrigMarginValue cp/ply"
+Write-Host "Parameter        : SINGULAR_EXTENSION_MARGIN (base offset)"
+Write-Host "Current value    : $OrigOffsetValue cp"
+Write-Host "Offsets to test  : $($Offsets -join ', ')"
+Write-Host "Formula          : getSingularMargin(depth) = depth*SINGULAR_MARGIN_PER_PLY + offset"
 Write-Host "Baseline JAR     : $BaselineJar"
-Write-Host "Bonferroni m     : $($Margins.Count)"
+Write-Host "SPRT settings    : H0=0/H1=50 Elo, BonferroniM=2, TC=60+0.6, conc=4, threads=2, minGames=600"
 Write-Host ""
 
 $results = @{}
 
-# Phase 1: Test margin per ply values
-foreach ($margin in $Margins) {
-    Write-Host "=== SINGULAR_MARGIN_PER_PLY = $margin ==="
-    $patchedLine = "${MarginBaseLine}${margin};"
-    $jar = "tools\engine-uci-c4-singmar$margin.jar"
+foreach ($offset in $Offsets) {
+    $safeName = if ($offset -lt 0) { "neg$([Math]::Abs($offset))" } else { "pos$offset" }
+    $Jar = "tools\engine-uci-c4-singext${safeName}.jar"
+
+    Write-Host ""
+    Write-Host "=== SINGULAR_EXTENSION_MARGIN = $offset ==="
+    Write-Host ""
 
     try {
         if (-not $SkipBuild) {
-            $patched = $currentContent -replace [regex]::Escape($ExpectedMargin), $patchedLine
-            Set-Content $SearcherFile $patched -Encoding UTF8 -NoNewline
-            Write-Host "[C-4] Patched: SINGULAR_MARGIN_PER_PLY = $margin"
+            $patchedContent = $currentContent -replace [regex]::Escape($ExpectedOffset), "${OffsetConstant}${offset};"
+            Set-Content $SearcherFile $patchedContent -Encoding UTF8 -NoNewline
+            Write-Host "[C-4] Patched SINGULAR_EXTENSION_MARGIN to $offset"
 
             Write-Host "[C-4] Building..."
             & .\mvnw.cmd package -pl engine-uci -am -DskipTests -q
-            if ($LASTEXITCODE -ne 0) { throw "Maven build failed for margin=$margin (exit $LASTEXITCODE)" }
+            if ($LASTEXITCODE -ne 0) { throw "Maven build failed (exit $LASTEXITCODE)" }
 
             $builtJar = "engine-uci\target\engine-uci-${VersionSuffix}.jar"
             if (-not (Test-Path $builtJar)) { throw "Built JAR not found at: $builtJar" }
-            Copy-Item $builtJar $jar -Force
-            Write-Host "[C-4] JAR saved: $jar"
+            Copy-Item $builtJar $Jar -Force
+            Write-Host "[C-4] JAR saved: $Jar"
         } else {
-            if (-not (Test-Path $jar)) { throw "SkipBuild set but JAR not found: $jar" }
-            Write-Host "[C-4] Reusing existing JAR: $jar (SkipBuild)"
+            if (-not (Test-Path $Jar)) { throw "SkipBuild set but JAR not found: $Jar" }
+            Write-Host "[C-4] Reusing existing JAR: $Jar (SkipBuild)"
         }
 
-        Write-Host "[C-4] Running SPRT (BonferroniM=$($Margins.Count))..."
+        Write-Host "[C-4] Running SPRT for offset=$offset..."
         & .\tools\sprt.ps1 `
-            -New $jar `
+            -New $Jar `
             -Old $BaselineJar `
-            -BonferroniM $Margins.Count `
-            -Tag "phase13-c4-singmar$margin"
+            -Tag "phase13-c4-singext${safeName}" `
+            -BonferroniM 2 `
+            -Elo0 0 -Elo1 50 `
+            -TC '60+0.6' `
+            -Concurrency 4 `
+            -EngineThreads 2 `
+            -MinGames 600
 
-        $results[$margin] = "COMPLETED"
+        $results[$offset] = "COMPLETED"
     } catch {
-        $results[$margin] = "FAILED: $_"
-        Write-Warning "C-4 margin=$margin failed: $_"
+        Write-Warning "C-4 offset=$offset failed: $_"
+        $results[$offset] = "FAILED: $_"
     } finally {
+        # Always restore Searcher.java
         $restored = Get-Content $SearcherFile -Raw
-        if ($restored -match [regex]::Escape($patchedLine)) {
-            $restored = $restored -replace [regex]::Escape($patchedLine), $ExpectedMargin
+        $patchLine = "${OffsetConstant}${offset};"
+        if ($restored -match [regex]::Escape($patchLine)) {
+            $restored = $restored -replace [regex]::Escape($patchLine), $ExpectedOffset
             Set-Content $SearcherFile $restored -Encoding UTF8 -NoNewline
-            Write-Host "[C-4] Restored SINGULAR_MARGIN_PER_PLY to $OrigMarginValue"
+            Write-Host "[C-4] Restored SINGULAR_EXTENSION_MARGIN to $OrigOffsetValue"
         }
+        # Reload currentContent from restored file for next iteration
         $currentContent = Get-Content $SearcherFile -Raw
     }
-    Write-Host ""
 }
 
-Write-Host "=== C-4 Margin SPRT Summary ==="
-foreach ($margin in $Margins) {
-    Write-Host "  margin=$margin : $($results[$margin])"
+Write-Host ""
+Write-Host "=== C-4 SPRT Summary ==="
+foreach ($offset in $Offsets) {
+    $safeName = if ($offset -lt 0) { "neg$([Math]::Abs($offset))" } else { "pos$offset" }
+    Write-Host "  offset=$offset : $($results[$offset])"
 }
-Write-Host ""
-Write-Host "After identifying the best margin, run the threshold test:"
-Write-Host "  .\tools\run_c4_sprt.ps1 -Margins @() then manually test SINGULAR_DEPTH_THRESHOLD=6"
-Write-Host ""
-
-# Phase 2: Test threshold (manual step after phase 1 results are reviewed)
-# The user should set the best margin from phase 1, then run:
-#   Modify SINGULAR_DEPTH_THRESHOLD from 8 to 6 and SPRT manually.
-Write-Host "NOTE: C-4c (SINGULAR_DEPTH_THRESHOLD=6) should be tested manually after"
-Write-Host "choosing the best margin from C-4a/C-4b."
+Write-Host "========================="
