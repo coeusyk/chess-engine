@@ -7840,3 +7840,87 @@ worse, actively regressing below baseline.
 |------|--------|
 | `engine-core/…/search/Searcher.java` | NULL_MOVE_DEPTH_THRESHOLD 3 → 4 |
 | `tools/run_c5_sprt.ps1` | Update OrigThreshValue 3 → 4 (new baseline) |
+
+---
+
+### B-1 King Safety Texel Tuning — H0 Accepted (No Improvement)
+
+**Date:** 2026-04-13
+**Experiment:** B-1 — Texel-tune king-safety scalar group (ATK_WEIGHT_*, SHIELD_*, OPEN_FILE, HALF_OPEN_FILE)
+**Phase:** 13 — Tuner Overhaul
+
+**Tuner run:**
+- Optimizer: Adam/fast, 200 max iterations, freeze-k
+- Corpus: `tools/seeds/king_safety_seeds.epd` (287 KB)
+- Converged at iteration 150 (MSE delta < 5e-4 for 10 consecutive iterations)
+- Final K = 1.454757, MSE = 0.05809511
+- Tuned values: SHIELD R2=18 R3=33 | OPEN=60 HALF=42 | ATK N=7 B=7 R=10 Q=9
+
+**SPRT result (stopped early — clear H0 trajectory):**
+- Config: H0=0, H1=15 Elo, α=β=0.05, TC=60+0.6, concurrency=6, threads=2
+- Games: 540 (of 800 minimum / 20000 max)
+- Score: 132W – 146L – 262D [0.487]
+- **Elo: −9.0 ±21.0, LOS: 20.1%, DrawRatio: 48.5%**
+- **LLR: −2.15 (−73.1%)**, bounds [−2.94, 2.94]
+- Log: `tools/results/sprt_phase13-b1-kingsafety-tuned_20260413_185133.log`
+
+**Verdict:** H0 accepted (early stop). Tuned king-safety params are ~9–12 Elo weaker than
+hand-tuned baseline. The CLOP-derived values remain superior. Source files restored via
+`git checkout`.
+
+**Action:** No code changes baked. Proceed to B-2 (pawn structure) and B-3 (mobility).
+
+---
+
+### B-2 Pawn Structure Texel Tuning — H0 Accepted (No Improvement)
+
+**Date:** 2026-04-13
+**Experiment:** B-2 — Texel-tune pawn-structure group (PASSED_MG/EG, ISOLATED, DOUBLED, CONNECTED, BACKWARD)
+**Phase:** 13 — Tuner Overhaul
+
+**Tuner run:**
+- Optimizer: Adam/fast, 200 max iterations, freeze-k
+- Corpus: `tools/seeds/pawn_structure_combined.epd` (merged from passed_pawn, connected_pawn, backward_pawn seeds)
+- Tuned values: PASSED_MG={0,50,40,6,49,57,112,0} | PASSED_EG={0,43,45,61,92,159,188,0} | ISOLATED MG=19 EG=15 | DOUBLED MG=6 EG=40
+
+**SPRT result (stopped early — clear H0 trajectory):**
+- Config: H0=0, H1=15 Elo, α=β=0.05, TC=60+0.6, concurrency=6, threads=2
+- Games: 278 (of 800 minimum / 20000 max)
+- Score: 69W – 79L – 130D [0.482]
+- **Elo: −12.9 ±30.3, LOS: 20.2%, DrawRatio: 46.7%**
+- **LLR: −1.28 (−43.6%)**, bounds [−2.94, 2.94]
+- Log: `tools/results/sprt_phase13-b2-pawnstruct-tuned_20260413_232238.log`
+
+**Verdict:** H0 accepted (early stop). Tuned pawn-structure params are ~13 Elo weaker than
+hand-tuned baseline. Source files restored via `git checkout`.
+
+**Action:** No code changes baked. Proceed to B-3 (mobility).
+
+---
+
+### B-3 Mobility Texel Tuning — H0 Accepted (No Improvement)
+
+**Date:** 2026-04-14
+**Experiment:** B-3 — Texel-tune mobility group (MG/EG per piece type)
+**Phase:** 13 — Tuner Overhaul
+
+**Tuner run:**
+- Optimizer: Adam/fast, 150 max iterations, freeze-k
+- Corpus: `data/quiet-labeled.epd` (full corpus, ~703k positions)
+- Tuned values: MG N=8 B=9 R=6 Q=3 | EG N=10 B=8 R=6 Q=15
+
+**SPRT result (stopped early — clear H0 trajectory):**
+- Config: H0=0, H1=15 Elo, α=β=0.05, TC=60+0.6, concurrency=6, threads=2
+- Games: 225 (of 800 minimum / 20000 max)
+- Score: 61W – 69L – 95D [0.482]
+- **Elo: −15.8 ±34.8, LOS: 18.6%, DrawRatio: 42.7%**
+- **LLR: −1.11 (−37.9%)**, bounds [−2.94, 2.94]
+- Log: `tools/results/sprt_phase13-b3-mobility-tuned_20260414_014346.log`
+
+**Verdict:** H0 accepted (early stop). Tuned mobility params are ~16 Elo weaker than
+the CLOP-derived baseline. Source files restored via `git checkout`.
+
+**B-track summary:** All three B-track Texel tuning experiments (B-1 king-safety, B-2 pawn-structure,
+B-3 mobility) failed to improve over the existing CLOP-derived evaluation parameters. The Adam/fast
+Texel optimizer consistently produced weaker values (−9 to −16 Elo). The CLOP parameters remain
+the best available eval configuration. No source changes baked from B-track.
