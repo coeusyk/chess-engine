@@ -7666,3 +7666,33 @@ Lowering the move-index guard from 4 to 3 is harmful at divisor=1.7.
   `tools/results/sprt_phase13-c2-thresh3_*.pgn`
 
 **Next:** C-3 (futility margin).
+
+---
+
+### [2026-04-13] Phase 13 — C-3 Futility Margin Depth-1: Final Disposition
+
+**Parameter tested:** `FUTILITY_MARGIN_DEPTH_1` in `Searcher.java` (line 35)  
+**Current value:** 150 cp  
+**Candidates tested:** 125, 175  
+**SPRT settings:** H0 = 0 Elo, H1 = 50 Elo, α = β = 0.025 (BonferroniM = 2, bounds ±3.66)  
+**Time control:** 5+0.05  
+**Comparison:** (C-2 engine + new margin) vs `tools/baseline-v0.5.6-pretune.jar`
+
+Both margins were tested sequentially. Lower margin (125) shows the combined engine (LMR=1.7
++ fut=125) at ~+20–24 Elo over pre-tune baseline — meaning fut=125 *reduces* net gain by
+~17–22 Elo relative to the C-2-only engine (+41.6 Elo). Higher margin (175) performed even
+worse, actively regressing below baseline.
+
+| Test | Games | W–L–D | Score | Elo over baseline | LLR | Verdict |
+|------|-------|-------|-------|-------------------|-----|---------|
+| C-2 + fut=125 vs baseline | 992 | 298–241–453 | 53.0% | +20.6 ± 15.9 | −3.83 | H0 accepted |
+| C-2 + fut=175 vs baseline | 72 | 15–24–33 | 43.8% | −43.7 ± 59.7 | −3.82 | H0 accepted |
+
+**Interpretation:** fut=125 is ≈ −17 Elo vs the C-2, engine with fut=150; fut=175 is heavily negative. The current futility margin (150 cp) is optimal among the three candidates.
+
+**Decisions Made:**
+
+- **`FUTILITY_MARGIN_DEPTH_1 = 150`** — **no change**.
+- PGN artefacts: `tools/results/sprt_phase13-c3-fut125_*.pgn`, `tools/results/sprt_phase13-c3-fut175_*.pgn`
+
+**Next:** C-4 (singular extension margin).
