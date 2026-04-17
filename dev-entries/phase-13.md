@@ -2473,3 +2473,21 @@ Two pre-existing test failures were tracked since Issues #134/#142:
 **No code changes required.** Both issues were resolved incrementally during earlier commits.
 Closing as verified.
 
+
+---
+
+### [2026-04-17] Phase 13 — C-6 SPRT: Correction History Resize + Weight Formula (Issue #165)
+
+**SPRT result: H1 accepted** (LLR 2.98, crossed upper bound at 20 games, TC=100+1)
+
+**Changes confirmed:**
+- CORRECTION_HISTORY_SIZE: 1024 → 4096
+- pawnKey hash shift: >>> 54 → >>> 52 (12-bit index to match 4096-entry table)
+- Weight formula: GRAIN / Math.max(1, effectiveDepth) → Math.min(CORRECTION_HISTORY_GRAIN, effectiveDepth * 16)
+
+**SPRT detail:**
+- Initial run at TC=10+0.1 showed score [0.520–0.523] over 582 games, LLR hovering ~0.87 — slow diffusion for ~14 Elo signal.
+- Restarted at TC=100+1 (lower per-game variance), H1 accepted at game 20: 5W-0L-15D [0.625], LLR=2.98.
+- True Elo gain estimated ~15 Elo above baseline (small but above H1=0 threshold).
+
+**Committed and baked into HEAD.**

@@ -58,7 +58,7 @@ public class Searcher {
 
     // Correction history: maps pawn structure to a static-eval bias.
     // Stored at GRAIN scale; applied as: adjustedEval = rawEval + ch[color][key] / GRAIN.
-    private static final int CORRECTION_HISTORY_SIZE = 1024;
+    private static final int CORRECTION_HISTORY_SIZE = 4096;
     private static final int CORRECTION_HISTORY_GRAIN = 256;
     private static final int CORRECTION_HISTORY_MAX = CORRECTION_HISTORY_GRAIN * 32;
 
@@ -814,7 +814,7 @@ public class Searcher {
 
         // Derive a pawn-structure key for correction history lookup.
         int colorIdx = Piece.isWhite(board.getActiveColor()) ? 0 : 1;
-        int pawnKey = (int)(((board.getWhitePawns() ^ board.getBlackPawns()) * 0x9E3779B97F4A7C15L) >>> 54);
+        int pawnKey = (int)(((board.getWhitePawns() ^ board.getBlackPawns()) * 0x9E3779B97F4A7C15L) >>> 52);
         int staticEvalRaw = staticEval;
         // Apply accumulated correction bias (capped at ±32 cp).
         staticEval += correctionHistory[colorIdx][pawnKey] / CORRECTION_HISTORY_GRAIN;
@@ -1070,7 +1070,7 @@ public class Searcher {
             // score diverges from the raw static eval for this pawn structure.
             if (!inSingularitySearch && !sideToMoveInCheck) {
                 int corrError = bestScore - staticEvalRaw;
-                int weight = CORRECTION_HISTORY_GRAIN / Math.max(1, effectiveDepth);
+                int weight = Math.min(CORRECTION_HISTORY_GRAIN, effectiveDepth * 16);
                 correctionHistory[colorIdx][pawnKey] = Math.max(-CORRECTION_HISTORY_MAX,
                         Math.min(CORRECTION_HISTORY_MAX,
                                 correctionHistory[colorIdx][pawnKey] + corrError * weight));
