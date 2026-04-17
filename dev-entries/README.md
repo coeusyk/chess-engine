@@ -1,9 +1,9 @@
-# Dev Log (Index)
+# Dev Entries (Phase-Split)
 
-The detailed dev history has been split into per-phase files under `dev-entries/`.
-Update the active phase file instead of appending to this index.
+This directory contains the development log split by phase to keep history navigable.
+Use the active phase file for ongoing updates and outcomes.
 
-## Phase Logs
+## Files
 - [dev-entries/pre-phase.md](dev-entries/pre-phase.md)
 - [dev-entries/misc.md](dev-entries/misc.md)
 - [dev-entries/phase-0.md](dev-entries/phase-0.md)
@@ -21,6 +21,7 @@ Update the active phase file instead of appending to this index.
 - [dev-entries/phase-12.md](dev-entries/phase-12.md)
 - [dev-entries/phase-13.md](dev-entries/phase-13.md)
 
-## Notes
-- Keep one entry per meaningful implementation/change day.
-- Include outcomes (SPRT/Perft/NPS) in the relevant phase file.
+## Logging Rule
+- Add new entries to the active phase file (`phase-N.md`).
+- Use `pre-phase.md` for work done before formal phase tracking.
+- Use `misc.md` only for cross-phase or repository-wide items.
