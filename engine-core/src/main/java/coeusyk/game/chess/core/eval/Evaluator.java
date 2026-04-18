@@ -210,8 +210,8 @@ public class Evaluator {
         egScore += pawnEg;
 
         mgScore += KingSafety.evaluatePawnShieldAndFiles(board)
-                 + (tempWhiteAttackWeight * tempWhiteAttackWeight / 4)
-                 - (tempBlackAttackWeight * tempBlackAttackWeight / 4);
+                 + KingSafety.safetyTablePenalty(tempWhiteAttackWeight)
+                 - KingSafety.safetyTablePenalty(tempBlackAttackWeight);
 
         // --- Bishop pair bonus ---
         if (Long.bitCount(board.getWhiteBishops()) >= 2) {

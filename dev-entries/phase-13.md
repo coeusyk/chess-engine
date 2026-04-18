@@ -2491,3 +2491,61 @@ Closing as verified.
 - True Elo gain estimated ~15 Elo above baseline (small but above H1=0 threshold).
 
 **Committed and baked into HEAD.**
+
+---
+
+### [2026-04-18] Phase 13 — Engine-Tuner King Safety Formula Mismatch Discovery & Fix
+
+**Context:**
+Post-B-track analysis revealed a critical formula mismatch between the playing engine and
+the tuner for king-safety evaluation:
+
+| Component | Formula | Behavior |
+|-----------|---------|----------|
+| **Engine** (`Evaluator.java`, `KingSafety.attackerPenalty`) | `-(w * w / 4)` | Unbounded quadratic; `w=10` → 25cp, `w=20` → 100cp |
+| **Tuner** (`PositionFeatures.java`) | `SAFETY_TABLE[w] * KING_SAFETY_SCALE / 100` | Piecewise-linear, capped at 50cp; 18-entry lookup table |
+
+The tuner was optimising against a different objective than the engine was computing.
+All three B-track SPRTs (B-1 king-safety, B-2 pawn-structure, B-3 mobility) ran with
+this mismatch active, which partially invalidates their H0 verdicts. The CLOP-derived
+weights (ATK_WEIGHT N=5/B=5/R=12/Q=0) were calibrated against the `w²/4` formula, so
+they happened to work well in the engine — but the tuner couldn't improve on them because
+it was modelling a fundamentally different penalty curve.
+
+**Fix (all UNCOMMITTED, 14 files, 524 insertions, 261 deletions):**
+
+1. **KingSafety.java**: Added `SAFETY_TABLE` (18-entry int array: 0,0,1,2,3,5,7,9,12,15,
+   18,22,26,30,35,40,45,50) and `safetyTablePenalty(int atkWeight)` public static method.
+   `attackerPenalty()` changed from `-(w*w/4)` to `-(SAFETY_TABLE[w] * KING_SAFETY_SCALE / 100)`.
+2. **Evaluator.java**: Merged eval loop replaced `w²/4` with `KingSafety.safetyTablePenalty(w)`.
+3. **EvalParams.java** (engine-core): Added `KING_SAFETY_SCALE = 100` field + `loadOverrides`
+   case. ATK_WEIGHT values kept at CLOP-derived: N=5, B=5, R=12, Q=0.
+4. **TunerEvaluator.java**: Now applies `KING_SAFETY_SCALE` to SAFETY_TABLE penalty.
+5. **EvalParams.java** (engine-tuner): Added `KING_SAFETY_SCALE = 100` constant + IDX constant.
+6. **PositionFeatures.java**: Updated to use `KING_SAFETY_SCALE` in king-safety feature accumulation.
+7. **EvaluatorTest.java**: Added `safetyTablePenaltyTests` verifying table lookup correctness.
+8. **EvalParamsTest.java**: Updated param count from 829 to 831 (added KING_SAFETY_SCALE).
+
+**B-Track Invalidation Note:**
+The B-1, B-2, and B-3 H0 verdicts (−9, −13, −16 Elo respectively) are partially
+attributable to the formula mismatch. The tuner was optimising against `SAFETY_TABLE`
+while the engine used `w²/4`. With the formula now aligned, future tuning runs should
+produce more meaningful results. All three B-track experiments are carried forward to
+Phase 14 as issues #170 (B-1 → A-1), #171 (B-3 → A-2), #172 (B-2 → A-3).
+
+**SPRT — Safety Table Formula Alignment (VERDICT: H1 ACCEPTED):**
+- Config: H0=0, H1=50, α=0.05, β=0.05, TC=100+1, concurrency=2
+- New: `engine-uci/target/engine-uci-0.5.6-SNAPSHOT.jar` (SAFETY_TABLE formula)
+- Old: `tools/baseline-v0.5.6-pretune.jar` (w²/4 formula)
+- PGN: `tools/results/sprt_phase13-safety-table-formula_20260419_012032.pgn`
+- LOG: `tools/results/sprt_phase13-safety-table-formula_20260419_012032.log`
+- Final: 84 games — 33W-15L-36D [0.607], LLR +3.13 (>2.94), **H1 ACCEPTED**
+- Elo: +75.6 ±56.9, LOS 99.5%, DrawRatio 42.9%
+- Interpretation: formula alignment is NOT merely a correctness fix — the `w²/4`
+  formula was actively miscalibrated (over-penalising high attacker counts), suppressing
+  engine strength. Switching to SAFETY_TABLE + KING_SAFETY_SCALE unlocks the full value
+  of the CLOP-derived ATK_WEIGHT parameters.
+
+**Measurements:**
+- Build: all 4 modules green (engine-core: 163 run, 0 failures, 2 skipped)
+- SPRT: **H1 ACCEPTED** — +75.6 Elo ±56.9, LOS 99.5% (84 games, TC=100+1)

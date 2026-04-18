@@ -8,7 +8,7 @@ class EvalParamsTest {
 
     @Test
     void totalParamsIs830() {
-        assertEquals(830, EvalParams.TOTAL_PARAMS);
+        assertEquals(831, EvalParams.TOTAL_PARAMS);
     }
 
     @Test

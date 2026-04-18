@@ -602,4 +602,82 @@ class EvaluatorTest {
         assertTrue(evaluator.evaluate(rookOn7th) > evaluator.evaluate(rookOn1st),
                 "Rook on 7th rank (a7) should score higher than rook on 1st rank (a1)");
     }
+
+    // --- Color-flip symmetry tests ---
+
+    /**
+     * Algorithmic color-flip of a FEN string: reverses rank order, swaps piece case,
+     * toggles active color, swaps castling rights, and mirrors the en passant rank.
+     * eval(pos) must equal eval(colorFlip(pos)) for a color-symmetric evaluator.
+     */
+    private static String colorFlipFen(String fen) {
+        String[] parts = fen.split(" ");
+        String placement = parts[0];
+        String color     = parts[1];
+        String castling  = parts[2];
+        String ep        = parts[3];
+        String rest      = parts.length > 4 ? parts[4] + " " + parts[5] : "0 1";
+
+        // Reverse rank order and swap piece case
+        String[] ranks = placement.split("/");
+        StringBuilder sb = new StringBuilder();
+        for (int i = ranks.length - 1; i >= 0; i--) {
+            if (sb.length() > 0) sb.append('/');
+            for (char c : ranks[i].toCharArray()) {
+                if (Character.isUpperCase(c))      sb.append(Character.toLowerCase(c));
+                else if (Character.isLowerCase(c)) sb.append(Character.toUpperCase(c));
+                else                               sb.append(c);
+            }
+        }
+
+        // Toggle active color
+        String newColor = color.equals("w") ? "b" : "w";
+
+        // Swap castling rights (K<->k, Q<->q)
+        StringBuilder cr = new StringBuilder();
+        for (char c : castling.toCharArray()) {
+            if      (c == 'K') cr.append('k');
+            else if (c == 'k') cr.append('K');
+            else if (c == 'Q') cr.append('q');
+            else if (c == 'q') cr.append('Q');
+            else               cr.append(c);
+        }
+
+        // Mirror en passant rank (3<->6)
+        String newEp = ep;
+        if (!ep.equals("-") && ep.length() == 2) {
+            char rank = ep.charAt(1);
+            if      (rank == '3') newEp = "" + ep.charAt(0) + '6';
+            else if (rank == '6') newEp = "" + ep.charAt(0) + '3';
+        }
+
+        return sb + " " + newColor + " " + cr + " " + newEp + " " + rest;
+    }
+
+    @Test
+    void kingSafetyColorFlipSymmetry() {
+        // eval(pos) == eval(colorFlip(pos)) for all positions.
+        // A color-symmetric evaluator must give the same side-to-move-relative score
+        // regardless of which color is attacking or defending the king.
+        String[] fens = {
+            // Starting position
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            // White king g1, shield intact, black rook on f3 attacking
+            "4k3/8/8/8/8/5r2/5PPP/6K1 b - - 0 1",
+            // White king c1, black queen+rook combo attack near king
+            "4k3/8/8/8/8/4qr2/5PPP/2K5 b - - 0 1",
+            // White king g1 with shield, black queen+rook+bishop multi-attack
+            "4k3/8/8/8/6b1/5rq1/5PPP/6K1 b - - 0 1",
+            // Both sides castled, symmetric middle-game structure
+            "r3k2r/pppq1ppp/8/8/8/8/PPPQ1PPP/R3K2R w KQkq - 0 1",
+        };
+        for (String fen : fens) {
+            String flipped = colorFlipFen(fen);
+            int evalOrig    = evaluator.evaluate(new Board(fen));
+            int evalFlipped = evaluator.evaluate(new Board(flipped));
+            assertEquals(evalOrig, evalFlipped,
+                    "eval must be color-symmetric for FEN: " + fen
+                    + "\n  flipped FEN: " + flipped);
+        }
+    }
 }

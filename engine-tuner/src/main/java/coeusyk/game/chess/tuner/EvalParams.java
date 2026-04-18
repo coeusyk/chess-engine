@@ -80,7 +80,7 @@ import java.util.Arrays;
  */
 public final class EvalParams {
 
-    public static final int TOTAL_PARAMS = 830;
+    public static final int TOTAL_PARAMS = 831;
 
     // --- Indices for documentation / cross-referencing ---
     public static final int IDX_MATERIAL_START  = 0;   // [0..11]
@@ -119,6 +119,7 @@ public final class EvalParams {
     public static final int IDX_ROOK_BEHIND_PASSER_MG = 827;
     public static final int IDX_ROOK_BEHIND_PASSER_EG = 828;
     public static final int IDX_HANGING_PENALTY       = 829;
+    public static final int IDX_KING_SAFETY_SCALE      = 830;
 
     /**
      * Per-parameter lower bounds enforced during coordinate descent.
@@ -171,7 +172,8 @@ public final class EvalParams {
         lo[IDX_BACKWARD_PAWN_EG]   = -5;  // Backward pawn penalty EG >= -5 (engine uses -1)
         lo[IDX_ROOK_BEHIND_PASSER_MG] = 0;  // Rook behind passer MG >= 0
         lo[IDX_ROOK_BEHIND_PASSER_EG] = 0;  // Rook behind passer EG >= 0
-        lo[IDX_HANGING_PENALTY]       = 0;  // Hanging penalty >= 0
+        lo[IDX_HANGING_PENALTY]       = 0;   // Hanging penalty >= 0
+        lo[IDX_KING_SAFETY_SCALE]      = 50;  // Scale >= 50 (half strength)
         return lo;
     }
 
@@ -206,7 +208,8 @@ public final class EvalParams {
         hi[IDX_BACKWARD_PAWN_EG]   = 20;   // Backward pawn penalty EG <= 20cp
         hi[IDX_ROOK_BEHIND_PASSER_MG] = 40;  // Rook behind passer MG <= 40cp
         hi[IDX_ROOK_BEHIND_PASSER_EG] = 50;  // Rook behind passer EG <= 50cp
-        hi[IDX_HANGING_PENALTY]       = 120; // Hanging penalty <= 120cp
+        hi[IDX_HANGING_PENALTY]       = 120;  // Hanging penalty <= 120cp
+        hi[IDX_KING_SAFETY_SCALE]      = 150;  // Scale <= 150 (50% stronger)
         return hi;
     }
 
@@ -288,7 +291,8 @@ public final class EvalParams {
                 break;
             case "king-safety":
                 java.util.Arrays.fill(mask, IDX_SHIELD_RANK2, IDX_MOB_MG_START, true);
-                mask[IDX_HANGING_PENALTY] = true;
+                mask[IDX_HANGING_PENALTY]      = true;
+                mask[IDX_KING_SAFETY_SCALE]    = true;
                 break;
             case "mobility":
                 java.util.Arrays.fill(mask, IDX_MOB_MG_START, IDX_TEMPO, true);
@@ -372,6 +376,7 @@ public final class EvalParams {
             case 827: return "ROOK_BEHIND_PASSER_MG";
             case 828: return "ROOK_BEHIND_PASSER_EG";
             case 829: return "HANGING_PENALTY";
+            case 830: return "KING_SAFETY_SCALE";
             default:  return "PARAM[" + idx + "]";
         }
     }
@@ -552,10 +557,10 @@ public final class EvalParams {
         p[IDX_SHIELD_RANK3]   = 7;
         p[IDX_OPEN_FILE]      = 45;
         p[IDX_HALF_OPEN_FILE] = 13;
-        p[IDX_ATK_KNIGHT]     = 5;
-        p[IDX_ATK_BISHOP]     = 3;
-        p[IDX_ATK_ROOK]       = 9;
-        p[IDX_ATK_QUEEN]      = 3;   // engine-core uses 0 (CLOP-baked) but tuner floor is 3
+        p[IDX_ATK_KNIGHT]     = 6;
+        p[IDX_ATK_BISHOP]     = 2;
+        p[IDX_ATK_ROOK]       = 12;
+        p[IDX_ATK_QUEEN]      = 0;
 
         // --- Mobility ---
         // MG: N=7, B=8, R=7, Q=2
@@ -587,7 +592,8 @@ public final class EvalParams {
         p[IDX_BACKWARD_PAWN_EG]     = 0;    // Backward pawn penalty EG
         p[IDX_ROOK_BEHIND_PASSER_MG] = 12; // Rook behind passer MG
         p[IDX_ROOK_BEHIND_PASSER_EG] = 4;  // Rook behind passer EG
-        p[IDX_HANGING_PENALTY]       = 40; // Hanging piece penalty
+        p[IDX_HANGING_PENALTY]       = 40;  // Hanging piece penalty
+        p[IDX_KING_SAFETY_SCALE]      = 100; // King safety scale (100 = neutral)
 
         return p;
     }
@@ -641,6 +647,7 @@ public final class EvalParams {
             w.write(String.format("ATTACKER_WEIGHTS  N=%.0f B=%.0f R=%.0f Q=%.0f%n",
                 params[IDX_ATK_KNIGHT], params[IDX_ATK_BISHOP], params[IDX_ATK_ROOK], params[IDX_ATK_QUEEN]));
             w.write(String.format("HANGING_PENALTY=%.0f%n", params[IDX_HANGING_PENALTY]));
+            w.write(String.format("KING_SAFETY_SCALE=%.0f%n", params[IDX_KING_SAFETY_SCALE]));
 
             w.write("\n## MOBILITY (MG then EG)\n");
             w.write(String.format("MG  N=%.0f B=%.0f R=%.0f Q=%.0f%n",

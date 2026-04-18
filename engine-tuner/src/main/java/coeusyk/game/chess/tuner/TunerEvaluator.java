@@ -6,7 +6,6 @@ import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Piece;
 
 import java.util.List;
-import java.util.stream.IntStream;
 
 /**
  * Static evaluator that accepts a parameter array instead of hardcoded constants.
@@ -481,6 +480,12 @@ public final class TunerEvaluator {
         return penalty;
     }
 
+    // Non-linear mapping from attacker-weight sum to centipawn penalty.
+    // Must match KingSafety.SAFETY_TABLE in engine-core and PositionFeatures.SAFETY_TABLE in engine-tuner.
+    static final int[] SAFETY_TABLE = {
+        0, 0, 1, 2, 3, 5, 7, 9, 12, 15, 18, 22, 26, 30, 35, 40, 45, 50
+    };
+
     private static int attackerPenalty(PositionData pos, boolean white, int kingSq, double[] params) {
         long zone   = white ? WHITE_KING_ZONE[kingSq] : BLACK_KING_ZONE[kingSq];
         long allOcc = pos.getWhiteOccupancy() | pos.getBlackOccupancy();
@@ -496,7 +501,8 @@ public final class TunerEvaluator {
         w += countAttackers(eRooks,   Piece.Rook,   zone, allOcc) * (int) params[EvalParams.IDX_ATK_ROOK];
         w += countAttackers(eQueens,  Piece.Queen,  zone, allOcc) * (int) params[EvalParams.IDX_ATK_QUEEN];
 
-        return -(w * w / 4);
+        int base = w < SAFETY_TABLE.length ? SAFETY_TABLE[w] : SAFETY_TABLE[SAFETY_TABLE.length - 1];
+        return -(int) (base * params[EvalParams.IDX_KING_SAFETY_SCALE] / 100);
     }
 
     private static int countAttackers(long pieces, int pt, long zone, long allOcc) {

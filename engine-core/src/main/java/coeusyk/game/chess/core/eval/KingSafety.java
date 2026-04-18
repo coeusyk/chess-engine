@@ -126,6 +126,32 @@ public final class KingSafety {
         return penalty;
     }
 
+    // Non-linear mapping from attacker-weight sum to centipawn penalty.
+    // Replaces the old -(w*w/4) integer formula which truncated to 0 for w<2
+    // and grew quadratically without bound for large multi-attacker positions.
+    // Table is capped at 50 cp. Mirrors PositionFeatures.SAFETY_TABLE in engine-tuner.
+    static final int[] SAFETY_TABLE = {
+        0, 0, 1, 2, 3, 5, 7, 9, 12, 15, 18, 22, 26, 30, 35, 40, 45, 50
+    };
+
+    /**
+     * Converts a pre-computed attacker-weight sum into a centipawn penalty
+     * using the non-linear SAFETY_TABLE and {@link EvalParams#KING_SAFETY_SCALE}.
+     *
+     * <p>Called from {@link Evaluator#evaluate(Board)} after the merged
+     * mobility+attack pass has accumulated the weight in
+     * {@code tempWhiteAttackWeight} / {@code tempBlackAttackWeight}.
+     *
+     * @param atkWeight accumulated attacker weight (sum of per-piece ATK_WEIGHT_* values)
+     * @return positive centipawn penalty (caller applies sign convention)
+     */
+    public static int safetyTablePenalty(int atkWeight) {
+        int base = atkWeight < SAFETY_TABLE.length
+                 ? SAFETY_TABLE[atkWeight]
+                 : SAFETY_TABLE[SAFETY_TABLE.length - 1];
+        return base * EvalParams.KING_SAFETY_SCALE / 100;
+    }
+
     private static int attackerPenalty(Board board, boolean white, int kingSq) {
         long zone = white ? WHITE_KING_ZONE[kingSq] : BLACK_KING_ZONE[kingSq];
         long allOcc = board.getWhiteOccupancy() | board.getBlackOccupancy();
@@ -141,7 +167,8 @@ public final class KingSafety {
         w += countAttackers(eRooks,   Piece.Rook,   zone, allOcc) * EvalParams.ATK_WEIGHT_ROOK;
         w += countAttackers(eQueens,  Piece.Queen,  zone, allOcc) * EvalParams.ATK_WEIGHT_QUEEN;
 
-        return -(w * w / 4);
+        int base = w < SAFETY_TABLE.length ? SAFETY_TABLE[w] : SAFETY_TABLE[SAFETY_TABLE.length - 1];
+        return -(base * EvalParams.KING_SAFETY_SCALE / 100);
     }
 
     private static int countAttackers(long pieces, int pieceType, long zone, long allOcc) {

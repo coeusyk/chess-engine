@@ -46,12 +46,16 @@ public final class EvalParams {
     /** Attacker-pressure weight for enemy rooks near the king. */
     public static int ATK_WEIGHT_ROOK = 12;
 
-    /**
-     * Attacker-pressure weight for enemy queens near the king.
-     * Fixed from -1 (semantically inverted — queen was reducing pressure) to a
-     * positive value. Two-phase CLOP (Phase A, 300 iter, TC 3+0.03) converged to 0.
-     */
+    /** Attacker-pressure weight for enemy queens near the king. */
     public static int ATK_WEIGHT_QUEEN = 0;
+
+    /**
+     * Global percentage scale applied to the attacker-pressure king safety penalty
+     * (i.e., the SAFETY_TABLE lookup result). 100 = current strength; larger values
+     * increase the penalty proportionally. Tunable via the engine-tuner king-safety
+     * group; runtime override via EvalParams override file.
+     */
+    public static int KING_SAFETY_SCALE = 100;
 
     // -----------------------------------------------------------------------
     // Evaluator constants
@@ -77,7 +81,7 @@ public final class EvalParams {
      *
      * <p><b>Recognised keys:</b> SHIELD_RANK2, SHIELD_RANK3, OPEN_FILE_PENALTY,
      * HALF_OPEN_FILE_PENALTY, ATK_WEIGHT_KNIGHT, ATK_WEIGHT_BISHOP,
-     * ATK_WEIGHT_ROOK, ATK_WEIGHT_QUEEN, HANGING_PENALTY, TEMPO.
+     * ATK_WEIGHT_ROOK, ATK_WEIGHT_QUEEN, KING_SAFETY_SCALE, HANGING_PENALTY, TEMPO.
      *
      * @param path path to the override file; must be readable
      * @throws IOException if the file cannot be read
@@ -101,6 +105,7 @@ public final class EvalParams {
                     case "ATK_WEIGHT_BISHOP":      ATK_WEIGHT_BISHOP      = v; break;
                     case "ATK_WEIGHT_ROOK":        ATK_WEIGHT_ROOK        = v; break;
                     case "ATK_WEIGHT_QUEEN":       ATK_WEIGHT_QUEEN       = v; break;
+                    case "KING_SAFETY_SCALE":      KING_SAFETY_SCALE      = v; break;
                     case "HANGING_PENALTY":        HANGING_PENALTY        = v; break;
                     case "TEMPO":                  TEMPO                  = v; break;
                     default:                                                   break;
