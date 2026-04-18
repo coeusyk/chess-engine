@@ -53,7 +53,7 @@ public final class TunerMain {
 
     public static void main(String[] args) throws Exception {
         if (args.length < 1) {
-        LOG.error("Usage: engine-tuner <dataset> [maxPositions] [maxIterations] [--optimizer adam|coordinate|lbfgs] [--param-group material|pst|pawn-structure|king-safety|mobility|scalars] [--corpus-format csv|epd] [--no-recalibrate-k] [--freeze-k] [--k <value>] [--freeze-params] [--corpus <csv>] [--coverage-audit]");
+        LOG.error("Usage: engine-tuner <dataset> [maxPositions] [maxIterations] [--optimizer adam|coordinate|lbfgs] [--param-group material|pst|pawn-structure|king-safety|mobility|scalars] [--corpus-format csv|epd] [--no-recalibrate-k] [--freeze-k] [--k <value>] [--freeze-params] [--corpus <csv>] [--coverage-audit] [--balanced-corpus]");
             System.exit(1);
         }
 
@@ -72,6 +72,7 @@ public final class TunerMain {
         boolean skipSmoke      = false; // --skip-smoke
         boolean skipSanity     = false; // --skip-sanity
         boolean skipConvergence = false; // --skip-convergence
+        boolean balancedCorpus  = false; // --balanced-corpus: augment EPD corpus with color-flipped copies
         int smokeGames         = 100;  // --smoke-games N
         int smokeDepth         = 3;    // --smoke-depth N
 
@@ -139,6 +140,8 @@ public final class TunerMain {
                     LOG.error("--corpus file not found: {}", corpusPath.toAbsolutePath());
                     System.exit(1);
                 }
+            } else if ("--balanced-corpus".equals(args[i])) {
+                balancedCorpus = true;
             } else if ("--skip-smoke".equals(args[i])) {
                 skipSmoke = true;
             } else if ("--skip-sanity".equals(args[i])) {
@@ -183,6 +186,7 @@ public final class TunerMain {
         LOG.info("[TunerMain] Freeze params: {}", freezeParams ? "yes (--freeze-params, Phase A)"  : "no");
         LOG.info("[TunerMain] Coverage audit: {}", coverageAudit ? "yes (will exit after audit)" : "no");
         LOG.info("[TunerMain] Corpus format: {}", corpusFormat);
+        LOG.info("[TunerMain] Balanced corpus: {}", balancedCorpus ? "yes (--balanced-corpus)" : "no");
         LOG.info("[TunerMain] Param group:   {}", paramGroup != null ? paramGroup : "all (no mask)");
         if (corpusPath != null) {
             LOG.info("[TunerMain] Corpus CSV:    {} (overrides dataset for training data)", corpusPath.toAbsolutePath());
@@ -193,7 +197,9 @@ public final class TunerMain {
         List<LabelledPosition> positions;
         if ("epd".equals(corpusFormat)) {
             // #140: load quiet-labeled.epd-compatible file with in-check and material filters
-            positions = PositionLoader.loadEpd(datasetPath, maxPositions);
+            positions = balancedCorpus
+                    ? PositionLoader.loadBalanced(datasetPath, maxPositions)
+                    : PositionLoader.loadEpd(datasetPath, maxPositions);
         } else if ("csv".equals(corpusFormat) || corpusPath != null) {
             // #130: load Stockfish-annotated CSV; sf_cp converted to pseudo-WDL via sigmoid(cp/340)
             Path src = (corpusPath != null) ? corpusPath : datasetPath;

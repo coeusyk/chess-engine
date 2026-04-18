@@ -57,6 +57,9 @@ tools/sf-eval-corpus.txt
 tools/*_run_log.txt
 tools/*_converge_log.txt
 
+### SPRT baseline / experiment JARs (binary artifacts — never commit) ###
+tools/*.jar
+
 ### Logs ###
 *.log
 

@@ -88,16 +88,7 @@ public class UciApplication {
     @SuppressWarnings("unused") // assigned for future stop-command interrupt support
     private volatile Thread searchThread;
 
-    private static final String[] BENCH_FENS = {
-        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-        "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
-        "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
-        "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
-        "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",
-        "r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/P1NP1N2/1PP1QPPP/R4RK1 w - - 0 10"
-    };
-    private static final int DEFAULT_BENCH_DEPTH = 13;
-    private static final int BENCH_HASH_MB = 16;
+    private static final int DEFAULT_BENCH_DEPTH = BenchRunner.DEFAULT_DEPTH;
 
     public static void main(String[] args) throws IOException {
         // Heap cap sanity check — must run before any large allocation.
@@ -176,7 +167,13 @@ public class UciApplication {
             } else if ("ucinewgame".equals(line)) {
                 stopRequested.set(true);
                 board = new Board();
+                // Full TT clear (not just age-bump) ensures no stale entries from
+                // the previous game are visible to the next game's search.
                 sharedTT.clear();
+                // History heuristic, killer moves, and correction-history tables
+                // live inside Searcher, which is re-created on every "go" command.
+                // They are therefore automatically zeroed between games with no
+                // explicit reset needed here.
                 openingBook.close();
                 activePonderTimeManager = null;
             } else if (line.startsWith("position")) {
@@ -671,40 +668,7 @@ public class UciApplication {
     }
 
     private void runBench(int depth) {
-        Searcher searcher = new Searcher();
-        searcher.setTranspositionTableSizeMb(BENCH_HASH_MB);
-        searcher.setContempt(contempt);
-        long totalNodes = 0;
-        long totalQNodes = 0;
-        long startMs = System.currentTimeMillis();
-
-        System.out.printf("Bench depth %d | hash %dMB | %d positions%n", depth, BENCH_HASH_MB, BENCH_FENS.length);
-        for (int i = 0; i < BENCH_FENS.length; i++) {
-            Board benchBoard = new Board(BENCH_FENS[i]);
-            benchBoard.setSearchMode(true);
-            searcher.clearTranspositionTable();
-            long posStart = System.currentTimeMillis();
-            SearchResult result = searcher.iterativeDeepening(benchBoard, depth);
-            long posMs = Math.max(1, System.currentTimeMillis() - posStart);
-            long posNps = result.nodesVisited() * 1000L / posMs;
-            double qRatio = result.nodesVisited() > 0
-                    ? (double) result.quiescenceNodes() / result.nodesVisited() : 0.0;
-            double fmcPct = result.betaCutoffs() > 0
-                    ? 100.0 * result.firstMoveCutoffs() / result.betaCutoffs() : 0.0;
-            System.out.printf("Position %d: nodes=%d qnodes=%d ms=%d nps=%d tt_hit=%.1f%% q_ratio=%.1fx cutoffs=%d fmc%%=%.1f tt_hits=%d ebf=%.2f%n",
-                    i + 1, result.nodesVisited(), result.quiescenceNodes(), posMs, posNps,
-                    result.ttHitRate() * 100.0, qRatio,
-                    result.betaCutoffs(), fmcPct, result.ttHits(), result.ebf());
-            totalNodes += result.nodesVisited();
-            totalQNodes += result.quiescenceNodes();
-        }
-
-        long elapsedMs = Math.max(1, System.currentTimeMillis() - startMs);
-        long nps = totalNodes * 1000L / elapsedMs;
-        double totalQRatio = totalNodes > 0 ? (double) totalQNodes / totalNodes : 0.0;
-        System.out.printf("Bench: %d nodes %dms %d nps | q_ratio=%.1fx%n",
-                totalNodes, elapsedMs, nps, totalQRatio);
-        System.out.flush();
+        new BenchRunner().run(depth);
     }
 
     private void printInfoLine(IterationInfo info) {

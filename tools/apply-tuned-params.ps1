@@ -64,9 +64,10 @@ $evalPath     = Join-Path $EngineCoreSrc "Evaluator.java"
 $pstPath      = Join-Path $EngineCoreSrc "PieceSquareTables.java"
 $pawnPath     = Join-Path $EngineCoreSrc "PawnStructure.java"
 $kingsafePath = Join-Path $EngineCoreSrc "KingSafety.java"
+$coreEvalParamsPath = Join-Path $EngineCoreSrc "EvalParams.java"
 $evalParamsPath = Join-Path $EngineTunerSrc "EvalParams.java"
 
-foreach ($f in $evalPath, $pstPath, $pawnPath, $kingsafePath, $evalParamsPath) {
+foreach ($f in $evalPath, $pstPath, $pawnPath, $kingsafePath, $coreEvalParamsPath, $evalParamsPath) {
     if (-not (Test-Path $f)) { Write-Error "Required file not found: $f"; exit 1 }
 }
 
@@ -273,6 +274,7 @@ function Apply-KingSafety {
     $section = Get-Section 'KING SAFETY'
     $sh2=$null; $sh3=$null; $opf=$null; $hof=$null
     $atkN=$null; $atkB=$null; $atkR=$null; $atkQ=$null
+    $kss=$null
     foreach ($l in $section) {
         if ($l -match '^SHIELD_RANK2=(\d+)\s+SHIELD_RANK3=(\d+)') {
             $sh2=[int]$Matches[1]; $sh3=[int]$Matches[2]
@@ -283,9 +285,12 @@ function Apply-KingSafety {
         if ($l -match '^ATTACKER_WEIGHTS\s+N=(-?\d+)\s+B=(-?\d+)\s+R=(-?\d+)\s+Q=(-?\d+)') {
             $atkN=[int]$Matches[1]; $atkB=[int]$Matches[2]; $atkR=[int]$Matches[3]; $atkQ=[int]$Matches[4]
         }
+        if ($l -match '^KING_SAFETY_SCALE=(\d+)') {
+            $kss=[int]$Matches[1]
+        }
     }
 
-    Write-Host "[apply-tuned-params] KING SAFETY: SHIELD R2=$sh2 R3=$sh3 | OPEN=$opf HALF=$hof | ATK N=$atkN B=$atkB R=$atkR Q=$atkQ"
+    Write-Host "[apply-tuned-params] KING SAFETY: SHIELD R2=$sh2 R3=$sh3 | OPEN=$opf HALF=$hof | ATK N=$atkN B=$atkB R=$atkR Q=$atkQ | SCALE=$kss"
 
     $lines = Get-Content $kingsafePath
     for ($i = 0; $i -lt $lines.Count; $i++) {
@@ -301,6 +306,16 @@ function Apply-KingSafety {
     Set-Content $kingsafePath $lines
     Write-Host "[apply-tuned-params] Updated : KingSafety.java"
 
+    # Apply KING_SAFETY_SCALE to engine-core EvalParams.java
+    if ($kss -ne $null) {
+        $ce = Get-Content $coreEvalParamsPath
+        for ($i = 0; $i -lt $ce.Count; $i++) {
+            $ce[$i] = $ce[$i] -replace '(public static int KING_SAFETY_SCALE = )(\d+);', "`${1}$kss;"
+        }
+        Set-Content $coreEvalParamsPath $ce
+        Write-Host "[apply-tuned-params] Updated : engine-core EvalParams.java (KING_SAFETY_SCALE=$kss)"
+    }
+
     $ep = Get-Content $evalParamsPath
     for ($i = 0; $i -lt $ep.Count; $i++) {
         $ep[$i] = $ep[$i] -replace '(p\[IDX_SHIELD_RANK2\]\s*= )(\d+);',   "`${1}$sh2;"
@@ -311,6 +326,7 @@ function Apply-KingSafety {
         if ($atkB -ne $null) { $ep[$i] = $ep[$i] -replace '(p\[IDX_ATK_BISHOP\]\s*= )(-?\d+);', "`${1}$atkB;" }
         if ($atkR -ne $null) { $ep[$i] = $ep[$i] -replace '(p\[IDX_ATK_ROOK\]\s*= )(-?\d+);',   "`${1}$atkR;" }
         if ($atkQ -ne $null) { $ep[$i] = $ep[$i] -replace '(p\[IDX_ATK_QUEEN\]\s*= )(-?\d+);',  "`${1}$atkQ;" }
+        if ($kss -ne $null)  { $ep[$i] = $ep[$i] -replace '(p\[IDX_KING_SAFETY_SCALE\]\s*= )(\d+);', "`${1}$kss;" }
     }
     Set-Content $evalParamsPath $ep
     Write-Host "[apply-tuned-params] Updated : EvalParams.java (king-safety baseline)"

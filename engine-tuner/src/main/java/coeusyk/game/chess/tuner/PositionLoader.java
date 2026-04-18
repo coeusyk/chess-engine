@@ -357,4 +357,88 @@ public final class PositionLoader {
         };
     }
 
+    /**
+     * Loads up to {@code maxPositions} positions from an EPD file, then augments the
+     * corpus with a color-flipped copy of every position, eliminating color bias.
+     *
+     * <p>For each loaded position with outcome {@code o}, a color-flipped copy is added
+     * with outcome {@code 1.0 - o} (exchanging the White/Black perspective). The
+     * resulting list interleaves original and flipped entries.
+     *
+     * @param file         EPD dataset path
+     * @param maxPositions maximum number of base positions to load (list will be ≤ 2 × this)
+     * @return list of size ≤ 2 × maxPositions
+     * @throws IOException if the file cannot be read
+     */
+    public static List<LabelledPosition> loadBalanced(Path file, int maxPositions) throws IOException {
+        List<LabelledPosition> base = loadEpd(file, maxPositions);
+        List<LabelledPosition> result = new ArrayList<>(base.size() * 2);
+        for (LabelledPosition lp : base) {
+            result.add(lp);
+            String flippedFen = colorFlipFen(lp.pos().fen());
+            if (flippedFen == null) continue;
+            TunerPosition flipped = parseFen(flippedFen);
+            if (flipped != null) {
+                result.add(new LabelledPosition(flipped, 1.0 - lp.outcome()));
+            }
+        }
+        LOG.info("[PositionLoader] loadBalanced: {} base + {} flipped = {} total",
+                 base.size(), result.size() - base.size(), result.size());
+        return result;
+    }
+
+    /**
+     * Returns the color-flipped FEN of the given position (mirrors the board vertically,
+     * swaps piece colors, toggles the side to move, and adjusts castling/en-passant).
+     * Returns {@code null} if the FEN is malformed.
+     */
+    private static String colorFlipFen(String fen) {
+        try {
+            String[] parts = fen.split(" ");
+            if (parts.length < 4) return null;
+            String placement = parts[0];
+            String color     = parts[1];
+            String castling  = parts[2];
+            String ep        = parts[3];
+            String rest      = parts.length > 4 ? parts[4] + " " + parts[5] : "0 1";
+
+            // Reverse rank order and swap piece case
+            String[] ranks = placement.split("/");
+            StringBuilder sb = new StringBuilder();
+            for (int i = ranks.length - 1; i >= 0; i--) {
+                if (sb.length() > 0) sb.append('/');
+                for (char c : ranks[i].toCharArray()) {
+                    if      (Character.isUpperCase(c)) sb.append(Character.toLowerCase(c));
+                    else if (Character.isLowerCase(c)) sb.append(Character.toUpperCase(c));
+                    else                               sb.append(c);
+                }
+            }
+
+            // Toggle active color
+            String newColor = color.equals("w") ? "b" : "w";
+
+            // Swap castling rights (K↔k, Q↔q)
+            StringBuilder cr = new StringBuilder();
+            for (char c : castling.toCharArray()) {
+                if      (c == 'K') cr.append('k');
+                else if (c == 'k') cr.append('K');
+                else if (c == 'Q') cr.append('q');
+                else if (c == 'q') cr.append('Q');
+                else               cr.append(c);
+            }
+
+            // Mirror en-passant rank (3↔6)
+            String newEp = ep;
+            if (!ep.equals("-") && ep.length() == 2) {
+                char rank = ep.charAt(1);
+                if      (rank == '3') newEp = "" + ep.charAt(0) + '6';
+                else if (rank == '6') newEp = "" + ep.charAt(0) + '3';
+            }
+
+            return sb + " " + newColor + " " + cr + " " + newEp + " " + rest;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
 }

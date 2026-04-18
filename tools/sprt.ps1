@@ -1,92 +1,96 @@
 <#
 .SYNOPSIS
-    Run an SPRT match between two engine JARs.
+    Run a SPRT test between two engine JARs using cutechess-cli.
 
 .DESCRIPTION
-    Runs SPRT(ELO0, ELO1, ALPHA, BETA) to validate whether the new engine
-    is stronger than the old engine.
+    Runs a Sequential Probability Ratio Test between a new and old engine JAR.
+    Supports Bonferroni correction for multiple comparisons.
+    Results and PGN are written to tools/results/.
 
-    SPRT Parameters:
-      ELO0  - null hypothesis Elo bound  (default 0:  no improvement)
-      ELO1  - alternative hypothesis Elo bound (default 50: meaningful gain;
-              use -Elo1 5 for tight tuner-methodology validations per AC)
-      ALPHA - false positive rate  (default 0.05 = 5%)
-      BETA  - false negative rate  (default 0.05 = 5%)
-
-    Reading Results (from cutechess-cli output):
-      "H1 accepted" (LLR >= upper bound) - patch improves strength, merge
-      "H0 accepted" (LLR <= lower bound) - no improvement detected, investigate
+    Run from the chess-engine/ directory:
+        .\tools\sprt.ps1 -New <newJar> -Old <oldJar> -Tag <tag>
 
 .PARAMETER New
-    Path to the new engine JAR to test.
+    Path to the new (candidate) engine JAR.
 
 .PARAMETER Old
-    Path to the old (baseline) engine JAR to test against.
+    Path to the old (baseline) engine JAR.
+
+.PARAMETER Tag
+    Short name used in output file names (e.g., "phase13-b1-kingsafety").
 
 .PARAMETER BonferroniM
-    Number of simultaneous hypotheses (for Bonferroni family-wise error correction).
-    Default: 0 (no correction). When set > 1, alpha and beta are divided by this value.
-    Example: -BonferroniM 5 adjusts alpha=0.05 to per-test alpha=0.01.
+    Number of simultaneous hypotheses (default 1 = no correction).
+    Sets alpha = beta = 0.05 / BonferroniM.
 
 .PARAMETER Elo0
-    Null hypothesis Elo bound (default: 0). Override per-issue AC as needed.
+    H0 Elo difference (default 0).
 
 .PARAMETER Elo1
-    Alternative hypothesis Elo bound (default: 50). Use -Elo1 5 for tuning-methodology SPRTs.
+    H1 Elo difference (default 10).
+
+.PARAMETER TC
+    Time control string passed to cutechess-cli (default '100+1').
+
+.PARAMETER Concurrency
+    Number of games to run in parallel (default 2).
+
+.PARAMETER EngineThreads
+    Number of threads per engine instance (default 1).
+
+.PARAMETER MinGames
+    Minimum game count before SPRT can stop (default 0 = no minimum).
 
 .PARAMETER OpeningsFile
-    Path to an EPD opening book. Defaults to tools/noob_3moves.epd if the file is present
-    next to the script. Pass an empty string ("") to explicitly disable.
-
-.EXAMPLE
-    .\tools\sprt.ps1 -New engine-uci\target\engine-uci.jar -Old tools\baseline-v0.5.6-pretune.jar
-.EXAMPLE
-    .\tools\sprt.ps1 -New engine-uci\target\engine-uci.jar -Old tools\engine-uci-0.5.5.jar -Elo1 5
-.EXAMPLE
-    .\tools\sprt.ps1 -New engine-uci\target\engine-uci.jar -Old tools\baseline-v0.5.6-pretune.jar -BonferroniM 5
+    Path to an EPD opening book. Auto-detected from tools/noob_3moves.epd if empty.
 #>
 param(
     [Parameter(Mandatory)][string]$New,
     [Parameter(Mandatory)][string]$Old,
-    [int]$BonferroniM = 0,
-    [int]$Elo0 = 0,
-    [int]$Elo1 = 50,
-    [string]$TC = '5+0.05',      # Time control (e.g. '60+0.6' for slower games)
-    [int]$Concurrency = 2,       # Concurrent games (cutechess-cli -concurrency)
-    [int]$EngineThreads = 1,     # UCI Threads option per engine (>1 enables SMP)
-    [int]$MinGames = 0,          # Minimum games before SPRT verdict (0 = no minimum)
-    [string]$OpeningsFile = "",  # Default: auto-detect noob_3moves.epd next to script
-    [string]$Tag = "",           # Optional descriptive tag for PGN filename (e.g. "phase13-material-group")
-    [string]$ParamOverrides = "" # Optional path to eval_params_override.txt from CLOP
+    [string]$Tag          = "sprt",
+    [int]   $BonferroniM  = 1,
+    [double]$Elo0         = 0,
+    [double]$Elo1         = 10,
+    [string]$TC           = "100+1",
+    [int]   $Concurrency  = 2,
+    [int]   $EngineThreads = 1,
+    [int]   $MinGames     = 0,
+    [string]$OpeningsFile = ""
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# --- SPRT parameters (override via -Elo0/-Elo1 on the command line) ---
-$Alpha    = 0.05
-$Beta     = 0.05
-$MaxGames = 20000
-# Note: $TC, $Concurrency, $EngineThreads, $MinGames come from script parameters
-
-# --- Bonferroni family-wise error correction (#136) ---
-if ($BonferroniM -gt 1) {
-    $Alpha = $Alpha / $BonferroniM
-    $Beta  = $Beta  / $BonferroniM
-    Write-Host "Bonferroni correction applied: per-test alpha=$Alpha, beta=$Beta for m=$BonferroniM hypotheses."
-}
-
-# --- Resolve cutechess-cli from env or PATH ---
+# ─── Locate cutechess-cli ────────────────────────────────────────────────────
 $Cutechess = $env:CUTECHESS
-if (-not $Cutechess) { $Cutechess = (Get-Command 'cutechess-cli' -ErrorAction SilentlyContinue)?.Source }
+if (-not $Cutechess) {
+    $Cutechess = (Get-Command 'cutechess-cli' -ErrorAction SilentlyContinue)?.Source
+}
 if (-not $Cutechess -or -not (Test-Path $Cutechess)) {
     Write-Error "cutechess-cli not found. Set `$env:CUTECHESS or add cutechess-cli.exe to PATH."
     exit 1
 }
 
-$Java = if ($env:JAVA) { Join-Path $env:JAVA 'bin\java.exe' } elseif ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME 'bin\java.exe' } else { 'java' }
+# ─── Locate Java ────────────────────────────────────────────────────────────
+$Java = if ($env:JAVA) {
+    Join-Path $env:JAVA 'bin\java.exe'
+} elseif ($env:JAVA_HOME) {
+    Join-Path $env:JAVA_HOME 'bin\java.exe'
+} else {
+    'java'
+}
 
-# --- Resolve opening book (auto-detect noob_3moves.epd if not specified) ---
+# ─── Resolve JARs ────────────────────────────────────────────────────────────
+$NewResolved = Resolve-Path $New -ErrorAction SilentlyContinue
+if (-not $NewResolved) { Write-Error "New engine JAR not found: $New"; exit 1 }
+$OldResolved = Resolve-Path $Old -ErrorAction SilentlyContinue
+if (-not $OldResolved) { Write-Error "Old engine JAR not found: $Old"; exit 1 }
+
+# ─── SPRT alpha / beta (Bonferroni correction) ───────────────────────────────
+$alpha = 0.05 / $BonferroniM
+$beta  = 0.05 / $BonferroniM
+
+# ─── Opening book ────────────────────────────────────────────────────────────
 if ($OpeningsFile -eq "") {
     $defaultBook = Join-Path $PSScriptRoot 'noob_3moves.epd'
     if (Test-Path $defaultBook) { $OpeningsFile = $defaultBook }
@@ -94,67 +98,54 @@ if ($OpeningsFile -eq "") {
 $openingsArgs = @()
 if ($OpeningsFile -ne "" -and (Test-Path $OpeningsFile)) {
     $openingsArgs = @("-openings", "file=$OpeningsFile", "format=epd", "order=random", "plies=4")
-    Write-Host "Opening book: $OpeningsFile"
-} elseif ($OpeningsFile -ne "") {
-    Write-Warning "Opening book not found: $OpeningsFile — running without openings"
 }
 
-# --- Resolve JAR paths relative to caller ---
-$NewResolved = Resolve-Path $New -ErrorAction SilentlyContinue
-$OldResolved = Resolve-Path $Old -ErrorAction SilentlyContinue
-
-if (-not $NewResolved) { Write-Error "New engine JAR not found: $New"; exit 1 }
-if (-not $OldResolved) { Write-Error "Old engine JAR not found: $Old"; exit 1 }
-
+# ─── Output paths ────────────────────────────────────────────────────────────
 $ResultsDir = Join-Path $PSScriptRoot 'results'
 if (-not (Test-Path $ResultsDir)) { New-Item -ItemType Directory -Path $ResultsDir | Out-Null }
 
-$TS      = Get-Date -Format 'yyyyMMdd_HHmmss'
-$tagPart = if ($Tag) { "${Tag}_" } else { "" }
-$PgnOut  = Join-Path $ResultsDir "sprt_${tagPart}$TS.pgn"
-$LogOut  = $PgnOut -replace '\.pgn$', '.log'
+$TS     = Get-Date -Format 'yyyyMMdd_HHmmss'
+$PgnOut = Join-Path $ResultsDir "sprt_${Tag}_${TS}.pgn"
+$LogOut = Join-Path $ResultsDir "sprt_${Tag}_${TS}.log"
 
-Write-Host "SPRT: new vs old  ELO0=$Elo0 ELO1=$Elo1 alpha=$Alpha beta=$Beta  TC=$TC  concurrency=$Concurrency  threads/engine=$EngineThreads"
+# ─── Summary header ──────────────────────────────────────────────────────────
+Write-Host "SPRT: new vs old  ELO0=$Elo0 ELO1=$Elo1 alpha=$alpha beta=$beta  TC=$TC  concurrency=$Concurrency  threads/engine=$EngineThreads"
 Write-Host "NEW : $($NewResolved.Path)"
 Write-Host "OLD : $($OldResolved.Path)"
 Write-Host "PGN : $PgnOut"
 Write-Host "LOG : $LogOut"
+if ($OpeningsFile -ne "" -and (Test-Path $OpeningsFile)) {
+    Write-Host "Opening book: $OpeningsFile"
+} else {
+    Write-Host "Opening book: (none)"
+}
+if ($MinGames -gt 0) { Write-Host "Min games   : $MinGames" }
 Write-Host ""
 
-$newEngineArgs = @("name=Vex-new", "cmd=$Java", "arg=-jar", "arg=$($NewResolved.Path)")
-if ($EngineThreads -gt 1) {
-    $newEngineArgs += @("option.Threads=$EngineThreads")
-}
-if ($ParamOverrides -ne '' -and (Test-Path $ParamOverrides)) {
-    $poResolved = (Resolve-Path $ParamOverrides).Path
-    $newEngineArgs += @("arg=--param-overrides", "arg=$poResolved")
-    Write-Host "Param overrides: $poResolved"
-}
-$newEngineArgs += @("proto=uci")
+# ─── Build cutechess-cli arguments ───────────────────────────────────────────
+$maxGames = if ($MinGames -gt 0) { [math]::Max($MinGames, 20000) } else { 20000 }
 
-$oldEngineArgs = @("name=Vex-old", "cmd=$Java", "arg=-jar", "arg=$($OldResolved.Path)")
-if ($EngineThreads -gt 1) {
-    $oldEngineArgs += @("option.Threads=$EngineThreads")
+$ccArgs = @(
+    "-engine", "name=NEW", "cmd=$Java", "arg=-jar", "arg=$($NewResolved.Path)", "proto=uci", "option.Threads=$EngineThreads",
+    "-engine", "name=OLD", "cmd=$Java", "arg=-jar", "arg=$($OldResolved.Path)", "proto=uci", "option.Threads=$EngineThreads",
+    "-each", "tc=$TC",
+    "-games", "$maxGames",
+    "-repeat",
+    "-recover",
+    "-resign", "movecount=5", "score=600",
+    "-draw", "movenumber=40", "movecount=8", "score=10",
+    "-sprt", "elo0=$Elo0", "elo1=$Elo1", "alpha=$alpha", "beta=$beta",
+    "-concurrency", "$Concurrency",
+    "-ratinginterval", "10",
+    "-pgnout", $PgnOut
+)
+
+if ($openingsArgs.Count -gt 0) {
+    $ccArgs += $openingsArgs
 }
-$oldEngineArgs += @("proto=uci")
 
-$sprtArgs = @("elo0=$Elo0", "elo1=$Elo1", "alpha=$Alpha", "beta=$Beta")
-
-& $Cutechess `
-    -engine @newEngineArgs `
-    -engine @oldEngineArgs `
-    -each tc=$TC `
-    -games $MaxGames `
-    -repeat `
-    -recover `
-    -resign movecount=5 score=600 `
-    -draw movenumber=40 movecount=8 score=10 `
-    -sprt @sprtArgs `
-    -concurrency $Concurrency `
-    -ratinginterval 10 `
-    @openingsArgs `
-    -pgnout $PgnOut | Tee-Object -FilePath $LogOut
+# ─── Run cutechess-cli ───────────────────────────────────────────────────────
+& $Cutechess @ccArgs 2>&1 | Tee-Object -FilePath $LogOut
 
 Write-Host ""
-Write-Host "PGN saved to: $PgnOut"
-Write-Host "LOG saved to: $LogOut"
+Write-Host "SPRT complete. Log: $LogOut"
