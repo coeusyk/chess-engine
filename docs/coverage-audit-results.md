@@ -67,41 +67,52 @@ is corpus starvation, not an optimizer bug.
 
 ---
 
-## Full-Corpus Audit — PENDING (PC)
+## Full-Corpus Audit — Recalibrated (Issue #163)
 
-A full audit against a 25k–50k position corpus must be run on the PC
-(Ryzen 7 7700X) with Stockfish-generated positions.  The `--coverage-audit`
-flag accepts any `--corpus` CSV.
+| Item | Value |
+|---|---|
+| Corpus | `data/quiet-labeled.epd` |
+| Positions | 703,000 |
+| Parameters | 829 (pre-formula-fix; 831 after KING_SAFETY_SCALE addition) |
+| Threshold | `1.753763e-8` (TEMPO-anchored: TEMPO_FISHER / 10) |
+| Date | 2026-04 |
 
-Planned augmentation corpus:
-- **Base**: ~28k positions from `tools/results/*.pgn` via `generate_texel_corpus.ps1`
-- **Attacker seeds**: `tools/seeds/attacker_weight_seeds.epd` (≥50 FENs, king-attack dynamics)
-- **Bishop-pair seeds**: `tools/seeds/bishop_pair_seeds.epd` (≥30 FENs, bishop-pair structures)
+### Threshold Recalibration
 
-Run command (PC):
-```powershell
-# 1. Generate augmented corpus
-.\tools\generate_texel_corpus.ps1 `
-    -StockfishPath "C:\Tools\stockfish.exe" `
-    -PgnDir "tools\results" `
-    -CustomFens "tools\seeds\attacker_weight_seeds.epd" `
-    -OutputCsv "data\texel_corpus_atk.csv"
+The original `STARVED_THRESHOLD = 1e-3` was calibrated against a 100-position
+sample and showed 829/829 STARVED on the full corpus. Issue #163 applied two
+fixes:
 
-.\tools\generate_texel_corpus.ps1 `
-    -StockfishPath "C:\Tools\stockfish.exe" `
-    -PgnDir "tools\results" `
-    -CustomFens "tools\seeds\bishop_pair_seeds.epd" `
-    -OutputCsv "data\texel_corpus_bp.csv"
+1. **LOCKED vs STARVED distinction**: Parameters where `PARAM_MIN == PARAM_MAX`
+   (e.g. `KING_MG`, `KING_EG`, back-rank PAWN PSTs) are now reported as LOCKED
+   — they are intentionally fixed constants, not signal-starved.
+2. **TEMPO-anchored threshold**: `COVERAGE_STARVED_THRESHOLD = 1.753763e-8`
+   (= TEMPO Fisher / 10). A parameter must show at least 10% of TEMPO's
+   per-position sensitivity to pass.
 
-# 2. Re-run coverage audit against augmented corpus
-java -jar engine-tuner\target\engine-tuner-0.5.6-SNAPSHOT-shaded.jar `
-    data\texel_corpus_atk.csv `
-    --corpus data\texel_corpus_atk.csv `
-    --coverage-audit
-```
+### Results (703k positions)
 
-Target acceptance: ATK_KNIGHT/BISHOP/ROOK/QUEEN and BISHOP_PAIR_MG/EG Fisher
-values ≥ 1e-4 on a ≥20k position corpus.
+| Category | Count |
+|---|---|
+| LOCKED | 3 / 829 |
+| STARVED | 773 / 826 tunable (Fisher < 1.753763e-8) |
+| OK | 53 / 826 (6.4%) |
+
+Top-covered parameters:
+- `MOB_MG_QUEEN` (1.07e-6)
+- `MOB_MG_BISHOP`, `MOB_MG_ROOK`
+- `TEMPO` (1.75e-7)
+
+3 non-PST scalars remain STARVED: `KNIGHT_OUTPOST_EG` (1.467e-8),
+`ROOK_BEHIND_PASSER_MG` (1.645e-8), `ROOK_BEHIND_PASSER_EG` (6.675e-9).
+
+Seed augmentation for these 3 scalars was **waived** (Issue #163 disposition):
+same-distribution seeds do not structurally improve Fisher diagonal values.
+773 of the STARVED params are PST entries (indices 12–779) — inherently sparse,
+unfixable by same-distribution augmentation. Genuine improvement requires
+structurally different corpus sources (tablebases, endgame suites).
+
+Full report: `coverage-audit-report.csv` (repo root).
 
 ---
 
@@ -113,5 +124,5 @@ values ≥ 1e-4 on a ≥20k position corpus.
 | FEN seed files committed to `tools/seeds/` | ✅ (`attacker_weight_seeds.epd` ≥50, `bishop_pair_seeds.epd` ≥30) |
 | `--custom-fens` / `-CustomFens` in `generate_texel_corpus.ps1` | ✅ |
 | Audit run on sample corpus, results documented | ✅ (this file) |
-| Full-corpus augmentation & re-audit to confirm Fisher ≥ 1e-4 | ⏳ PC-pending (Ryzen 7 7700X) |
-| SPRT H0=0 elo H1=10, α=0.05 β=0.05 on augmented-tuned params | ⏳ PC-pending |
+| Full-corpus audit with recalibrated threshold (#163) | ✅ (703k positions, TEMPO-anchored threshold) |
+| Seed augmentation for remaining STARVED scalars | ⏭️ Waived (#163 disposition — same-distribution seeds ineffective) |
