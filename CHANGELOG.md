@@ -5,7 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [0.5.6] — Phase 13: Tuner Overhaul — Unreleased
+## [0.5.6] — Phase 13: Tuner Overhaul — 2026-04-19
 
 ### Search — SPRT-Validated Strength Gains
 
