@@ -15,12 +15,14 @@ package coeusyk.game.chess.core.eval;
  * </ul>
  *
  * <p>After a Texel tuning run, copy the new values from the tuner output file
- * into {@link Evaluator#DEFAULT_CONFIG} and commit. There is no runtime
- * parameter injection.
+ * into {@link Evaluator#DEFAULT_CONFIG} and commit.
+ *
+ * <p>Note: {@code tempo} is intentionally NOT a field here. It is read directly
+ * from {@link EvalParams#TEMPO} at evaluation time, consistent with all other
+ * overrideable {@link EvalParams} fields. This avoids the class-load snapshot
+ * hazard that would arise from capturing it in a {@code static final} record.
  */
 public record EvalConfig(
-    int tempo,
-
     int bishopPairMg,
     int bishopPairEg,
 

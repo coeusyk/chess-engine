@@ -10,6 +10,7 @@ jobs:
     runs-on: windows-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      CUTECHESS_VERSION: 'v1.4.0'
 
     steps:
       - name: Checkout develop
@@ -71,21 +72,34 @@ jobs:
         if: steps.baseline.outputs.skip != 'true'
         shell: pwsh
         run: |
-          $cutechess = (Get-Command cutechess-cli -ErrorAction SilentlyContinue)?.Source
-          if ($cutechess) {
-            Write-Host "Found cutechess-cli in PATH: $cutechess"
-            "CUTECHESS=$cutechess" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-            exit 0
+          # Resolve version from env
+          $version = $env:CUTECHESS_VERSION          # e.g. v1.4.0
+          $versionNum = $version.TrimStart('v')      # e.g. 1.4.0
+
+          $installDir = Join-Path $env:RUNNER_TEMP 'cutechess'
+          $zipPath    = Join-Path $env:RUNNER_TEMP 'cutechess.zip'
+          $zipUrl     = "https://github.com/cutechess/cutechess/releases/download/$version/cutechess-$versionNum-win64.zip"
+
+          Write-Host "Downloading cutechess-cli $version from: $zipUrl"
+          Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UseBasicParsing
+
+          Write-Host "Extracting to: $installDir"
+          Expand-Archive -Path $zipPath -DestinationPath $installDir -Force
+
+          # The CLI binary may be in the root or a subdirectory — find it
+          $cliExe = Get-ChildItem -Path $installDir -Recurse -Filter 'cutechess-cli.exe' | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $cliExe) {
+            throw "cutechess-cli.exe not found after extracting $zipUrl"
           }
 
-          choco install cutechess -y --no-progress
-          $cutechess = (Get-Command cutechess-cli -ErrorAction SilentlyContinue)?.Source
-          if (-not $cutechess) {
-            throw "cutechess-cli not found after install. Set CUTECHESS explicitly or ensure chocolatey package availability."
-          }
+          Write-Host "Found cutechess-cli: $cliExe"
 
-          Write-Host "Installed cutechess-cli: $cutechess"
-          "CUTECHESS=$cutechess" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          # Add the directory containing the exe to PATH for this job
+          $cliDir = Split-Path $cliExe -Parent
+          "$cliDir" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+          # Also expose the full path directly for the run step
+          "CUTECHESS=$cliExe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Run SPRT match
         if: steps.baseline.outputs.skip != 'true'
@@ -109,14 +123,36 @@ jobs:
             throw "cutechess-cli not found."
           }
 
+          # Use full path to java.exe so cutechess-cli can find it without relying
+          # on its own PATH resolution (which differs from the shell's PATH).
+          $javaExe = Join-Path $env:JAVA_HOME 'bin\java.exe'
+          if (-not (Test-Path $javaExe)) {
+            throw "java.exe not found at $javaExe (JAVA_HOME=$env:JAVA_HOME)"
+          }
+
+          # Create .bat wrappers so Qt's QProcess launches them via cmd.exe.
+          # Direct QProcess::start() on Windows cannot reliably invoke java.exe
+          # with arguments; routing through a .bat file is the standard fix.
+          $wrappersDir = Join-Path $env:RUNNER_TEMP 'wrappers'
+          New-Item -ItemType Directory -Path $wrappersDir -Force | Out-Null
+
+          $devBat  = Join-Path $wrappersDir 'vex-dev.bat'
+          $baseBat = Join-Path $wrappersDir 'vex-base.bat'
+
+          "@echo off`n`"$javaExe`" -jar `"$devJar`"" | Set-Content -Path $devBat  -Encoding ASCII
+          "@echo off`n`"$javaExe`" -jar `"$baselineJar`"" | Set-Content -Path $baseBat -Encoding ASCII
+
           Write-Host "Dev JAR:      $devJar"
           Write-Host "Baseline JAR: $baselineJar"
           Write-Host "Cutechess:    $cutechess"
+          Write-Host "Java:         $javaExe"
+          Write-Host "Dev wrapper:"; Get-Content $devBat
+          Write-Host "Base wrapper:"; Get-Content $baseBat
 
           $sprtOut = Join-Path $env:RUNNER_TEMP 'sprt_output.txt'
           & $cutechess `
-            -engine "name=Vex-dev"  "cmd=java -jar \"$devJar\""      proto=uci `
-            -engine "name=Vex-base" "cmd=java -jar \"$baselineJar\"" proto=uci `
+            -engine name=Vex-dev  cmd=$devBat  proto=uci `
+            -engine name=Vex-base cmd=$baseBat proto=uci `
             -each tc=5+0.05 `
             -games 1000 `
             -repeat `
@@ -127,6 +163,9 @@ jobs:
             -concurrency 2 *>&1 | Tee-Object -FilePath $sprtOut
 
           $outputText = Get-Content -Path $sprtOut -Raw
+          if ($outputText -match 'Cannot start engine') {
+            throw "cutechess-cli could not start one or more engines. Check Java path and JAR integrity.`n$($outputText -split '\n' | Select-String 'Cannot|Error|Warning' | Select-Object -First 10 | Out-String)"
+          }
           if ($outputText -match 'H1 was accepted') {
             'verdict=H1_ACCEPTED' | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           } elseif ($outputText -match 'H0 was accepted') {

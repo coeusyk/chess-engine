@@ -1,0 +1,64 @@
+# Seed FENs for attacker-weight (ATK_KNIGHT/BISHOP/ROOK/QUEEN) corpus coverage.
+# Positions selected for active king-zone attack dynamics: multiple pieces bearing
+# on the enemy king's zone while defence is underdeveloped. Use with --custom-fens
+# in generate_texel_corpus.ps1 to augment the Stockfish-annotated training corpus.
+#
+# Format: FEN only (one per line, EPD-style without semicolon tags).
+# ≥50 starting positions covering knight, bishop, rook, and queen attackers.
+
+# --- Knight attack clusters ---
+r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4
+rnbqnrk1/ppp2ppp/3p4/3Pp1B1/2B5/2N5/PPP2PPP/R2QK2R w KQ - 0 9
+r1bqr1k1/ppp2ppp/2np1n2/2b1p3/2B1P3/2NP1N2/PPP2PPP/R1BQR1K1 w - - 0 8
+4r1k1/pp1n1ppp/2p1qn2/3pP3/1N1P2Q1/2P5/PP3PPP/R1B1R1K1 w - - 2 16
+r3kb1r/1bqn1ppp/pp1ppn2/8/2PNP3/2N3P1/PP3PBP/R1BQ1RK1 w kq - 0 11
+2bqr1k1/r3bppp/p2p1n2/npp1p3/4PP2/1NNP2P1/PPP1B1BP/R2Q1RK1 w - - 0 14
+r1bqk2r/ppppbppp/2n2n2/8/3NP3/2N5/PPP1BPPP/R1BQK2R w KQkq - 4 7
+r1b1k2r/ppq1bppp/2nppn2/8/3NP3/2N1B3/PPPQBPPP/R4RK1 w kq - 4 10
+3r2k1/1pp1qnpp/p2p1p2/4bN2/4P3/1N1Q2P1/PPP2P1P/R4RK1 w - - 2 19
+1r2r1k1/1bqnnppp/pp1p4/2pPp3/2P1P3/2NN2P1/PPQ2PBP/R1B2RK1 w - - 0 14
+r3nrk1/1ppqbppp/p2p1nb1/4p3/2NPPB2/2N1B1P1/PPP2P1P/R2Q1RK1 w - - 4 11
+rn1qkb1r/pp2pppp/2pp1n2/8/3NP3/5N2/PPP1BPPP/R1BQK2R w KQkq - 0 7
+r1bq1rk1/pp2bppp/2n1pn2/3p4/3P4/2NBPN2/PP3PPP/R1BQ1RK1 w - - 0 10
+r1bqnrk1/pp3ppp/2pb1n2/3pp3/2PNP3/3PBN2/PP3PPP/R1BQR1K1 w - - 2 11
+r2q1rk1/1b1nbppp/p2ppn2/1pp5/3NP3/1BN1BP2/PPP2PPP/R2Q1RK1 w - - 0 10
+2rqr1k1/1b1n1ppp/pp1p1nb1/4p3/1PN1PP2/2NB2P1/PP1QR1BP/R5K1 w - - 0 16
+
+# --- Bishop attack clusters ---
+r1b1k2r/ppppqppp/2n2n2/2b5/4P3/2NB1N2/PPP2PPP/R1BQK2R w KQkq - 0 7
+r1bq1rk1/pp2ppbp/2np1np1/3P4/2P1PB2/2N2N2/PP3PPP/R1BQR1K1 w - - 0 9
+2rr2k1/pb1q1ppp/1pnbpn2/3p4/3P1B2/1BN1PN2/PP3PPP/R2QR1K1 w - - 2 13
+r1bqr1k1/1ppnbppp/4pn2/p2p4/2PPP3/2NB1N2/PP3PPP/R1BQR1K1 w - - 0 10
+r1bq1rk1/pp4pp/2pbpn2/3p4/3P1B2/2N1PN2/PP3PPP/R2QKB1R w KQ - 0 12
+3r1rk1/1bq1bppp/p1nppn2/1pp5/2P1PBP1/2NP1N2/PPQ2PBP/R4RK1 w - - 2 13
+r1b2rk1/pp1nqppp/3bp3/2pp4/4PBP1/2NP1N2/PP1Q1PBP/R4RK1 w - - 0 12
+r2qk2r/1pp1bppp/p1nb1n2/4p1B1/4P3/2N2N2/PPP1BPPP/R2QK2R w KQkq - 4 9
+r1bq1rk1/ppn1bppp/2p1pn2/3p2B1/3PP3/2NB1N2/PPP2PPP/R2QR1K1 w - - 2 9
+2rr2k1/3qbppp/pp2pn2/2npb3/P3P1P1/2N1BP2/1PP1NBQP/R4RK1 w - - 0 14
+rbq1r1k1/5ppp/ppnbpn2/2pp4/3P1B2/1PN1PN2/PBP2PPP/2RQRK2 w - - 2 13
+
+# --- Rook attack clusters ---
+r4rk1/1b1q1ppp/pp1ppn2/8/3PP3/2NB1Q2/PPR2PPP/4RBK1 w - - 2 17
+2r1r1k1/pp2qppp/3p1n2/3bp3/4P3/1NRB1N2/PP2QPPP/3R2K1 w - - 4 17
+r3r1k1/ppqn1ppp/5b2/3pp3/4P3/1NN1BP2/PPP2PPP/R2QR1K1 w - - 2 14
+1r2r1k1/3q1ppp/ppp1pn2/3p4/Q3P3/P1N1BP2/1PP2PPP/2R1R1K1 w - - 0 18
+3r4/2q1kppp/pp2pn2/2rp4/4P3/P1N1BPP1/1PP1Q2P/2R1R1K1 w - - 0 20
+r3r1k1/2q1bppp/pp1p1n2/2pP4/4PBP1/P1N2P2/1PP1Q2P/R3R1K1 w - - 0 16
+3rr1k1/pbq2ppp/1pn1pn2/2pp4/2P1P3/2NBQN2/PP3PPP/3RR1K1 w - - 4 13
+6k1/r1q2ppp/pp1rpn2/2p5/4P3/PRNB1Q2/2P2PPP/5RK1 w - - 2 21
+1rr3k1/3qbppp/pp2pn2/3p4/3P1BP1/1PN1QN2/PP4PP/2RR2K1 w - - 0 17
+1r1r2k1/3nbppp/ppq1pn2/2pp4/2PP1B2/P1N1QNP1/1P3PBP/3R1RK1 w - - 2 15
+r3r1k1/3qbppp/pppnpn2/3p4/3PP3/1NNBBP2/PPQ3PP/R4RK1 w - - 0 13
+
+# --- Queen attack clusters ---
+r1bqr1k1/pp3ppp/2np1n2/2p5/2P1P3/2NB1N2/PP2QPPP/R1B2RK1 w - - 2 12
+r2q1rk1/pp1b1ppp/2nb1n2/3pp1B1/3PP3/2NB1N2/PPQ2PPP/R4RK1 w - - 2 11
+2rqr1k1/p4ppp/bpp1pn2/3p4/2PP4/2N1QNP1/PP3PBP/3R1RK1 w - - 0 16
+r3r1k1/p4ppp/bpqppn2/2p5/2P1PB2/1PN2N2/P1Q2PPP/3RR1K1 w - - 0 16
+1r3rk1/p1q2ppp/bpnppn2/2p5/2PP4/QPN1BN2/P4PPP/1R1R2K1 w - - 2 15
+r1bqr1k1/pp3ppp/2np4/3np1B1/3P4/2N2N2/PPQ1BPPP/R4RK1 w - - 0 13
+2r2rk1/p2qbppp/bpnppn2/8/2PP4/2NQBN2/PP3PPP/R1B2RK1 w - - 0 13
+2rq1rk1/pp2bppp/2n1pn2/3p4/3P1B1Q/2NBPN2/PP3PPP/R4RK1 w - - 2 12
+r4rk1/pp2bppp/5n2/3qp3/3P4/2N2N2/PP1QBPPP/R4RK1 w - - 2 16
+2rqr1k1/ppp2ppp/3p1n2/3bp3/3PP2Q/2N1BN2/PPP3PP/3R1RK1 w - - 4 14
+1r2r1k1/3qbppp/p1pp1n2/1p2p3/4P2Q/2N1BN2/PPP2PPP/R3R1K1 w - - 0 14

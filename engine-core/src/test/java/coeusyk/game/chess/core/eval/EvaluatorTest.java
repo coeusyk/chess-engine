@@ -3,6 +3,8 @@ package coeusyk.game.chess.core.eval;
 import coeusyk.game.chess.core.models.Board;
 import org.junit.jupiter.api.Test;
 
+import static coeusyk.game.chess.core.eval.EvalParams.TEMPO;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 class EvaluatorTest {
@@ -14,8 +16,8 @@ class EvaluatorTest {
         Board board = new Board();
         int score = evaluator.evaluate(board);
         // Equal material + PSTs are symmetric, so the only offset is the TEMPO bonus
-        // for the side to move (+15 for White at the start position).
-        assertEquals(Evaluator.DEFAULT_CONFIG.tempo(), score, "Starting position should evaluate to TEMPO cp (side-to-move bonus only)");
+        // for the side to move (EvalParams.TEMPO cp for White at the start position).
+        assertEquals(TEMPO, score, "Starting position should evaluate to TEMPO cp (side-to-move bonus only)");
     }
 
     @Test
@@ -28,7 +30,7 @@ class EvaluatorTest {
         // Position with equal material, White to move — eval equals TEMPO (side-to-move bonus).
         Board extraPawn = new Board("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
         int equalMaterial = evaluator.evaluate(extraPawn);
-        assertEquals(Evaluator.DEFAULT_CONFIG.tempo(), equalMaterial, "Equal material should evaluate to TEMPO cp (side-to-move bonus)");
+        assertEquals(TEMPO, equalMaterial, "Equal material should evaluate to TEMPO cp (side-to-move bonus)");
     }
 
     @Test
@@ -48,7 +50,7 @@ class EvaluatorTest {
         Board board = new Board();
         int whiteScore = evaluator.evaluate(board);
         // Starting position is materially/positionally symmetric; eval = TEMPO (side-to-move bonus).
-        assertEquals(Evaluator.DEFAULT_CONFIG.tempo(), whiteScore);
+        assertEquals(TEMPO, whiteScore);
     }
 
     @Test
@@ -108,28 +110,34 @@ class EvaluatorTest {
     void pstTableLookupCorrect() {
         // Tables stored in display order: a8=0, h1=63
         // Board also uses a8=0, so white PST lookup is direct (no mirror).
-        // White knight on e4 → board sq 36 → table index 36
-        // MG_KNIGHT row 4 (32-39): {-13,8,9,10,15,11,14,-10} → col 4 = 15 (v0.5.4)
-        assertEquals(15, PieceSquareTables.mg(2, 36));
-        // EG_KNIGHT row 4 (32-39): {-24,-13,9,19,10,11,0,-27} → col 4 = 10 (v0.5.4)
-        assertEquals(10, PieceSquareTables.eg(2, 36));
-        // MG_PAWN row 4 (32-39): {-30,-27,-5,6,12,9,-10,-31} → col 4 = 12 (v0.5.4)
-        assertEquals(12, PieceSquareTables.mg(1, 36));
+        // White knight on e4 → board sq 36 → table index 36 (row 4, col 4)
+        // Restored 2026-04-10: eval-converged PSTs reverted (see EvaluatorTest.mgAndEgMaterialValuesAreCorrect).
+        // MG_KNIGHT row 4 (32-39): {-21,-10,7,17,19,5,21,-20} → col 4 = 19
+        assertEquals(19, PieceSquareTables.mg(2, 36));
+        // EG_KNIGHT row 4 (32-39): reverted from eval-converged PSTs → col 4 = 14
+        assertEquals(14, PieceSquareTables.eg(2, 36));
+        // MG_PAWN row 4 (32-39): reverted from eval-converged PSTs → col 4 = 14
+        assertEquals(14, PieceSquareTables.mg(1, 36));
     }
 
     @Test
     void mgAndEgMaterialValuesAreCorrect() {
-        assertEquals(100, Evaluator.mgMaterialValue(1));   // Pawn   (unchanged)
-        assertEquals(391, Evaluator.mgMaterialValue(2));   // Knight (v0.5.4)
-        assertEquals(428, Evaluator.mgMaterialValue(3));   // Bishop (v0.5.4)
-        assertEquals(558, Evaluator.mgMaterialValue(4));   // Rook   (v0.5.4)
-        assertEquals(1200, Evaluator.mgMaterialValue(5));  // Queen  (v0.5.4)
+        // Restored 2026-04-10: eval-converged params from Issue #141 were reverted because
+        // eval-mode Texel minimizes raw cp² MSE against Stockfish's internal scale, which
+        // differs from Vex's. This collapsed all piece values by ~35% (Rook MG: 558→362),
+        // causing ~−44 Elo regression versus the pre-tuning baseline (SPRT #142 post-mortem).
+        // eval-mode tuning is now gated behind --experimental. (See issue tracker.)
+        assertEquals(100,  Evaluator.mgMaterialValue(1));  // Pawn
+        assertEquals(391,  Evaluator.mgMaterialValue(2));  // Knight
+        assertEquals(428,  Evaluator.mgMaterialValue(3));  // Bishop
+        assertEquals(558,  Evaluator.mgMaterialValue(4));  // Rook
+        assertEquals(1200, Evaluator.mgMaterialValue(5));  // Queen
 
-        assertEquals(89, Evaluator.egMaterialValue(1));    // Pawn   (v0.5.4)
-        assertEquals(287, Evaluator.egMaterialValue(2));   // Knight (v0.5.4)
-        assertEquals(311, Evaluator.egMaterialValue(3));   // Bishop (v0.5.4)
-        assertEquals(555, Evaluator.egMaterialValue(4));   // Rook   (v0.5.4)
-        assertEquals(1040, Evaluator.egMaterialValue(5));  // Queen  (v0.5.4)
+        assertEquals(89,   Evaluator.egMaterialValue(1));  // Pawn
+        assertEquals(287,  Evaluator.egMaterialValue(2));  // Knight
+        assertEquals(311,  Evaluator.egMaterialValue(3));  // Bishop
+        assertEquals(555,  Evaluator.egMaterialValue(4));  // Rook
+        assertEquals(1040, Evaluator.egMaterialValue(5));  // Queen
     }
 
     @Test
@@ -158,12 +166,12 @@ class EvaluatorTest {
         Board endgame = new Board("4k3/pppppppp/8/8/8/8/PPPPPPPP/4K3 w - - 0 1");
         int endgameScore = evaluator.evaluate(endgame);
         // Equal material, symmetric → eval = TEMPO (side-to-move bonus only)
-        assertEquals(Evaluator.DEFAULT_CONFIG.tempo(), endgameScore);
+        assertEquals(TEMPO, endgameScore);
 
         // Starting position: phase = 24 → pure middlegame score
         Board startPos = new Board();
         int startScore = evaluator.evaluate(startPos);
-        assertEquals(Evaluator.DEFAULT_CONFIG.tempo(), startScore);
+        assertEquals(TEMPO, startScore);
     }
 
     @Test
@@ -293,8 +301,12 @@ class EvaluatorTest {
         int[] scoreDoubled = PawnStructure.evaluate(doubled, 0L);
         int[] scoreSpread = PawnStructure.evaluate(spread, 0L);
 
-        assertTrue(scoreSpread[0] >= scoreDoubled[0],
-                "Doubled pawns MG: spread >= doubled (DOUBLED_MG=0 in v0.5.4; EG penalty=13 enforces correctness)");
+        // Updated 2026-04-10: eval-converged Texel run (Issue #141) set DOUBLED_MG=-2 (tuner
+        // found a tiny MG bonus for doubled pawns, likely absorbing a structural trade-off).
+        // mg -= (wd-bd) * (-2) = mg += 2 for the doubled position. Doubled MG >= spread MG.
+        // The doubled-pawn downside is captured entirely by DOUBLED_EG=23 (penalty).
+        assertTrue(scoreDoubled[0] >= scoreSpread[0],
+                "Doubled pawns MG: with DOUBLED_MG=-2 (tuned tiny bonus), doubled >= spread");
         assertTrue(scoreSpread[1] > scoreDoubled[1],
                 "Doubled pawns should score lower in EG");
     }
@@ -346,16 +358,30 @@ class EvaluatorTest {
 
     @Test
     void attackerWeightReducesSafety() {
-        // Black queen on f3 attacks white king zone on g1
-        Board queenAttacks = new Board("6k1/5ppp/8/8/8/5q2/5PPP/6K1 w - - 0 1");
-        // No queen — no attacker penalty
-        Board noAttacker = new Board("6k1/5ppp/8/8/8/8/5PPP/6K1 w - - 0 1");
+        // Black rook on f3 attacks white king zone on g1.
+        // ATK_WEIGHT_ROOK = 7 (clearly positive), so a rook attack always reduces safety.
+        Board rookAttacks = new Board("6k1/5ppp/8/8/8/5r2/5PPP/6K1 w - - 0 1");
+        Board noAttacker  = new Board("6k1/5ppp/8/8/8/8/5PPP/6K1 w - - 0 1");
 
-        int safetyAttacked = KingSafety.evaluate(queenAttacks);
-        int safetyClean = KingSafety.evaluate(noAttacker);
+        int safetyAttacked = KingSafety.evaluate(rookAttacks);
+        int safetyClean    = KingSafety.evaluate(noAttacker);
 
         assertTrue(safetyClean > safetyAttacked,
-                "Enemy queen attacking king zone should reduce safety");
+                "Enemy rook attacking king zone should reduce safety (ATK_WEIGHT_ROOK=7)");
+    }
+
+    @Test
+    void queenPlusRookCombinedAttackReducesSafety() {
+        // Black rook+queen on f3/e3 both attacking white king zone on g1.
+        // Combined w = ATK_WEIGHT_ROOK + ATK_WEIGHT_QUEEN = 7 + 3 = 10 → penalty = -25.
+        Board comboAttacks = new Board("6k1/5ppp/8/8/8/4qr2/5PPP/6K1 w - - 0 1");
+        Board noAttacker   = new Board("6k1/5ppp/8/8/8/8/5PPP/6K1 w - - 0 1");
+
+        int safetyCombo = KingSafety.evaluate(comboAttacks);
+        int safetyClean = KingSafety.evaluate(noAttacker);
+
+        assertTrue(safetyClean > safetyCombo,
+                "Rook+queen combined attack should reduce king safety");
     }
 
     @Test
@@ -575,5 +601,83 @@ class EvaluatorTest {
 
         assertTrue(evaluator.evaluate(rookOn7th) > evaluator.evaluate(rookOn1st),
                 "Rook on 7th rank (a7) should score higher than rook on 1st rank (a1)");
+    }
+
+    // --- Color-flip symmetry tests ---
+
+    /**
+     * Algorithmic color-flip of a FEN string: reverses rank order, swaps piece case,
+     * toggles active color, swaps castling rights, and mirrors the en passant rank.
+     * eval(pos) must equal eval(colorFlip(pos)) for a color-symmetric evaluator.
+     */
+    private static String colorFlipFen(String fen) {
+        String[] parts = fen.split(" ");
+        String placement = parts[0];
+        String color     = parts[1];
+        String castling  = parts[2];
+        String ep        = parts[3];
+        String rest      = parts.length > 4 ? parts[4] + " " + parts[5] : "0 1";
+
+        // Reverse rank order and swap piece case
+        String[] ranks = placement.split("/");
+        StringBuilder sb = new StringBuilder();
+        for (int i = ranks.length - 1; i >= 0; i--) {
+            if (sb.length() > 0) sb.append('/');
+            for (char c : ranks[i].toCharArray()) {
+                if (Character.isUpperCase(c))      sb.append(Character.toLowerCase(c));
+                else if (Character.isLowerCase(c)) sb.append(Character.toUpperCase(c));
+                else                               sb.append(c);
+            }
+        }
+
+        // Toggle active color
+        String newColor = color.equals("w") ? "b" : "w";
+
+        // Swap castling rights (K<->k, Q<->q)
+        StringBuilder cr = new StringBuilder();
+        for (char c : castling.toCharArray()) {
+            if      (c == 'K') cr.append('k');
+            else if (c == 'k') cr.append('K');
+            else if (c == 'Q') cr.append('q');
+            else if (c == 'q') cr.append('Q');
+            else               cr.append(c);
+        }
+
+        // Mirror en passant rank (3<->6)
+        String newEp = ep;
+        if (!ep.equals("-") && ep.length() == 2) {
+            char rank = ep.charAt(1);
+            if      (rank == '3') newEp = "" + ep.charAt(0) + '6';
+            else if (rank == '6') newEp = "" + ep.charAt(0) + '3';
+        }
+
+        return sb + " " + newColor + " " + cr + " " + newEp + " " + rest;
+    }
+
+    @Test
+    void kingSafetyColorFlipSymmetry() {
+        // eval(pos) == eval(colorFlip(pos)) for all positions.
+        // A color-symmetric evaluator must give the same side-to-move-relative score
+        // regardless of which color is attacking or defending the king.
+        String[] fens = {
+            // Starting position
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            // White king g1, shield intact, black rook on f3 attacking
+            "4k3/8/8/8/8/5r2/5PPP/6K1 b - - 0 1",
+            // White king c1, black queen+rook combo attack near king
+            "4k3/8/8/8/8/4qr2/5PPP/2K5 b - - 0 1",
+            // White king g1 with shield, black queen+rook+bishop multi-attack
+            "4k3/8/8/8/6b1/5rq1/5PPP/6K1 b - - 0 1",
+            // Both sides castled, symmetric middle-game structure
+            "r3k2r/pppq1ppp/8/8/8/8/PPPQ1PPP/R3K2R w KQkq - 0 1",
+        };
+        for (String fen : fens) {
+            String flipped = colorFlipFen(fen);
+            int evalOrig    = evaluator.evaluate(new Board(fen));
+            int evalFlipped = evaluator.evaluate(new Board(flipped));
+            assertEquals(evalOrig, evalFlipped,
+                    "eval must be color-symmetric for FEN: " + fen
+                    + "\n  flipped FEN: " + flipped);
+        }
     }
 }

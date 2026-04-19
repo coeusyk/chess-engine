@@ -189,9 +189,10 @@ class SearcherTest {
     void lmrReductionTableIsPrecomputed() {
         Searcher searcher = new Searcher();
 
-        // Updated Phase 9B #113: new log2-based formula (R = 1 + log2(d)*log2(m)/2) gives R=2
-        // at depth=3/moveIndex=3; both R=1 and R=2 are correct reductions (R=2 is more aggressive).
-        assertEquals(2, searcher.getLmrReductionForTesting(3, 3));
+        // Updated Phase 13 C-2: LMR_LOG_DIVISOR changed from 2*(ln2)^2≈0.961 → 1.7.
+        // R = max(1, floor(1 + ln(3)*ln(3)/1.7)) = max(1, floor(1.710)) = 1.
+        // R=1 at depth=3/move=3 is correct and less aggressive than the Phase 9B formula.
+        assertEquals(1, searcher.getLmrReductionForTesting(3, 3));
         assertTrue(searcher.getLmrReductionForTesting(8, 8) >= 1);
         assertTrue(searcher.getLmrReductionForTesting(12, 24) >= searcher.getLmrReductionForTesting(4, 4));
     }
@@ -431,8 +432,8 @@ class SearcherTest {
     void singularMarginScalesByDepth() {
         Searcher searcher = new Searcher();
 
-        assertEquals(64, searcher.getSingularMarginForTesting(8));
-        assertEquals(80, searcher.getSingularMarginForTesting(10));
+        assertEquals(54, searcher.getSingularMarginForTesting(8));
+        assertEquals(70, searcher.getSingularMarginForTesting(10));
     }
 
     @Test

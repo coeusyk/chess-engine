@@ -15,6 +15,7 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Tag("regression")
 class SearchRegressionTest {
@@ -130,7 +131,14 @@ class SearchRegressionTest {
     // E10: Philidor position — Black defends with third-rank rook check (5 pieces, Black to move).
     static final String E10_FEN = "8/8/5KPk/8/8/8/r7/5R2 b - - 0 1";
 
-    // ── Stability test: assert every position matches its captured bestmove ──
+    // ── Q-search horizon regression (Issue #138) ─────────────────────
+    // Regression game: chess.com/game/computer/1061637955 (2026-04-08)
+    // Vex (Black) had forced mate-in-5 via 45...Bc2! but drew by perpetual.
+    // FEN: position after 44...Qf2+ 45.Kh1 (Black to move).
+    // White: Kh1 Qg1 Bh3 | Black: Kh8 Qf2 Ng4 Bc2 + pawns g7/h7.
+    // Mating line: 45...Bc2 46.Bxg7+ Kxg7 47.Bxg4 Bxe4+ 48.Bf3 Bxf3#
+    // Engine must not return a draw/repetition score — eval must be > +200cp for Black.
+    static final String Q1_FEN = "7k/6pp/8/8/6n1/7B/2b2q2/6QK b - - 0 45";
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("regressionPositions")
@@ -161,6 +169,10 @@ class SearchRegressionTest {
             //     for all king-cycling paths. Updated 2026-04-02: draw detection scoring 0 makes e1d2 preferred.
             //     Reverted to v0.5.4 eval baseline: depth-8 preference returns to e1d2 (king advance).
             //     Both f5f6 and e1d2 are equivalent continuations.
+            //     Updated 2026-04-10: Phase 13 tuner-overhaul eval changes shift depth-8 PST gradient;
+            //     e1e2 (king toward d2/e2 approach corridor) becomes preferred. Both e1d2 and e1e2 win.
+            //     Reverted 2026-04-10: eval-mode PSTs reverted (issue #141 post-mortem); depth-8
+            //     preference returns to e1d2. Both e1d2 and e1e2 are equivalent king advances.
             Arguments.of("P1",  P1_FEN,  "e1d2"),
             Arguments.of("P2",  P2_FEN,  "d4d5"),
             // P3: 8/8/8/8/4k3/8/3PK3/8 — Ke2+Pd2 vs Ke4. Both d2d3 (pawn advance) and e2f2
@@ -184,7 +196,23 @@ class SearchRegressionTest {
             //     depth-8 reduction pattern; c1c2 becomes preferred. Both c4c5 and c1c2 win.
             //     Reverted to v0.5.4 eval baseline: depth-8 preference returns to c1c2 (king advance).
             //     Both c4c5 and c1c2 are winning continuations; choice is eval-dependent.
-            Arguments.of("P5",  P5_FEN,  "c1c2"),
+            //     Updated 2026-04-10: Phase 13 tuner-overhaul eval changes (king PST & mobility)
+            //     shift depth-8 preference to c1b2 (king approaches b-pawn). All of c1c2, c1b2,
+            //     c4c5 win; choice is eval-dependent.
+            //     Reverted 2026-04-10: eval-mode PSTs reverted (issue #141 post-mortem); depth-8
+            //     preference returns to c1c2. All of c1c2, c1b2, c4c5 win; equivalent.
+            //     Updated 2026-04-10: CLOP phase-13 params baked in (K=2,B=1,R=7,Q=3,H=73,T=17).
+            //     Eval shift causes depth-8 preference to move to b4b5 (pawn push). All of
+            //     c1c2, c1b2, c4c5, b4b5 win; choice is eval-dependent.
+            //     Updated 2026-04-10: Reverted king safety weights to pre-CLOP (K=5,B=3,R=9);
+            //     fixed ATK_WEIGHT_QUEEN from -1 to +5; kept TEMPO=17, HANGING=52.
+            //     Depth-8 preference shifts to c1d2 (king activation). All of c1c2, c1d2,
+            //     c1b2, c4c5, b4b5 win; choice is eval-dependent.
+            //     Updated 2026-04-12: two-phase CLOP baked in (Q=0 K=6 B=2 R=12 H=40 T=17).
+            //     Lower hanging penalty (52→40) and higher rook attack weight (9→12) slightly
+            //     shift depth-8 king-advance ordering toward b4b5 (pawn push). All of
+            //     c1c2, c1d2, c1b2, c4c5, b4b5 win; choice is eval-dependent.
+            Arguments.of("P5",  P5_FEN,  "b4b5"),
             Arguments.of("P6",  P6_FEN,  "f4f5"),
             // P7: 8/3P4/8/8/8/8/8/3K1k2 — Kd1+Pd7 vs Kf1. d7d8q (immediate promotion)
             //     and d1d2 (king advance toward f1 before promoting) both win. d7d8q gains
@@ -211,6 +239,11 @@ class SearchRegressionTest {
             //     depth-8 reduction pattern; d3d4 becomes preferred. Both d3d4 and d3e4 win.
             //     Reverted to v0.5.4 eval baseline: depth-8 preference returns to d3d4 (king
             //     centralises toward d5 key square). All of d3d4, d3e4, d3c4 win; equivalent.
+            //     Reverted 2026-04-10: eval-mode PSTs reverted (issue #141 post-mortem); depth-8
+            //     preference shifts to d3e4 (escort). All of d3d4, d3e4, d3c4 win; equivalent.
+            //     Updated 2026-04-10: CLOP phase-13 params baked in (K=2,B=1,R=7,Q=3,H=73,T=17).
+            //     Eval shift returns depth-8 preference to d3d4 (centralise toward d5 key square).
+            //     All of d3d4, d3e4, d3c4 win; equivalent.
             Arguments.of("P9",  P9_FEN,  "d3d4"),
             // P10: e3d3 and e3f3 are symmetric king moves to break direct e-file opposition.
             //      Both win; choice is eval-dependent (d3/f3 equidistant for central pawn).
@@ -235,6 +268,11 @@ class SearchRegressionTest {
             //     (queen restriction to 6th rank — textbook KQK technique). Both are winning.
             //     Reverted to v0.5.4 eval + v0.5.4 Searcher + v0.5.4 MopUp: f1f6 (textbook
             //     restriction technique). Both f1f6 and f1d3 win; equivalent KQK continuations.
+            //     Updated 2026-04-10: Phase 13 tuner-overhaul eval changes shift depth-8 queen
+            //     placement preference to f1b5 (queen to bishop-5 diagonal — restricts BK from
+            //     d7/e6). Both f1f6 and f1b5 are winning KQK continuations; equivalent.
+            //     Reverted 2026-04-10: eval-mode PSTs reverted (issue #141 post-mortem); depth-8
+            //     preference returns to f1f6 (textbook 6th-rank restriction). Both win; equivalent.
             Arguments.of("E1",  E1_FEN,  "f1f6"),
             // E2: 4k3/8/8/8/8/8/8/4KR2 — KR vs K.  f1f6 (rook-to-6th restriction) and
             //     e1d2 (king activation toward centre) both win; known theoretical equivalence.
@@ -245,13 +283,33 @@ class SearchRegressionTest {
             //     is now preferred. Both e1e2 and f1f6 are correct KRK technique.
             //     Reverted to v0.5.4 eval + v0.5.4 Searcher + v0.5.4 MopUp: f1f6 (textbook
             //     rook restriction). Both f1f6, e1e2, f1f3 are correct KRK continuations.
+            //     Updated 2026-04-10: CLOP-tuned params (TEMPO 21→12, ATK_WEIGHT_ROOK 5→9).
+            //     Reduced TEMPO lowers side-to-move bonus, shifting depth-8 king-activation
+            //     preference toward e1e2 (approach corridor). Both e1e2 and f1f6 win by
+            //     standard KRK technique; neither is an error.
+            //     Reverted 2026-04-10: eval-mode PSTs reverted (issue #141 post-mortem); depth-8
+            //     preference returns to f1f6 (textbook 6th-rank restriction). Both win; equivalent.
+            //     Updated 2026-04-10: CLOP phase-13 params baked in (K=2,B=1,R=7,Q=3,H=73,T=17).
+            //     Higher TEMPO (12→17) and lower R/higher Q shift depth-8 king-activation
+            //     preference to e1e2 (approach corridor). Both e1e2 and f1f6 win; equivalent.
+            //     Updated 2026-04-10: Reverted king safety weights to pre-CLOP (K=5,B=3,R=9);
+            //     fixed ATK_WEIGHT_QUEEN from -1 to +5; kept TEMPO=17, HANGING=52.
+            //     Depth-8 preference returns to f1f6 (textbook 6th-rank restriction).
+            //     Both e1e2 and f1f6 are correct KRK technique; equivalent.
             Arguments.of("E2",  E2_FEN,  "f1f6"),
             Arguments.of("E3",  E3_FEN,  "f4f5"),
             // E4: e4d4 and e4f4 are symmetric king moves to break e-file direct opposition.
             //     Both win; equivalent by symmetry for a central pawn.
             //     Updated 2026-04-03: cheap bitboard hanging-penalty (replacing SEE-based form)
             //     reverts depth-8 preference to e4d4. Equivalent by symmetry.
-            Arguments.of("E4",  E4_FEN,  "e4d4"),
+            //     Updated Phase 13 PST tuning: symmetric preference shifts to e4f4. Both win.
+            //     Reverted 2026-04-10: eval-mode PSTs reverted (issue #141 post-mortem); depth-8
+            //     preference returns to e4d4 (symmetric equivalent; both win by opposition).
+            //     Updated 2026-04-10: CLOP phase-13 params baked in (K=2,B=1,R=7,Q=3,H=73,T=17).
+            //     Eval shift returns preference to e4f4. Both e4d4 and e4f4 win; equivalent.
+            //     Updated 2026-04-12: final two-phase CLOP baked in (Q=0,K=6,B=2,R=12,H=40,T=17).
+            //     e4f4 preference confirmed preserved under final production params.
+            Arguments.of("E4",  E4_FEN,  "e4f4"),
             Arguments.of("E5",  E5_FEN,  "a2e2"),
             // E6: 8/8/8/5k2/1PP5/8/2K5/8 — Kc2+Pb4c4 vs Kf5. Both b4b5 and c4c5 advance
             //     connected pawns; BK on f5 is far from both.
@@ -266,13 +324,25 @@ class SearchRegressionTest {
             // E7: b2c3 (king advance toward enemy king on e5) is also valid KBN vs K
             //     technique. Both b2c3 and d2f3 (knight centralisation) win; move order
             //     is eval-dependent. Updated 2026-04-01: new eval terms prefer king advance.
-            Arguments.of("E7",  E7_FEN,  "b2c3"),
+            //     Updated 2026-04-12: two-phase CLOP baked in (Q=0 K=6 B=2 R=12 H=40 T=17).
+            //     Knight weight bump (5→6) slightly raises knight-centralisation scores;
+            //     depth-8 preference shifts to d2f3 (knight to f3, attacks e5+h4). Both
+            //     b2c3 and d2f3 are correct KBN technique; choice is eval-dependent.
+            Arguments.of("E7",  E7_FEN,  "d2f3"),
             // E8: 7k/p7/8/8/8/8/7P/6RK — Kh1+Rg1+Ph2 vs Kh8+Pa7. g1g5 (active rook,
-            //     threatens Rg7+/Ra5) and h2h4 (pawn race) both win. Choice is eval-dependent.
+            //     centralises to 5th rank) and h2h4 (pawn race) both win. Choice is eval-dependent.
             //     Updated 2026-04-02: new terms shift preference to g1g5.
             //     Updated Phase 10 #10.5: Texel-tuned piece bonuses (rook7thEg 23→32) shift
-            //     depth-8 preference to h2h4. Both g1g5 and h2h4 are winning continuations.
-            Arguments.of("E8",  E8_FEN,  "h2h4"),
+            //     depth-8 preference to h2h4. Both g1g5/g1g6 and h2h4 are winning continuations.
+            //     Updated Phase 13 PST tuning: preference shifts back to g1g5. Both are winning.
+            //     Updated 2026-04-10: Reverted king safety weights to pre-CLOP (K=5,B=3,R=9);
+            //     fixed ATK_WEIGHT_QUEEN from -1 to +5; kept TEMPO=17, HANGING=52.
+            //     Depth-8 preference shifts to h2h4 (pawn race). Both g1g5 and h2h4 win; equivalent.
+            //     Updated 2026-04-12: two-phase CLOP baked in (Q=0 K=6 B=2 R=12 H=40 T=17).
+            //     Higher rook weight (9→12) increases rook-activity evaluation; rook activation
+            //     g1g5 (centralising rook to 5th) is now preferred over pawn push h2h4.
+            //     Both g1g5 and h2h4 win; choice is eval-dependent.
+            Arguments.of("E8",  E8_FEN,  "g1g5"),
             Arguments.of("E9",  E9_FEN,  "d3e3"),
             Arguments.of("E10", E10_FEN, "a2a6")
         );
@@ -290,7 +360,11 @@ class SearchRegressionTest {
     @Tag("regression")
     void engineDoesNotDrawFromWinningPosition(String label, String fen) {
         Board board = new Board(fen);
-        SearchResult result = new Searcher().searchDepth(board, DRAW_FAILURE_DEPTH);
+        Searcher searcher = new Searcher();
+        // Contempt must be active: repetition draws return ±contemptCp instead of 0,
+        // nudging the engine away from cycling in clearly winning positions.
+        searcher.setContempt(Searcher.DEFAULT_CONTEMPT_CP);
+        SearchResult result = searcher.searchDepth(board, DRAW_FAILURE_DEPTH);
         assertNotEquals(0, result.scoreCp(),
                 "Engine returned draw score 0 for draw-failure position: " + label + " | " + fen);
     }
@@ -356,6 +430,27 @@ class SearchRegressionTest {
             }
         }
         System.out.println("=== END DISCOVERY ===");
+    }
+
+    // ── Q-search horizon regression — Issue #138 ─────────────────────
+    // From FEN Q1_FEN: Black bishop is already on c2 (the winning Bc2 move has been
+    // played). This is Black to move with a Ng4-based mating net in place. The engine
+    // must evaluate the resulting position as clearly winning for Black (> +200cp).
+    // Constructed from the regression game in Issue #138, where the engine missed the
+    // Bc2! continuation and drew by perpetual instead.
+    // Engine must recognise it is clearly winning; eval must be > +200cp for Black.
+    // (Score is returned in the active-side perspective, so positive = good for Black.)
+    private static final int Q1_DEPTH = 12;
+
+    @Test
+    @Tag("regression")
+    void horizonBlindnessRegression_Q1() {
+        Board board = new Board(Q1_FEN);
+        SearchResult result = new Searcher().searchDepth(board, Q1_DEPTH);
+        assertTrue(result.scoreCp() > 200,
+                "Horizon blindness regression (Issue #138): engine returned "
+                + result.scoreCp() + "cp from Q1_FEN — expected > 200cp (Black winning). "
+                + "Bestmove: " + (result.bestMove() != null ? toUci(result.bestMove()) : "null"));
     }
 
     // ── Helper ──────────────────────────────────────────────────────

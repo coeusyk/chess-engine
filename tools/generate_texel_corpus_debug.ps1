@@ -625,13 +625,11 @@ for ($i = 0; $i -lt $totalPos; $i += $batchSize) {
 
 $sfPath = $StockfishPath
 $sfDepth = $Depth
-$sigK = $K
 
 $annotated = $batches | ForEach-Object -Parallel {
     $batch  = $_
     $sfPath = $using:sfPath
     $sfDepth = $using:sfDepth
-    $sigK   = $using:sigK
     $results = [System.Collections.Generic.List[PSCustomObject]]::new()
 
     # Start one Stockfish process for this thread
@@ -674,10 +672,9 @@ $annotated = $batches | ForEach-Object -Parallel {
             }
 
             if ($null -ne $evalCp) {
-                $wdl = 1.0 / (1.0 + [Math]::Pow(10.0, -[double]$evalCp / $sigK))
                 $results.Add([PSCustomObject]@{
                     Fen        = $pos.Fen4
-                    Wdl        = [Math]::Round($wdl, 6)
+                    SfCp       = $evalCp
                     GameResult = $pos.GameResult
                 })
             }
@@ -705,10 +702,10 @@ Write-Host ""
 Write-Host "Step 3: Writing CSV to $OutputCsv..." -ForegroundColor Cyan
 
 $csvLines = [System.Text.StringBuilder]::new()
-[void]$csvLines.AppendLine("fen,wdl_stockfish,game_result")
+[void]$csvLines.AppendLine("fen,sf_cp,game_result")
 foreach ($row in $allAnnotated) {
     $fenEsc = $row.Fen -replace '"','""'
-    [void]$csvLines.AppendLine("`"$fenEsc`",$($row.Wdl),$($row.GameResult)")
+    [void]$csvLines.AppendLine("`"$fenEsc`",$($row.SfCp),$($row.GameResult)")
 }
 
 [System.IO.File]::WriteAllText($OutputCsv, $csvLines.ToString(), [System.Text.Encoding]::UTF8)
@@ -716,7 +713,7 @@ foreach ($row in $allAnnotated) {
 $rowCount = $allAnnotated.Count
 Write-Host ""
 Write-Host "Corpus written: $rowCount positions to $OutputCsv" -ForegroundColor Green
-Write-Host "CSV columns  : fen, wdl_stockfish, game_result"
+Write-Host "CSV columns  : fen, sf_cp, game_result"
 Write-Host "Next step    : run engine-tuner with --corpus $OutputCsv"
 
 # Print a sample row for quick sanity check
@@ -725,7 +722,7 @@ if ($allAnnotated.Count -gt 0) {
     Write-Host ""
     Write-Host "Sample row:" -ForegroundColor DarkCyan
     Write-Host "  FEN        : $($sample.Fen)"
-    Write-Host "  WDL        : $($sample.Wdl)"
+    Write-Host "  SfCp       : $($sample.SfCp)"
     Write-Host "  GameResult : $($sample.GameResult)"
 }
 

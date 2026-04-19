@@ -37,8 +37,16 @@ public final class GradientDescent {
     private static final double BETA2   = 0.999;
     private static final double EPSILON = 1e-8;
 
-    /** Early-stop if relative MSE improvement falls below this threshold. */
-    private static final double CONVERGENCE_THRESHOLD = 1e-9;
+    /** Early-stop if relative MSE improvement falls below this threshold for CONVERGENCE_PATIENCE consecutive iterations. */
+    private static final double CONVERGENCE_THRESHOLD = 5e-4;  // 0.05% per iteration
+    /** Number of consecutive iterations that must see MSE delta below CONVERGENCE_THRESHOLD before stopping. */
+    private static final int    CONVERGENCE_PATIENCE   = 10;
+
+    // Logarithmic barrier hyperparameters (Issue #134)
+    // Barrier pushes scalar params away from PARAM_MIN, replacing the hard lower-bound clamp.
+    // gamma is annealed per-iteration: gamma_t = BARRIER_GAMMA_INIT * BARRIER_ANNEAL_RATE^(t-1)
+    private static final double BARRIER_GAMMA_INIT  = 0.001;
+    private static final double BARRIER_ANNEAL_RATE = 0.99;
 
     private GradientDescent() {}
 
@@ -98,11 +106,23 @@ public final class GradientDescent {
         LOG.info(String.format("[Adam] start  MSE=%.8f  params=%d  positions=%d  threads=%d",
                 currentMse, n, positions.size(), Runtime.getRuntime().availableProcessors()));
 
+        int belowThresholdCount = 0;
         for (int iter = 1; iter <= maxIters; iter++) {
             Instant iterStart = Instant.now();
 
             // Compute gradient via finite difference
             double[] grad = computeGradient(positions, params, k);
+
+            // Apply logarithmic barrier gradient to scalar params to push away from PARAM_MIN.
+            // Replaces the hard lower-bound clamp for non-PST parameters.
+            double gamma = BARRIER_GAMMA_INIT * Math.pow(BARRIER_ANNEAL_RATE, iter - 1);
+            for (int i = 0; i < n; i++) {
+                if (!EvalParams.isScalarParam(i)) continue;
+                if (EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i]) continue;
+                double distance = params[i] - EvalParams.PARAM_MIN[i];
+                if (distance < 1e-4) distance = 1e-4;
+                grad[i] -= gamma / distance;
+            }
 
             // Adam update
             for (int i = 0; i < n; i++) {
@@ -119,7 +139,8 @@ public final class GradientDescent {
                 // Update float accumulator
                 accum[i] -= LR * mHat / (Math.sqrt(vHat) + EPSILON);
 
-                // Discretize and clamp
+                // Discretize and clamp to [PARAM_MIN, PARAM_MAX].
+                // Barrier provides soft push away from lower bound; hard clamp is the backstop.
                 params[i] = EvalParams.clampOne(i, Math.round(accum[i]));
             }
 
@@ -151,12 +172,17 @@ public final class GradientDescent {
             LOG.info(String.format("[Adam] iter %3d  K=%.6f  MSE=%.8f  time=%dms",
                     iter, k, newMse, ms));
 
-            // Convergence check
+            // Convergence check (patience window: must hold for CONVERGENCE_PATIENCE consecutive iters)
             if (currentMse > 0 && Math.abs(currentMse - newMse) / currentMse < CONVERGENCE_THRESHOLD) {
-                LOG.info(String.format("[Adam] converged after %d iterations (MSE delta < %.1e)",
-                        iter, CONVERGENCE_THRESHOLD));
-                currentMse = newMse;
-                break;
+                belowThresholdCount++;
+                if (belowThresholdCount >= CONVERGENCE_PATIENCE) {
+                    LOG.info(String.format("[Adam] converged after %d iterations (MSE delta < %.1e for %d consecutive iters)",
+                            iter, CONVERGENCE_THRESHOLD, CONVERGENCE_PATIENCE));
+                    currentMse = newMse;
+                    break;
+                }
+            } else {
+                belowThresholdCount = 0;
             }
             currentMse = newMse;
         }
@@ -189,13 +215,16 @@ public final class GradientDescent {
      * @param k            sigmoid scaling constant (from {@link KFinder})
      * @param maxIters     iteration cap
      * @param recalibrateK if {@code true}, re-runs {@link KFinder} after each iteration
+     * @param groupMask    optional mask; if non-null only {@code true} indices are updated
+     *                     (null = update all params, fully backward compatible)
      * @return tuned parameter array
      */
     public static double[] tuneWithFeatures(List<PositionFeatures> features,
                                             double[] initialParams,
                                             double k,
                                             int maxIters,
-                                            boolean recalibrateK) {
+                                            boolean recalibrateK,
+                                            boolean[] groupMask) {
         int n = initialParams.length;
         double[] params = initialParams.clone();
 
@@ -212,13 +241,26 @@ public final class GradientDescent {
         LOG.info(String.format("[Adam/fast] start  MSE=%.8f  params=%d  positions=%d  threads=%d",
                 currentMse, n, features.size(), Runtime.getRuntime().availableProcessors()));
 
+        int belowThresholdCount = 0;
         for (int iter = 1; iter <= maxIters; iter++) {
             Instant iterStart = Instant.now();
 
             double[] grad = computeGradientFromFeatures(features, params, k);
 
+            // Apply logarithmic barrier gradient to scalar params to push away from PARAM_MIN.
+            // Replaces the hard lower-bound clamp for non-PST parameters.
+            double gamma = BARRIER_GAMMA_INIT * Math.pow(BARRIER_ANNEAL_RATE, iter - 1);
+            for (int i = 0; i < n; i++) {
+                if (!EvalParams.isScalarParam(i)) continue;
+                if (EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i]) continue;
+                double distance = params[i] - EvalParams.PARAM_MIN[i];
+                if (distance < 1e-4) distance = 1e-4;
+                grad[i] -= gamma / distance;
+            }
+
             for (int i = 0; i < n; i++) {
                 if (EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i]) continue;
+                if (groupMask != null && !groupMask[i]) continue;  // skip params outside the active group
 
                 m[i] = BETA1 * m[i] + (1 - BETA1) * grad[i];
                 v[i] = BETA2 * v[i] + (1 - BETA2) * grad[i] * grad[i];
@@ -227,6 +269,8 @@ public final class GradientDescent {
                 double vHat = v[i] / (1 - Math.pow(BETA2, iter));
 
                 accum[i] -= LR * mHat / (Math.sqrt(vHat) + EPSILON);
+                // Discretize and clamp to [PARAM_MIN, PARAM_MAX].
+                // Barrier provides soft push away from lower bound; hard clamp is the backstop.
                 params[i] = EvalParams.clampOne(i, Math.round(accum[i]));
             }
 
@@ -256,10 +300,15 @@ public final class GradientDescent {
                     iter, k, newMse, ms));
 
             if (currentMse > 0 && Math.abs(currentMse - newMse) / currentMse < CONVERGENCE_THRESHOLD) {
-                LOG.info(String.format("[Adam/fast] converged after %d iterations (MSE delta < %.1e)",
-                        iter, CONVERGENCE_THRESHOLD));
-                currentMse = newMse;
-                break;
+                belowThresholdCount++;
+                if (belowThresholdCount >= CONVERGENCE_PATIENCE) {
+                    LOG.info(String.format("[Adam/fast] converged after %d iterations (MSE delta < %.1e for %d consecutive iters)",
+                            iter, CONVERGENCE_THRESHOLD, CONVERGENCE_PATIENCE));
+                    currentMse = newMse;
+                    break;
+                }
+            } else {
+                belowThresholdCount = 0;
             }
             currentMse = newMse;
         }
@@ -268,13 +317,38 @@ public final class GradientDescent {
     }
 
     /**
-     * Convenience overload for feature-based tuning with
-     * {@link #DEFAULT_MAX_ITERATIONS}.
+     * Convenience overload for feature-based tuning with {@link #DEFAULT_MAX_ITERATIONS}
+     * and no group mask (all params updated).
      */
     public static double[] tuneWithFeatures(List<PositionFeatures> features,
                                             double[] initialParams,
                                             double k) {
-        return tuneWithFeatures(features, initialParams, k, DEFAULT_MAX_ITERATIONS, true);
+        return tuneWithFeatures(features, initialParams, k, DEFAULT_MAX_ITERATIONS, true, null);
+    }
+
+    /**
+     * Convenience overload without a group mask (all params updated).
+     */
+    public static double[] tuneWithFeatures(List<PositionFeatures> features,
+                                            double[] initialParams,
+                                            double k,
+                                            int maxIters,
+                                            boolean recalibrateK) {
+        return tuneWithFeatures(features, initialParams, k, maxIters, recalibrateK, null);
+    }
+
+    /**
+     * Metrics-collecting overload — metrics parameter accepted for API
+     * symmetry with eval-mode; WDL convergence metrics are not yet instrumented.
+     */
+    public static double[] tuneWithFeatures(List<PositionFeatures> features,
+                                            double[] initialParams,
+                                            double k,
+                                            int maxIters,
+                                            boolean recalibrateK,
+                                            boolean[] groupMask,
+                                            TunerRunMetrics metrics) {
+        return tuneWithFeatures(features, initialParams, k, maxIters, recalibrateK, groupMask);
     }
 
     /**
@@ -317,6 +391,355 @@ public final class GradientDescent {
         double scale = 2.0 / features.size();
         for (int i = 0; i < n; i++) grad[i] *= scale;
         return grad;
+    }
+
+    /**
+     * Computes the diagonal of the empirical Fisher information matrix.
+     *
+     * <p>For each parameter i: {@code fisherDiag[i] = mean_p( (∂L/∂p_i)^2 )}.
+     * A low value indicates that the parameter has little gradient signal across the
+     * corpus — i.e. the corpus is "starved" of positions that exercise feature i.
+     *
+     * @param features precomputed position features
+     * @param params   current parameter array
+     * @param k        sigmoid scaling constant
+     * @return array of length {@code params.length}: diagonal Fisher estimates
+     */
+    public static double[] computeFisherDiagonal(List<PositionFeatures> features,
+                                                 double[] params,
+                                                 double k) {
+        int n = params.length;
+        double kFactor = k * Math.log(10.0) / 400.0;
+
+        double[] fisherDiag = features.parallelStream()
+                .map(pf -> {
+                    double[] localFisher = new double[n];
+                    double eval   = pf.eval(params);
+                    double sig    = TunerEvaluator.sigmoid(eval, k);
+                    double factor = (sig - pf.outcome) * sig * (1.0 - sig) * kFactor;
+                    double[] localGrad = new double[n];
+                    pf.accumulateGradient(localGrad, params, factor);
+                    for (int i = 0; i < n; i++) {
+                        localFisher[i] = localGrad[i] * localGrad[i];
+                    }
+                    return localFisher;
+                })
+                .collect(
+                    () -> new double[n],
+                    (acc, lf) -> { for (int i = 0; i < n; i++) acc[i] += lf[i]; },
+                    (a,   b)  -> { for (int i = 0; i < n; i++) a[i]  +=  b[i]; }
+                );
+
+        double scale = 1.0 / features.size();
+        for (int i = 0; i < n; i++) fisherDiag[i] *= scale;
+        return fisherDiag;
+    }
+
+    // =========================================================================
+    // L-BFGS optimizer (Issue #137)
+    // =========================================================================
+
+    /**
+     * Counts how many positions activate each parameter (i.e. have a non-zero
+     * feature contribution for that parameter index).
+     *
+     * <p>For sparse linear parameters: position activates index {@code i} iff
+     * {@code i} appears in {@link PositionFeatures#indices}.
+     * For the four ATK parameters: position activates {@code IDX_ATK_X} iff
+     * the corresponding white or black attacker count is non-zero.
+     *
+     * @param features precomputed position feature list
+     * @param n        total number of parameters ({@link EvalParams#TOTAL_PARAMS})
+     * @return long[] of activation counts, one per parameter
+     */
+    public static long[] computeActivationCounts(List<PositionFeatures> features, int n) {
+        return features.parallelStream()
+                .collect(
+                    () -> new long[n],
+                    (acc, pf) -> {
+                        for (int k = 0; k < pf.indices.length; k++) {
+                            acc[pf.indices[k]]++;
+                        }
+                        if (pf.wN > 0 || pf.bN > 0) acc[EvalParams.IDX_ATK_KNIGHT]++;
+                        if (pf.wB > 0 || pf.bB > 0) acc[EvalParams.IDX_ATK_BISHOP]++;
+                        if (pf.wR > 0 || pf.bR > 0) acc[EvalParams.IDX_ATK_ROOK]++;
+                        if (pf.wQ > 0 || pf.bQ > 0) acc[EvalParams.IDX_ATK_QUEEN]++;
+                    },
+                    (a, b) -> { for (int i = 0; i < n; i++) a[i] += b[i]; }
+                );
+    }
+
+    // =========================================================================
+
+    /** L-BFGS history length (number of (s, y) curvature pairs to retain). */
+    private static final int LBFGS_M = 10;
+
+    /** Gradient norm convergence threshold for L-BFGS: stop when ||∇L||₂ < this. */
+    private static final double LBFGS_GRAD_NORM_THRESHOLD = 1e-5;
+
+    /**
+     * Runs L-BFGS gradient descent using precomputed {@link PositionFeatures}.
+     *
+     * <p>Uses the standard two-loop recursion to compute the search direction
+     * {@code p = H^{-1} · ∇L}. Stores the last {@value #LBFGS_M} parameter-gradient
+     * difference pairs {@code (s_k, y_k)} in a circular buffer.
+     * The logarithmic barrier gradient (same as the Adam path in Issue #134) is
+     * included in all gradient computations so that curvature pairs reflect the
+     * full augmented objective.
+     *
+     * <p>Primary convergence criterion: {@code ||∇L||₂ < 1e-5}. The {@code maxIters}
+     * parameter acts as an emergency cap.
+     *
+     * @param features     precomputed position features
+     * @param initialParams starting point (length {@link EvalParams#TOTAL_PARAMS})
+     * @param k            sigmoid scaling constant (from {@link KFinder})
+     * @param maxIters     emergency iteration cap
+     * @param recalibrateK if {@code true}, re-runs {@link KFinder} after each iteration
+     * @return tuned parameter array
+     */
+    public static double[] tuneWithFeaturesLBFGS(List<PositionFeatures> features,
+                                                 double[] initialParams,
+                                                 double k,
+                                                 int maxIters,
+                                                 boolean recalibrateK,
+                                                 boolean[] groupMask) {
+        final int n = initialParams.length;
+        final int m = LBFGS_M;
+
+        double[] params = initialParams.clone();
+        for (int i = 0; i < n; i++) {
+            params[i] = EvalParams.clampOne(i, params[i]);
+        }
+        // Float accumulator — same purpose as in the Adam path: tracks sub-integer moves
+        double[] accum = params.clone();
+
+        // Circular buffer for L-BFGS curvature pairs
+        double[][] sList  = new double[m][];  // s_k = accum_k − accum_{k-1}
+        double[][] yList  = new double[m][];  // y_k = ∇L_k − ∇L_{k-1} (with barrier)
+        double[]   rhoArr = new double[m];    // ρ_k = 1 / (y_k · s_k)
+        int histLen  = 0;  // number of valid pairs stored
+        int histHead = 0;  // next write position in the circular buffer
+
+        double currentMse = TunerEvaluator.computeMseFromFeatures(features, params, k);
+        LOG.info(String.format("[L-BFGS] start  MSE=%.8f  n=%d  positions=%d  m=%d",
+                currentMse, n, features.size(), m));
+
+        // Compute initial gradient (barrier included) — reused in first iteration
+        double[] prevGrad = computeBarrierGradient(features, params, k, 1);
+        int belowThresholdCount = 0;
+
+        for (int iter = 1; iter <= maxIters; iter++) {
+            Instant iterStart = Instant.now();
+
+            double[] grad = (iter == 1) ? prevGrad
+                    : computeBarrierGradient(features, params, k, iter);
+
+            // --- Gradient norm convergence check (Issue #137) ---
+            double gradNormSq = 0.0;
+            for (double g : grad) gradNormSq += g * g;
+            double gradNorm = Math.sqrt(gradNormSq);
+            if (gradNorm < LBFGS_GRAD_NORM_THRESHOLD) {
+                System.out.printf("[L-BFGS] Converged at iteration %d — gradient norm: %.2e%n",
+                        iter, gradNorm);
+                LOG.info(String.format("[L-BFGS] converged at iteration %d — gradient norm: %.2e",
+                        iter, gradNorm));
+                break;
+            }
+
+            // --- Two-loop recursion: compute search direction q = H^{-1} · grad ---
+            double[] q = grad.clone();
+            int k2 = Math.min(histLen, m);  // number of valid history entries
+            double[] alpha = new double[m];
+
+            // First loop (backward through history)
+            for (int i = k2 - 1; i >= 0; i--) {
+                int idx = ((histHead - 1 - i) % m + m) % m;
+                alpha[i] = rhoArr[idx] * dot(sList[idx], q);
+                axpy(-alpha[i], yList[idx], q);
+            }
+
+            // Scale by H_0 = (y^T s / y^T y) · I (Oren-Luenberger initial scaling)
+            if (k2 > 0) {
+                int last = ((histHead - 1) % m + m) % m;
+                double ys  = 1.0 / rhoArr[last];         // y·s = 1/ρ
+                double yy  = dot(yList[last], yList[last]);
+                if (yy > 1e-20) {
+                    double h0 = ys / yy;
+                    for (int j = 0; j < n; j++) q[j] *= h0;
+                }
+            }
+
+            // Second loop (forward through history)
+            for (int i = 0; i < k2; i++) {
+                int idx = ((histHead - k2 + i) % m + m) % m;
+                double beta = rhoArr[idx] * dot(yList[idx], q);
+                axpy(alpha[i] - beta, sList[idx], q);
+            }
+
+            // Verify descent direction: q · grad must be positive. If not, reset history
+            // and fall back to steepest descent for this step.
+            if (dot(q, grad) <= 0.0) {
+                LOG.warn(String.format("[L-BFGS] iter %d: non-descent direction detected, resetting history", iter));
+                histLen  = 0;
+                histHead = 0;
+                q = grad.clone();
+            }
+
+            // --- Update float accumulator ---
+            double[] newAccum = new double[n];
+            for (int i = 0; i < n; i++) {
+                if (EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i]
+                        || (groupMask != null && !groupMask[i])) {
+                    newAccum[i] = accum[i];  // frozen or outside active group
+                } else {
+                    newAccum[i] = accum[i] - q[i];  // step size α = 1.0 (standard L-BFGS trial step)
+                }
+            }
+
+            // --- Discretize and clamp (same logic as Adam path) ---
+            double[] newParams = new double[n];
+            for (int i = 0; i < n; i++) {
+                if (EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i]) {
+                    newParams[i] = params[i];
+                    continue;
+                }
+                if (EvalParams.isScalarParam(i)) {
+                    newParams[i] = Math.min(EvalParams.PARAM_MAX[i], Math.round(newAccum[i]));
+                } else {
+                    newParams[i] = EvalParams.clampOne(i, Math.round(newAccum[i]));
+                }
+            }
+            EvalParams.enforceMaterialOrdering(newParams);
+
+            // --- Build curvature pair (s, y) in float-accumulator space ---
+            double[] newGrad = computeBarrierGradient(features, newParams, k, iter);
+            double[] sNew = new double[n];
+            double[] yNew = new double[n];
+            for (int i = 0; i < n; i++) {
+                sNew[i] = newAccum[i] - accum[i];
+                yNew[i] = newGrad[i]  - grad[i];
+            }
+            double ys = dot(yNew, sNew);
+            if (ys > 1e-20) {  // only store positive-definite pairs
+                sList[histHead]  = sNew;
+                yList[histHead]  = yNew;
+                rhoArr[histHead] = 1.0 / ys;
+                histHead = (histHead + 1) % m;
+                if (histLen < m) histLen++;
+            }
+
+            // Apply updates
+            params = newParams;
+            accum  = newAccum;
+
+            // K recalibration
+            if (recalibrateK) {
+                double newK   = KFinder.findKFromFeatures(features, params);
+                double kDrift = Math.abs(newK - k);
+                if (kDrift >= 0.001) {
+                    LOG.info(String.format("[L-BFGS] K recalibrated: %.6f \u2192 %.6f (drift=%.6f)", k, newK, kDrift));
+                    k = newK;
+                }
+            }
+
+            double newMse = TunerEvaluator.computeMseFromFeatures(features, params, k);
+            long ms = Duration.between(iterStart, Instant.now()).toMillis();
+            LOG.info(String.format("[L-BFGS] iter %3d  K=%.6f  MSE=%.8f  ||\u2207L||=%.2e  time=%dms",
+                    iter, k, newMse, gradNorm, ms));
+
+            // MSE flat-line secondary convergence check (patience window)
+            if (currentMse > 0 && Math.abs(currentMse - newMse) / currentMse < CONVERGENCE_THRESHOLD) {
+                belowThresholdCount++;
+                if (belowThresholdCount >= CONVERGENCE_PATIENCE) {
+                    LOG.info(String.format("[L-BFGS] converged after %d iterations (MSE delta < %.1e for %d consecutive iters)",
+                            iter, CONVERGENCE_THRESHOLD, CONVERGENCE_PATIENCE));
+                    break;
+                }
+            } else {
+                belowThresholdCount = 0;
+            }
+            currentMse = newMse;
+        }
+
+        return params;
+    }
+
+    /**
+     * Convenience overload for L-BFGS with {@link #DEFAULT_MAX_ITERATIONS}
+     * and no group mask (all params updated).
+     */
+    public static double[] tuneWithFeaturesLBFGS(List<PositionFeatures> features,
+                                                 double[] initialParams,
+                                                 double k) {
+        return tuneWithFeaturesLBFGS(features, initialParams, k, DEFAULT_MAX_ITERATIONS, true, null);
+    }
+
+    /**
+     * Convenience overload without a group mask (all params updated).
+     */
+    public static double[] tuneWithFeaturesLBFGS(List<PositionFeatures> features,
+                                                 double[] initialParams,
+                                                 double k,
+                                                 int maxIters,
+                                                 boolean recalibrateK) {
+        return tuneWithFeaturesLBFGS(features, initialParams, k, maxIters, recalibrateK, null);
+    }
+
+    /**
+     * Metrics-collecting overload — metrics parameter accepted for API
+     * symmetry with eval-mode; L-BFGS convergence metrics are not yet instrumented.
+     */
+    public static double[] tuneWithFeaturesLBFGS(List<PositionFeatures> features,
+                                                 double[] initialParams,
+                                                 double k,
+                                                 int maxIters,
+                                                 boolean recalibrateK,
+                                                 boolean[] groupMask,
+                                                 TunerRunMetrics metrics) {
+        return tuneWithFeaturesLBFGS(features, initialParams, k, maxIters, recalibrateK, groupMask);
+    }
+
+    // -------------------------------------------------------------------------
+    // Private helpers
+    // -------------------------------------------------------------------------
+
+    /**
+     * Computes the analytical gradient from features AND adds the logarithmic
+     * barrier contribution for scalar parameters.  Used by both Adam and L-BFGS
+     * so that curvature pairs (s, y) are consistent with the full augmented
+     * objective.
+     *
+     * @param features precomputed features
+     * @param params   current parameter array
+     * @param k        sigmoid scaling constant
+     * @param iter     current iteration number (controls barrier gamma annealing)
+     */
+    private static double[] computeBarrierGradient(List<PositionFeatures> features,
+                                                   double[] params,
+                                                   double k,
+                                                   int iter) {
+        double[] grad = computeGradientFromFeatures(features, params, k);
+        double gamma = BARRIER_GAMMA_INIT * Math.pow(BARRIER_ANNEAL_RATE, iter - 1);
+        for (int i = 0; i < grad.length; i++) {
+            if (!EvalParams.isScalarParam(i)) continue;
+            if (EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i]) continue;
+            double dist = params[i] - EvalParams.PARAM_MIN[i];
+            if (dist < 1e-4) dist = 1e-4;
+            grad[i] -= gamma / dist;
+        }
+        return grad;
+    }
+
+    /** Returns the dot product of two equal-length vectors. */
+    private static double dot(double[] a, double[] b) {
+        double s = 0.0;
+        for (int i = 0; i < a.length; i++) s += a[i] * b[i];
+        return s;
+    }
+
+    /** In-place AXPY: {@code a += alpha * x}. */
+    private static void axpy(double alpha, double[] x, double[] a) {
+        for (int i = 0; i < a.length; i++) a[i] += alpha * x[i];
     }
 
     /**

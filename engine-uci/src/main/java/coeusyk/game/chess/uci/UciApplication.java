@@ -1,5 +1,6 @@
 package coeusyk.game.chess.uci;
 
+import coeusyk.game.chess.core.eval.EvalParams;
 import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Move;
 import coeusyk.game.chess.core.movegen.MovesGenerator;
@@ -37,6 +38,7 @@ public class UciApplication {
     private int pawnHashSizeMb = 1;
     private int threads = 1;
     private long moveOverheadMs = 30;
+    @SuppressWarnings("unused") // UCI setoption stub — wired up when local Syzygy probing is added
     private String syzygyPath = "";
     private boolean syzygyOnline = false;
     private int syzygyProbeDepth = 1;
@@ -86,18 +88,33 @@ public class UciApplication {
     @SuppressWarnings("unused") // assigned for future stop-command interrupt support
     private volatile Thread searchThread;
 
-    private static final String[] BENCH_FENS = {
-        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-        "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
-        "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
-        "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
-        "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",
-        "r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/P1NP1N2/1PP1QPPP/R4RK1 w - - 0 10"
-    };
-    private static final int DEFAULT_BENCH_DEPTH = 13;
-    private static final int BENCH_HASH_MB = 16;
+    private static final int DEFAULT_BENCH_DEPTH = BenchRunner.DEFAULT_DEPTH;
 
     public static void main(String[] args) throws IOException {
+        // Heap cap sanity check — must run before any large allocation.
+        // Written to stderr with "info string" prefix so GUI logs see it without
+        // breaking the UCI protocol (UCI parsers ignore unrecognised info tokens
+        // and never read stderr).
+        long maxHeapBytes = Runtime.getRuntime().maxMemory();
+        final long WARN_THRESHOLD = 256L * 1024L * 1024L; // 256 MB
+        if (maxHeapBytes < WARN_THRESHOLD) {
+            long maxHeapMb = maxHeapBytes / (1024L * 1024L);
+            System.err.println("info string WARNING: JVM heap cap is only " + maxHeapMb
+                    + "mb. Recommend -Xmx512m or higher."
+                    + " GC pauses may degrade search under multi-threading.");
+        }
+
+        // Apply eval-parameter overrides before any Evaluator is constructed so that
+        // Evaluator.DEFAULT_CONFIG picks up the new TEMPO value at class-init time.
+        for (int i = 0; i < args.length - 1; i++) {
+            if ("--param-overrides".equals(args[i])) {
+                java.nio.file.Path p = java.nio.file.Paths.get(args[i + 1]);
+                if (java.nio.file.Files.exists(p)) {
+                    EvalParams.loadOverrides(p);
+                }
+                break;
+            }
+        }
         UciApplication app = new UciApplication();
         for (int i = 0; i < args.length; i++) {
             if ("--bench".equals(args[i])) {
@@ -143,14 +160,20 @@ public class UciApplication {
                 System.out.println("option name BookFile type string default Performance.bin");
                 System.out.println("option name BookDepth type spin default 20 min 0 max 50");
                 System.out.println("option name BookVariance type spin default 50 min 0 max 100");
-                System.out.println("option name Contempt type spin default 50 min 0 max 100");
+                System.out.println("option name Contempt type spin default 50 min 0 max 200");
                 System.out.println("uciok");
             } else if ("isready".equals(line)) {
                 System.out.println("readyok");
             } else if ("ucinewgame".equals(line)) {
                 stopRequested.set(true);
                 board = new Board();
+                // Full TT clear (not just age-bump) ensures no stale entries from
+                // the previous game are visible to the next game's search.
                 sharedTT.clear();
+                // History heuristic, killer moves, and correction-history tables
+                // live inside Searcher, which is re-created on every "go" command.
+                // They are therefore automatically zeroed between games with no
+                // explicit reset needed here.
                 openingBook.close();
                 activePonderTimeManager = null;
             } else if (line.startsWith("position")) {
@@ -227,6 +250,14 @@ public class UciApplication {
                 }
                 board.makeMove(move);
             }
+        }
+
+        // Reopen book on the UCI main thread so the book is guaranteed open
+        // before the next "go" arrives. This fixes the data race where ucinewgame
+        // closed the book and the lazy reopen in runSearch() ran on the search thread
+        // concurrently with setoption writes from the UCI thread.
+        if (ownBook && !openingBook.isOpen()) {
+            openNewBook();
         }
     }
 
@@ -328,7 +359,13 @@ public class UciApplication {
         } else if ("ownbook".equals(optionNameLower)) {
             ownBook = "true".equalsIgnoreCase(valuePart);
         } else if ("bookfile".equals(optionNameLower)) {
-            bookFile = valuePart.trim();
+            String trimmed = valuePart.trim();
+            if (trimmed.contains("..") || trimmed.contains("\0") || trimmed.length() > 512) {
+                LOG.warn("setoption BookFile rejected: invalid path '{}'",
+                        trimmed.replaceAll("[\r\n\t]", "_"));
+                return;
+            }
+            bookFile = trimmed;
             openNewBook();
         } else if ("bookdepth".equals(optionNameLower)) {
             try {
@@ -344,7 +381,7 @@ public class UciApplication {
             }
         } else if ("contempt".equals(optionNameLower)) {
             try {
-                contempt = Math.max(0, Math.min(100, Integer.parseInt(valuePart)));
+                contempt = Math.max(0, Math.min(200, Integer.parseInt(valuePart)));
             } catch (NumberFormatException ignored) {
             }
         }
@@ -353,14 +390,52 @@ public class UciApplication {
 
     private void openNewBook() {
         openingBook.close();
-        if ("Performance.bin".equals(bookFile)) {
-            openingBook.openFromClasspath("books/Performance.bin");
-        } else {
+        String safeLog = bookFile.replaceAll("[\r\n\t]", "_");  // log injection guard
+
+        java.nio.file.Path p = java.nio.file.Path.of(bookFile);
+
+        // Step 1: absolute path — use directly.
+        if (p.isAbsolute()) {
             try {
-                openingBook.open(java.nio.file.Path.of(bookFile));
+                openingBook.open(p);
             } catch (java.io.IOException e) {
-                LOG.warn("Could not open book file '{}': {}", bookFile, e.getMessage());
+                LOG.warn("Could not open book file '{}': {}", safeLog, e.getMessage());
             }
+            if (!openingBook.isOpen()) {
+                LOG.warn("Book file not found at absolute path '{}' — book disabled", safeLog);
+            }
+            return;
+        }
+
+        // Step 2: relative to the JAR directory (covers GUI launchers with arbitrary CWD).
+        try {
+            java.nio.file.Path jarLoc = java.nio.file.Path.of(
+                UciApplication.class.getProtectionDomain().getCodeSource().getLocation().toURI()
+            );
+            java.nio.file.Path jarDir = jarLoc.getParent();
+            if (jarDir != null) {
+                try {
+                    openingBook.open(jarDir.resolve(bookFile));
+                } catch (java.io.IOException ignored) { /* fall through */ }
+                if (openingBook.isOpen()) return;
+            }
+        } catch (Exception ignored) {
+            // getCodeSource() can return null, or URI may be malformed — fall through.
+        }
+
+        // Step 3: relative to the working directory.
+        try {
+            openingBook.open(p);
+        } catch (java.io.IOException ignored) { /* fall through */ }
+        if (openingBook.isOpen()) return;
+
+        // Step 4: classpath resource (only allow plain filenames, no directory traversal).
+        if (!bookFile.contains("/") && !bookFile.contains("\\")) {
+            openingBook.openFromClasspath("books/" + bookFile);
+        }
+
+        if (!openingBook.isOpen()) {
+            LOG.warn("Book file '{}' not found at any location — book disabled", safeLog);
         }
     }
 
@@ -471,6 +546,7 @@ public class UciApplication {
                             Searcher helper = new Searcher();
                             helper.setSharedTranspositionTable(sharedTT);
                             helper.setPawnHashSizeMb(pawnHashSizeMb);
+                            helper.setContempt(contempt);
                             Board helperBoard = new Board(positionFen);
                             helperBoard.setSearchMode(true);
                             helper.iterativeDeepening(
@@ -493,10 +569,10 @@ public class UciApplication {
             boolean isPonder = contains(parts, "ponder");
 
             // Opening book probe — skip when pondering (we're searching the opponent's position).
+            // Book is guaranteed open if handlePosition() ran before this go (see reopen guard there).
             if (ownBook && !isPonder) {
                 int halfMoves = searchBoard.boardStates.size() - 1;
                 if (halfMoves < bookDepth * 2) {
-                    if (!openingBook.isOpen()) openNewBook();
                     Move bookMove = openingBook.probe(searchBoard);
                     if (bookMove != null) {
                         bestMoveToEmit = bookMove;
@@ -508,6 +584,7 @@ public class UciApplication {
             Searcher searcher = new Searcher();
             searcher.setSharedTranspositionTable(sharedTT);
             searcher.setPawnHashSizeMb(pawnHashSizeMb);
+            searcher.setContempt(contempt);
             if (multiPV > 1) {
                 searcher.setMultiPV(multiPV);
             }
@@ -591,39 +668,7 @@ public class UciApplication {
     }
 
     private void runBench(int depth) {
-        Searcher searcher = new Searcher();
-        searcher.setTranspositionTableSizeMb(BENCH_HASH_MB);
-        long totalNodes = 0;
-        long totalQNodes = 0;
-        long startMs = System.currentTimeMillis();
-
-        System.out.printf("Bench depth %d | hash %dMB | %d positions%n", depth, BENCH_HASH_MB, BENCH_FENS.length);
-        for (int i = 0; i < BENCH_FENS.length; i++) {
-            Board benchBoard = new Board(BENCH_FENS[i]);
-            benchBoard.setSearchMode(true);
-            searcher.clearTranspositionTable();
-            long posStart = System.currentTimeMillis();
-            SearchResult result = searcher.iterativeDeepening(benchBoard, depth);
-            long posMs = Math.max(1, System.currentTimeMillis() - posStart);
-            long posNps = result.nodesVisited() * 1000L / posMs;
-            double qRatio = result.nodesVisited() > 0
-                    ? (double) result.quiescenceNodes() / result.nodesVisited() : 0.0;
-            double fmcPct = result.betaCutoffs() > 0
-                    ? 100.0 * result.firstMoveCutoffs() / result.betaCutoffs() : 0.0;
-            System.out.printf("Position %d: nodes=%d qnodes=%d ms=%d nps=%d tt_hit=%.1f%% q_ratio=%.1fx cutoffs=%d fmc%%=%.1f tt_hits=%d ebf=%.2f%n",
-                    i + 1, result.nodesVisited(), result.quiescenceNodes(), posMs, posNps,
-                    result.ttHitRate() * 100.0, qRatio,
-                    result.betaCutoffs(), fmcPct, result.ttHits(), result.ebf());
-            totalNodes += result.nodesVisited();
-            totalQNodes += result.quiescenceNodes();
-        }
-
-        long elapsedMs = Math.max(1, System.currentTimeMillis() - startMs);
-        long nps = totalNodes * 1000L / elapsedMs;
-        double totalQRatio = totalNodes > 0 ? (double) totalQNodes / totalNodes : 0.0;
-        System.out.printf("Bench: %d nodes %dms %d nps | q_ratio=%.1fx%n",
-                totalNodes, elapsedMs, nps, totalQRatio);
-        System.out.flush();
+        new BenchRunner().run(depth);
     }
 
     private void printInfoLine(IterationInfo info) {

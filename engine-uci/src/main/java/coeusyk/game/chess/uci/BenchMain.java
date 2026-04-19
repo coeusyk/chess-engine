@@ -23,7 +23,12 @@ public class BenchMain {
     private static final int    WARMUP_ROUNDS  = 5;
     private static final int    MEASURE_ROUNDS = 10;
     private static final int    BENCH_HASH_MB  = 16;
-    private static final String VERSION        = "0.5.1-SNAPSHOT";
+    private static final String VERSION = getVersion();
+
+    private static String getVersion() {
+        String version = BenchMain.class.getPackage().getImplementationVersion();
+        return version != null ? version : "unknown";
+    }
 
     private static final String[] POSITION_NAMES = {
         "startpos",

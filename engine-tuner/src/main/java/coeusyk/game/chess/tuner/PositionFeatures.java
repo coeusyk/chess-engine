@@ -18,11 +18,12 @@ import java.util.stream.Collectors;
  * </pre>
  * where {@code w[i]} is the precomputed coefficient for param {@code i} (with
  * the tapered-eval phase weight already applied), and the non-linear king safety
- * term handles the quadratic attacker-penalty expression:
+ * term evaluates attacker pressure via a piecewise-linear safety table:
  * <pre>
- *   nonLinear = (-wW² + wB²) / 4 × (phase/24)
- *   wW = wN×ATK_N + wB_f×ATK_B + wR_f×ATK_R + wQ_f×ATK_Q  (attackers on white king zone)
- *   wB = bN×ATK_N + bB_f×ATK_B + bR_f×ATK_R + bQ_f×ATK_Q  (attackers on black king zone)
+ *   nonLinear = (-safetyEval(wW) + safetyEval(wBk)) × (phase/24)
+ *   wW  = wN×ATK_N + wB×ATK_B + wR×ATK_R + wQ×ATK_Q  (attackers on white king zone)
+ *   wBk = bN×ATK_N + bB×ATK_B + bR×ATK_R + bQ×ATK_Q  (attackers on black king zone)
+ *   safetyEval(w) — piecewise-linear interpolation of SAFETY_TABLE, mirrors KingSafety
  * </pre>
  *
  * <h3>Memory</h3>
@@ -76,6 +77,38 @@ public final class PositionFeatures {
     }
 
     // =========================================================================
+    // Safety table helpers (piecewise-linear, mirrors KingSafety.SAFETY_TABLE)
+    // =========================================================================
+
+    // Must match TunerEvaluator.SAFETY_TABLE and KingSafety.SAFETY_TABLE.
+    private static final int[] SAFETY_TABLE = {
+        0, 0, 1, 2, 3, 5, 7, 9, 12, 15, 18, 22, 26, 30, 35, 40, 45, 50
+    };
+
+    /**
+     * Piecewise-linear interpolation of the safety table at a floating-point weight {@code w}.
+     * Allows the Adam optimizer to treat ATK_WEIGHT params as continuous variables
+     * while matching the integer lookup the engine performs at game time.
+     */
+    private static double safetyEval(double w) {
+        if (w <= 0.0) return 0.0;
+        int lo = (int) w;
+        if (lo >= SAFETY_TABLE.length - 1) return SAFETY_TABLE[SAFETY_TABLE.length - 1];
+        return SAFETY_TABLE[lo] * (1.0 - (w - lo)) + SAFETY_TABLE[lo + 1] * (w - lo);
+    }
+
+    /**
+     * Slope of the piecewise-linear safety table at {@code w} (used for gradient computation).
+     * Returns 0 at the plateau (w >= table max index).
+     */
+    private static double safetyGradient(double w) {
+        if (w <= 0.0) return 0.0;
+        int lo = (int) w;
+        if (lo >= SAFETY_TABLE.length - 1) return 0.0;
+        return SAFETY_TABLE[lo + 1] - SAFETY_TABLE[lo];
+    }
+
+    // =========================================================================
     // Fast eval using precomputed features (no bitboard operations)
     // =========================================================================
 
@@ -89,7 +122,7 @@ public final class PositionFeatures {
         for (int k = 0; k < indices.length; k++) {
             e += weights[k] * params[indices[k]];
         }
-        // Non-linear king safety attacker penalty
+        // Non-linear king safety attacker penalty using piecewise-linear safety table
         double wW  = wN * params[EvalParams.IDX_ATK_KNIGHT]
                    + wB * params[EvalParams.IDX_ATK_BISHOP]
                    + wR * params[EvalParams.IDX_ATK_ROOK]
@@ -98,7 +131,8 @@ public final class PositionFeatures {
                    + bB * params[EvalParams.IDX_ATK_BISHOP]
                    + bR * params[EvalParams.IDX_ATK_ROOK]
                    + bQ * params[EvalParams.IDX_ATK_QUEEN];
-        e += (-wW * wW + wBk * wBk) / 4.0 * phase / 24.0;
+        e += (-safetyEval(wW) + safetyEval(wBk)) * phase / 24.0
+             * params[EvalParams.IDX_KING_SAFETY_SCALE] / 100.0;
         return e;
     }
 
@@ -125,8 +159,9 @@ public final class PositionFeatures {
         for (int k = 0; k < indices.length; k++) {
             grad[indices[k]] += factor * weights[k];
         }
-        // Non-linear king safety ATK gradient
-        // d(-wW²+wBk²)/4 / d(ATK_X) = (-wW × wX_count + wBk × bX_count) / 2
+        // Non-linear king safety ATK gradient using piecewise-linear safety table.
+        // ∂(-safetyEval(wW) + safetyEval(wBk)) / ∂ATK_X
+        //   = (-safetyGradient(wW) * xW_count + safetyGradient(wBk) * xBk_count)
         // phase/24 factor because attacker penalty goes into mgScore which is tapered
         double wW  = wN * params[EvalParams.IDX_ATK_KNIGHT]
                    + wB * params[EvalParams.IDX_ATK_BISHOP]
@@ -136,11 +171,17 @@ public final class PositionFeatures {
                    + bB * params[EvalParams.IDX_ATK_BISHOP]
                    + bR * params[EvalParams.IDX_ATK_ROOK]
                    + bQ * params[EvalParams.IDX_ATK_QUEEN];
-        double pf  = factor * phase / 24.0;
-        grad[EvalParams.IDX_ATK_KNIGHT] += pf * (-wW * wN + wBk * bN) / 2.0;
-        grad[EvalParams.IDX_ATK_BISHOP] += pf * (-wW * wB + wBk * bB) / 2.0;
-        grad[EvalParams.IDX_ATK_ROOK]   += pf * (-wW * wR + wBk * bR) / 2.0;
-        grad[EvalParams.IDX_ATK_QUEEN]  += pf * (-wW * wQ + wBk * bQ) / 2.0;
+        double pf     = factor * phase / 24.0;
+        double sGradW  = safetyGradient(wW);
+        double sGradBk = safetyGradient(wBk);
+        double kss = params[EvalParams.IDX_KING_SAFETY_SCALE] / 100.0;
+        grad[EvalParams.IDX_ATK_KNIGHT] += pf * kss * (-sGradW * wN + sGradBk * bN);
+        grad[EvalParams.IDX_ATK_BISHOP] += pf * kss * (-sGradW * wB + sGradBk * bB);
+        grad[EvalParams.IDX_ATK_ROOK]   += pf * kss * (-sGradW * wR + sGradBk * bR);
+        grad[EvalParams.IDX_ATK_QUEEN]  += pf * kss * (-sGradW * wQ + sGradBk * bQ);
+        // Gradient for KING_SAFETY_SCALE: d(eval)/d(scale) = baseKingSafetyEval / 100
+        double baseKsSafety = (-safetyEval(wW) + safetyEval(wBk)) * phase / 24.0;
+        grad[EvalParams.IDX_KING_SAFETY_SCALE] += factor * baseKsSafety / 100.0;
     }
 
     // =========================================================================
