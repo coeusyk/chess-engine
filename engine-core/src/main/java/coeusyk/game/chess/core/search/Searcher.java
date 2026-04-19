@@ -51,9 +51,10 @@ public class Searcher {
     // contempt to activate.  Loaded from EvalParams.CONTEMPT_THRESHOLD at call-time so
     // the value can be overridden via the CLOP override file.
     // Default contempt value (centipawns) used by the UCI interface and the draw-failure
-    // regression tests.  Exposed as a public constant so tests can reference it without
-    // hard-coding the magic number 50 (matches EvalParams.CONTEMPT_VALUE default).
-    public static final int DEFAULT_CONTEMPT_CP = 50;
+    // regression tests.  Derived from EvalParams.CONTEMPT_VALUE so both stay in sync when
+    // the tuning default is adjusted.  Exposed as a public constant so tests can reference
+    // it without hard-coding a magic number.
+    public static final int DEFAULT_CONTEMPT_CP = EvalParams.CONTEMPT_VALUE;
 
     // Correction history: maps pawn structure to a static-eval bias.
     // Stored at GRAIN scale; applied as: adjustedEval = rawEval + ch[color][key] / GRAIN.

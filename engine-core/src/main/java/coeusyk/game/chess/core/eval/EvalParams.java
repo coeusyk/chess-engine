@@ -128,12 +128,14 @@ public final class EvalParams {
                     case "KING_SAFETY_SCALE":      KING_SAFETY_SCALE      = v; break;
                     case "HANGING_PENALTY":        HANGING_PENALTY        = v; break;
                     case "TEMPO":                  TEMPO                  = v; break;
-                    case "CONTEMPT_THRESHOLD":     CONTEMPT_THRESHOLD     = v; break;
-                    case "CONTEMPT_VALUE":         CONTEMPT_VALUE         = v; break;
+                    // Clamp to [0, 32767] — prevents -CONTEMPT_THRESHOLD negation
+                    // overflow in Searcher.contemptScore() for pathological override files.
+                    case "CONTEMPT_THRESHOLD":     CONTEMPT_THRESHOLD     = Math.max(0, Math.min(32767, v)); break;
+                    case "CONTEMPT_VALUE":         CONTEMPT_VALUE         = Math.max(0, Math.min(32767, v)); break;
                     default:                                                   break;
                 }
-            } catch (NumberFormatException ignored) {
-                // Skip lines with non-integer values
+            } catch (NumberFormatException e) {
+                System.err.println("[EvalParams] Skipping malformed override line (non-integer value): " + raw.trim());
             }
         }
     }
