@@ -453,6 +453,28 @@ class SearchRegressionTest {
                 + "Bestmove: " + (result.bestMove() != null ? toUci(result.bestMove()) : "null"));
     }
 
+    // ── Contempt prevents repetition draw — Issue #174 ─────────────────
+    // With contempt enabled, the engine must NOT return a draw score (0) from the
+    // Phase 13 regression FEN where Black is clearly winning.  This test specifically
+    // validates that EvalParams.CONTEMPT_THRESHOLD is applied correctly when
+    // setContempt() is active — independent of Fix 2 (hanging penalty suppression).
+    @Test
+    @Tag("regression")
+    void contemptPreventsRepetitionDrawFromWinningPosition() {
+        Board board = new Board(Q1_FEN);
+        Searcher searcher = new Searcher();
+        searcher.setContempt(Searcher.DEFAULT_CONTEMPT_CP);
+        SearchResult result = searcher.searchDepth(board, Q1_DEPTH);
+        assertNotEquals(0, result.scoreCp(),
+                "Contempt regression (Issue #174): engine returned neutral draw score (0) from "
+                + Q1_FEN + " with contempt=" + Searcher.DEFAULT_CONTEMPT_CP + "cp. "
+                + "Engine should not accept a repetition draw when winning. Bestmove: "
+                + (result.bestMove() != null ? toUci(result.bestMove()) : "null"));
+        assertTrue(result.scoreCp() > 0,
+                "Contempt regression (Issue #174): engine should score Q1_FEN as winning for "
+                + "Black with contempt enabled, got: " + result.scoreCp() + "cp");
+    }
+
     // ── Helper ──────────────────────────────────────────────────────
 
     private static String toUci(Move move) {

@@ -71,6 +71,25 @@ public final class EvalParams {
     public static int TEMPO = 17;
 
     // -----------------------------------------------------------------------
+    // Search constants (contempt) — tunable via CLOP override file
+    // -----------------------------------------------------------------------
+
+    /**
+     * Minimum side-to-move MG material+PST advantage (centipawns) required for contempt
+     * to activate.  Positions within ±CONTEMPT_THRESHOLD of equality always return a
+     * neutral draw score (0) regardless of the contempt setting.
+     */
+    public static int CONTEMPT_THRESHOLD = 150;
+
+    /**
+     * Default draw-contempt penalty in centipawns.  Applied as a negative score to
+     * repetition/50-move draws when the side to move holds an advantage exceeding
+     * {@link #CONTEMPT_THRESHOLD}.  Also the value exposed via the UCI {@code Contempt}
+     * option spin default.
+     */
+    public static int CONTEMPT_VALUE = 50;
+
+    // -----------------------------------------------------------------------
 
     private EvalParams() {}
 
@@ -81,7 +100,8 @@ public final class EvalParams {
      *
      * <p><b>Recognised keys:</b> SHIELD_RANK2, SHIELD_RANK3, OPEN_FILE_PENALTY,
      * HALF_OPEN_FILE_PENALTY, ATK_WEIGHT_KNIGHT, ATK_WEIGHT_BISHOP,
-     * ATK_WEIGHT_ROOK, ATK_WEIGHT_QUEEN, KING_SAFETY_SCALE, HANGING_PENALTY, TEMPO.
+     * ATK_WEIGHT_ROOK, ATK_WEIGHT_QUEEN, KING_SAFETY_SCALE, HANGING_PENALTY, TEMPO,
+     * CONTEMPT_THRESHOLD, CONTEMPT_VALUE.
      *
      * @param path path to the override file; must be readable
      * @throws IOException if the file cannot be read
@@ -108,6 +128,8 @@ public final class EvalParams {
                     case "KING_SAFETY_SCALE":      KING_SAFETY_SCALE      = v; break;
                     case "HANGING_PENALTY":        HANGING_PENALTY        = v; break;
                     case "TEMPO":                  TEMPO                  = v; break;
+                    case "CONTEMPT_THRESHOLD":     CONTEMPT_THRESHOLD     = v; break;
+                    case "CONTEMPT_VALUE":         CONTEMPT_VALUE         = v; break;
                     default:                                                   break;
                 }
             } catch (NumberFormatException ignored) {

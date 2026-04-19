@@ -53,8 +53,8 @@ $ErrorActionPreference = 'Stop'
 $repoRoot   = Split-Path $PSScriptRoot -Parent
 $engineRoot = $PSScriptRoot | Split-Path -Parent   # chess-engine/
 $corpus     = Join-Path $engineRoot "tools\quiet-labeled.epd"
-$tunerJar   = Join-Path $engineRoot "engine-tuner\target\engine-tuner-0.5.6-SNAPSHOT-shaded.jar"
-$engineJar  = Join-Path $engineRoot "engine-uci\target\engine-uci-0.5.6-SNAPSHOT-shaded.jar"
+$tunerJar   = Join-Path $engineRoot "engine-tuner\target\engine-tuner-0.5.7-SNAPSHOT-shaded.jar"
+$engineJar  = Join-Path $engineRoot "engine-uci\target\engine-uci-0.5.7-SNAPSHOT-shaded.jar"
 $toolsDir   = Join-Path $engineRoot "tools"
 
 $Java       = if ($env:JAVA) { $env:JAVA } else { 'java' }

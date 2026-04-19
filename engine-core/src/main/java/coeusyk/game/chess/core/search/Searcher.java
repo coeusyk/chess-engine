@@ -1,5 +1,6 @@
 package coeusyk.game.chess.core.search;
 
+import coeusyk.game.chess.core.eval.EvalParams;
 import coeusyk.game.chess.core.eval.Evaluator;
 import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Move;
@@ -47,13 +48,11 @@ public class Searcher {
     private static final int TB_LOSS_SCORE = -(MATE_SCORE - 2 * MAX_PLY);
 
     // Minimum material+PST advantage (white-positive, centipawns, MG scale) required for
-    // contempt to activate.  Below this threshold the position is close enough to equal
-    // that a draw score of 0 is more appropriate.  Prevents balanced middlegames from
-    // being distorted by a non-zero contempt penalty.
-    private static final int CONTEMPT_THRESHOLD = 150;
+    // contempt to activate.  Loaded from EvalParams.CONTEMPT_THRESHOLD at call-time so
+    // the value can be overridden via the CLOP override file.
     // Default contempt value (centipawns) used by the UCI interface and the draw-failure
     // regression tests.  Exposed as a public constant so tests can reference it without
-    // hard-coding the magic number 50.
+    // hard-coding the magic number 50 (matches EvalParams.CONTEMPT_VALUE default).
     public static final int DEFAULT_CONTEMPT_CP = 50;
 
     // Correction history: maps pawn structure to a static-eval bias.
@@ -1668,8 +1667,8 @@ public class Searcher {
         // incMgScore is white-positive; flip sign for black to get side-to-move advantage.
         int incMg = board.getIncMgScore();
         int sideToMoveAdv = Piece.isWhite(board.getActiveColor()) ? incMg : -incMg;
-        if (sideToMoveAdv >  CONTEMPT_THRESHOLD) return -contemptCp;
-        if (sideToMoveAdv < -CONTEMPT_THRESHOLD) return  contemptCp;
+        if (sideToMoveAdv >  EvalParams.CONTEMPT_THRESHOLD) return -contemptCp;
+        if (sideToMoveAdv < -EvalParams.CONTEMPT_THRESHOLD) return  contemptCp;
         return 0;
     }
 
