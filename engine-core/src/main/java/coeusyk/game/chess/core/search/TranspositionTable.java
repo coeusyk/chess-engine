@@ -1,31 +1,46 @@
 package coeusyk.game.chess.core.search;
 
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReferenceArray;
+import java.util.concurrent.atomic.AtomicLongArray;
+
+import coeusyk.game.chess.core.models.Move;
 
 /**
- * Transposition table backed by an {@link AtomicReferenceArray} for lock-free
- * concurrent access.  Each slot holds a single immutable {@link Entry} record.
- * Reference writes and reads via {@code AtomicReferenceArray} are guaranteed
- * atomic in Java (JLS §17.6), so concurrent Lazy-SMP threads can freely read
- * and write without synchronization.
+ * Transposition table backed by an {@link AtomicLongArray} for lock-free
+ * concurrent access.  Each logical entry occupies two consecutive longs:
+ * index {@code i*2} holds the Zobrist key and index {@code i*2+1} holds
+ * all other fields packed into a single long.
  *
- * <p>Race conditions on multi-word state are tolerated: the {@code key} field
- * inside each entry is checked after every probe, so a stale or partially
- * overwritten entry is treated as a miss rather than silently corrupting search.
+ * <p>Bit layout of the data word:
+ * <pre>
+ *   bits 63-34: score      (30-bit signed, range ±536M — covers all engine scores)
+ *   bits 33-18: bestMove   (16-bit; 0xFFFF = Move.NONE sentinel)
+ *   bits 17-10: depth      (8-bit unsigned)
+ *   bits  9- 8: bound      (2-bit ordinal: EXACT=0, LOWER_BOUND=1, UPPER_BOUND=2)
+ *   bits  7- 0: generation (8-bit byte)
+ * </pre>
  *
- * <p>The replacement policy is depth-preferred with always-replace on key match:
- * a new entry replaces an existing one only when the new depth ≥ old depth or
- * the slot belongs to a different position (key mismatch / empty).
+ * <p>Write order: data word is written before the key word (both via
+ * {@code AtomicLongArray.set()}, which is a volatile write).  A reader that
+ * observes the new key is therefore guaranteed by the Java Memory Model to
+ * also observe the new data word (volatile happens-before).
+ *
+ * <p>Write-write races on the same slot are accepted: two threads may
+ * independently write key and data, potentially mixing them.  A key mismatch
+ * on the next probe is treated as a miss — no incorrect search behaviour.
+ *
+ * <p>The replacement policy is depth-preferred with always-replace on key
+ * mismatch or generation-stale:
+ * a new entry replaces an existing one only when the new depth &ge; old depth
+ * or the stored entry is stale ({@link #AGE_THRESHOLD} generations old).
  */
 public class TranspositionTable {
     private static final int DEFAULT_SIZE_MB = 64;
-    private static final int APPROX_ENTRY_BYTES = 32;
-    private static final int MAX_ENTRY_COUNT = 1 << 23;
+    private static final int APPROX_ENTRY_BYTES = 16;
+    private static final int MAX_ENTRY_COUNT = 1 << 24;
 
-    // AtomicReferenceArray gives one atomic read/write per slot.
-    // Each Entry is an immutable record — fields are safely visible after construction.
-    private AtomicReferenceArray<Entry> table;
+    private AtomicLongArray table;
+    private int entryCount;
     private int mask;
 
     // AtomicLong counters for optional probe/hit statistics.
@@ -65,30 +80,64 @@ public class TranspositionTable {
         long desiredEntries = Math.max(1L, bytes / APPROX_ENTRY_BYTES);
         long cappedDesiredEntries = Math.min(desiredEntries, (long) MAX_ENTRY_COUNT);
 
-        int entryCount = 1;
-        while (entryCount < cappedDesiredEntries) {
-            entryCount <<= 1;
+        int ec = 1;
+        while (ec < cappedDesiredEntries) {
+            ec <<= 1;
         }
 
-        table = new AtomicReferenceArray<>(entryCount);
-        mask = entryCount - 1;
+        entryCount = ec;
+        table = new AtomicLongArray(ec * 2);
+        mask = ec - 1;
         resetStats();
     }
 
     public Entry probe(long key) {
-        Entry entry = table.get(indexFor(key));
+        int idx = indexFor(key);
+        long storedKey = table.get(idx * 2);
         if (statsEnabled) {
             probes.incrementAndGet();
-            if (entry != null && entry.key() == key) {
+            if (storedKey != 0L && storedKey == key) {
                 hits.incrementAndGet();
-                return entry;
+                return unpack(key, table.get(idx * 2 + 1));
             }
             return null;
         }
-        if (entry != null && entry.key() == key) {
-            return entry;
+        if (storedKey != 0L && storedKey == key) {
+            return unpack(key, table.get(idx * 2 + 1));
         }
         return null;
+    }
+
+    /** Unpacks the data word into an {@link Entry}. */
+    private static Entry unpack(long key, long data) {
+        int rawScore = (int) ((data >>> 34) & 0x3FFF_FFFFL);
+        int score    = (rawScore << 2) >> 2;            // sign-extend 30-bit
+        int rawMove  = (int) ((data >>> 18) & 0xFFFF);
+        int bestMove = (rawMove == 0xFFFF) ? Move.NONE : rawMove;
+        int depth    = (int) ((data >>> 10) & 0xFF);
+        int boundOrdinal = (int) ((data >>> 8) & 0x3);
+        TTBound bound = decodeBound(boundOrdinal);
+        byte generation = (byte) (data & 0xFF);
+        return new Entry(key, bestMove, depth, score, bound, generation);
+    }
+
+    private static TTBound decodeBound(int boundOrdinal) {
+        return switch (boundOrdinal) {
+            case 0 -> TTBound.EXACT;
+            case 1 -> TTBound.LOWER_BOUND;
+            case 2 -> TTBound.UPPER_BOUND;
+            default -> TTBound.EXACT;
+        };
+    }
+
+    /** Packs entry fields into the 64-bit data word. */
+    private static long pack(int score, int bestMove, int depth, TTBound bound, byte generation) {
+        long packedMove = (bestMove == Move.NONE) ? 0xFFFFL : (bestMove & 0xFFFFL);
+        return ((long) (score & 0x3FFF_FFFF) << 34)
+             | (packedMove                   << 18)
+             | ((long) (depth & 0xFF)        << 10)
+             | ((long) (bound.ordinal() & 0x3) << 8)
+             | (generation & 0xFFL);
     }
 
     /**
@@ -129,14 +178,22 @@ public class TranspositionTable {
      * deep results from adjacent positions in the game tree.
      */
     public void store(long key, int bestMove, int depth, int score, TTBound bound) {
-        int index = indexFor(key);
-        Entry existing = table.get(index);
-        boolean replace = existing == null
-                || existing.key() != key
-                || (byte)(currentGeneration - existing.generation()) >= AGE_THRESHOLD
-                || depth >= existing.depth();
+        int idx = indexFor(key);
+        long existingKey  = table.get(idx * 2);
+        boolean replace;
+        if (existingKey == 0L || existingKey != key) {
+            replace = true;
+        } else {
+            long existingData = table.get(idx * 2 + 1);
+            byte existingGen  = (byte) (existingData & 0xFF);
+            int  existingDepth = (int) ((existingData >>> 10) & 0xFF);
+            replace = (byte) (currentGeneration - existingGen) >= AGE_THRESHOLD
+                   || depth >= existingDepth;
+        }
         if (replace) {
-            table.set(index, new Entry(key, bestMove, depth, score, bound, currentGeneration));
+            long data = pack(score, bestMove, depth, bound, currentGeneration);
+            table.set(idx * 2 + 1, data); // data before key (volatile happens-before)
+            table.set(idx * 2,     key);
         }
     }
 
@@ -152,7 +209,7 @@ public class TranspositionTable {
      * which is accurate enough for a GUI progress bar.
      */
     public int hashfull() {
-        int len = table.length();
+        int len = entryCount;
         if (len == 0) {
             return 0;
         }
@@ -161,16 +218,20 @@ public class TranspositionTable {
         int recent = 0;
         byte gen = currentGeneration;
         for (int i = 0; i < sampleSize; i++) {
-            Entry e = table.get(i * stride);
-            if (e != null && (byte)(gen - e.generation()) < AGE_THRESHOLD) {
-                recent++;
+            long storedKey = table.get(i * stride * 2);
+            if (storedKey != 0L) {
+                long data = table.get(i * stride * 2 + 1);
+                byte entryGen = (byte) (data & 0xFF);
+                if ((byte) (gen - entryGen) < AGE_THRESHOLD) {
+                    recent++;
+                }
             }
         }
         return recent * 1000 / sampleSize;
     }
 
     public int getEntryCount() {
-        return table.length();
+        return entryCount;
     }
 
     public double getHitRate() {
@@ -193,7 +254,7 @@ public class TranspositionTable {
     public void clear() {
         int len = table.length();
         for (int i = 0; i < len; i++) {
-            table.set(i, null);
+            table.set(i, 0L);
         }
         resetStats();
     }
@@ -208,8 +269,10 @@ public class TranspositionTable {
     }
 
     /**
-     * Packed-int best move, or {@link coeusyk.game.chess.core.models.Move#NONE} if none.
-     * Encoding: bits 0-5 = from, bits 6-11 = to, bits 12-15 = flag.
+     * Immutable snapshot of a TT entry.  Constructed on-the-fly by
+     * {@link #probe(long)} from the packed data long.
+     * <p>bestMove is either a 16-bit packed move (bits 0-5 from, 6-11 to, 12-15 flag)
+     * or {@link coeusyk.game.chess.core.models.Move#NONE} (-1) if no move was stored.
      */
     public record Entry(long key, int bestMove, int depth, int score, TTBound bound, byte generation) {
     }

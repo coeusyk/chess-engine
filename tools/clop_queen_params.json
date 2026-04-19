@@ -1,0 +1,9 @@
+[
+  {
+    "name": "ATK_WEIGHT_QUEEN",
+    "current": 5,
+    "min": -10,
+    "max": 20,
+    "step": 1
+  }
+]

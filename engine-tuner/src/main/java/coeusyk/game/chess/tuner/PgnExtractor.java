@@ -4,10 +4,12 @@ import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Move;
 import coeusyk.game.chess.core.notation.SanConverter;
 
+import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.regex.Pattern;
 
@@ -177,5 +179,81 @@ public final class PgnExtractor {
             else if (depth == 0) { sb.append(c); }
         }
         return sb.toString();
+    }
+
+    /**
+     * CLI entry point: extracts WDL-labelled positions from PGN files and writes EPD.
+     *
+     * <p>Usage: {@code java -cp <tuner.jar> coeusyk.game.chess.tuner.PgnExtractor
+     *   <pgnDir> <output.epd> [maxPositions] [skipPlies] [maxPieces]}
+     */
+    public static void main(String[] args) throws IOException {
+        if (args.length < 2) {
+            System.err.println("Usage: PgnExtractor <pgnDir> <output.epd> [maxPositions] [skipPlies] [maxPieces]");
+            System.exit(1);
+        }
+
+        Path pgnDir      = Path.of(args[0]);
+        Path output      = Path.of(args[1]);
+        int maxPositions  = args.length >= 3 ? Integer.parseInt(args[2]) : 100_000;
+        int skipPlies     = args.length >= 4 ? Integer.parseInt(args[3]) : 20;
+        int maxPieces     = args.length >= 5 ? Integer.parseInt(args[4]) : 28;
+
+        List<Path> pgnFiles = Files.list(pgnDir)
+                .filter(p -> p.toString().endsWith(".pgn"))
+                .sorted()
+                .toList();
+
+        System.out.printf("[PgnExtractor] PGN files: %d in %s%n", pgnFiles.size(), pgnDir);
+        System.out.printf("[PgnExtractor] Max positions: %d, skipPlies: %d, maxPieces: %d%n",
+                maxPositions, skipPlies, maxPieces);
+
+        List<LabelledPosition> all = new ArrayList<>();
+        for (Path pgn : pgnFiles) {
+            System.out.printf("[PgnExtractor] Processing: %s%n", pgn.getFileName());
+            List<LabelledPosition> batch = extract(pgn, skipPlies);
+            // Filter: piece count <= maxPieces
+            for (LabelledPosition lp : batch) {
+                String fen = lp.pos().fen();
+                int pieces = countPieces(fen);
+                if (pieces <= maxPieces) {
+                    all.add(lp);
+                }
+            }
+            System.out.printf("[PgnExtractor]   extracted %d, total %d%n", batch.size(), all.size());
+            if (all.size() >= maxPositions) break;
+        }
+
+        // Shuffle and cap
+        Collections.shuffle(all);
+        if (all.size() > maxPositions) {
+            all = all.subList(0, maxPositions);
+        }
+
+        // Write EPD with c0 annotation
+        try (BufferedWriter w = Files.newBufferedWriter(output)) {
+            for (LabelledPosition lp : all) {
+                String result = outcomeToResult(lp.outcome());
+                w.write(lp.pos().fen() + " c0 \"" + result + "\";");
+                w.newLine();
+            }
+        }
+
+        System.out.printf("[PgnExtractor] Wrote %d positions to %s%n", all.size(), output);
+    }
+
+    private static int countPieces(String fen) {
+        String board = fen.split(" ")[0];
+        int count = 0;
+        for (char c : board.toCharArray()) {
+            if (Character.isLetter(c)) count++;
+        }
+        return count;
+    }
+
+    private static String outcomeToResult(double outcome) {
+        if (outcome == 1.0) return "1-0";
+        if (outcome == 0.0) return "0-1";
+        return "1/2-1/2";
     }
 }

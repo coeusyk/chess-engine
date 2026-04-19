@@ -3,6 +3,8 @@ package coeusyk.game.chess.core.search;
 import coeusyk.game.chess.core.models.Move;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 class TranspositionTableTest {
@@ -112,5 +114,25 @@ class TranspositionTableTest {
         assertNotNull(entry);
         assertEquals(10, entry.depth(), "deep fresh entry should be preserved over shallow replacement");
         assertEquals(100, entry.score());
+    }
+
+    @Test
+    void invalidPackedBoundOrdinalFallsBackToExact() throws Exception {
+        TranspositionTable table = new TranspositionTable(1);
+        long key = 123_456_789L;
+        int idx = (int) key & (table.getEntryCount() - 1);
+
+        Field tableField = TranspositionTable.class.getDeclaredField("table");
+        tableField.setAccessible(true);
+        java.util.concurrent.atomic.AtomicLongArray rawTable =
+                (java.util.concurrent.atomic.AtomicLongArray) tableField.get(table);
+
+        long dataWithInvalidBound = (1L << 8) * 3; // bound ordinal 3 (invalid)
+        rawTable.set(idx * 2 + 1, dataWithInvalidBound);
+        rawTable.set(idx * 2, key);
+
+        TranspositionTable.Entry entry = table.probe(key);
+        assertNotNull(entry);
+        assertEquals(TTBound.EXACT, entry.bound());
     }
 }

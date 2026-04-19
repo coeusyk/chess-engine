@@ -30,7 +30,7 @@ public class Searcher {
     private static final int MATE_SCORE = 100_000;
     private static final int MAX_PLY = 128;
     private static final int ASPIRATION_INITIAL_DELTA_CP = 50;
-    private static final int NULL_MOVE_DEPTH_THRESHOLD = 3;
+    private static final int NULL_MOVE_DEPTH_THRESHOLD = 4; // C-5 SPRT: threshold=4 won (+90.3 Elo vs baseline, H1 accepted)
     private static final int MAX_LEGAL_MOVES = 256;
     private static final int FUTILITY_MARGIN_DEPTH_1 = 150;
     private static final int FUTILITY_MARGIN_DEPTH_2 = 300;
@@ -39,14 +39,35 @@ public class Searcher {
     private static final int MAX_CHECK_EXTENSIONS = 16;
     private static final int SINGULAR_DEPTH_THRESHOLD = 8;
     private static final int SINGULAR_MARGIN_PER_PLY = 8;
+    // Flat base offset added on top of depth*SINGULAR_MARGIN_PER_PLY.
+    // Negative → tighter margin (more extensions); positive → looser margin.
+    // C-4 SPRT result: -10 accepted H1 at +162 Elo (BonferroniM=2, TC=60+0.6).
+    private static final int SINGULAR_EXTENSION_MARGIN = -10;
     private static final int TB_WIN_SCORE = MATE_SCORE - 2 * MAX_PLY;
     private static final int TB_LOSS_SCORE = -(MATE_SCORE - 2 * MAX_PLY);
 
+    // Minimum material+PST advantage (white-positive, centipawns, MG scale) required for
+    // contempt to activate.  Below this threshold the position is close enough to equal
+    // that a draw score of 0 is more appropriate.  Prevents balanced middlegames from
+    // being distorted by a non-zero contempt penalty.
+    private static final int CONTEMPT_THRESHOLD = 150;
+    // Default contempt value (centipawns) used by the UCI interface and the draw-failure
+    // regression tests.  Exposed as a public constant so tests can reference it without
+    // hard-coding the magic number 50.
+    public static final int DEFAULT_CONTEMPT_CP = 50;
+
     // Correction history: maps pawn structure to a static-eval bias.
     // Stored at GRAIN scale; applied as: adjustedEval = rawEval + ch[color][key] / GRAIN.
-    private static final int CORRECTION_HISTORY_SIZE = 1024;
+    private static final int CORRECTION_HISTORY_SIZE = 4096;
     private static final int CORRECTION_HISTORY_GRAIN = 256;
     private static final int CORRECTION_HISTORY_MAX = CORRECTION_HISTORY_GRAIN * 32;
+
+    // LMR reduction formula divisor: 2*(ln2)^2 ≈ 0.961.
+    // R = max(1, floor(1 + ln(depth)*ln(moveIndex) / LMR_LOG_DIVISOR)).
+    // NOTE: the experiment registry (C-2) describes this as "2*ln(2) ≈ 1.386" — that is wrong.
+    // The actual value is 2*(ln(2))^2 ≈ 0.961 (more aggressive: larger R at equal depth/move).
+    // C-2 SPRT (phase13): divisor=1.7 H1 accepted (+41.6 Elo, 319 games). moveIndex>=4 unchanged.
+    private static final double LMR_LOG_DIVISOR = 1.7;
 
     // Delta pruning thresholds used in quiescence search.
     // Values mirror the SEE piece table to keep material reasoning consistent.
@@ -66,6 +87,7 @@ public class Searcher {
     private long leafNodes;
     private long quiescenceNodes;
     private long checkExtensionsApplied;
+    private long matingThreatExtensionsApplied;
     private int seldepth;
     private long betaCutoffs;
     private long firstMoveCutoffs;
@@ -97,7 +119,12 @@ public class Searcher {
     private final int[][] correctionHistory = new int[2][CORRECTION_HISTORY_SIZE];
     private final int[] staticEvalStack = new int[MAX_PLY + 2];
     // Not final: can be replaced with a shared instance for Lazy SMP multi-threaded search.
-    private TranspositionTable transpositionTable = new TranspositionTable();
+    // Initialised with a 1 MB placeholder so that UciApplication's call to
+    // setSharedTranspositionTable() does not orphan a full 64 MB array on every
+    // search (main thread + each helper).  Any code that uses Searcher standalone
+    // (tests, tuner) gets a working but small private TT; the UCI path always
+    // replaces it with sharedTT before searching.
+    private TranspositionTable transpositionTable = new TranspositionTable(1);
     private final int[][] lmrReductions = precomputeLmrReductions();
 
     // Per-thread pre-allocated move lists — one slot per ply level (MAX_PLY) plus
@@ -131,6 +158,12 @@ public class Searcher {
     private boolean syzygy50MoveRule = true;
 
     private boolean aborted;
+
+    // Penalty applied to draw-by-repetition and 50-move-rule draws when the side to move
+    // has a clear material advantage (> CONTEMPT_THRESHOLD cp).  A positive value makes the
+    // engine avoid draws when winning and accept them when losing.  Set via setContempt();
+    // defaults to 0 (neutral) so that tests using new Searcher() are unaffected.
+    private int contemptCp = 0;
 
     public Searcher() {
         this(true, true, true, true, true, true);
@@ -181,6 +214,20 @@ public class Searcher {
         this.lmrEnabled = lmrEnabled;
         this.futilityRazoringEnabled = futilityRazoringEnabled;
         this.checkExtensionsEnabled = checkExtensionsEnabled;
+    }
+
+    /**
+     * Sets the draw-contempt value in centipawns.
+     * When the side to move has a material+PST advantage exceeding {@code CONTEMPT_THRESHOLD},
+     * repetition and 50-move-rule draws return {@code -cp} (bad for the winning side).
+     * When the side to move is behind by the same margin, they return {@code +cp} (good for
+     * the losing side).  Balanced positions always return 0 regardless of this setting.
+     * Insufficient-material draws always return 0 (they are genuine draws).
+     *
+     * @param cp contempt in centipawns; clamped to [0, 200]
+     */
+    public void setContempt(int cp) {
+        this.contemptCp = Math.max(0, Math.min(200, cp));
     }
 
     public void setMultiPV(int multiPV) {
@@ -345,6 +392,7 @@ public class Searcher {
 
         aborted = false;
         checkExtensionsApplied = 0;
+        matingThreatExtensionsApplied = 0;
         searchStartNanos = System.nanoTime();
         transpositionTable.resetStats();
         java.util.Arrays.fill(staticEvalStack, 0);
@@ -707,11 +755,14 @@ public class Searcher {
             return alpha;
         }
 
-        // Draw detection: return 0 for any recognized draw condition (skip at root so we
-        // always return a bestMove from searchRoot, never a raw draw score).
+        // Draw detection: return a contempt-adjusted score for avoidable draws, 0 for genuine draws.
+        // (Skip at root so searchRoot always returns a bestMove, never a raw draw score.)
         if (ply > 0) {
-            if (board.isRepetitionDraw() || board.isFiftyMoveRuleDraw() || board.isInsufficientMaterial()) {
-                return 0;
+            if (board.isInsufficientMaterial()) {
+                return 0; // genuine draw — always neutral
+            }
+            if (board.isRepetitionDraw() || board.isFiftyMoveRuleDraw()) {
+                return contemptScore(board);
             }
         }
 
@@ -726,7 +777,17 @@ public class Searcher {
         }
 
         if (effectiveDepth == 0) {
-            return quiescence(board, alpha, beta, ply, 0, shouldStopHard);
+            // Mating-threat leaf extension: when alpha is already in mate territory
+            // (a forced mate was found in another branch), extend 1 ply to check
+            // whether this branch also resolves the position — avoids quiet-move
+            // horizon blindness near a forced mating sequence.
+            if (currentExtensionsUsed < maxExtensions && alpha >= MATE_SCORE - MAX_PLY) {
+                effectiveDepth = 1;
+                currentExtensionsUsed++;
+                matingThreatExtensionsApplied++;
+            } else {
+                return quiescence(board, alpha, beta, ply, 0, shouldStopHard);
+            }
         }
 
         long zobrist = board.getZobristHash();
@@ -753,7 +814,7 @@ public class Searcher {
 
         // Derive a pawn-structure key for correction history lookup.
         int colorIdx = Piece.isWhite(board.getActiveColor()) ? 0 : 1;
-        int pawnKey = (int)(((board.getWhitePawns() ^ board.getBlackPawns()) * 0x9E3779B97F4A7C15L) >>> 54);
+        int pawnKey = (int)(((board.getWhitePawns() ^ board.getBlackPawns()) * 0x9E3779B97F4A7C15L) >>> 52);
         int staticEvalRaw = staticEval;
         // Apply accumulated correction bias (capped at ±32 cp).
         staticEval += correctionHistory[colorIdx][pawnKey] / CORRECTION_HISTORY_GRAIN;
@@ -1009,7 +1070,7 @@ public class Searcher {
             // score diverges from the raw static eval for this pawn structure.
             if (!inSingularitySearch && !sideToMoveInCheck) {
                 int corrError = bestScore - staticEvalRaw;
-                int weight = CORRECTION_HISTORY_GRAIN / Math.max(1, effectiveDepth);
+                int weight = Math.min(CORRECTION_HISTORY_GRAIN, effectiveDepth * 16);
                 correctionHistory[colorIdx][pawnKey] = Math.max(-CORRECTION_HISTORY_MAX,
                         Math.min(CORRECTION_HISTORY_MAX,
                                 correctionHistory[colorIdx][pawnKey] + corrError * weight));
@@ -1213,15 +1274,13 @@ public class Searcher {
     private int[][] precomputeLmrReductions() {
         // Formula: R = max(1, floor(1 + log2(depth) * log2(moveIndex) / 2))
         // log2(x) = ln(x) / ln(2).  Rewritten in terms of natural log:
-        //   R = max(1, floor(1 + ln(depth)*ln(moveIndex) / (2 * LN2 * LN2)))
-        // where LN2 = ln(2) ≈ 0.6931.
-        double ln2Sq2 = 2.0 * Math.log(2) * Math.log(2); // 2 * ln(2)^2 ≈ 0.961
+        //   R = max(1, floor(1 + ln(depth)*ln(moveIndex) / LMR_LOG_DIVISOR))
         int[][] reductions = new int[MAX_PLY][MAX_LEGAL_MOVES];
         for (int depth = 1; depth < MAX_PLY; depth++) {
             for (int moveIndex = 1; moveIndex < MAX_LEGAL_MOVES; moveIndex++) {
                 int reduction = Math.max(
                         1,
-                        (int) (1.0 + (Math.log(depth) * Math.log(moveIndex)) / ln2Sq2)
+                        (int) (1.0 + (Math.log(depth) * Math.log(moveIndex)) / LMR_LOG_DIVISOR)
                 );
                 reductions[depth][moveIndex] = reduction;
             }
@@ -1256,6 +1315,10 @@ public class Searcher {
         return checkExtensionsApplied;
     }
 
+    long getMatingThreatExtensionsAppliedForTesting() {
+        return matingThreatExtensionsApplied;
+    }
+
     int getMaxCheckExtensionsForTesting(int initialDepth) {
         return getMaxCheckExtensionsForDepth(initialDepth);
     }
@@ -1268,7 +1331,7 @@ public class Searcher {
     }
 
     private int getSingularMargin(int depth) {
-        return depth * SINGULAR_MARGIN_PER_PLY;
+        return depth * SINGULAR_MARGIN_PER_PLY + SINGULAR_EXTENSION_MARGIN;
     }
 
     private boolean shouldApplyPawnPromotionExtension(
@@ -1587,6 +1650,27 @@ public class Searcher {
 
     private int evaluate(Board board) {
         return evaluator.evaluate(board);
+    }
+
+    /**
+     * Returns the draw score adjusted for contempt.
+     * Uses the incrementally maintained MG material+PST score (O(1), already computed by Board).
+     * <ul>
+     *   <li>If the side to move is winning by &gt; CONTEMPT_THRESHOLD: returns {@code -contemptCp}
+     *       (draw is bad for them — engine avoids it).</li>
+     *   <li>If the side to move is losing by &gt; CONTEMPT_THRESHOLD: returns {@code +contemptCp}
+     *       (draw is acceptable for them — engine accepts it).</li>
+     *   <li>Otherwise: returns 0 (balanced — no contempt distortion).</li>
+     * </ul>
+     */
+    private int contemptScore(Board board) {
+        if (contemptCp == 0) return 0;
+        // incMgScore is white-positive; flip sign for black to get side-to-move advantage.
+        int incMg = board.getIncMgScore();
+        int sideToMoveAdv = Piece.isWhite(board.getActiveColor()) ? incMg : -incMg;
+        if (sideToMoveAdv >  CONTEMPT_THRESHOLD) return -contemptCp;
+        if (sideToMoveAdv < -CONTEMPT_THRESHOLD) return  contemptCp;
+        return 0;
     }
 
     private int wdlToScore(WDLResult.WDL wdl) {

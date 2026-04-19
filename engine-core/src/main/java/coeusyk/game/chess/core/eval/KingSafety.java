@@ -7,26 +7,15 @@ public final class KingSafety {
 
     private KingSafety() {}
 
-    private static final int SHIELD_RANK_2_BONUS = 12;
-    private static final int SHIELD_RANK_3_BONUS = 7;
+    // Shield/open-file/attacker constants are now read from EvalParams (overrideable at startup).
 
-    private static final int OPEN_FILE_PENALTY = 45;
-    private static final int HALF_OPEN_FILE_PENALTY = 13;
-
-    private static final int[] ATTACKER_WEIGHT = new int[7];
-
-    private static final long[] WHITE_KING_ZONE = new long[64];
-    private static final long[] BLACK_KING_ZONE = new long[64];
+    static final long[] WHITE_KING_ZONE = new long[64];
+    static final long[] BLACK_KING_ZONE = new long[64];
 
     private static final int WHITE_G1 = 62, WHITE_H1 = 63, WHITE_C1 = 58, WHITE_B1 = 57;
     private static final int BLACK_G8 = 6,  BLACK_H8 = 7,  BLACK_C8 = 2,  BLACK_B8 = 1;
 
     static {
-        ATTACKER_WEIGHT[Piece.Knight] = 6;
-        ATTACKER_WEIGHT[Piece.Bishop] = 5;
-        ATTACKER_WEIGHT[Piece.Rook]   = 5;
-        ATTACKER_WEIGHT[Piece.Queen]  = 6;
-
         for (int sq = 0; sq < 64; sq++) {
             int row = sq / 8;
             int file = sq % 8;
@@ -66,6 +55,21 @@ public final class KingSafety {
         return evaluateSide(board, true) - evaluateSide(board, false);
     }
 
+    /**
+     * Returns only the pawn shield + open-file components of king safety (white minus black),
+     * mg-only. Attacker penalties are computed in Evaluator's merged mobility pass.
+     */
+    public static int evaluatePawnShieldAndFiles(Board board) {
+        return evaluateCheapSide(board, true) - evaluateCheapSide(board, false);
+    }
+
+    private static int evaluateCheapSide(Board board, boolean white) {
+        long kingBb = white ? board.getWhiteKing() : board.getBlackKing();
+        if (kingBb == 0) return 0;
+        int kingSq = Long.numberOfTrailingZeros(kingBb);
+        return pawnShield(board, white, kingSq) + openFiles(board, white, kingSq);
+    }
+
     private static int evaluateSide(Board board, boolean white) {
         long kingBb = white ? board.getWhiteKing() : board.getBlackKing();
         if (kingBb == 0) return 0;
@@ -98,9 +102,9 @@ public final class KingSafety {
             int f = file + df;
             if (f < 0 || f > 7) continue;
             if (r1 >= 0 && r1 < 8 && (friendlyPawns & (1L << (r1 * 8 + f))) != 0)
-                bonus += SHIELD_RANK_2_BONUS;
+                bonus += EvalParams.SHIELD_RANK2;
             if (r2 >= 0 && r2 < 8 && (friendlyPawns & (1L << (r2 * 8 + f))) != 0)
-                bonus += SHIELD_RANK_3_BONUS;
+                bonus += EvalParams.SHIELD_RANK3;
         }
         return bonus;
     }
@@ -116,10 +120,36 @@ public final class KingSafety {
             if (f < 0 || f > 7) continue;
             long fileMask = 0x0101010101010101L << f;
             if ((friendly & fileMask) == 0) {
-                penalty -= (enemy & fileMask) == 0 ? OPEN_FILE_PENALTY : HALF_OPEN_FILE_PENALTY;
+                penalty -= (enemy & fileMask) == 0 ? EvalParams.OPEN_FILE_PENALTY : EvalParams.HALF_OPEN_FILE_PENALTY;
             }
         }
         return penalty;
+    }
+
+    // Non-linear mapping from attacker-weight sum to centipawn penalty.
+    // Replaces the old -(w*w/4) integer formula which truncated to 0 for w<2
+    // and grew quadratically without bound for large multi-attacker positions.
+    // Table is capped at 50 cp. Mirrors PositionFeatures.SAFETY_TABLE in engine-tuner.
+    static final int[] SAFETY_TABLE = {
+        0, 0, 1, 2, 3, 5, 7, 9, 12, 15, 18, 22, 26, 30, 35, 40, 45, 50
+    };
+
+    /**
+     * Converts a pre-computed attacker-weight sum into a centipawn penalty
+     * using the non-linear SAFETY_TABLE and {@link EvalParams#KING_SAFETY_SCALE}.
+     *
+     * <p>Called from {@link Evaluator#evaluate(Board)} after the merged
+     * mobility+attack pass has accumulated the weight in
+     * {@code tempWhiteAttackWeight} / {@code tempBlackAttackWeight}.
+     *
+     * @param atkWeight accumulated attacker weight (sum of per-piece ATK_WEIGHT_* values)
+     * @return positive centipawn penalty (caller applies sign convention)
+     */
+    public static int safetyTablePenalty(int atkWeight) {
+        int base = atkWeight < SAFETY_TABLE.length
+                 ? SAFETY_TABLE[atkWeight]
+                 : SAFETY_TABLE[SAFETY_TABLE.length - 1];
+        return base * EvalParams.KING_SAFETY_SCALE / 100;
     }
 
     private static int attackerPenalty(Board board, boolean white, int kingSq) {
@@ -132,12 +162,13 @@ public final class KingSafety {
         long eQueens  = white ? board.getBlackQueens()   : board.getWhiteQueens();
 
         int w = 0;
-        w += countAttackers(eKnights, Piece.Knight, zone, allOcc) * ATTACKER_WEIGHT[Piece.Knight];
-        w += countAttackers(eBishops, Piece.Bishop, zone, allOcc) * ATTACKER_WEIGHT[Piece.Bishop];
-        w += countAttackers(eRooks,   Piece.Rook,   zone, allOcc) * ATTACKER_WEIGHT[Piece.Rook];
-        w += countAttackers(eQueens,  Piece.Queen,  zone, allOcc) * ATTACKER_WEIGHT[Piece.Queen];
+        w += countAttackers(eKnights, Piece.Knight, zone, allOcc) * EvalParams.ATK_WEIGHT_KNIGHT;
+        w += countAttackers(eBishops, Piece.Bishop, zone, allOcc) * EvalParams.ATK_WEIGHT_BISHOP;
+        w += countAttackers(eRooks,   Piece.Rook,   zone, allOcc) * EvalParams.ATK_WEIGHT_ROOK;
+        w += countAttackers(eQueens,  Piece.Queen,  zone, allOcc) * EvalParams.ATK_WEIGHT_QUEEN;
 
-        return -(w * w / 4);
+        int base = w < SAFETY_TABLE.length ? SAFETY_TABLE[w] : SAFETY_TABLE[SAFETY_TABLE.length - 1];
+        return -(base * EvalParams.KING_SAFETY_SCALE / 100);
     }
 
     private static int countAttackers(long pieces, int pieceType, long zone, long allOcc) {

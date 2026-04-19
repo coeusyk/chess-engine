@@ -156,6 +156,30 @@ class NpsBenchmarkTest {
             "Pawn table may be too small or hash collisions excessive.",
             pawnHitRate * 100.0));
 
+        // D-4: multi-size pawn hash sweep — find which size achieves ≥92% hit rate.
+        System.out.println();
+        System.out.println("[NpsBenchmark] Pawn-hash multi-size sweep (finding size for ≥92% hit rate):");
+        int[] pawnHashSizesMb = {1, 2, 4};
+        boolean foundNinetyTwo = false;
+        for (int mb : pawnHashSizesMb) {
+            Searcher sizeSearcher = new Searcher();
+            sizeSearcher.setTranspositionTableSizeMb(BENCH_HASH_MB);
+            sizeSearcher.setPawnHashSizeMb(mb);
+            sizeSearcher.enablePawnHashStats();
+            for (String fen2 : POSITION_FENS) {
+                Board b2 = new Board(fen2);
+                b2.setSearchMode(true);
+                sizeSearcher.searchDepth(b2, BENCH_DEPTH);
+            }
+            double rate = sizeSearcher.getPawnHashHitRate();
+            System.out.printf(Locale.US,
+                "[NpsBenchmark] Pawn hash %d MB: hit rate = %.1f%%%s%n",
+                mb, rate * 100.0, rate >= 0.92 ? "  [>=92% ✓]" : "");
+            if (rate >= 0.92) foundNinetyTwo = true;
+        }
+        assertTrue(foundNinetyTwo,
+            "[NpsBenchmark] D-4: no pawn hash size in {1,2,4} MB achieved >=92% hit rate.");
+
         // Regression gate: if nps.baseline is set, require aggMean >= baseline * (1 - nps.threshold).
         long npsBaseline = Long.getLong("nps.baseline", 0L);
         if (npsBaseline > 0) {

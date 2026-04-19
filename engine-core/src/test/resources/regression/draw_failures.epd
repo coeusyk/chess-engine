@@ -10,3 +10,9 @@
 #
 # Seed #2 — Issue #125: KR vs K — same root cause, same contempt fix.
 4k3/8/8/8/8/8/8/4KR2 w - - c0 "draw_failure issue_125 KRvK engine-drew-by-repetition contempt-fix";
+#
+# Seed #3 — Issue #125: KR-vs-KRN+passed-pawn (Black to move).
+# Stockfish shows a forced win; pre-fix engine cycled via 3-fold repetition and drew.
+# Note: the spec FEN "8R7/..." had a transcription error (rank-8 summed to 16).
+# Canonical corrected FEN below (White: Rh8 Ke5 Ng4 Pb3; Black: Rc5 Bf4 pe7 Kh4).
+7R/4p3/8/2r1K3/5bNk/1P6/8/8 b - - 1 74 c0 "draw_failure issue_125 KRvsKRN-passedpawn btm engine-drew-by-repetition contempt-fix";
