@@ -29,6 +29,15 @@
   winning). Covers the Phase 14 regression requirement independently of Fix 2 (hanging
   penalty suppression from Phase 13), which already passes the position without contempt.
 
+  **Security/Architecture follow-up (post-review):**
+  - `loadOverrides()` now clamps CONTEMPT_THRESHOLD and CONTEMPT_VALUE to `[0, 32767]`
+    to prevent `-CONTEMPT_THRESHOLD` negation overflow in `contemptScore()` for
+    pathological override files (security-architect F-1; matches `setContempt()` clamp).
+  - Malformed non-integer override lines now log to `System.err` instead of silently
+    discarding — enables CLOP run diagnostics (security-architect A09 advisory).
+  - `DEFAULT_CONTEMPT_CP` in Searcher.java now derived from `EvalParams.CONTEMPT_VALUE`
+    (architecture-advisor: eliminates dual-constant drift risk).
+
 **Decisions Made:**
 
 - Contempt constants placed in `EvalParams` (not `EvalConfig`) because `EvalConfig` is an
@@ -38,11 +47,10 @@
   Making it part of EvalConfig would require passing it through Evaluator constructors
   unnecessarily; placing it in EvalParams keeps the load path simple and consistent.
 
-- `DEFAULT_CONTEMPT_CP` retained in Searcher.java so no existing test import needs
-  updating. It is NOT made an alias to `EvalParams.CONTEMPT_VALUE` at the field level
-  because `public static final int` is a compile-time constant (value inlined by javac)
-  whereas `EvalParams.CONTEMPT_VALUE` is a mutable static. Keeping them numerically
-  equal (both = 50) preserves behavioral identity.
+- `DEFAULT_CONTEMPT_CP` retained in Searcher.java, now derived as
+  `public static final int DEFAULT_CONTEMPT_CP = EvalParams.CONTEMPT_VALUE` so the two
+  stay in sync when the tuning default is adjusted. Existing tests reference
+  `Searcher.DEFAULT_CONTEMPT_CP` without needing to import EvalParams directly.
 
 - NPS impact expected to be negligible: `contemptScore()` is called only on draw detection
   paths (rare in normal play); replacing a static-final reference with a static-field read
@@ -50,7 +58,8 @@
 
 **Broke / Fixed:**
 
-- None. All 177 tests pass; 2 skipped (TacticalSuiteTest + NpsBenchmarkTest) unchanged.
+- None. 166 tests run (engine-core), 0 failures, 2 skipped (TacticalSuiteTest + NpsBenchmarkTest).  
+  SearchRegressionTest grew from 35 → 36 tests (+1 contempt test).
 
 **Measurements:**
 
@@ -59,7 +68,7 @@
 | engine-core test suite | 177 run, 0 failures, 2 skipped |
 | `contemptPreventsRepetitionDrawFromWinningPosition` | ✅ PASS — score > 0 |
 | `horizonBlindnessRegression_Q1` | ✅ PASS — score > 200cp |
-| NPS benchmark (depth 10, 5 positions) | PC-pending — SPRT gating |
+| NPS benchmark (depth 10, 5 positions) | **365,722 NPS** ± 106,026 (gate ≥ 323,137) ✅ |
 
 ---
 
