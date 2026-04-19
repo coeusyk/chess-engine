@@ -115,9 +115,19 @@ public class TranspositionTable {
         int rawMove  = (int) ((data >>> 18) & 0xFFFF);
         int bestMove = (rawMove == 0xFFFF) ? Move.NONE : rawMove;
         int depth    = (int) ((data >>> 10) & 0xFF);
-        TTBound bound = TTBound.values()[(int) ((data >>> 8) & 0x3)];
+        int boundOrdinal = (int) ((data >>> 8) & 0x3);
+        TTBound bound = decodeBound(boundOrdinal);
         byte generation = (byte) (data & 0xFF);
         return new Entry(key, bestMove, depth, score, bound, generation);
+    }
+
+    private static TTBound decodeBound(int boundOrdinal) {
+        return switch (boundOrdinal) {
+            case 0 -> TTBound.EXACT;
+            case 1 -> TTBound.LOWER_BOUND;
+            case 2 -> TTBound.UPPER_BOUND;
+            default -> TTBound.EXACT;
+        };
     }
 
     /** Packs entry fields into the 64-bit data word. */

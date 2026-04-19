@@ -31,7 +31,7 @@ while ($true) {
     $iteration++
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     
-    $procs = @(Get-Process java -ErrorAction SilentlyContinue | Where-Object { $_.StartTime -gt [datetime]"2026-04-10 20:48" } | Sort-Object Id)
+    $procs = @(Get-Process java -ErrorAction SilentlyContinue | Sort-Object Id)
     
     if ($procs.Count -ge 2) {
         $p2t_cur = [math]::Round($procs[0].WorkingSet / 1MB, 2)

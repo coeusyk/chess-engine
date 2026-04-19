@@ -44,6 +44,7 @@ tools/*.log
 tools/*.epd
 tools/selfplay*.pgn
 tools/results/*.pgn
+tools/results/*.csv
 tools/results/*.txt
 
 ### Texel corpus (generated artifact — never commit) ###

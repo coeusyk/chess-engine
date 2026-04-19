@@ -44,9 +44,7 @@ $TunedJar        = "tools\engine-uci-b1-kingsafety-tuned.jar"
 $KingSafetyFile  = "engine-core\src\main\java\coeusyk\game\chess\core\eval\KingSafety.java"
 $EvalParamsFile  = "engine-tuner\src\main\java\coeusyk\game\chess\tuner\EvalParams.java"
 
-foreach ($required in $SeedFile) {
-    if (-not (Test-Path $required)) { Write-Error "Required file not found: $required"; exit 1 }
-}
+if (-not (Test-Path $SeedFile)) { Write-Error "Required file not found: $SeedFile"; exit 1 }
 
 Write-Host "B-1 Experiment — King-Safety Texel Tuning + SPRT"
 Write-Host "--------------------------------------------------"

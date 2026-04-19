@@ -144,7 +144,7 @@ public final class SmokeTestRunner {
             for (int h = 0; h < histLen; h++) {
                 if (positionHistory[h] == zkey) repCount++;
             }
-            if (repCount >= 2) return GameOutcome.DRAW; // threefold repetition
+            if (repCount >= 3) return GameOutcome.DRAW; // threefold repetition
 
             // Fifty-move rule
             if (board.getHalfmoveClock() >= 100) return GameOutcome.DRAW;
@@ -179,12 +179,18 @@ public final class SmokeTestRunner {
     /** Selects the best legal move using a simple fixed-depth negamax α-β. */
     private static Move chooseBestMove(Board board, ArrayList<Move> legalMoves,
                                        double[] params, int depth) {
-        int bestScore = Integer.MIN_VALUE + 1;
+        int bestScore = -INF;
         Move bestMove = legalMoves.get(0);
 
-        for (Move move : legalMoves) {
+        for (int i = 0; i < legalMoves.size(); i++) {
+            Move move = legalMoves.get(i);
             board.makeMove(move);
-            int score = -negamax(board, depth - 1, -INF, -bestScore + 1, params);
+            int score;
+            if (i == 0) {
+                score = -negamax(board, depth - 1, -INF, INF, params);
+            } else {
+                score = -negamax(board, depth - 1, -bestScore - 1, -bestScore, params);
+            }
             board.unmakeMove();
             if (score > bestScore) {
                 bestScore = score;

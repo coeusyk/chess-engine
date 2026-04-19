@@ -78,7 +78,7 @@ well at runtime. The tuner couldn't improve on them because it was optimizing a
 fundamentally different penalty curve.
 
 **Formula alignment fix**: Engine now uses `SAFETY_TABLE` + `KING_SAFETY_SCALE`
-(matching tuner). SPRT confirms Elo-neutral (correctness fix, not strength change).
+(matching tuner). SPRT accepted H1 with +75.6 ±56.9 Elo (LOS 99.5%, 84 games).
 
 Re-tuning with the corrected formula is carried forward as Phase 14 issues
 #170 (king-safety), #171 (mobility), #172 (pawn-structure).
