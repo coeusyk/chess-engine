@@ -182,15 +182,9 @@ public final class SmokeTestRunner {
         int bestScore = -INF;
         Move bestMove = legalMoves.get(0);
 
-        for (int i = 0; i < legalMoves.size(); i++) {
-            Move move = legalMoves.get(i);
+        for (Move move : legalMoves) {
             board.makeMove(move);
-            int score;
-            if (i == 0) {
-                score = -negamax(board, depth - 1, -INF, INF, params);
-            } else {
-                score = -negamax(board, depth - 1, -bestScore - 1, -bestScore, params);
-            }
+            int score = -negamax(board, depth - 1, -INF, INF, params);
             board.unmakeMove();
             if (score > bestScore) {
                 bestScore = score;
