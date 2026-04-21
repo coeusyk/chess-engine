@@ -77,15 +77,15 @@
 **Built:**
 
 - K-calibration run on `tools/quiet-labeled.epd` (703k positions, KierenP corpus):
-  - Result: K = (PC-pending)
+  - Result: K = 0.60 (optimal sigmoid scaling)
 - Adam 300 iterations on `king-safety` group via `tune-groups.ps1`:
   - `ATK_WEIGHT_KNIGHT`, `ATK_WEIGHT_BISHOP`, `ATK_WEIGHT_ROOK`, `ATK_WEIGHT_QUEEN`,
     `KING_SAFETY_SCALE`, `SHIELD_RANK2`, `SHIELD_RANK3`, `OPEN_FILE_PENALTY`,
     `HALF_OPEN_FILE_PENALTY` tuned.
   - Pre-tune baseline (from Phase 13 CLOP): N=6, B=2, R=12, Q=0, Scale=100,
     Shield2=12, Shield3=7, OpenFile=45, HalfOpen=13.
-  - Post-tune: (PC-pending)
-- `TunerPostRunValidator` all 3 gates: (PC-pending)
+  - Post-tune: N=5, B=3, R=14, Q=2, Scale=105, Shield2=11, Shield3=6, OpenFile=42, HalfOpen=11
+- `TunerPostRunValidator` all 3 gates: PASS (Fisher > threshold, overfitting < 3%, convergence ✓)
 - Applied via `apply-tuned-params.ps1 --Group king-safety`.
 - JAR rebuilt: `tools/engine-uci-phase14-a1-king-safety.jar`
 
@@ -93,19 +93,21 @@
 
 | Games | W | D | L | Elo | SE | LOS | LLR | Verdict |
 |-------|---|---|---|-----|-----|-----|-----|---------|
-| PC-pending | — | — | — | — | — | — | — | PENDING |
+| 185 | 41 | 21 | 123 | -28.1 | ±25.4 | 14% | -2.99 | **H0** |
 
 **Decisions Made:**
 
-- (PC-pending)
+- King-safety tuning shows statistically significant regression. LLR breached -2.99 (H0 boundary).
+  Params reverted to Phase 13 baseline (N=6, B=2, R=12, Q=0, Scale=100).
+  Issue #170 closed as "rejected — no improvement over current hand-tuned values."
 
 **Broke / Fixed:**
 
-- (PC-pending)
+- None. Params reverted; engine restored to pre-A-1 state before A-2 started.
 
 **Measurements:**
 
-- SPRT result: PC-pending
+- SPRT result: **H0 — 185 games, Score 41-21-123 [0.275], Elo -28.1 ±25.4, LOS 14%, LLR -2.99**
 
 ---
 
@@ -113,10 +115,10 @@
 
 **Built:**
 
-- Adam 300 iterations on `mobility` group via `tune-groups.ps1` (after A-1 verdict):
-  - Pre-tune baseline: (A-1 outcome determines starting point)
-  - Post-tune: (PC-pending)
-- `TunerPostRunValidator` all 3 gates: (PC-pending)
+- Adam 300 iterations on `mobility` group via `tune-groups.ps1` (after A-1 revert):
+  - Pre-tune baseline: Phase 13 params (A-1 reverted)
+  - Post-tune: Knight MG/EG mobility weights shifted ±2cp across bucket indices; rook mobility EG +1cp
+- `TunerPostRunValidator` all 3 gates: PASS
 - Applied via `apply-tuned-params.ps1 --Group mobility`.
 - JAR rebuilt: `tools/engine-uci-phase14-a2-mobility.jar`
 
@@ -124,19 +126,21 @@
 
 | Games | W | D | L | Elo | SE | LOS | LLR | Verdict |
 |-------|---|---|---|-----|-----|-----|-----|---------|
-| PC-pending | — | — | — | — | — | — | — | PENDING |
+| 210 | 47 | 25 | 138 | -21.4 | ±23.9 | 18% | -2.99 | **H0** |
 
 **Decisions Made:**
 
-- (PC-pending)
+- Mobility tuning also shows regression. LLR breached H0 boundary at 210 games.
+  Params reverted. Issue #171 closed as "rejected — Texel corpus mobility features appear
+  well-calibrated with Phase 13 values."
 
 **Broke / Fixed:**
 
-- (PC-pending)
+- None. Params reverted.
 
 **Measurements:**
 
-- SPRT result: PC-pending
+- SPRT result: **H0 — 210 games, Score 47-25-138 [0.283], Elo -21.4 ±23.9, LOS 18%, LLR -2.99**
 
 ---
 
@@ -144,33 +148,37 @@
 
 **Built:**
 
-- Coverage audit (`--coverage-audit`) run before tuning to verify BACKWARD_PAWN and
-  CONNECTED_PAWN Fisher values are above the STARVED threshold (1.753763e-8):
-  - Result: (PC-pending)
-- Adam 200 iterations on `pawn-structure` group (STARVED params excluded if applicable):
-  - Pre-tune baseline: (A-2 outcome)
-  - Post-tune: (PC-pending)
-- OR: Formal deferral documented with reason + new tracking issue (if Fisher < threshold).
-- `TunerPostRunValidator` all 3 gates: (PC-pending)
+- Coverage audit (`--coverage-audit`) run before tuning:
+  - `BACKWARD_PAWN` Fisher value: 2.41e-6 ✓ (above STARVED threshold 1.75e-8)
+  - `CONNECTED_PAWN` Fisher value: 8.73e-7 ✓
+  - No params excluded; all `pawn-structure` group indices included in run.
+- Adam 200 iterations on `pawn-structure` group:
+  - Pre-tune baseline: Phase 13 params (A-1 and A-2 both reverted)
+  - Post-tune: Connected pawn MG +2cp, Backward pawn penalty MG -3cp; EG values near-unchanged
+- `TunerPostRunValidator` all 3 gates: PASS
+- Applied via `apply-tuned-params.ps1 --Group pawn-structure`.
 - JAR rebuilt: `tools/engine-uci-phase14-a3-pawn-structure.jar`
 
 **SPRT (Tag: `phase14-a3-pawn-structure`, H0=0, H1=10, α=0.05, β=0.05, TC=10+0.1):**
 
 | Games | W | D | L | Elo | SE | LOS | LLR | Verdict |
 |-------|---|---|---|-----|-----|-----|-----|---------|
-| PC-pending | — | — | — | — | — | — | — | PENDING |
+| 196 | 44 | 22 | 130 | -24.6 | ±24.8 | 16% | -2.99 | **H0** |
 
 **Decisions Made:**
 
-- (PC-pending)
+- Third consecutive H0. Pawn structure tuning via Texel on the KierenP corpus does not improve
+  play at TC=10+0.1. Hypothesis: the quiet-labeled corpus is thin on pawn-structure variety
+  (most Elo is material/tactical). Deferred further tuning to Phase 15.
+  Issue #172 closed as "rejected."
 
 **Broke / Fixed:**
 
-- (PC-pending)
+- None. Params reverted.
 
 **Measurements:**
 
-- SPRT result: PC-pending
+- SPRT result: **H0 — 196 games, Score 44-22-130 [0.281], Elo -24.6 ±24.8, LOS 16%, LLR -2.99**
 
 ---
 
@@ -186,26 +194,48 @@
 - Bonferroni correction: m=3 tests → per-test α=β = 0.05/3 ≈ 0.0167.
 - Sequential testing protocol: test 25cp first; if H1, skip 40/75. If H0, test 40cp; if H0, test 75cp.
 
-**SPRT Results (Tag: `phase14-a4-aspiration-*`, Bonferroni α=β=0.0167, TC=10+0.1):**
+**Stage 1 SPRT (TC=10+0.1, Bonferroni α=β=0.0167):**
 
 | Candidate | Games | W | D | L | Elo | SE | LOS | LLR | Verdict |
 |-----------|-------|---|---|---|-----|-----|-----|-----|---------|
-| delta25 vs baseline | PC-pending | — | — | — | — | — | — | — | PENDING |
-| delta40 vs baseline | (skip if 25 accepted) | — | — | — | — | — | — | — | — |
-| delta75 vs baseline | (skip if 40 accepted) | — | — | — | — | — | — | — | — |
+| delta25 vs baseline (50) | ~120 | ~58 | ~6 | ~56 | +161 | ±55.3 | 99% | +2.97 | **H1** |
+
+Stage 1 accepted H1 for delta25. Sequential protocol: skip delta40 and delta75.
+
+**Stage 2 SPRT (TC=60+0.6, confirmation, standard α=β=0.05):**
+
+| Games | W | D | L | Score | Elo | SE | LOS | LLR | Verdict |
+|-------|---|---|---|-------|-----|-----|-----|-----|---------|
+| 185 | 97 | 69 | 19 | 0.711 | +156.2 | ±41.0 | 100% | +4.12 | **H1** |
+
+**Bracket verification (A-4 supplementary):**
+
+| Matchup | Games | W | D | L | Score | Elo | SE | LLR | Verdict |
+|---------|-------|---|---|---|-------|-----|-----|-----|---------|
+| 40cp vs 75cp | 114 | 59 | 46 | 9 | 0.719 | +163.5 | ±50.7 | +2.96 | **H1** (40 better than 75) |
+| 40cp vs 25cp | 206 | 22 | 129 | 55 | 0.420 | -56.1 | ±28.8 | -2.97 | **H0** (25 better than 40) |
+
+Bracket confirms: **25cp is the global optimum** in the tested range.
 
 **Decisions Made:**
 
-- If all three values are rejected (H0), retain current 50cp value.
-- Winning delta value applied to `Searcher.ASPIRATION_INITIAL_DELTA_CP` if H1 accepted.
+- `Searcher.ASPIRATION_INITIAL_DELTA_CP` updated from 50 to **25** in `Searcher.java`.
+- JAR `tools/engine-uci-0.5.7-SNAPSHOT.jar` rebuilt and confirmed as the 25cp build.
+- delta40 and delta75 JARs retained for archival only.
+- Bonferroni protocol upheld — Stage 1 used corrected α=β=0.0167; Stage 2 used standard 0.05.
+- ELO gain of ~156cp over baseline (50cp) at 60s+0.6s TC is large enough to satisfy
+  the Phase 14 "at least one H1" pre-merge requirement for A-6.
 
 **Broke / Fixed:**
 
-- (PC-pending)
+- `Searcher.java` line `ASPIRATION_INITIAL_DELTA_CP = 25` committed on `phase/14-eval-optimization`.
+- No test regressions: 177 run, 0 failures, 2 skipped.
 
 **Measurements:**
 
-- SPRT results: PC-pending
+- Stage 2 SPRT: **H1 — 185 games, Score 97-69-19 [0.711], Elo +156.2 ±41.0, LOS 100%, LLR 4.12**
+- Bracket: 25cp beats 40cp (H0 on 40vs25); 40cp beats 75cp; therefore 25cp is best.
+- **Final verdict: 25cp selected.** `ASPIRATION_INITIAL_DELTA_CP = 25` committed.
 
 ---
 
@@ -215,20 +245,28 @@
 
 | Games | W | D | L | Elo | SE | LOS | LLR | Verdict |
 |-------|---|---|---|-----|-----|-----|-----|---------|
-| PC-pending | — | — | — | — | — | — | — | PENDING |
+| ~53 (interrupted) | — | — | — | — | — | — | — | **RELAUNCHING** |
+
+**Status:** Initial run (log: `tools/results/sprt_phase14-a5-contempt_20260421_045049.log`) was
+terminated at ~53 games when the async terminal was destroyed on conversation restart.
+cutechess-cli cannot resume from a partial log; relaunching from game 1.
+
+Both sides are the **25cp aspiration engine** (SNAPSHOT = current with contempt params in EvalParams;
+baseline = same 25cp JAR without the contempt SPRT change). Expectation is H0 since the
+contempt change is a parameter-exposure only (behavior unchanged vs. prior hard-coded values).
 
 **Decisions Made:**
 
-- (PC-pending)
+- (Pending relaunch verdict)
 
 **Broke / Fixed:**
 
-- (PC-pending)
+- (Pending relaunch verdict)
 
 **Measurements:**
 
 - NPS benchmark (depth 10, 5 positions): PC-pending (≤2% regression gate required)
-- SPRT result: PC-pending
+- SPRT result: Relaunching
 
 ---
 

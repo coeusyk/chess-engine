@@ -30,7 +30,7 @@ public class Searcher {
     private static final int INF = 1_000_000;
     private static final int MATE_SCORE = 100_000;
     private static final int MAX_PLY = 128;
-    private static final int ASPIRATION_INITIAL_DELTA_CP = 50;
+    private static final int ASPIRATION_INITIAL_DELTA_CP = 25;
     private static final int NULL_MOVE_DEPTH_THRESHOLD = 4; // C-5 SPRT: threshold=4 won (+90.3 Elo vs baseline, H1 accepted)
     private static final int MAX_LEGAL_MOVES = 256;
     private static final int FUTILITY_MARGIN_DEPTH_1 = 150;

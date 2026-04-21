@@ -49,12 +49,15 @@ param(
     [Parameter(Mandatory)][string]$Old,
     [string]$Tag          = "sprt",
     [int]   $BonferroniM  = 1,
+    [double]$Alpha        = 0.05,
+    [double]$Beta         = 0.05,
     [double]$Elo0         = 0,
     [double]$Elo1         = 10,
     [string]$TC           = "100+1",
     [int]   $Concurrency  = 2,
     [int]   $EngineThreads = 1,
     [int]   $MinGames     = 0,
+    [int]   $MaxGames     = 0,
     [string]$OpeningsFile = ""
 )
 
@@ -87,8 +90,8 @@ $OldResolved = Resolve-Path $Old -ErrorAction SilentlyContinue
 if (-not $OldResolved) { Write-Error "Old engine JAR not found: $Old"; exit 1 }
 
 # ─── SPRT alpha / beta (Bonferroni correction) ───────────────────────────────
-$alpha = 0.05 / $BonferroniM
-$beta  = 0.05 / $BonferroniM
+$alpha = $Alpha / $BonferroniM
+$beta  = $Beta  / $BonferroniM
 
 # ─── Opening book ────────────────────────────────────────────────────────────
 if ($OpeningsFile -eq "") {
@@ -109,7 +112,7 @@ $PgnOut = Join-Path $ResultsDir "sprt_${Tag}_${TS}.pgn"
 $LogOut = Join-Path $ResultsDir "sprt_${Tag}_${TS}.log"
 
 # ─── Summary header ──────────────────────────────────────────────────────────
-Write-Host "SPRT: new vs old  ELO0=$Elo0 ELO1=$Elo1 alpha=$alpha beta=$beta  TC=$TC  concurrency=$Concurrency  threads/engine=$EngineThreads"
+Write-Host "SPRT: new vs old  ELO0=$Elo0 ELO1=$Elo1 alpha=$alpha beta=$beta  TC=$TC  concurrency=$Concurrency  threads/engine=$EngineThreads$(if ($MaxGames -gt 0) { "  maxGames=$MaxGames" })"
 Write-Host "NEW : $($NewResolved.Path)"
 Write-Host "OLD : $($OldResolved.Path)"
 Write-Host "PGN : $PgnOut"
@@ -123,7 +126,7 @@ if ($MinGames -gt 0) { Write-Host "Min games   : $MinGames" }
 Write-Host ""
 
 # ─── Build cutechess-cli arguments ───────────────────────────────────────────
-$maxGames = if ($MinGames -gt 0) { [math]::Max($MinGames, 20000) } else { 20000 }
+$maxGames = if ($MaxGames -gt 0) { $MaxGames } elseif ($MinGames -gt 0) { [math]::Max($MinGames, 20000) } else { 20000 }
 
 $ccArgs = @(
     "-engine", "name=NEW", "cmd=$Java", "arg=-jar", "arg=$($NewResolved.Path)", "proto=uci", "option.Threads=$EngineThreads",
