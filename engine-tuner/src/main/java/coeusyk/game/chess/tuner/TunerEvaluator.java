@@ -230,6 +230,9 @@ public final class TunerEvaluator {
         int phase = computePhase(pos);
         int score = (mgScore * phase + egScore * (TOTAL_PHASE - phase)) / TOTAL_PHASE;
 
+        // --- Piece attacked by pawn penalty: full weight for phase>=5, linear taper below ---
+        score += (pieceAttackedByPawnMg(pos, params) * Math.min(TOTAL_PHASE, phase * 5)) / TOTAL_PHASE;
+
         // --- Tempo bonus (applied after phase interpolation, from White's perspective) ---
         int tempo = (int) params[EvalParams.IDX_TEMPO];
         if (Piece.isWhite(pos.getActiveColor())) {
@@ -815,6 +818,10 @@ public final class TunerEvaluator {
         // 12. Hanging piece penalty (not tapered — applied after phase interpolation)
         addHangingPenaltyFeatures(pos, tmp);
 
+        // 13. Piece attacked by pawn penalty: full weight for phase>=5, linear fade below
+        float papTaper = Math.min(1.0f, (float) phase / (0.2f * TOTAL_PHASE));
+        addPieceAtkByPawnFeatures(pos, tmp, papTaper);
+
         // 13. Tempo bonus (not tapered – applied after phase interpolation)
         tmp[EvalParams.IDX_TEMPO] = Piece.isWhite(pos.getActiveColor()) ? 1.0f : -1.0f;
 
@@ -1241,6 +1248,80 @@ public final class TunerEvaluator {
         if (net != 0) {
             tmp[EvalParams.IDX_HANGING_PENALTY] = net;
         }
+    }
+
+    /**
+     * Feature accumulation for {@link EvalParams#IDX_PIECE_ATK_BY_PAWN_MG}.
+     * Accumulates (wCount − bCount) × mgTaper into the feature vector.
+     */
+    private static void addPieceAtkByPawnFeatures(PositionData pos, float[] tmp, float mgTaper) {
+        long allOcc = pos.getWhiteOccupancy() | pos.getBlackOccupancy();
+        long whitePawnAtk = Attacks.whitePawnAttacks(pos.getWhitePawns());
+        long blackPawnAtk = Attacks.blackPawnAttacks(pos.getBlackPawns());
+        long attackedByWhite = computeAttackedBy(pos, true,  allOcc);
+        long attackedByBlack = computeAttackedBy(pos, false, allOcc);
+        int wCount = countPieceAtkByPawnWithFewRetreats(
+                pos.getWhiteKnights(), pos.getWhiteBishops(), pos.getWhiteRooks(),
+                blackPawnAtk, allOcc, pos.getWhiteOccupancy(), attackedByBlack);
+        int bCount = countPieceAtkByPawnWithFewRetreats(
+                pos.getBlackKnights(), pos.getBlackBishops(), pos.getBlackRooks(),
+                whitePawnAtk, allOcc, pos.getBlackOccupancy(), attackedByWhite);
+        int net = wCount - bCount;
+        if (net != 0) {
+            tmp[EvalParams.IDX_PIECE_ATK_BY_PAWN_MG] += net * mgTaper;
+        }
+    }
+
+    /**
+     * Counts knights, bishops, and rooks that are attacked by enemy pawns and have
+     * at most one safe retreat square.
+     */
+    private static int countPieceAtkByPawnWithFewRetreats(long knights, long bishops, long rooks,
+                                                           long enemyPawnAtk, long allOcc,
+                                                           long friendly, long enemyAtk) {
+        int count = 0;
+        long temp = knights & enemyPawnAtk;
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            long safe = Attacks.knightAttacks(sq) & ~friendly & ~enemyAtk;
+            if (Long.bitCount(safe) <= 1) count++;
+            temp &= temp - 1;
+        }
+        temp = bishops & enemyPawnAtk;
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            long safe = Attacks.bishopAttacks(sq, allOcc) & ~friendly & ~enemyAtk;
+            if (Long.bitCount(safe) <= 1) count++;
+            temp &= temp - 1;
+        }
+        temp = rooks & enemyPawnAtk;
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            long safe = Attacks.rookAttacks(sq, allOcc) & ~friendly & ~enemyAtk;
+            if (Long.bitCount(safe) <= 1) count++;
+            temp &= temp - 1;
+        }
+        return count;
+    }
+
+    /**
+     * Returns the piece-attacked-by-pawn MG penalty (white-positive).
+     * The caller adds this to mgScore so phase interpolation applies the taper.
+     * Mirrors {@code Evaluator.pieceAttackedByPawnPenalty()}.
+     */
+    private static int pieceAttackedByPawnMg(PositionData pos, double[] params) {
+        long allOcc = pos.getWhiteOccupancy() | pos.getBlackOccupancy();
+        long whitePawnAtk = Attacks.whitePawnAttacks(pos.getWhitePawns());
+        long blackPawnAtk = Attacks.blackPawnAttacks(pos.getBlackPawns());
+        long attackedByWhite = computeAttackedBy(pos, true,  allOcc);
+        long attackedByBlack = computeAttackedBy(pos, false, allOcc);
+        int wCount = countPieceAtkByPawnWithFewRetreats(
+                pos.getWhiteKnights(), pos.getWhiteBishops(), pos.getWhiteRooks(),
+                blackPawnAtk, allOcc, pos.getWhiteOccupancy(), attackedByBlack);
+        int bCount = countPieceAtkByPawnWithFewRetreats(
+                pos.getBlackKnights(), pos.getBlackBishops(), pos.getBlackRooks(),
+                whitePawnAtk, allOcc, pos.getBlackOccupancy(), attackedByWhite);
+        return (wCount - bCount) * (int) params[EvalParams.IDX_PIECE_ATK_BY_PAWN_MG];
     }
 
     // =========================================================================

@@ -80,7 +80,7 @@ import java.util.Arrays;
  */
 public final class EvalParams {
 
-    public static final int TOTAL_PARAMS = 831;
+    public static final int TOTAL_PARAMS = 832;
 
     // --- Indices for documentation / cross-referencing ---
     public static final int IDX_MATERIAL_START  = 0;   // [0..11]
@@ -120,6 +120,8 @@ public final class EvalParams {
     public static final int IDX_ROOK_BEHIND_PASSER_EG = 828;
     public static final int IDX_HANGING_PENALTY       = 829;
     public static final int IDX_KING_SAFETY_SCALE      = 830;
+    /** MG-only penalty per minor/rook attacked by enemy pawn with ≤1 safe retreat. */
+    public static final int IDX_PIECE_ATK_BY_PAWN_MG  = 831;
 
     /**
      * Per-parameter lower bounds enforced during coordinate descent.
@@ -174,6 +176,7 @@ public final class EvalParams {
         lo[IDX_ROOK_BEHIND_PASSER_EG] = 0;  // Rook behind passer EG >= 0
         lo[IDX_HANGING_PENALTY]       = 0;   // Hanging penalty >= 0
         lo[IDX_KING_SAFETY_SCALE]      = 50;  // Scale >= 50 (half strength)
+        lo[IDX_PIECE_ATK_BY_PAWN_MG]  = -50; // Penalty floor (never a bonus)
         return lo;
     }
 
@@ -210,6 +213,7 @@ public final class EvalParams {
         hi[IDX_ROOK_BEHIND_PASSER_EG] = 50;  // Rook behind passer EG <= 50cp
         hi[IDX_HANGING_PENALTY]       = 120;  // Hanging penalty <= 120cp
         hi[IDX_KING_SAFETY_SCALE]      = 150;  // Scale <= 150 (50% stronger)
+        hi[IDX_PIECE_ATK_BY_PAWN_MG]  = 0;    // Never a bonus (penalty only)
         return hi;
     }
 
@@ -287,12 +291,12 @@ public final class EvalParams {
                 break;
             case "pawn-structure":
                 java.util.Arrays.fill(mask, IDX_PASSED_MG_START, IDX_SHIELD_RANK2, true);
-                java.util.Arrays.fill(mask, IDX_CONNECTED_PAWN_MG, IDX_ROOK_BEHIND_PASSER_MG, true);
                 break;
             case "king-safety":
                 java.util.Arrays.fill(mask, IDX_SHIELD_RANK2, IDX_MOB_MG_START, true);
-                mask[IDX_HANGING_PENALTY]      = true;
-                mask[IDX_KING_SAFETY_SCALE]    = true;
+                mask[IDX_HANGING_PENALTY]         = true;
+                mask[IDX_KING_SAFETY_SCALE]       = true;
+                mask[IDX_PIECE_ATK_BY_PAWN_MG]   = true;
                 break;
             case "mobility":
                 java.util.Arrays.fill(mask, IDX_MOB_MG_START, IDX_TEMPO, true);
@@ -377,6 +381,7 @@ public final class EvalParams {
             case 828: return "ROOK_BEHIND_PASSER_EG";
             case 829: return "HANGING_PENALTY";
             case 830: return "KING_SAFETY_SCALE";
+            case 831: return "PIECE_ATK_BY_PAWN_MG";
             default:  return "PARAM[" + idx + "]";
         }
     }
@@ -594,6 +599,7 @@ public final class EvalParams {
         p[IDX_ROOK_BEHIND_PASSER_EG] = 4;  // Rook behind passer EG
         p[IDX_HANGING_PENALTY]       = 40;  // Hanging piece penalty
         p[IDX_KING_SAFETY_SCALE]      = 100; // King safety scale (100 = neutral)
+        p[IDX_PIECE_ATK_BY_PAWN_MG]  = -20; // Piece attacked by pawn MG penalty
 
         return p;
     }
@@ -648,6 +654,7 @@ public final class EvalParams {
                 params[IDX_ATK_KNIGHT], params[IDX_ATK_BISHOP], params[IDX_ATK_ROOK], params[IDX_ATK_QUEEN]));
             w.write(String.format("HANGING_PENALTY=%.0f%n", params[IDX_HANGING_PENALTY]));
             w.write(String.format("KING_SAFETY_SCALE=%.0f%n", params[IDX_KING_SAFETY_SCALE]));
+            w.write(String.format("PIECE_ATTACKED_BY_PAWN_MG=%.0f%n", params[IDX_PIECE_ATK_BY_PAWN_MG]));
 
             w.write("\n## MOBILITY (MG then EG)\n");
             w.write(String.format("MG  N=%.0f B=%.0f R=%.0f Q=%.0f%n",

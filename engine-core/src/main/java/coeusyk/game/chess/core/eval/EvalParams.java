@@ -65,6 +65,13 @@ public final class EvalParams {
     public static int HANGING_PENALTY = 40;
 
     /**
+     * MG-only penalty (centipawns, typically negative) per minor piece or rook that is
+     * attacked by an enemy pawn and has at most one safe retreat square.  Applied to
+     * mgScore before phase interpolation; tapers naturally to zero in the endgame.
+     */
+    public static int PIECE_ATTACKED_BY_PAWN_MG = -20;
+
+    /**
      * Side-to-move bonus in centipawns (tempo).
      * 17 cp is historically reasonable (engines typically use 12–25 cp).
      */
@@ -100,8 +107,8 @@ public final class EvalParams {
      *
      * <p><b>Recognised keys:</b> SHIELD_RANK2, SHIELD_RANK3, OPEN_FILE_PENALTY,
      * HALF_OPEN_FILE_PENALTY, ATK_WEIGHT_KNIGHT, ATK_WEIGHT_BISHOP,
-     * ATK_WEIGHT_ROOK, ATK_WEIGHT_QUEEN, KING_SAFETY_SCALE, HANGING_PENALTY, TEMPO,
-     * CONTEMPT_THRESHOLD, CONTEMPT_VALUE.
+     * ATK_WEIGHT_ROOK, ATK_WEIGHT_QUEEN, KING_SAFETY_SCALE, HANGING_PENALTY,
+     * PIECE_ATTACKED_BY_PAWN_MG, TEMPO, CONTEMPT_THRESHOLD, CONTEMPT_VALUE.
      *
      * @param path path to the override file; must be readable
      * @throws IOException if the file cannot be read
@@ -127,6 +134,7 @@ public final class EvalParams {
                     case "ATK_WEIGHT_QUEEN":       ATK_WEIGHT_QUEEN       = v; break;
                     case "KING_SAFETY_SCALE":      KING_SAFETY_SCALE      = v; break;
                     case "HANGING_PENALTY":        HANGING_PENALTY        = v; break;
+                    case "PIECE_ATTACKED_BY_PAWN_MG": PIECE_ATTACKED_BY_PAWN_MG = v; break;
                     case "TEMPO":                  TEMPO                  = v; break;
                     // Clamp to [0, 32767] — prevents -CONTEMPT_THRESHOLD negation
                     // overflow in Searcher.contemptScore() for pathological override files.
