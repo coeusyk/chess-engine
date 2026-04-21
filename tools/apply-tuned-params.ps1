@@ -234,12 +234,22 @@ function Apply-PawnStructure {
         }
     }
 
+    # CONNECTED_PAWN and BACKWARD_PAWN are in ## MISC TERMS (tuner output format).
+    # They are included in the pawn-structure tuning group so we read them here too.
+    $miscSection = Get-Section 'MISC TERMS'
+    $cpMg=$null; $cpEg=$null; $bpwMg=$null; $bpwEg=$null
+    foreach ($l in $miscSection) {
+        if ($l -match '^CONNECTED_PAWN\s+MG=(-?\d+)\s+EG=(-?\d+)')    { $cpMg=[int]$Matches[1]; $cpEg=[int]$Matches[2] }
+        if ($l -match '^BACKWARD_PAWN\s+MG=(-?\d+)\s+EG=(-?\d+)')     { $bpwMg=[int]$Matches[1]; $bpwEg=[int]$Matches[2] }
+    }
+
     # Build PASSED_MG/EG arrays  (index 0 = 0 pinned, indices 1-6 from tuner, index 7 = 0 pinned)
     $mgArr = "0, $($passedMgVals -join ', '), 0"
     $egArr = "0, $($passedEgVals -join ', '), 0"
 
     Write-Host "[apply-tuned-params] PAWN STRUCTURE: PASSED_MG={$mgArr} | PASSED_EG={$egArr}"
     Write-Host "[apply-tuned-params]               : ISOLATED MG=$isolMg EG=$isolEg | DOUBLED MG=$dblMg EG=$dblEg"
+    Write-Host "[apply-tuned-params]               : connectedPawn MG=$cpMg EG=$cpEg | backwardPawn MG=$bpwMg EG=$bpwEg"
 
     $pawnLines = Get-Content $pawnPath
     for ($i = 0; $i -lt $pawnLines.Count; $i++) {
@@ -260,6 +270,17 @@ function Apply-PawnStructure {
     Set-Content $coreEvalParamsPath $ceLines
     Write-Host "[apply-tuned-params] Updated : EvalParams.java (engine-core PASSED_PAWN arrays)"
 
+    # Patch Evaluator.java DEFAULT_CONFIG for connected/backward pawn (MISC TERMS values)
+    if ($cpMg -ne $null -and $bpwMg -ne $null) {
+        $lines = Get-Content $evalPath
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            $lines[$i] = $lines[$i] -replace '(/\* connectedPawnMg/Eg\*/ )(-?\d+), (-?\d+),', "`${1}$cpMg, $cpEg,"
+            $lines[$i] = $lines[$i] -replace '(/\* backwardPawnMg/Eg \*/ )(-?\d+), (-?\d+),', "`${1}$bpwMg, $bpwEg,"
+        }
+        Set-Content $evalPath $lines
+        Write-Host "[apply-tuned-params] Updated : Evaluator.java (connectedPawn + backwardPawn)"
+    }
+
     # Sync EvalParams
     $ep = Get-Content $evalParamsPath
     $mgStr = "0, $($passedMgVals -join ', '), 0"
@@ -271,6 +292,10 @@ function Apply-PawnStructure {
         $ep[$i] = $ep[$i] -replace '(p\[IDX_ISOLATED_EG\] = )(\d+);', "`${1}$isolEg;"
         $ep[$i] = $ep[$i] -replace '(p\[IDX_DOUBLED_MG\]\s*= )(\d+);', "`${1}$dblMg;"
         $ep[$i] = $ep[$i] -replace '(p\[IDX_DOUBLED_EG\]\s*= )(\d+);', "`${1}$dblEg;"
+        if ($cpMg -ne $null)  { $ep[$i] = $ep[$i] -replace '(p\[IDX_CONNECTED_PAWN_MG\]\s*= )(-?\d+);', "`${1}$cpMg;" }
+        if ($cpEg -ne $null)  { $ep[$i] = $ep[$i] -replace '(p\[IDX_CONNECTED_PAWN_EG\]\s*= )(-?\d+);', "`${1}$cpEg;" }
+        if ($bpwMg -ne $null) { $ep[$i] = $ep[$i] -replace '(p\[IDX_BACKWARD_PAWN_MG\]\s*= )(-?\d+);', "`${1}$bpwMg;" }
+        if ($bpwEg -ne $null) { $ep[$i] = $ep[$i] -replace '(p\[IDX_BACKWARD_PAWN_EG\]\s*= )(-?\d+);', "`${1}$bpwEg;" }
     }
     Set-Content $evalParamsPath $ep
     Write-Host "[apply-tuned-params] Updated : EvalParams.java (pawn-structure baseline)"
@@ -299,29 +324,25 @@ function Apply-KingSafety {
 
     Write-Host "[apply-tuned-params] KING SAFETY: SHIELD R2=$sh2 R3=$sh3 | OPEN=$opf HALF=$hof | ATK N=$atkN B=$atkB R=$atkR Q=$atkQ | SCALE=$kss"
 
-    $lines = Get-Content $kingsafePath
-    for ($i = 0; $i -lt $lines.Count; $i++) {
-        $lines[$i] = $lines[$i] -replace '(private static final int SHIELD_RANK_2_BONUS = )(\d+);', "`${1}$sh2;"
-        $lines[$i] = $lines[$i] -replace '(private static final int SHIELD_RANK_3_BONUS = )(\d+);', "`${1}$sh3;"
-        $lines[$i] = $lines[$i] -replace '(private static final int OPEN_FILE_PENALTY = )(\d+);',   "`${1}$opf;"
-        $lines[$i] = $lines[$i] -replace '(private static final int HALF_OPEN_FILE_PENALTY = )(\d+);', "`${1}$hof;"
-        if ($atkN -ne $null) { $lines[$i] = $lines[$i] -replace '(ATTACKER_WEIGHT\[Piece\.Knight\] = )(-?\d+);', "`${1}$atkN;" }
-        if ($atkB -ne $null) { $lines[$i] = $lines[$i] -replace '(ATTACKER_WEIGHT\[Piece\.Bishop\] = )(-?\d+);', "`${1}$atkB;" }
-        if ($atkR -ne $null) { $lines[$i] = $lines[$i] -replace '(ATTACKER_WEIGHT\[Piece\.Rook\]\s*= )(-?\d+);', "`${1}$atkR;" }
-        if ($atkQ -ne $null) { $lines[$i] = $lines[$i] -replace '(ATTACKER_WEIGHT\[Piece\.Queen\] = )(-?\d+);',  "`${1}$atkQ;" }
+    # Apply all king-safety params to engine-core EvalParams.java.
+    # NOTE: SHIELD_RANK2/3, OPEN_FILE, HALF_OPEN, ATK_WEIGHT_*, and KING_SAFETY_SCALE
+    # all live in engine-core EvalParams.java (not KingSafety.java, which references them
+    # via EvalParams.*).  The old KingSafety.java static-field patterns were removed when
+    # these constants were centralised into EvalParams; the patching is done here.
+    $ce = Get-Content $coreEvalParamsPath
+    for ($i = 0; $i -lt $ce.Count; $i++) {
+        $ce[$i] = $ce[$i] -replace '(public static int SHIELD_RANK2 = )(\d+);',           "`${1}$sh2;"
+        $ce[$i] = $ce[$i] -replace '(public static int SHIELD_RANK3 = )(\d+);',           "`${1}$sh3;"
+        $ce[$i] = $ce[$i] -replace '(public static int OPEN_FILE_PENALTY = )(\d+);',      "`${1}$opf;"
+        $ce[$i] = $ce[$i] -replace '(public static int HALF_OPEN_FILE_PENALTY = )(\d+);', "`${1}$hof;"
+        if ($atkN -ne $null) { $ce[$i] = $ce[$i] -replace '(public static int ATK_WEIGHT_KNIGHT = )(-?\d+);', "`${1}$atkN;" }
+        if ($atkB -ne $null) { $ce[$i] = $ce[$i] -replace '(public static int ATK_WEIGHT_BISHOP = )(-?\d+);', "`${1}$atkB;" }
+        if ($atkR -ne $null) { $ce[$i] = $ce[$i] -replace '(public static int ATK_WEIGHT_ROOK = )(-?\d+);',   "`${1}$atkR;" }
+        if ($atkQ -ne $null) { $ce[$i] = $ce[$i] -replace '(public static int ATK_WEIGHT_QUEEN = )(-?\d+);',  "`${1}$atkQ;" }
+        if ($kss -ne $null)  { $ce[$i] = $ce[$i] -replace '(public static int KING_SAFETY_SCALE = )(\d+);',  "`${1}$kss;" }
     }
-    Set-Content $kingsafePath $lines
-    Write-Host "[apply-tuned-params] Updated : KingSafety.java"
-
-    # Apply KING_SAFETY_SCALE to engine-core EvalParams.java
-    if ($kss -ne $null) {
-        $ce = Get-Content $coreEvalParamsPath
-        for ($i = 0; $i -lt $ce.Count; $i++) {
-            $ce[$i] = $ce[$i] -replace '(public static int KING_SAFETY_SCALE = )(\d+);', "`${1}$kss;"
-        }
-        Set-Content $coreEvalParamsPath $ce
-        Write-Host "[apply-tuned-params] Updated : engine-core EvalParams.java (KING_SAFETY_SCALE=$kss)"
-    }
+    Set-Content $coreEvalParamsPath $ce
+    Write-Host "[apply-tuned-params] Updated : engine-core EvalParams.java (SHIELD R2=$sh2 R3=$sh3 | OPEN=$opf HALF=$hof | ATK N=$atkN B=$atkB R=$atkR Q=$atkQ | SCALE=$kss)"
 
     $ep = Get-Content $evalParamsPath
     for ($i = 0; $i -lt $ep.Count; $i++) {
