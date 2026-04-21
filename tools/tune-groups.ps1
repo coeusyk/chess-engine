@@ -64,7 +64,7 @@ if (-not (Test-Path $corpus))    { Write-Error "Corpus not found: $corpus"; exit
 if (-not (Test-Path $tunerJar))  { Write-Error "Tuner JAR not found: $tunerJar - run: .\mvnw.cmd package -pl engine-tuner -am -DskipTests"; exit 1 }
 if (-not (Test-Path $engineJar)) { Write-Error "Engine JAR not found: $engineJar - run: .\mvnw.cmd package -pl engine-uci -am -DskipTests"; exit 1 }
 
-$posArg  = if ($MaxPositions -gt 0) { @("$MaxPositions", "$MaxIterations") } else { @("2147483647", "$MaxIterations") }
+$posArg  = if ($MaxPositions -gt 0) { @("$MaxPositions", "$MaxIterations") } else { @("2147483646", "$MaxIterations") }
 $groupList = $Groups -split ','
 
 Write-Host "================================================================"
