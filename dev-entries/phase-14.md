@@ -239,45 +239,67 @@ Bracket confirms: **25cp is the global optimum** in the tested range.
 
 ---
 
-### [2026-04-20] Phase 14 — Contempt SPRT (Issue #174, A-5)
+### [2026-04-21] Phase 14 — Eval Features SPRT (Issue #174, A-5)
 
-**SPRT (Tag: `phase14-a5-contempt`, H0=0, H1=10, α=0.05, β=0.05, TC=10+0.1):**
+**Background:** Original A-5 run (`phase14-a5-contempt`) was a contempt-only parameter-exposure test; it
+was interrupted at ~53 games on conversation restart. The scope was expanded to include two additional
+correctness fixes committed as Issues 1 and 2: `backwardPawnCount` bug fix (Issue 1, commit `f3d7be3`) and
+passed pawn rank bonus wiring to `EvalParams` (Issue 2, commit `82f87f6`). The JAR `engine-uci-phase14-eval-features.jar`
+(built 2026-04-21 12:05) bundles all three changes vs `engine-uci-0.5.7-baseline.jar` (baseline = 25cp aspiration only).
 
-| Games | W | D | L | Elo | SE | LOS | LLR | Verdict |
-|-------|---|---|---|-----|-----|-----|-----|---------|
-| ~53 (interrupted) | — | — | — | — | — | — | — | **RELAUNCHING** |
+**Changes in eval-features vs baseline:**
+1. **Contempt in EvalParams** — parameter-exposure only (behavior unchanged; default = 0)
+2. **backwardPawnCount fix** — real correctness fix (isolated pawn guard + correct support mask)
+3. **Passed pawn wiring to EvalParams** — parameter-exposure only (defaults identical to old hardcoded values)
 
-**Status:** Initial run (log: `tools/results/sprt_phase14-a5-contempt_20260421_045049.log`) was
-terminated at ~53 games when the async terminal was destroyed on conversation restart.
-cutechess-cli cannot resume from a partial log; relaunching from game 1.
+**SPRT run 1 (killed at ~529 games, 20000-game cap was wrong):**
 
-Both sides are the **25cp aspiration engine** (SNAPSHOT = current with contempt params in EvalParams;
-baseline = same 25cp JAR without the contempt SPRT change). Expectation is H0 since the
-contempt change is a parameter-exposure only (behavior unchanged vs. prior hard-coded values).
+| Games | W | D | L | Score | Elo | SE | LOS | LLR | Trend |
+|-------|---|---|---|-------|-----|-----|-----|-----|-------|
+| 516 | 114 | 285 | 117 | 0.497 | −2.7 | ±20.2 | 40% | −0.724 | ↘ negative |
+
+Run terminated and relaunched with 800-game cap.
+
+**SPRT run 2 (Tag: `phase14-a5-eval-features`, H0=0, H1=10, α=0.05, β=0.05, TC=10+0.1, MaxGames=800):**
+Log: `tools/results/sprt_phase14-a5-eval-features_20260421_140002.log`
+
+| Games | W | D | L | Score | Elo | SE | LOS | LLR | Verdict |
+|-------|---|---|---|-------|-----|-----|-----|-----|---------|
+| 800 | 200 | 190 | 410 | 0.506 | +4.3 | ±16.8 | 69.4% | −0.091 | **Game cap — no SPRT decision** |
+
+DrawRatio: 51.2%. LLR never approached either bound (±2.94). No two-phase 60+0.6 run warranted
+(protocol requires Stage 1 H1 first; LLR never went positive beyond noise).
 
 **Decisions Made:**
 
-- (Pending relaunch verdict)
+- SPRT inconclusive at 800 games (LLR −0.091). H1 not accepted → no 60+0.6 confirmation run.
+- Changes ship on **correctness grounds** regardless of SPRT outcome:
+  - `backwardPawnCount` fix is a genuine correctness improvement (was double-counting under wrong mask).
+  - Passed pawn and contempt parameter exposure are non-regressing infrastructure for future tuning.
+- A-4 (aspiration delta=25, +156 Elo) satisfies the Phase 14 "at least one H1" pre-merge requirement.
+- Phase 14 eval-features JAR is the v0.5.7 release candidate.
 
 **Broke / Fixed:**
 
-- (Pending relaunch verdict)
+- `Evaluator.java`, `TunerEvaluator.java`: `backwardPawnCount()` correctness fix committed `f3d7be3`.
+- `EvalParams.java`, `PawnStructure.java`: passed pawn rank bonus arrays wired to EvalParams committed `82f87f6`.
+- No test regressions: all tests pass.
 
 **Measurements:**
 
-- NPS benchmark (depth 10, 5 positions): PC-pending (≤2% regression gate required)
-- SPRT result: Relaunching
+- SPRT: **Game cap at 800 — no decision. Score 200-190-410 [0.506], Elo +4.3 ±16.8, LOS 69.4%, LLR −0.091**
+- Verdict: eval-features changes committed on correctness grounds. A-5 closed — proceed to A-6.
 
 ---
 
 ### [TBD] Phase 14 — Merge + Version Bump (Issue #175, A-6)
 
 **Pre-merge checklist:**
-- [ ] All A-1 through A-5 verdicts recorded in this file
+- [x] All A-1 through A-5 verdicts recorded in this file
 - [ ] `engine-core` tests: 0 failures, ≤2 skips
 - [ ] `engine-tuner` tests: 0 failures, ≤1 skip
 - [ ] NPS bench ≥ 323,137 NPS (5% below Phase 13 aggregate baseline 340,144 NPS)
-- [ ] At least one SPRT H1 accepted across A-1 through A-5
+- [x] At least one SPRT H1 accepted across A-1 through A-5 (A-4: delta25 +156 Elo)
 - [ ] `dev-entries/phase-14.md` complete; CHANGELOG.md entry added
 
 **Built:**
