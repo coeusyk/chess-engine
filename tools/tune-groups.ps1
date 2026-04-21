@@ -61,10 +61,10 @@ $Java       = if ($env:JAVA) { $env:JAVA } else { 'java' }
 
 # Verify prerequisites
 if (-not (Test-Path $corpus))    { Write-Error "Corpus not found: $corpus"; exit 1 }
-if (-not (Test-Path $tunerJar))  { Write-Error "Tuner JAR not found: $tunerJar — run: .\mvnw.cmd package -pl engine-tuner -am -DskipTests"; exit 1 }
-if (-not (Test-Path $engineJar)) { Write-Error "Engine JAR not found: $engineJar — run: .\mvnw.cmd package -pl engine-uci -am -DskipTests"; exit 1 }
+if (-not (Test-Path $tunerJar))  { Write-Error "Tuner JAR not found: $tunerJar - run: .\mvnw.cmd package -pl engine-tuner -am -DskipTests"; exit 1 }
+if (-not (Test-Path $engineJar)) { Write-Error "Engine JAR not found: $engineJar - run: .\mvnw.cmd package -pl engine-uci -am -DskipTests"; exit 1 }
 
-$posArg  = if ($MaxPositions -gt 0) { @("$MaxPositions") } else { @() }
+$posArg  = if ($MaxPositions -gt 0) { @("$MaxPositions", "$MaxIterations") } else { @("2147483647", "$MaxIterations") }
 $groupList = $Groups -split ','
 
 Write-Host "================================================================"
@@ -77,11 +77,11 @@ Write-Host "  Elo1 (SPRT): $Elo1"
 Write-Host "================================================================"
 Write-Host ""
 
-# ─── Phase A: K calibration (run once before all groups) ────────────────────
+# --- Phase A: K calibration (run once before all groups) -------------------
 if (-not $SkipPhaseA) {
     Write-Host ">>> Phase A: K calibration (--freeze-params) ..."
     Push-Location $engineRoot
-    & $Java -jar $tunerJar $corpus @posArg $MaxIterations `
+    & $Java -jar $tunerJar $corpus @posArg `
         --corpus-format epd --freeze-params
     Pop-Location
     Write-Host ">>> Phase A complete.  K written to tuned_params.txt."
@@ -91,7 +91,7 @@ if (-not $SkipPhaseA) {
     Write-Host ""
 }
 
-# ─── Per-group loop ──────────────────────────────────────────────────────────
+# --- Per-group loop ---------------------------------------------------------
 $baselineJar = $engineJar   # starts as current HEAD JAR
 $iteration   = 0
 
@@ -106,10 +106,10 @@ foreach ($group in $groupList) {
     Copy-Item $engineJar $baselineSnapshot -Force
     Write-Host "[tune-groups] Baseline snapshot: $baselineSnapshot"
 
-    # Step 2: Phase B — tune this group only with fixed K
+    # Step 2: Phase B - tune this group only with fixed K
     Write-Host "[tune-groups] Phase B: tuning group '$group' ..."
     Push-Location $engineRoot
-    & $Java -jar $tunerJar $corpus @posArg $MaxIterations `
+    & $Java -jar $tunerJar $corpus @posArg `
         --corpus-format epd --param-group $group --freeze-k
     $tunerExit = $LASTEXITCODE
     Pop-Location
@@ -155,12 +155,12 @@ foreach ($group in $groupList) {
         # Commit the accepted group
         Push-Location $engineRoot
         & git add engine-core/src engine-tuner/src/main/java/coeusyk/game/chess/tuner/EvalParams.java tuned_params.txt
-        & git commit -m "feat(eval): Texel tuning — $group group (phase13 per-group SPRT H1)"
+        & git commit -m "feat(eval): Texel tuning - $group group (phase14 per-group SPRT H1)"
         Pop-Location
-        Write-Host "[tune-groups] ✓ Group '$group' committed.  Baseline updated."
-        # engineJar already points to newly built JAR → becomes baseline for next group
+        Write-Host "[tune-groups] OK Group '$group' committed.  Baseline updated."
+        # engineJar already points to newly built JAR -> becomes baseline for next group
     } elseif ($verdict -eq 'H0') {
-        Write-Host "[tune-groups] ✗ H0 for group '$group'. Reverting source files."
+        Write-Host "[tune-groups] REVERTED H0 for group '$group'. Reverting source files."
         Push-Location $engineRoot
         & git checkout -- engine-core/src
         & git checkout -- engine-tuner/src/main/java/coeusyk/game/chess/tuner/EvalParams.java

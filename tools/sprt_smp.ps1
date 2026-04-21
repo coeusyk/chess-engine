@@ -27,7 +27,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $Cutechess = $env:CUTECHESS
-if (-not $Cutechess) { $Cutechess = (Get-Command 'cutechess-cli' -ErrorAction SilentlyContinue)?.Source }
+if (-not $Cutechess) { $cmd = Get-Command 'cutechess-cli' -ErrorAction SilentlyContinue; if ($cmd) { $Cutechess = $cmd.Source } }
 if (-not $Cutechess -or -not (Test-Path $Cutechess)) {
     Write-Error "cutechess-cli not found. Set `$env:CUTECHESS or add cutechess-cli.exe to PATH."
     exit 1
@@ -48,7 +48,7 @@ if ($OpeningsFile -ne "" -and (Test-Path $OpeningsFile)) {
     $openingsArgs = @("-openings", "file=$OpeningsFile", "format=epd", "order=random", "plies=4")
     Write-Host "Opening book: $OpeningsFile"
 } elseif ($OpeningsFile -ne "") {
-    Write-Warning "Opening book not found: $OpeningsFile — running without openings"
+    Write-Warning "Opening book not found: $OpeningsFile - running without openings"
 }
 
 $ResultsDir = Join-Path $PSScriptRoot 'results'

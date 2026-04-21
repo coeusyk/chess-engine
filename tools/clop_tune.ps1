@@ -114,8 +114,8 @@ if ($CutechessPath -eq "cutechess-cli") {
     if ($env:CUTECHESS -and (Test-Path $env:CUTECHESS)) {
         $CutechessPath = $env:CUTECHESS
     } else {
-        $resolved = (Get-Command 'cutechess-cli' -ErrorAction SilentlyContinue)?.Source
-        if ($resolved) { $CutechessPath = $resolved }
+        $cmd = Get-Command 'cutechess-cli' -ErrorAction SilentlyContinue
+        if ($cmd) { $CutechessPath = $cmd.Source }
     }
 }
 if (-not (Test-Path $CutechessPath -ErrorAction SilentlyContinue) -and -not (Get-Command $CutechessPath -ErrorAction SilentlyContinue)) {

@@ -67,7 +67,8 @@ $ErrorActionPreference = 'Stop'
 # ─── Locate cutechess-cli ────────────────────────────────────────────────────
 $Cutechess = $env:CUTECHESS
 if (-not $Cutechess) {
-    $Cutechess = (Get-Command 'cutechess-cli' -ErrorAction SilentlyContinue)?.Source
+    $cmd = Get-Command 'cutechess-cli' -ErrorAction SilentlyContinue
+    $Cutechess = if ($cmd) { $cmd.Source } else { $null }
 }
 if (-not $Cutechess -or -not (Test-Path $Cutechess)) {
     Write-Error "cutechess-cli not found. Set `$env:CUTECHESS or add cutechess-cli.exe to PATH."
