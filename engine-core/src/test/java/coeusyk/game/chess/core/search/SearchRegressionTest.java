@@ -212,7 +212,10 @@ class SearchRegressionTest {
             //     Lower hanging penalty (52→40) and higher rook attack weight (9→12) slightly
             //     shift depth-8 king-advance ordering toward b4b5 (pawn push). All of
             //     c1c2, c1d2, c1b2, c4c5, b4b5 win; choice is eval-dependent.
-            Arguments.of("P5",  P5_FEN,  "b4b5"),
+            //     Updated Phase 14 A-4: ASPIRATION_INITIAL_DELTA_CP 50→25 shifts TT ordering;
+            //     depth-8 preference returns to c1d2 (king activation). All of c1c2, c1d2,
+            //     c1b2, c4c5, b4b5 win; choice is eval-dependent.
+            Arguments.of("P5",  P5_FEN,  "c1d2"),
             Arguments.of("P6",  P6_FEN,  "f4f5"),
             // P7: 8/3P4/8/8/8/8/8/3K1k2 — Kd1+Pd7 vs Kf1. d7d8q (immediate promotion)
             //     and d1d2 (king advance toward f1 before promoting) both win. d7d8q gains
@@ -273,7 +276,10 @@ class SearchRegressionTest {
             //     d7/e6). Both f1f6 and f1b5 are winning KQK continuations; equivalent.
             //     Reverted 2026-04-10: eval-mode PSTs reverted (issue #141 post-mortem); depth-8
             //     preference returns to f1f6 (textbook 6th-rank restriction). Both win; equivalent.
-            Arguments.of("E1",  E1_FEN,  "f1f6"),
+            //     Updated Phase 14 A-4: ASPIRATION_INITIAL_DELTA_CP 50→25 shifts TT ordering;
+            //     depth-8 preference shifts to f1b5 (queen to bishop-5 diagonal — restricts BK
+            //     from d7/e6). Both f1f6 and f1b5 are winning KQK continuations; equivalent.
+            Arguments.of("E1",  E1_FEN,  "f1b5"),
             // E2: 4k3/8/8/8/8/8/8/4KR2 — KR vs K.  f1f6 (rook-to-6th restriction) and
             //     e1d2 (king activation toward centre) both win; known theoretical equivalence.
             //     Updated 2026-04-03: cheap bitboard hanging-penalty (replacing SEE-based form)
