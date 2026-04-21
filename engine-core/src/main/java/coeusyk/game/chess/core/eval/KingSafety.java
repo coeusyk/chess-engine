@@ -58,9 +58,26 @@ public final class KingSafety {
     /**
      * Returns only the pawn shield + open-file components of king safety (white minus black),
      * mg-only. Attacker penalties are computed in Evaluator's merged mobility pass.
+     *
+     * <p>When the kings are on opposite sides of the board (one on files a-d, the other on
+     * e-h), direct pawn-shield attacks are less relevant and the raw shield/open-file bonus
+     * is halved for both sides to avoid over-weighting static structure in dynamic positions.
      */
     public static int evaluatePawnShieldAndFiles(Board board) {
-        return evaluateCheapSide(board, true) - evaluateCheapSide(board, false);
+        long wKing = board.getWhiteKing();
+        long bKing = board.getBlackKing();
+        int wScore = wKing != 0L ? evaluateCheapSide(board, true)  : 0;
+        int bScore = bKing != 0L ? evaluateCheapSide(board, false) : 0;
+        // Opposite flanks: one king on queenside (files 0-3), the other on kingside (files 4-7).
+        if (wKing != 0L && bKing != 0L) {
+            int wFile = Long.numberOfTrailingZeros(wKing) % 8;
+            int bFile = Long.numberOfTrailingZeros(bKing) % 8;
+            if ((wFile < 4) != (bFile < 4)) {
+                wScore /= 2;
+                bScore /= 2;
+            }
+        }
+        return wScore - bScore;
     }
 
     private static int evaluateCheapSide(Board board, boolean white) {
