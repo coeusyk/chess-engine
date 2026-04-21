@@ -305,6 +305,7 @@ public class Evaluator {
 
         int[] ps = PawnStructure.evaluate(board.getWhitePawns(), board.getBlackPawns());
         int pawnMg = ps[0], pawnEg = ps[1];
+        int[] pp = PawnStructure.passedPawnResult(board.getWhitePawns(), board.getBlackPawns());
 
         int kingSafetyMg = KingSafety.evaluatePawnShieldAndFiles(board)
                          + KingSafety.safetyTablePenalty(tempWhiteAttackWeight)
@@ -368,6 +369,7 @@ public class Evaluator {
         sb.append(String.format(fmt, "material+PST",    mgMat,       egMat)).append('\n');
         sb.append(String.format(fmt, "mobility",        mobMg,       mobEg)).append('\n');
         sb.append(String.format(fmt, "pawn structure",  pawnMg,      pawnEg)).append('\n');
+        sb.append(String.format(fmt, "  passed pawns",  pp[0],       pp[1])).append('\n');
         sb.append(String.format(fmt, "king safety",     kingSafetyMg, 0)).append('\n');
         sb.append(String.format(fmt, "bishop pair",     bpMg,        bpEg)).append('\n');
         sb.append(String.format(fmt, "rook on 7th",     r7Mg,        r7Eg)).append('\n');

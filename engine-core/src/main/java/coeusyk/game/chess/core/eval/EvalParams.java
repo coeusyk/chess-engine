@@ -97,6 +97,24 @@ public final class EvalParams {
     public static int CONTEMPT_VALUE = 50;
 
     // -----------------------------------------------------------------------
+    // Pawn structure — passed pawn rank bonuses
+    // -----------------------------------------------------------------------
+
+    /**
+     * Passed pawn MG bonus indexed 0..7 (rank index in direction of advancement).
+     * Index 0 (start rank) and 7 (promotion rank) are pinned at 0; indices 1..6 are tunable.
+     * Default values match the previously hardcoded {@code PawnStructure.PASSED_MG} array.
+     */
+    public static int[] PASSED_PAWN_RANK_BONUS_MG = {0, 8, 4, 0, 8, 10, 52, 0};
+
+    /**
+     * Passed pawn EG bonus indexed 0..7 (rank index in direction of advancement).
+     * Index 0 (start rank) and 7 (promotion rank) are pinned at 0; indices 1..6 are tunable.
+     * Default values match the previously hardcoded {@code PawnStructure.PASSED_EG} array.
+     */
+    public static int[] PASSED_PAWN_RANK_BONUS_EG = {0, 5, 11, 32, 59, 129, 129, 0};
+
+    // -----------------------------------------------------------------------
 
     private EvalParams() {}
 
@@ -108,7 +126,8 @@ public final class EvalParams {
      * <p><b>Recognised keys:</b> SHIELD_RANK2, SHIELD_RANK3, OPEN_FILE_PENALTY,
      * HALF_OPEN_FILE_PENALTY, ATK_WEIGHT_KNIGHT, ATK_WEIGHT_BISHOP,
      * ATK_WEIGHT_ROOK, ATK_WEIGHT_QUEEN, KING_SAFETY_SCALE, HANGING_PENALTY,
-     * PIECE_ATTACKED_BY_PAWN_MG, TEMPO, CONTEMPT_THRESHOLD, CONTEMPT_VALUE.
+     * PIECE_ATTACKED_BY_PAWN_MG, TEMPO, CONTEMPT_THRESHOLD, CONTEMPT_VALUE,
+     * PASSED_MG_1..PASSED_MG_6, PASSED_EG_1..PASSED_EG_6.
      *
      * @param path path to the override file; must be readable
      * @throws IOException if the file cannot be read
@@ -140,6 +159,18 @@ public final class EvalParams {
                     // overflow in Searcher.contemptScore() for pathological override files.
                     case "CONTEMPT_THRESHOLD":     CONTEMPT_THRESHOLD     = Math.max(0, Math.min(32767, v)); break;
                     case "CONTEMPT_VALUE":         CONTEMPT_VALUE         = Math.max(0, Math.min(32767, v)); break;
+                    case "PASSED_MG_1":             PASSED_PAWN_RANK_BONUS_MG[1] = v; break;
+                    case "PASSED_MG_2":             PASSED_PAWN_RANK_BONUS_MG[2] = v; break;
+                    case "PASSED_MG_3":             PASSED_PAWN_RANK_BONUS_MG[3] = v; break;
+                    case "PASSED_MG_4":             PASSED_PAWN_RANK_BONUS_MG[4] = v; break;
+                    case "PASSED_MG_5":             PASSED_PAWN_RANK_BONUS_MG[5] = v; break;
+                    case "PASSED_MG_6":             PASSED_PAWN_RANK_BONUS_MG[6] = v; break;
+                    case "PASSED_EG_1":             PASSED_PAWN_RANK_BONUS_EG[1] = v; break;
+                    case "PASSED_EG_2":             PASSED_PAWN_RANK_BONUS_EG[2] = v; break;
+                    case "PASSED_EG_3":             PASSED_PAWN_RANK_BONUS_EG[3] = v; break;
+                    case "PASSED_EG_4":             PASSED_PAWN_RANK_BONUS_EG[4] = v; break;
+                    case "PASSED_EG_5":             PASSED_PAWN_RANK_BONUS_EG[5] = v; break;
+                    case "PASSED_EG_6":             PASSED_PAWN_RANK_BONUS_EG[6] = v; break;
                     default:                                                   break;
                 }
             } catch (NumberFormatException e) {

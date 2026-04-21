@@ -241,17 +241,24 @@ function Apply-PawnStructure {
     Write-Host "[apply-tuned-params] PAWN STRUCTURE: PASSED_MG={$mgArr} | PASSED_EG={$egArr}"
     Write-Host "[apply-tuned-params]               : ISOLATED MG=$isolMg EG=$isolEg | DOUBLED MG=$dblMg EG=$dblEg"
 
-    $lines = Get-Content $pawnPath
-    for ($i = 0; $i -lt $lines.Count; $i++) {
-        $lines[$i] = $lines[$i] -replace '(private static final int\[\] PASSED_MG = \{)[^}]*(};)', "`${1}$mgArr`};"
-        $lines[$i] = $lines[$i] -replace '(private static final int\[\] PASSED_EG = \{)[^}]*(};)', "`${1}$egArr`};"
-        $lines[$i] = $lines[$i] -replace '(private static final int ISOLATED_MG = )(\d+);', "`${1}$isolMg;"
-        $lines[$i] = $lines[$i] -replace '(private static final int ISOLATED_EG = )(\d+);', "`${1}$isolEg;"
-        $lines[$i] = $lines[$i] -replace '(private static final int DOUBLED_MG = )(\d+);', "`${1}$dblMg;"
-        $lines[$i] = $lines[$i] -replace '(private static final int DOUBLED_EG = )(\d+);', "`${1}$dblEg;"
+    $pawnLines = Get-Content $pawnPath
+    for ($i = 0; $i -lt $pawnLines.Count; $i++) {
+        $pawnLines[$i] = $pawnLines[$i] -replace '(private static final int ISOLATED_MG = )(\d+);', "`${1}$isolMg;"
+        $pawnLines[$i] = $pawnLines[$i] -replace '(private static final int ISOLATED_EG = )(\d+);', "`${1}$isolEg;"
+        $pawnLines[$i] = $pawnLines[$i] -replace '(private static final int DOUBLED_MG = )(\d+);', "`${1}$dblMg;"
+        $pawnLines[$i] = $pawnLines[$i] -replace '(private static final int DOUBLED_EG = )(\d+);', "`${1}$dblEg;"
     }
-    Set-Content $pawnPath $lines
+    Set-Content $pawnPath $pawnLines
     Write-Host "[apply-tuned-params] Updated : PawnStructure.java"
+
+    # Patch engine-core EvalParams.java PASSED_PAWN_RANK_BONUS arrays
+    $ceLines = Get-Content $coreEvalParamsPath
+    for ($i = 0; $i -lt $ceLines.Count; $i++) {
+        $ceLines[$i] = $ceLines[$i] -replace '(public static int\[\] PASSED_PAWN_RANK_BONUS_MG = \{)[^}]*(};)', "`${1}$mgArr`};"
+        $ceLines[$i] = $ceLines[$i] -replace '(public static int\[\] PASSED_PAWN_RANK_BONUS_EG = \{)[^}]*(};)', "`${1}$egArr`};"
+    }
+    Set-Content $coreEvalParamsPath $ceLines
+    Write-Host "[apply-tuned-params] Updated : EvalParams.java (engine-core PASSED_PAWN arrays)"
 
     # Sync EvalParams
     $ep = Get-Content $evalParamsPath
