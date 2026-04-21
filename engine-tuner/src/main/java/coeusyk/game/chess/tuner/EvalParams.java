@@ -291,6 +291,7 @@ public final class EvalParams {
                 break;
             case "pawn-structure":
                 java.util.Arrays.fill(mask, IDX_PASSED_MG_START, IDX_SHIELD_RANK2, true);
+                java.util.Arrays.fill(mask, IDX_CONNECTED_PAWN_MG, IDX_ROOK_BEHIND_PASSER_MG, true);
                 break;
             case "king-safety":
                 java.util.Arrays.fill(mask, IDX_SHIELD_RANK2, IDX_MOB_MG_START, true);
