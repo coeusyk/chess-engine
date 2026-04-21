@@ -684,6 +684,12 @@ public final class TunerEvaluator {
 
     private static final long FILE_MASK_BASE_TE = 0x0101010101010101L;
 
+    /**
+     * Count backward pawns: a pawn is backward if it cannot safely advance (the stop square
+     * is attacked by an enemy pawn) and has no supporting pawn on an adjacent file at the
+     * same rank or behind it.  Isolated pawns (no adjacent-file neighbours at all) are
+     * excluded because they already receive the isolated-pawn penalty.
+     */
     private static int backwardPawnCount(long friendly, long enemy, boolean white) {
         long enemyAtk = white ? Attacks.blackPawnAttacks(enemy) : Attacks.whitePawnAttacks(enemy);
         long temp = friendly;
@@ -695,14 +701,19 @@ public final class TunerEvaluator {
             if (file > 0) adjFiles |= FILE_MASK_BASE_TE << (file - 1);
             if (file < 7) adjFiles |= FILE_MASK_BASE_TE << (file + 1);
             long adjFriendly = friendly & adjFiles;
-            if (white) {
-                long ahead = adjFriendly & ((1L << sq) - 1);
-                int stopSq = sq - 8;
-                if (stopSq >= 0 && ahead == 0 && (enemyAtk & (1L << stopSq)) != 0) count++;
-            } else {
-                long ahead = adjFriendly & ~((1L << (sq + 8)) - 1);
-                int stopSq = sq + 8;
-                if (stopSq < 64 && ahead == 0 && (enemyAtk & (1L << stopSq)) != 0) count++;
+            // Isolated pawns are already penalised separately; do not double-count.
+            if (adjFriendly != 0L) {
+                if (white) {
+                    // Support: adjacent-file pawn at same rank or behind (row >= current row).
+                    long support = adjFriendly & (-1L << ((sq / 8) * 8));
+                    int stopSq = sq - 8;
+                    if (stopSq >= 0 && support == 0L && (enemyAtk & (1L << stopSq)) != 0) count++;
+                } else {
+                    // Support: adjacent-file pawn at same rank or behind (row <= current row).
+                    long support = adjFriendly & (-1L >>> ((7 - sq / 8) * 8));
+                    int stopSq = sq + 8;
+                    if (stopSq < 64 && support == 0L && (enemyAtk & (1L << stopSq)) != 0) count++;
+                }
             }
             temp &= temp - 1;
         }
