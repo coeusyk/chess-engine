@@ -292,6 +292,55 @@ DrawRatio: 51.2%. LLR never approached either bound (±2.94). No two-phase 60+0.
 
 ---
 
+### 2025-04-22 — KING_SAFETY_SCALE gradient wiring audit + test (Issue #180)
+
+**What happened:**
+
+An eval-params audit (`eval_params_audit.md`) discovered that `KING_SAFETY_SCALE` [830] was
+receiving **zero gradient every iteration** in the Texel tuner: the scale factor was missing from
+`PositionFeatures.accumulateGradient()`'s ATK weight terms and the explicit ∂L/∂scale term was
+absent entirely. Param [830] was effectively dead — it would never move from its default of 100.
+
+A git audit confirmed the code fix had already been committed to `phase/14-eval-optimization` in a
+prior session (the scale factor and chain-rule term are present in the committed `PositionFeatures.java`).
+The remaining gaps addressed in this session:
+
+1. **Javadoc — `PositionFeatures.java`**: updated parameter count 817 → 832; added
+   `× (KING_SAFETY_SCALE/100)` factor to the formula in the class-level Javadoc.
+2. **Javadoc — `EvalParams.java` (tuner)**: updated `buildGroupMask()` king-safety group comment
+   from `∪ {829}` → `∪ {829, 830, 831}` (hanging penalty, king safety scale, piece attacked by pawn).
+3. **New test — `PositionFeaturesTest.java`** (3 tests):
+   - `kingSafetyScaleGradientIsNonZero()` — with a Black knight attacking the White king zone
+     (FEN: `4k3/8/8/8/8/5n2/8/4K3 w - - 0 1`), asserts `grad[830] ≠ 0.0`.
+   - `kingSafetyScaleEval_isLinearInScale()` — verifies the eval contribution is linear in scale:
+     eval[100] − eval[0] == eval[200] − eval[100].
+   - `kingSafetyScaleBelow100_reducesAttackerPenaltyForWhite()` — asserts eval(scale=50) > eval(scale=100)
+     when Black has king-zone attacker pressure on White.
+
+**Why this matters for re-runs (#170–172):**
+
+With scale fixed and free to converge, the Adam optimizer may move ATK weights and KING_SAFETY_SCALE
+simultaneously. The Phase 13 SPRT outcomes for king-safety, mobility, and pawn-structure were derived
+without this gradient active, so their tuning results are suspect. All three will be re-run
+(issues #170, #171, #172) using Phase 13 baseline params as the starting point.
+
+**Decision on #173 / #174:** Not repeated. Aspiration-window (#173) and eval-features correctness
+(#174) are orthogonal to the gradient fix — their SPRT verdicts are unaffected.
+
+**Measurements:**
+
+- `engine-tuner` tests: **131 run, 0 failures, 1 skipped — BUILD SUCCESS**
+- `PositionFeaturesTest`: 3/3 pass (0.009 s)
+- No changes to `TunerEvaluator`, `GradientDescent`, `KFinder`, or group-mask logic.
+
+**Broken / Fixed:**
+
+- `PositionFeatures.java`: Javadoc corrected (parameter count, formula).
+- `EvalParams.java` (tuner): Javadoc corrected (king-safety group mask comment).
+- `PositionFeaturesTest.java`: new file — 3 acceptance-criteria tests.
+
+---
+
 ### [TBD] Phase 14 — Merge + Version Bump (Issue #175, A-6)
 
 **Pre-merge checklist:**

@@ -8,7 +8,7 @@ import java.util.stream.Collectors;
  *
  * <p>At load time, each {@link LabelledPosition} is converted into a compact
  * representation that stores all positional features needed to compute both
- * the static evaluation and its gradient w.r.t. the 817 tuning parameters —
+ * the static evaluation and its gradient w.r.t. the 832 tuning parameters —
  * without any bitboard operation at iteration time.
  *
  * <h3>Evaluation decomposition</h3>
@@ -20,7 +20,7 @@ import java.util.stream.Collectors;
  * the tapered-eval phase weight already applied), and the non-linear king safety
  * term evaluates attacker pressure via a piecewise-linear safety table:
  * <pre>
- *   nonLinear = (-safetyEval(wW) + safetyEval(wBk)) × (phase/24)
+ *   nonLinear = (-safetyEval(wW) + safetyEval(wBk)) × (phase/24) × (KING_SAFETY_SCALE/100)
  *   wW  = wN×ATK_N + wB×ATK_B + wR×ATK_R + wQ×ATK_Q  (attackers on white king zone)
  *   wBk = bN×ATK_N + bB×ATK_B + bR×ATK_R + bQ×ATK_Q  (attackers on black king zone)
  *   safetyEval(w) — piecewise-linear interpolation of SAFETY_TABLE, mirrors KingSafety

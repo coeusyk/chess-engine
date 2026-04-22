@@ -271,9 +271,10 @@ public final class EvalParams {
      *   <li>{@code material}       — indices [0, 12)</li>
      *   <li>{@code pst}            — indices [12, 780)</li>
      *   <li>{@code pawn-structure} — indices [780, 796) ∪ [823, 827) (passed, isolated, doubled, connected, backward)</li>
-     *   <li>{@code king-safety}    — indices [796, 804) ∪ {829} (shield, open files, attacker weights, hanging penalty)</li>
+     *   <li>{@code king-safety}    — indices [796, 804) ∪ {829, 830, 831} (shield, open files, attacker weights, hanging penalty, king safety scale, piece attacked by pawn)</li>
      *   <li>{@code mobility}       — indices [804, 812)</li>
      *   <li>{@code scalars}        — indices [812, 823) ∪ [827, 829) (tempo, bishop pair, rook bonuses, knight outpost, rook behind passer)</li>
+     *   <li>{@code exit-gate}       — indices [780, 796) ∪ [800, 804) ∪ [823, 827) (pawn-structure + ATK_WEIGHT_*, exit-gate combined run)</li>
      * </ul>
      *
      * @param groupName one of the six group names listed above (case-sensitive)
@@ -306,10 +307,18 @@ public final class EvalParams {
                 java.util.Arrays.fill(mask, IDX_TEMPO, IDX_CONNECTED_PAWN_MG, true);
                 java.util.Arrays.fill(mask, IDX_ROOK_BEHIND_PASSER_MG, IDX_HANGING_PENALTY, true);
                 break;
+            case "exit-gate":
+                // PASSED_MG/EG[1..6], ISOLATED, DOUBLED  [780..795]
+                java.util.Arrays.fill(mask, IDX_PASSED_MG_START, IDX_SHIELD_RANK2, true);
+                // ATK_WEIGHT_KNIGHT/BISHOP/ROOK/QUEEN     [800..803]
+                java.util.Arrays.fill(mask, IDX_ATK_KNIGHT, IDX_MOB_MG_START, true);
+                // CONNECTED_PAWN, BACKWARD_PAWN           [823..826]
+                java.util.Arrays.fill(mask, IDX_CONNECTED_PAWN_MG, IDX_ROOK_BEHIND_PASSER_MG, true);
+                break;
             default:
                 throw new IllegalArgumentException(
                     "Unknown param group: \"" + groupName + "\""
-                    + " (valid: material, pst, pawn-structure, king-safety, mobility, scalars)");
+                    + " (valid: material, pst, pawn-structure, king-safety, mobility, scalars, exit-gate)");
         }
         return mask;
     }
@@ -547,26 +556,26 @@ public final class EvalParams {
 
         // --- Pawn structure ---
         // PASSED_MG = {0, 8, 4, 0, 8, 10, 52, 0} — indices 1..6 are tunable
-        int[] PASSED_MG = {0, 8, 4, 0, 8, 10, 52, 0};
-        int[] PASSED_EG = {0, 5, 11, 32, 59, 129, 129, 0};
+        int[] PASSED_MG = {0, 47, 40, 6, 52, 62, 122, 0};
+        int[] PASSED_EG = {0, 33, 24, 37, 53, 124, 152, 0};
         for (int i = 0; i < 6; i++) {
             p[IDX_PASSED_MG_START + i] = PASSED_MG[i + 1];
             p[IDX_PASSED_EG_START + i] = PASSED_EG[i + 1];
         }
-        p[IDX_ISOLATED_MG] = 14;
-        p[IDX_ISOLATED_EG] = 7;
-        p[IDX_DOUBLED_MG]  = 0;
-        p[IDX_DOUBLED_EG]  = 13;
+        p[IDX_ISOLATED_MG] = 16;
+        p[IDX_ISOLATED_EG] = 13;
+        p[IDX_DOUBLED_MG]  = 6;
+        p[IDX_DOUBLED_EG]  = 34;
 
         // --- King safety ---
         p[IDX_SHIELD_RANK2]   = 12;
         p[IDX_SHIELD_RANK3]   = 7;
         p[IDX_OPEN_FILE]      = 45;
         p[IDX_HALF_OPEN_FILE] = 13;
-        p[IDX_ATK_KNIGHT]     = 6;
-        p[IDX_ATK_BISHOP]     = 2;
-        p[IDX_ATK_ROOK]       = 12;
-        p[IDX_ATK_QUEEN]      = 0;
+        p[IDX_ATK_KNIGHT]     = 53;
+        p[IDX_ATK_BISHOP]     = 8;
+        p[IDX_ATK_ROOK]       = 74;
+        p[IDX_ATK_QUEEN]      = 9;
 
         // --- Mobility ---
         // MG: N=7, B=8, R=7, Q=2
@@ -592,10 +601,10 @@ public final class EvalParams {
         p[IDX_ROOK_SEMI_OPEN_EG]    = 19;   // Rook on semi-open file EG
         p[IDX_KNIGHT_OUTPOST_MG]    = 40;   // Knight outpost MG
         p[IDX_KNIGHT_OUTPOST_EG]    = 30;   // Knight outpost EG
-        p[IDX_CONNECTED_PAWN_MG]    = 9;    // Connected pawn bonus MG
-        p[IDX_CONNECTED_PAWN_EG]    = 4;    // Connected pawn bonus EG
-        p[IDX_BACKWARD_PAWN_MG]     = 0;    // Backward pawn penalty MG
-        p[IDX_BACKWARD_PAWN_EG]     = 0;    // Backward pawn penalty EG
+        p[IDX_CONNECTED_PAWN_MG]    = 7;    // Connected pawn bonus MG
+        p[IDX_CONNECTED_PAWN_EG]    = 6;    // Connected pawn bonus EG
+        p[IDX_BACKWARD_PAWN_MG]     = 6;    // Backward pawn penalty MG
+        p[IDX_BACKWARD_PAWN_EG]     = 20;    // Backward pawn penalty EG
         p[IDX_ROOK_BEHIND_PASSER_MG] = 12; // Rook behind passer MG
         p[IDX_ROOK_BEHIND_PASSER_EG] = 4;  // Rook behind passer EG
         p[IDX_HANGING_PENALTY]       = 40;  // Hanging piece penalty
