@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Per-group Texel tuning + SPRT workflow.
+    Per-group Texel tuning + 2-stage SPRT workflow.
 
 .DESCRIPTION
     Runs the full Phase B tuning → apply → build → SPRT cycle for one or more
@@ -12,9 +12,11 @@
       2. Run tuner: --param-group <G> --freeze-k  (Phase B, uses K from tuned_params.txt).
       3. Apply tuned params to engine-core source files + sync EvalParams baseline.
       4. Rebuild engine-uci JAR.
-      5. SPRT new JAR vs baseline JAR with -Tag "phase13-<G>-group".
-      6a. H1 accepted → commit changes; baseline = new JAR.
-      6b. H0 accepted → git checkout -- engine-core; restore EvalParams; baseline unchanged.
+      5a. Stage 1 (STC): SPRT new JAR vs baseline JAR at StcTC.  Prompt for verdict.
+          H0 accepted → revert immediately.  H1 accepted → proceed to Stage 2 (if -TwoStage).
+      5b. Stage 2 (LTC): SPRT at LtcTC.  H1 accepted → commit.  H0 accepted → revert.
+      6a. Both stages H1 → commit changes; baseline = new JAR.
+      6b. Any stage H0 → git checkout -- engine-core; restore EvalParams; baseline unchanged.
 
 .PARAMETER Groups
     Comma-separated list of groups to tune in order.
@@ -29,22 +31,44 @@
 .PARAMETER Elo1
     SPRT alternative hypothesis Elo bound (default 5 for tuner-methodology validations).
 
+.PARAMETER TwoStage
+    If set, runs a 2-stage SPRT: Stage 1 at StcTC then Stage 2 at LtcTC.
+    Both stages must accept H1 for the group to be committed.
+    If not set, runs a single SPRT at LtcTC only.
+
+.PARAMETER StcTC
+    Time control for Stage 1 (STC).  Default: '10+0.1'.
+
+.PARAMETER LtcTC
+    Time control for Stage 2 (LTC) or the single-stage run.  Default: '60+0.6'.
+
+.PARAMETER TagPrefix
+    Prefix for SPRT result tags (e.g. 'phase14').  Default: 'phase14'.
+
 .PARAMETER SkipPhaseA
     If set, skips Phase A K calibration (uses K already in tuned_params.txt).
 
 .EXAMPLE
-    # Full per-group workflow with tight SPRT (Elo1=5)
-    .\tools\tune-groups.ps1 -Groups scalars,material,mobility,king-safety,pawn-structure -Elo1 5
+    # 2-stage STC+LTC workflow for three groups
+    .\tools\tune-groups.ps1 -Groups king-safety,mobility,pawn-structure -TwoStage -SkipPhaseA
+
+.EXAMPLE
+    # Single-stage LTC only (legacy behaviour)
+    .\tools\tune-groups.ps1 -Groups scalars,material -Elo1 5
 
 .EXAMPLE
     # Quick smoke-test: tune scalars only, 50k positions
     .\tools\tune-groups.ps1 -Groups scalars -MaxPositions 50000 -MaxIterations 200
 #>
 param(
-    [string]$Groups        = "scalars,material,mobility,king-safety,pawn-structure,pst",
+    [string[]]$Groups      = @("scalars","material","mobility","king-safety","pawn-structure","pst"),
     [int]$MaxPositions     = 0,
     [int]$MaxIterations    = 500,
     [int]$Elo1             = 5,
+    [switch]$TwoStage,
+    [string]$StcTC         = "10+0.1",
+    [string]$LtcTC         = "60+0.6",
+    [string]$TagPrefix     = "phase14",
     [switch]$SkipPhaseA
 )
 Set-StrictMode -Version Latest
@@ -65,7 +89,7 @@ if (-not (Test-Path $tunerJar))  { Write-Error "Tuner JAR not found: $tunerJar -
 if (-not (Test-Path $engineJar)) { Write-Error "Engine JAR not found: $engineJar - run: .\mvnw.cmd package -pl engine-uci -am -DskipTests"; exit 1 }
 
 $posArg  = if ($MaxPositions -gt 0) { @("$MaxPositions", "$MaxIterations") } else { @("2147483646", "$MaxIterations") }
-$groupList = $Groups -split ','
+$groupList = $Groups
 
 Write-Host "================================================================"
 Write-Host " tune-groups.ps1"
@@ -74,6 +98,8 @@ Write-Host "  Corpus    : $corpus"
 Write-Host "  Positions : $(if ($MaxPositions -gt 0) { $MaxPositions } else { 'all' })"
 Write-Host "  Iterations: $MaxIterations"
 Write-Host "  Elo1 (SPRT): $Elo1"
+Write-Host "  SPRT mode : $(if ($TwoStage) { "2-stage  STC=$StcTC → LTC=$LtcTC" } else { "single-stage  TC=$LtcTC" })"
+Write-Host "  Tag prefix: $TagPrefix"
 Write-Host "================================================================"
 Write-Host ""
 
@@ -140,16 +166,37 @@ foreach ($group in $groupList) {
         continue
     }
 
-    # Step 5: SPRT new JAR vs baseline
-    $tag = "phase13-${group}-group"
-    Write-Host "[tune-groups] Running SPRT: -Tag '$tag' (Elo1=$Elo1) ..."
+    # Step 5: SPRT — Stage 1 (STC) and optionally Stage 2 (LTC)
     $sprtScript = Join-Path $toolsDir "sprt.ps1"
-    & $sprtScript -New $engineJar -Old $baselineSnapshot -Tag $tag -Elo1 $Elo1
+    $verdict    = 'H0'
 
-    # Step 6: prompt for result
-    Write-Host ""
-    $verdict = Read-Host "[tune-groups] Enter SPRT verdict: H1 (keep) / H0 (revert) / skip"
-    $verdict = $verdict.ToUpper().Trim()
+    if ($TwoStage) {
+        # Stage 1: STC
+        $stcTag = "${TagPrefix}-${group}-stc"
+        Write-Host "[tune-groups] Stage 1 SPRT (STC $StcTC): -Tag '$stcTag' ..."
+        & $sprtScript -New $engineJar -Old $baselineSnapshot -Tag $stcTag -Elo1 $Elo1 -TC $StcTC
+        Write-Host ""
+        $v1 = (Read-Host "[tune-groups] Stage 1 (STC) verdict: H1 (pass to LTC) / H0 (revert) / skip").ToUpper().Trim()
+
+        if ($v1 -eq 'H1') {
+            # Stage 2: LTC
+            $ltcTag = "${TagPrefix}-${group}-ltc"
+            Write-Host "[tune-groups] Stage 1 passed. Running Stage 2 SPRT (LTC $LtcTC): -Tag '$ltcTag' ..."
+            & $sprtScript -New $engineJar -Old $baselineSnapshot -Tag $ltcTag -Elo1 $Elo1 -TC $LtcTC
+            Write-Host ""
+            $v2 = (Read-Host "[tune-groups] Stage 2 (LTC) verdict: H1 (commit) / H0 (revert)").ToUpper().Trim()
+            $verdict = $v2
+        } else {
+            $verdict = $v1   # H0 or skip on STC
+        }
+    } else {
+        # Single-stage: run at LtcTC
+        $tag = "${TagPrefix}-${group}-group"
+        Write-Host "[tune-groups] Running SPRT (single-stage $LtcTC): -Tag '$tag' (Elo1=$Elo1) ..."
+        & $sprtScript -New $engineJar -Old $baselineSnapshot -Tag $tag -Elo1 $Elo1 -TC $LtcTC
+        Write-Host ""
+        $verdict = (Read-Host "[tune-groups] Enter SPRT verdict: H1 (keep) / H0 (revert) / skip").ToUpper().Trim()
+    }
 
     if ($verdict -eq 'H1') {
         # Commit the accepted group

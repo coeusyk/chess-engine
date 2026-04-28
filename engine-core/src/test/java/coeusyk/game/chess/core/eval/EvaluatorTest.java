@@ -445,6 +445,40 @@ class EvaluatorTest {
                 "King safety should be symmetric for mirrored positions");
     }
 
+    @Test
+    void pawnAttackPenaltyMirrorSymmetryRegression() {
+        // Sign-sensitive scenario: only White has a pawn-attacked minor piece.
+        // Compare the SAME position under PIECE_ATTACKED_BY_PAWN_MG=0 vs +20.
+        // Correct relative application must not increase White's score when penalty magnitude grows.
+        int old = EvalParams.PIECE_ATTACKED_BY_PAWN_MG;
+        try {
+            // From Phase 14 rollback postmortem (non-zero pawn-atk taper observed).
+            String fen = "1b4k1/3Q3p/p3p1p1/1Np2pq1/P7/2P1P1nP/1P6/5N1K w - - 68 35";
+
+            EvalParams.PIECE_ATTACKED_BY_PAWN_MG = 0;
+            int evalNoPenalty = evaluator.evaluate(new Board(fen));
+
+            EvalParams.PIECE_ATTACKED_BY_PAWN_MG = 20;
+            int evalPositivePenalty = evaluator.evaluate(new Board(fen));
+
+            assertTrue(evalPositivePenalty <= evalNoPenalty,
+                    "Pawn-attack perspective regression: increasing penalty magnitude must not improve White score. "
+                            + "evalNoPenalty=" + evalNoPenalty + " evalPositivePenalty=" + evalPositivePenalty);
+        } finally {
+            EvalParams.PIECE_ATTACKED_BY_PAWN_MG = old;
+        }
+    }
+
+    @Test
+    void oppositeFlankDirectionalPressureRegression() {
+        // Opposite flanks: White king on g1, Black king on c8, open h-file with White rook on h1.
+        // White has concrete kingside attacking pressure and should evaluate positively.
+        String fen = "2k5/ppp3p1/8/7Q/8/3B4/6P1/6KR w - - 0 1";
+        int score = evaluator.evaluate(new Board(fen));
+        assertTrue(score > 20,
+                "Opposite-flank directional regression: expected White advantage in attacking structure, got " + score + "cp");
+    }
+
     // --- Mop-up evaluation tests ---
 
     @Test

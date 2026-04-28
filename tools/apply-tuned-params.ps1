@@ -31,7 +31,7 @@
 #>
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('material','pst','pawn-structure','king-safety','mobility','scalars','all')]
+    [ValidateSet('material','pst','pawn-structure','king-safety','mobility','scalars','exit-gate','all')]
     [string]$Group,
 
     [string]$TunedParamsFile = "",
@@ -476,6 +476,44 @@ function Apply-Scalars {
     Write-Host "[apply-tuned-params] Updated : EvalParams.java (scalars baseline)"
 }
 
+# ─── EXIT-GATE ───────────────────────────────────────────────────────────────
+# Combined pawn-structure params + ATK_WEIGHT_* (Phase 14 exit gate #3).
+# Runs pawn-structure apply first, then patches only the four ATK_WEIGHT values
+# from the KING SAFETY section (shield/open-file/scale unchanged).
+function Apply-ExitGate {
+    Apply-PawnStructure
+
+    $section = Get-Section 'KING SAFETY'
+    $atkN=$null; $atkB=$null; $atkR=$null; $atkQ=$null
+    foreach ($l in $section) {
+        if ($l -match '^ATTACKER_WEIGHTS\s+N=(-?\d+)\s+B=(-?\d+)\s+R=(-?\d+)\s+Q=(-?\d+)') {
+            $atkN=[int]$Matches[1]; $atkB=[int]$Matches[2]; $atkR=[int]$Matches[3]; $atkQ=[int]$Matches[4]
+        }
+    }
+
+    Write-Host "[apply-tuned-params] EXIT-GATE ATK: N=$atkN B=$atkB R=$atkR Q=$atkQ"
+
+    $ce = Get-Content $coreEvalParamsPath
+    for ($i = 0; $i -lt $ce.Count; $i++) {
+        if ($atkN -ne $null) { $ce[$i] = $ce[$i] -replace '(public static int ATK_WEIGHT_KNIGHT = )(-?\d+);', "`${1}$atkN;" }
+        if ($atkB -ne $null) { $ce[$i] = $ce[$i] -replace '(public static int ATK_WEIGHT_BISHOP = )(-?\d+);', "`${1}$atkB;" }
+        if ($atkR -ne $null) { $ce[$i] = $ce[$i] -replace '(public static int ATK_WEIGHT_ROOK = )(-?\d+);',   "`${1}$atkR;" }
+        if ($atkQ -ne $null) { $ce[$i] = $ce[$i] -replace '(public static int ATK_WEIGHT_QUEEN = )(-?\d+);',  "`${1}$atkQ;" }
+    }
+    Set-Content $coreEvalParamsPath $ce
+    Write-Host "[apply-tuned-params] Updated : engine-core EvalParams.java (exit-gate ATK weights)"
+
+    $ep = Get-Content $evalParamsPath
+    for ($i = 0; $i -lt $ep.Count; $i++) {
+        if ($atkN -ne $null) { $ep[$i] = $ep[$i] -replace '(p\[IDX_ATK_KNIGHT\]\s*= )(-?\d+);', "`${1}$atkN;" }
+        if ($atkB -ne $null) { $ep[$i] = $ep[$i] -replace '(p\[IDX_ATK_BISHOP\]\s*= )(-?\d+);', "`${1}$atkB;" }
+        if ($atkR -ne $null) { $ep[$i] = $ep[$i] -replace '(p\[IDX_ATK_ROOK\]\s*= )(-?\d+);',   "`${1}$atkR;" }
+        if ($atkQ -ne $null) { $ep[$i] = $ep[$i] -replace '(p\[IDX_ATK_QUEEN\]\s*= )(-?\d+);',  "`${1}$atkQ;" }
+    }
+    Set-Content $evalParamsPath $ep
+    Write-Host "[apply-tuned-params] Updated : EvalParams.java (exit-gate ATK weights baseline)"
+}
+
 # ─── Dispatch ────────────────────────────────────────────────────────────────
 switch ($Group) {
     'material'       { Apply-Material }
@@ -484,6 +522,7 @@ switch ($Group) {
     'king-safety'    { Apply-KingSafety }
     'mobility'       { Apply-Mobility }
     'scalars'        { Apply-Scalars }
+    'exit-gate'      { Apply-ExitGate }
     'all' {
         Apply-Material
         Apply-Pst
