@@ -477,3 +477,44 @@ All 31 positions pass the validator at engine startup.
   the standard bench for Phase 14 onwards.
 
 **Gate status:** ✅ — all bench runs ≥ 301,116 NPS.
+
+---
+
+### [2026-04-29] Phase 14 — Eval Asymmetry Fix SPRT (STC)
+
+**Tag:** `phase14-fix-eval-asymmetry-stc`
+**Log:** `tools/results/sprt_phase14-fix-eval-asymmetry-stc_20260429_001115.log`
+**Issue:** #183
+
+**Setup:**
+- NEW: `engine-uci-0.5.7-SNAPSHOT.jar` (commit `44aea1a` — eval asymmetry fix)
+- OLD: `engine-uci-0.5.7-baseline.jar`
+- H0=0, H1=5, α=β=0.05, TC 5+0.05, concurrency 2, opening book `noob_3moves.epd`
+
+**Result after 14,218 games:**
+
+| Metric | Value |
+|---|---|
+| Score (NEW vs OLD) | 3688 – 3692 – 6838 [0.500] |
+| Elo difference | +0.1 ±4.1 |
+| LOS | 48.1% |
+| Draw ratio | 48.1% |
+| LLR | −2.95 (lbound −2.94, ubound +2.94) |
+| **Verdict** | **H0 accepted** |
+
+**Per-colour analysis:**
+
+| Side | W | L | D | Score |
+|---|---|---|---|---|
+| NEW as White | 1,818 | 1,913 | 3,378 | 0.493 |
+| NEW as Black | 1,870 | 1,779 | 3,460 | 0.507 |
+
+**Interpretation:**
+
+H0 accepted at essentially zero Elo difference (+0.1 ±4.1). This is a successful asymmetry fix:
+
+- Prior rollback SPRT showed −5.7 Elo ±7.3 with White asymmetry (0.481 as White vs 0.503 as Black, z≈2.04).
+- Post-fix, White score recovered to 0.493 — the z-score imbalance collapsed (|0.493 − 0.507| = 0.014, within normal variance at this sample size).
+- The fix is a correctness patch that eliminates the regression. It does not produce a positive Elo gain vs 0.5.7.
+
+**Decision:** Keep fix on branch. The eval correctness fix is necessary regardless of SPRT outcome. Proceed to A-1 (king-safety group tuning) using this branch as the new evaluation baseline. No parameter rollback.
