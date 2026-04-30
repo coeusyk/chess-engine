@@ -209,7 +209,7 @@ public class Evaluator {
         mgScore += pawnMg;
         egScore += pawnEg;
 
-        mgScore += KingSafety.evaluatePawnShieldAndFiles(board)
+        mgScore += KingSafety.evaluatePawnShieldAndFiles(board, tempWhiteAttackWeight, tempBlackAttackWeight)
                  + KingSafety.safetyTablePenalty(tempWhiteAttackWeight)
                  - KingSafety.safetyTablePenalty(tempBlackAttackWeight);
 
@@ -263,6 +263,11 @@ public class Evaluator {
         egScore += MopUp.evaluate(board, phase);
         int score = (mgScore * phase + egScore * (TOTAL_PHASE - phase)) / TOTAL_PHASE;
 
+        // --- Piece attacked by pawn penalty: full weight in opening/MG (phase >= 5),
+        //     linear taper to 0 below that threshold (~20% of TOTAL_PHASE). ---
+        score += (pieceAttackedByPawnRelative(board, whitePawnAtk, blackPawnAtk, allOccupancy)
+                 * Math.min(TOTAL_PHASE, phase * 5)) / TOTAL_PHASE;
+
         // --- Tempo bonus (applied after phase interpolation) ---
         // Read from EvalParams.TEMPO directly so runtime --param-overrides are picked up.
         score += Piece.isWhite(board.getActiveColor()) ? EvalParams.TEMPO : -EvalParams.TEMPO;
@@ -271,6 +276,172 @@ public class Evaluator {
         score += hangingPenalty(board);
 
         return Piece.isWhite(board.getActiveColor()) ? score : -score;
+    }
+
+    /**
+     * Returns a human-readable breakdown of every evaluation term for the given position.
+     * Each line is independent; the caller (UCI handler) prefixes them with "info string ".
+     * Values are white-positive centipawns unless noted; the final line is side-to-move relative.
+     */
+    public String explainEval(Board board) {
+        int mgMat = board.getIncMgScore();
+        int egMat = board.getIncEgScore();
+
+        long allOcc       = board.getWhiteOccupancy() | board.getBlackOccupancy();
+        long whitePawnAtk = Attacks.whitePawnAttacks(board.getWhitePawns());
+        long blackPawnAtk = Attacks.blackPawnAttacks(board.getBlackPawns());
+
+        int wKingSq = board.getWhiteKing() != 0L ? Long.numberOfTrailingZeros(board.getWhiteKing()) : -1;
+        int bKingSq = board.getBlackKing() != 0L ? Long.numberOfTrailingZeros(board.getBlackKing()) : -1;
+        long wKingZone    = wKingSq >= 0 ? KingSafety.WHITE_KING_ZONE[wKingSq] : 0L;
+        long bKingZone    = bKingSq >= 0 ? KingSafety.BLACK_KING_ZONE[bKingSq] : 0L;
+        long wKingRing    = wKingSq >= 0 ? AttackTables.KING_ATTACKS[wKingSq]  : 0L;
+        long bKingRing    = bKingSq >= 0 ? AttackTables.KING_ATTACKS[bKingSq]  : 0L;
+
+        long whiteMob = computeMobilityAndAttack(board, true,  allOcc, blackPawnAtk, bKingZone, bKingRing);
+        long blackMob = computeMobilityAndAttack(board, false, allOcc, whitePawnAtk, wKingZone, wKingRing);
+        int mobMg = unpackMg(whiteMob) - unpackMg(blackMob);
+        int mobEg = unpackEg(whiteMob) - unpackEg(blackMob);
+
+        int[] ps = PawnStructure.evaluate(board.getWhitePawns(), board.getBlackPawns());
+        int pawnMg = ps[0], pawnEg = ps[1];
+        int[] pp = PawnStructure.passedPawnResult(board.getWhitePawns(), board.getBlackPawns());
+
+        int kingSafetyMg = KingSafety.evaluatePawnShieldAndFiles(board, tempWhiteAttackWeight, tempBlackAttackWeight)
+                         + KingSafety.safetyTablePenalty(tempWhiteAttackWeight)
+                         - KingSafety.safetyTablePenalty(tempBlackAttackWeight);
+
+        EvalConfig cfg = this.config;
+        int bpMg = 0, bpEg = 0;
+        if (Long.bitCount(board.getWhiteBishops()) >= 2) { bpMg += cfg.bishopPairMg(); bpEg += cfg.bishopPairEg(); }
+        if (Long.bitCount(board.getBlackBishops()) >= 2) { bpMg -= cfg.bishopPairMg(); bpEg -= cfg.bishopPairEg(); }
+
+        int wRook7 = Long.bitCount(board.getWhiteRooks() & WHITE_RANK_7);
+        int bRook7 = Long.bitCount(board.getBlackRooks() & BLACK_RANK_7);
+        int r7Mg = (wRook7 - bRook7) * cfg.rook7thMg();
+        int r7Eg = (wRook7 - bRook7) * cfg.rook7thEg();
+
+        long wRookFile = rookFilePacked(board.getWhiteRooks(), board.getWhitePawns(), board.getBlackPawns());
+        long bRookFile = rookFilePacked(board.getBlackRooks(), board.getBlackPawns(), board.getWhitePawns());
+        int rfMg = (int)(wRookFile >> 32) - (int)(bRookFile >> 32);
+        int rfEg = (int) wRookFile        - (int) bRookFile;
+
+        int wOut = Long.bitCount(board.getWhiteKnights() & WHITE_OUTPOST_ZONE & ~blackPawnAtk);
+        int bOut = Long.bitCount(board.getBlackKnights() & BLACK_OUTPOST_ZONE & ~whitePawnAtk);
+        int outMg = (wOut - bOut) * cfg.knightOutpostMg();
+        int outEg = (wOut - bOut) * cfg.knightOutpostEg();
+
+        int wConn = connectedPawnCount(board.getWhitePawns());
+        int bConn = connectedPawnCount(board.getBlackPawns());
+        int cpMg = (wConn - bConn) * cfg.connectedPawnMg();
+        int cpEg = (wConn - bConn) * cfg.connectedPawnEg();
+
+        int wBack = backwardPawnCount(board.getWhitePawns(), board.getBlackPawns(), true);
+        int bBack = backwardPawnCount(board.getBlackPawns(), board.getWhitePawns(), false);
+        int backMg = -(wBack - bBack) * cfg.backwardPawnMg();
+        int backEg = -(wBack - bBack) * cfg.backwardPawnEg();
+
+        long rookBehind = rookBehindPasserPacked(board.getWhiteRooks(), board.getBlackRooks(),
+                board.getWhitePawns(), board.getBlackPawns());
+        int rbMg = (int)(rookBehind >> 32);
+        int rbEg = (int) rookBehind;
+
+        int totalMg = mgMat + mobMg + pawnMg + kingSafetyMg + bpMg + r7Mg + rfMg + outMg + cpMg + backMg + rbMg;
+        int totalEg = egMat + mobEg + pawnEg + bpEg + r7Eg + rfEg + outEg + cpEg + backEg + rbEg;
+
+        int phase = computePhase(board);
+        int mopUp = MopUp.evaluate(board, phase);
+        int interpolated = (totalMg * phase + (totalEg + mopUp) * (TOTAL_PHASE - phase)) / TOTAL_PHASE;
+
+        int papTaper = Math.min(TOTAL_PHASE, phase * 5);
+        int pap = (pieceAttackedByPawnRelative(board, whitePawnAtk, blackPawnAtk, allOcc) * papTaper) / TOTAL_PHASE;
+
+        int tempo = Piece.isWhite(board.getActiveColor()) ? EvalParams.TEMPO : -EvalParams.TEMPO;
+        int hanging = hangingPenalty(board);
+
+        int rawScore = interpolated + pap + tempo + hanging;
+        int finalScore = Piece.isWhite(board.getActiveColor()) ? rawScore : -rawScore;
+
+        String fmt = "  %-18s mg=%+5d  eg=%+5d";
+        String fmtFlat = "  %-18s %+d cp";
+        StringBuilder sb = new StringBuilder();
+        sb.append("--- eval breakdown (white positive, cp) ---\n");
+        sb.append(String.format(fmt, "material+PST",    mgMat,       egMat)).append('\n');
+        sb.append(String.format(fmt, "mobility",        mobMg,       mobEg)).append('\n');
+        sb.append(String.format(fmt, "pawn structure",  pawnMg,      pawnEg)).append('\n');
+        sb.append(String.format(fmt, "  passed pawns",  pp[0],       pp[1])).append('\n');
+        sb.append(String.format(fmt, "king safety",     kingSafetyMg, 0)).append('\n');
+        sb.append(String.format(fmt, "bishop pair",     bpMg,        bpEg)).append('\n');
+        sb.append(String.format(fmt, "rook on 7th",     r7Mg,        r7Eg)).append('\n');
+        sb.append(String.format(fmt, "rook on file",    rfMg,        rfEg)).append('\n');
+        sb.append(String.format(fmt, "knight outpost",  outMg,       outEg)).append('\n');
+        sb.append(String.format(fmt, "connected pawns", cpMg,        cpEg)).append('\n');
+        sb.append(String.format(fmt, "backward pawns",  backMg,      backEg)).append('\n');
+        sb.append(String.format(fmt, "rook/passer",     rbMg,        rbEg)).append('\n');
+        sb.append(String.format("  %-18s mg=%+5d  eg=%+5d  phase=%d/%d\n",
+                "totals", totalMg, totalEg, phase, TOTAL_PHASE));
+        sb.append(String.format(fmtFlat, "interpolated", interpolated)).append('\n');
+        sb.append(String.format(fmtFlat, "pawn-atk taper", pap)).append('\n');
+        sb.append(String.format(fmtFlat, "tempo", tempo)).append('\n');
+        sb.append(String.format(fmtFlat, "hanging", hanging)).append('\n');
+        sb.append(String.format("  %-18s %+d cp  (side-to-move relative)", "final", finalScore));
+        return sb.toString();
+    }
+
+        /**
+         * Relative piece-attacked-by-pawn term (white-positive):
+         * {@code penalty(black) - penalty(white)}.
+         *
+         * <p>Each side penalty is the count of minor pieces/rooks attacked by enemy pawns with
+         * at most one safe retreat square, multiplied by the configured penalty magnitude.
+         */
+        private int pieceAttackedByPawnRelative(Board board, long whitePawnAtk, long blackPawnAtk,
+                            long allOcc) {
+        int whiteCount = countPiecesAtkByPawnWithFewRetreats(
+                board.getWhiteKnights(), board.getWhiteBishops(), board.getWhiteRooks(),
+                blackPawnAtk, allOcc, board.getWhiteOccupancy(), board.getAttackedByBlack());
+        int blackCount = countPiecesAtkByPawnWithFewRetreats(
+                board.getBlackKnights(), board.getBlackBishops(), board.getBlackRooks(),
+                whitePawnAtk, allOcc, board.getBlackOccupancy(), board.getAttackedByWhite());
+
+        int penaltyMagnitude = Math.abs(EvalParams.PIECE_ATTACKED_BY_PAWN_MG);
+        int whitePenalty = whiteCount * penaltyMagnitude;
+        int blackPenalty = blackCount * penaltyMagnitude;
+        return blackPenalty - whitePenalty;
+    }
+
+    /**
+     * Counts knights, bishops, and rooks in {@code knights|bishops|rooks} that are
+     * simultaneously attacked by an enemy pawn ({@code enemyPawnAtk}) and have at most
+     * one safe retreat square.  A safe retreat is any square the piece can legally reach
+     * that is not occupied by a friendly piece and not controlled by the enemy.
+     */
+    private static int countPiecesAtkByPawnWithFewRetreats(long knights, long bishops, long rooks,
+                                                            long enemyPawnAtk, long allOcc,
+                                                            long friendly, long enemyAtk) {
+        int count = 0;
+        long temp = knights & enemyPawnAtk;
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            long safe = Attacks.knightAttacks(sq) & ~friendly & ~enemyAtk;
+            if (Long.bitCount(safe) <= 1) count++;
+            temp &= temp - 1;
+        }
+        temp = bishops & enemyPawnAtk;
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            long safe = Attacks.bishopAttacks(sq, allOcc) & ~friendly & ~enemyAtk;
+            if (Long.bitCount(safe) <= 1) count++;
+            temp &= temp - 1;
+        }
+        temp = rooks & enemyPawnAtk;
+        while (temp != 0) {
+            int sq = Long.numberOfTrailingZeros(temp);
+            long safe = Attacks.rookAttacks(sq, allOcc) & ~friendly & ~enemyAtk;
+            if (Long.bitCount(safe) <= 1) count++;
+            temp &= temp - 1;
+        }
+        return count;
     }
 
     /**
@@ -474,8 +645,10 @@ public class Evaluator {
     }
 
     /**
-     * Count backward pawns: a pawn is backward if it cannot safely advance and is
-     * behind all friendly pawns on adjacent files.
+     * Count backward pawns: a pawn is backward if it cannot safely advance (the stop square
+     * is attacked by an enemy pawn) and has no supporting pawn on an adjacent file at the
+     * same rank or behind it.  Isolated pawns (no adjacent-file neighbours at all) are
+     * excluded because they already receive the isolated-pawn penalty.
      */
     private static int backwardPawnCount(long friendly, long enemy, boolean white) {
         long enemyAtk = white ? Attacks.blackPawnAttacks(enemy) : Attacks.whitePawnAttacks(enemy);
@@ -484,24 +657,22 @@ public class Evaluator {
         while (temp != 0) {
             int sq = Long.numberOfTrailingZeros(temp);
             int file = sq % 8;
-            // build adjacent-file fill of friendly pawns
             long adjFiles = 0L;
             if (file > 0) adjFiles |= FILE_MASK_BASE << (file - 1);
             if (file < 7) adjFiles |= FILE_MASK_BASE << (file + 1);
             long adjFriendly = friendly & adjFiles;
-            // For white (advancing toward row 0), backward = no friendly neighbor ahead (lower row),
-            // and the stop square is attacked by enemy pawns
-            if (white) {
-                long ahead = adjFriendly & ((1L << sq) - 1);   // rows < row are lower-index in a8=0
-                int stopSq = sq - 8; // one rank forward for white
-                if (stopSq >= 0 && ahead == 0 && (enemyAtk & (1L << stopSq)) != 0) {
-                    count++;
-                }
-            } else {
-                long ahead = adjFriendly & ~((1L << (sq + 8)) - 1);  // rows > row (higher index)
-                int stopSq = sq + 8;
-                if (stopSq < 64 && ahead == 0 && (enemyAtk & (1L << stopSq)) != 0) {
-                    count++;
+            // Isolated pawns are already penalised separately; do not double-count.
+            if (adjFriendly != 0L) {
+                if (white) {
+                    // Support: adjacent-file pawn at same rank or behind (row >= current row).
+                    long support = adjFriendly & (-1L << ((sq / 8) * 8));
+                    int stopSq = sq - 8;
+                    if (stopSq >= 0 && support == 0L && (enemyAtk & (1L << stopSq)) != 0) count++;
+                } else {
+                    // Support: adjacent-file pawn at same rank or behind (row <= current row).
+                    long support = adjFriendly & (-1L >>> ((7 - sq / 8) * 8));
+                    int stopSq = sq + 8;
+                    if (stopSq < 64 && support == 0L && (enemyAtk & (1L << stopSq)) != 0) count++;
                 }
             }
             temp &= temp - 1;

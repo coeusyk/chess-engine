@@ -2,6 +2,6 @@
 [Convergence] PASS — iters=0 hitCap=false finalMse=0.000000 meanRelDelta=NaN
 [MaterialBounds] PASS
 [Sanity] PASS
-[Smoke] PASS — games=100 W=40 D=20 L=40 score=0.500 LOS=0.500 (threshold=0.30)
+[Smoke] PASS — games=100 W=50 D=0 L=50 score=0.500 LOS=0.500 (threshold=0.30)
 
 [Validator] OVERALL: PASS — tuned_params.txt will be written.

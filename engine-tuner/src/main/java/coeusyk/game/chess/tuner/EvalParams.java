@@ -80,7 +80,7 @@ import java.util.Arrays;
  */
 public final class EvalParams {
 
-    public static final int TOTAL_PARAMS = 831;
+    public static final int TOTAL_PARAMS = 832;
 
     // --- Indices for documentation / cross-referencing ---
     public static final int IDX_MATERIAL_START  = 0;   // [0..11]
@@ -120,6 +120,8 @@ public final class EvalParams {
     public static final int IDX_ROOK_BEHIND_PASSER_EG = 828;
     public static final int IDX_HANGING_PENALTY       = 829;
     public static final int IDX_KING_SAFETY_SCALE      = 830;
+    /** MG-only penalty per minor/rook attacked by enemy pawn with ≤1 safe retreat. */
+    public static final int IDX_PIECE_ATK_BY_PAWN_MG  = 831;
 
     /**
      * Per-parameter lower bounds enforced during coordinate descent.
@@ -143,14 +145,16 @@ public final class EvalParams {
         Arrays.fill(lo, IDX_PASSED_MG_START, IDX_ISOLATED_MG,  0);  // Passed pawn bonuses >= 0
         Arrays.fill(lo, IDX_ISOLATED_MG, IDX_SHIELD_RANK2,     0);  // Pawn penalties >= 0
         Arrays.fill(lo, IDX_SHIELD_RANK2, IDX_MOB_MG_START,    0);  // King safety >= 0
-        // Attacker weights pinned >= 2: corpus coverage gaps can zero these incorrectly.
-        // King-attack positions are underrepresented in quiet-start self-play. A floor
-        // of 2 prevents the optimizer absorbing this signal into PSTs when training data
-        // lacks king-side attack patterns. Re-evaluate after noob_3moves.epd corpus run.
-        lo[IDX_ATK_KNIGHT] = 2;
-        lo[IDX_ATK_BISHOP] = 2;
-        lo[IDX_ATK_ROOK]   = 2;
-        lo[IDX_ATK_QUEEN]  = 3;
+        // Run #171: pin all king-safety params except ATK_ROOK=[20,45] and ATK_KNIGHT=[25,45].
+        // Only rook and knight attacker weights are free; all other king-safety params are
+        // locked at their current engine-core baseline values. Restore broad ranges after
+        // this targeted retune is committed.
+        lo[IDX_SHIELD_RANK2]  = 12;  lo[IDX_SHIELD_RANK3]   = 7;   // shield rank-2/3 pinned
+        lo[IDX_OPEN_FILE]     = 45;  lo[IDX_HALF_OPEN_FILE] = 13;  // file penalties pinned
+        lo[IDX_ATK_KNIGHT]    = 25;  // run 171: lower bound for free param
+        lo[IDX_ATK_BISHOP]    = 2;   // pinned at engine-core baseline
+        lo[IDX_ATK_ROOK]      = 20;  // run 171: lower bound for free param
+        lo[IDX_ATK_QUEEN]     = 0;   // pinned at engine-core baseline
         Arrays.fill(lo, IDX_MOB_MG_START, IDX_MOB_EG_START,   -5);  // Mobility MG may be slightly negative
         Arrays.fill(lo, IDX_MOB_EG_START, IDX_TEMPO,            0);  // Mobility EG must be >= 0
         lo[IDX_TEMPO]          = 5;   // Tempo bonus >= 5cp (PST absorption risk)
@@ -172,8 +176,9 @@ public final class EvalParams {
         lo[IDX_BACKWARD_PAWN_EG]   = -5;  // Backward pawn penalty EG >= -5 (engine uses -1)
         lo[IDX_ROOK_BEHIND_PASSER_MG] = 0;  // Rook behind passer MG >= 0
         lo[IDX_ROOK_BEHIND_PASSER_EG] = 0;  // Rook behind passer EG >= 0
-        lo[IDX_HANGING_PENALTY]       = 0;   // Hanging penalty >= 0
-        lo[IDX_KING_SAFETY_SCALE]      = 50;  // Scale >= 50 (half strength)
+        lo[IDX_HANGING_PENALTY]       = 40;   // Run #171: pinned at current engine-core value
+        lo[IDX_KING_SAFETY_SCALE]      = 100;  // Run #171: pinned at current engine-core value
+        lo[IDX_PIECE_ATK_BY_PAWN_MG]  = -20;  // Run #171: pinned at current engine-core value
         return lo;
     }
 
@@ -189,6 +194,13 @@ public final class EvalParams {
         Arrays.fill(hi, IDX_PASSED_EG_START, IDX_ISOLATED_MG,  200);    // Passed pawn EG
         Arrays.fill(hi, IDX_ISOLATED_MG, IDX_SHIELD_RANK2,      60);    // Pawn penalties
         Arrays.fill(hi, IDX_SHIELD_RANK2, IDX_MOB_MG_START,     80);    // King safety
+        // Run #171: pin all king-safety params except ATK_ROOK=[20,45] and ATK_KNIGHT=[25,45].
+        hi[IDX_SHIELD_RANK2]  = 12;  hi[IDX_SHIELD_RANK3]   = 7;   // shield rank-2/3 pinned
+        hi[IDX_OPEN_FILE]     = 45;  hi[IDX_HALF_OPEN_FILE] = 13;  // file penalties pinned
+        hi[IDX_ATK_KNIGHT]    = 45;  // run 171: upper bound for free param
+        hi[IDX_ATK_BISHOP]    = 2;   // pinned at engine-core baseline
+        hi[IDX_ATK_ROOK]      = 45;  // run 171: upper bound for free param
+        hi[IDX_ATK_QUEEN]     = 0;   // pinned at engine-core baseline
         Arrays.fill(hi, IDX_MOB_MG_START, IDX_MOB_EG_START,     15);    // Mobility MG
         Arrays.fill(hi, IDX_MOB_EG_START, IDX_TEMPO,             15);    // Mobility EG
         hi[IDX_TEMPO]          = 30;   // Tempo bonus <= 30cp
@@ -208,8 +220,9 @@ public final class EvalParams {
         hi[IDX_BACKWARD_PAWN_EG]   = 20;   // Backward pawn penalty EG <= 20cp
         hi[IDX_ROOK_BEHIND_PASSER_MG] = 40;  // Rook behind passer MG <= 40cp
         hi[IDX_ROOK_BEHIND_PASSER_EG] = 50;  // Rook behind passer EG <= 50cp
-        hi[IDX_HANGING_PENALTY]       = 120;  // Hanging penalty <= 120cp
-        hi[IDX_KING_SAFETY_SCALE]      = 150;  // Scale <= 150 (50% stronger)
+        hi[IDX_HANGING_PENALTY]       = 40;   // Run #171: pinned at current engine-core value
+        hi[IDX_KING_SAFETY_SCALE]      = 100;  // Run #171: pinned at current engine-core value
+        hi[IDX_PIECE_ATK_BY_PAWN_MG]  = -20;  // Run #171: pinned at current engine-core value
         return hi;
     }
 
@@ -267,9 +280,10 @@ public final class EvalParams {
      *   <li>{@code material}       — indices [0, 12)</li>
      *   <li>{@code pst}            — indices [12, 780)</li>
      *   <li>{@code pawn-structure} — indices [780, 796) ∪ [823, 827) (passed, isolated, doubled, connected, backward)</li>
-     *   <li>{@code king-safety}    — indices [796, 804) ∪ {829} (shield, open files, attacker weights, hanging penalty)</li>
+     *   <li>{@code king-safety}    — indices [796, 804) ∪ {829, 830, 831} (shield, open files, attacker weights, hanging penalty, king safety scale, piece attacked by pawn)</li>
      *   <li>{@code mobility}       — indices [804, 812)</li>
      *   <li>{@code scalars}        — indices [812, 823) ∪ [827, 829) (tempo, bishop pair, rook bonuses, knight outpost, rook behind passer)</li>
+     *   <li>{@code exit-gate}       — indices [780, 796) ∪ [800, 804) ∪ [823, 827) (pawn-structure + ATK_WEIGHT_*, exit-gate combined run)</li>
      * </ul>
      *
      * @param groupName one of the six group names listed above (case-sensitive)
@@ -291,8 +305,9 @@ public final class EvalParams {
                 break;
             case "king-safety":
                 java.util.Arrays.fill(mask, IDX_SHIELD_RANK2, IDX_MOB_MG_START, true);
-                mask[IDX_HANGING_PENALTY]      = true;
-                mask[IDX_KING_SAFETY_SCALE]    = true;
+                mask[IDX_HANGING_PENALTY]         = true;
+                mask[IDX_KING_SAFETY_SCALE]       = true;
+                mask[IDX_PIECE_ATK_BY_PAWN_MG]   = true;
                 break;
             case "mobility":
                 java.util.Arrays.fill(mask, IDX_MOB_MG_START, IDX_TEMPO, true);
@@ -301,10 +316,18 @@ public final class EvalParams {
                 java.util.Arrays.fill(mask, IDX_TEMPO, IDX_CONNECTED_PAWN_MG, true);
                 java.util.Arrays.fill(mask, IDX_ROOK_BEHIND_PASSER_MG, IDX_HANGING_PENALTY, true);
                 break;
+            case "exit-gate":
+                // PASSED_MG/EG[1..6], ISOLATED, DOUBLED  [780..795]
+                java.util.Arrays.fill(mask, IDX_PASSED_MG_START, IDX_SHIELD_RANK2, true);
+                // ATK_WEIGHT_KNIGHT/BISHOP/ROOK/QUEEN     [800..803]
+                java.util.Arrays.fill(mask, IDX_ATK_KNIGHT, IDX_MOB_MG_START, true);
+                // CONNECTED_PAWN, BACKWARD_PAWN           [823..826]
+                java.util.Arrays.fill(mask, IDX_CONNECTED_PAWN_MG, IDX_ROOK_BEHIND_PASSER_MG, true);
+                break;
             default:
                 throw new IllegalArgumentException(
                     "Unknown param group: \"" + groupName + "\""
-                    + " (valid: material, pst, pawn-structure, king-safety, mobility, scalars)");
+                    + " (valid: material, pst, pawn-structure, king-safety, mobility, scalars, exit-gate)");
         }
         return mask;
     }
@@ -377,6 +400,7 @@ public final class EvalParams {
             case 828: return "ROOK_BEHIND_PASSER_EG";
             case 829: return "HANGING_PENALTY";
             case 830: return "KING_SAFETY_SCALE";
+            case 831: return "PIECE_ATK_BY_PAWN_MG";
             default:  return "PARAM[" + idx + "]";
         }
     }
@@ -541,26 +565,26 @@ public final class EvalParams {
 
         // --- Pawn structure ---
         // PASSED_MG = {0, 8, 4, 0, 8, 10, 52, 0} — indices 1..6 are tunable
-        int[] PASSED_MG = {0, 8, 4, 0, 8, 10, 52, 0};
-        int[] PASSED_EG = {0, 5, 11, 32, 59, 129, 129, 0};
+        int[] PASSED_MG = {0, 47, 40, 6, 52, 62, 122, 0};
+        int[] PASSED_EG = {0, 33, 24, 37, 53, 124, 152, 0};
         for (int i = 0; i < 6; i++) {
             p[IDX_PASSED_MG_START + i] = PASSED_MG[i + 1];
             p[IDX_PASSED_EG_START + i] = PASSED_EG[i + 1];
         }
-        p[IDX_ISOLATED_MG] = 14;
-        p[IDX_ISOLATED_EG] = 7;
-        p[IDX_DOUBLED_MG]  = 0;
-        p[IDX_DOUBLED_EG]  = 13;
+        p[IDX_ISOLATED_MG] = 16;
+        p[IDX_ISOLATED_EG] = 13;
+        p[IDX_DOUBLED_MG]  = 6;
+        p[IDX_DOUBLED_EG]  = 34;
 
         // --- King safety ---
         p[IDX_SHIELD_RANK2]   = 12;
         p[IDX_SHIELD_RANK3]   = 7;
         p[IDX_OPEN_FILE]      = 45;
         p[IDX_HALF_OPEN_FILE] = 13;
-        p[IDX_ATK_KNIGHT]     = 6;
-        p[IDX_ATK_BISHOP]     = 2;
-        p[IDX_ATK_ROOK]       = 12;
-        p[IDX_ATK_QUEEN]      = 0;
+        p[IDX_ATK_KNIGHT]     = 6;   // Run #171: synced with engine-core baseline (clamped to [25,45])
+        p[IDX_ATK_BISHOP]     = 2;   // Run #171: synced with engine-core baseline (pinned)
+        p[IDX_ATK_ROOK]       = 12;  // Run #171: synced with engine-core baseline (clamped to [20,45])
+        p[IDX_ATK_QUEEN]      = 0;   // Run #171: synced with engine-core baseline (pinned)
 
         // --- Mobility ---
         // MG: N=7, B=8, R=7, Q=2
@@ -586,14 +610,15 @@ public final class EvalParams {
         p[IDX_ROOK_SEMI_OPEN_EG]    = 19;   // Rook on semi-open file EG
         p[IDX_KNIGHT_OUTPOST_MG]    = 40;   // Knight outpost MG
         p[IDX_KNIGHT_OUTPOST_EG]    = 30;   // Knight outpost EG
-        p[IDX_CONNECTED_PAWN_MG]    = 9;    // Connected pawn bonus MG
-        p[IDX_CONNECTED_PAWN_EG]    = 4;    // Connected pawn bonus EG
-        p[IDX_BACKWARD_PAWN_MG]     = 0;    // Backward pawn penalty MG
-        p[IDX_BACKWARD_PAWN_EG]     = 0;    // Backward pawn penalty EG
+        p[IDX_CONNECTED_PAWN_MG]    = 7;    // Connected pawn bonus MG
+        p[IDX_CONNECTED_PAWN_EG]    = 6;    // Connected pawn bonus EG
+        p[IDX_BACKWARD_PAWN_MG]     = 6;    // Backward pawn penalty MG
+        p[IDX_BACKWARD_PAWN_EG]     = 20;    // Backward pawn penalty EG
         p[IDX_ROOK_BEHIND_PASSER_MG] = 12; // Rook behind passer MG
         p[IDX_ROOK_BEHIND_PASSER_EG] = 4;  // Rook behind passer EG
         p[IDX_HANGING_PENALTY]       = 40;  // Hanging piece penalty
         p[IDX_KING_SAFETY_SCALE]      = 100; // King safety scale (100 = neutral)
+        p[IDX_PIECE_ATK_BY_PAWN_MG]  = -20; // Piece attacked by pawn MG penalty
 
         return p;
     }
@@ -648,6 +673,7 @@ public final class EvalParams {
                 params[IDX_ATK_KNIGHT], params[IDX_ATK_BISHOP], params[IDX_ATK_ROOK], params[IDX_ATK_QUEEN]));
             w.write(String.format("HANGING_PENALTY=%.0f%n", params[IDX_HANGING_PENALTY]));
             w.write(String.format("KING_SAFETY_SCALE=%.0f%n", params[IDX_KING_SAFETY_SCALE]));
+            w.write(String.format("PIECE_ATTACKED_BY_PAWN_MG=%.0f%n", params[IDX_PIECE_ATK_BY_PAWN_MG]));
 
             w.write("\n## MOBILITY (MG then EG)\n");
             w.write(String.format("MG  N=%.0f B=%.0f R=%.0f Q=%.0f%n",

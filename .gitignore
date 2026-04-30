@@ -67,3 +67,6 @@ tools/*.jar
 ### Opening books ###
 tools/noob_3moves.epd
 tools/noob_3moves.epd.zip
+
+### Analysis output artifacts ###
+tools/output/

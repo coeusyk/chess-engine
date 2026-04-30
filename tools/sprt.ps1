@@ -30,7 +30,7 @@
     H1 Elo difference (default 10).
 
 .PARAMETER TC
-    Time control string passed to cutechess-cli (default '100+1').
+    Time control string passed to cutechess-cli (default '60+0.6').
 
 .PARAMETER Concurrency
     Number of games to run in parallel (default 2).
@@ -49,12 +49,15 @@ param(
     [Parameter(Mandatory)][string]$Old,
     [string]$Tag          = "sprt",
     [int]   $BonferroniM  = 1,
+    [double]$Alpha        = 0.05,
+    [double]$Beta         = 0.05,
     [double]$Elo0         = 0,
     [double]$Elo1         = 10,
-    [string]$TC           = "100+1",
+    [string]$TC           = "60+0.6",
     [int]   $Concurrency  = 2,
     [int]   $EngineThreads = 1,
     [int]   $MinGames     = 0,
+    [int]   $MaxGames     = 0,
     [string]$OpeningsFile = ""
 )
 
@@ -64,7 +67,8 @@ $ErrorActionPreference = 'Stop'
 # ─── Locate cutechess-cli ────────────────────────────────────────────────────
 $Cutechess = $env:CUTECHESS
 if (-not $Cutechess) {
-    $Cutechess = (Get-Command 'cutechess-cli' -ErrorAction SilentlyContinue)?.Source
+    $cmd = Get-Command 'cutechess-cli' -ErrorAction SilentlyContinue
+    $Cutechess = if ($cmd) { $cmd.Source } else { $null }
 }
 if (-not $Cutechess -or -not (Test-Path $Cutechess)) {
     Write-Error "cutechess-cli not found. Set `$env:CUTECHESS or add cutechess-cli.exe to PATH."
@@ -87,8 +91,8 @@ $OldResolved = Resolve-Path $Old -ErrorAction SilentlyContinue
 if (-not $OldResolved) { Write-Error "Old engine JAR not found: $Old"; exit 1 }
 
 # ─── SPRT alpha / beta (Bonferroni correction) ───────────────────────────────
-$alpha = 0.05 / $BonferroniM
-$beta  = 0.05 / $BonferroniM
+$alpha = $Alpha / $BonferroniM
+$beta  = $Beta  / $BonferroniM
 
 # ─── Opening book ────────────────────────────────────────────────────────────
 if ($OpeningsFile -eq "") {
@@ -109,7 +113,7 @@ $PgnOut = Join-Path $ResultsDir "sprt_${Tag}_${TS}.pgn"
 $LogOut = Join-Path $ResultsDir "sprt_${Tag}_${TS}.log"
 
 # ─── Summary header ──────────────────────────────────────────────────────────
-Write-Host "SPRT: new vs old  ELO0=$Elo0 ELO1=$Elo1 alpha=$alpha beta=$beta  TC=$TC  concurrency=$Concurrency  threads/engine=$EngineThreads"
+Write-Host "SPRT: new vs old  ELO0=$Elo0 ELO1=$Elo1 alpha=$alpha beta=$beta  TC=$TC  concurrency=$Concurrency  threads/engine=$EngineThreads$(if ($MaxGames -gt 0) { "  maxGames=$MaxGames" })"
 Write-Host "NEW : $($NewResolved.Path)"
 Write-Host "OLD : $($OldResolved.Path)"
 Write-Host "PGN : $PgnOut"
@@ -123,7 +127,7 @@ if ($MinGames -gt 0) { Write-Host "Min games   : $MinGames" }
 Write-Host ""
 
 # ─── Build cutechess-cli arguments ───────────────────────────────────────────
-$maxGames = if ($MinGames -gt 0) { [math]::Max($MinGames, 20000) } else { 20000 }
+$maxGames = if ($MaxGames -gt 0) { $MaxGames } elseif ($MinGames -gt 0) { [math]::Max($MinGames, 20000) } else { 20000 }
 
 $ccArgs = @(
     "-engine", "name=NEW", "cmd=$Java", "arg=-jar", "arg=$($NewResolved.Path)", "proto=uci", "option.Threads=$EngineThreads",
@@ -132,7 +136,7 @@ $ccArgs = @(
     "-games", "$maxGames",
     "-repeat",
     "-recover",
-    "-resign", "movecount=5", "score=600",
+    "-resign", "movecount=5", "score=400",
     "-draw", "movenumber=40", "movecount=8", "score=10",
     "-sprt", "elo0=$Elo0", "elo1=$Elo1", "alpha=$alpha", "beta=$beta",
     "-concurrency", "$Concurrency",

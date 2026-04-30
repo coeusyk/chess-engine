@@ -325,6 +325,53 @@ class EvaluatorTest {
                 "Mirrored pawn structure positions should produce symmetric eval");
     }
 
+    // --- Backward pawn tests ---
+    // Use a custom EvalConfig with backwardPawnMg=20,backwardPawnEg=20 so the penalty is
+    // measurable; all other weights are zeroed to isolate the backward-pawn effect on scores.
+
+    @Test
+    void backwardPawnIsolatedNotCountedAsBackward() {
+        // White pawn e4 (sq 36) is isolated — no white pawns on d- or f-file.
+        // Black pawn d6 (sq 19) attacks e5 (the stop square of e4).
+        // An isolated pawn should NOT be flagged as backward; it already takes the isolated penalty.
+        // a8=0 convention: e4=row4,file4,sq36; d6=row2,file3,sq19; stop e5=sq28.
+        EvalConfig testCfg = new EvalConfig(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 20, 0, 0);
+        Evaluator testEval = new Evaluator(testCfg);
+        Evaluator zeroEval = new Evaluator(new EvalConfig(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
+
+        Board pos = new Board("4k3/8/3p4/8/4P3/8/8/4K3 w - - 0 1");
+        assertEquals(zeroEval.evaluate(pos), testEval.evaluate(pos),
+                "Isolated pawn e4 should NOT be counted as backward (no double-penalty with isolated)");
+    }
+
+    @Test
+    void backwardPawnWithOnlyForwardNeighborIsCounted() {
+        // White pawns e4 (sq 36) and d5 (sq 27). d5 is AHEAD of e4 for white (row 3 < row 4).
+        // e4 has no support behind it. Black pawn f6 (sq 21) attacks e5 (stop of e4).
+        // e4 IS backward: neighbour is only ahead, not behind, and stop is attacked.
+        EvalConfig testCfg = new EvalConfig(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 20, 0, 0);
+        Evaluator testEval = new Evaluator(testCfg);
+        Evaluator zeroEval = new Evaluator(new EvalConfig(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
+
+        Board pos = new Board("4k3/8/5p2/3P4/4P3/8/8/4K3 w - - 0 1");
+        assertTrue(testEval.evaluate(pos) < zeroEval.evaluate(pos),
+                "e4 with only d5 ahead (no support behind) should be counted as backward — penalty applied");
+    }
+
+    @Test
+    void backwardPawnWithSupportBehindNotCounted() {
+        // White pawns e4 (sq 36) and d3 (sq 43). d3 is BEHIND e4 for white (row 5 > row 4).
+        // d3 provides rear support for e4. Black pawn d6 (sq 19) attacks e5 (stop of e4).
+        // e4 is NOT backward: the support behind it (d3) disqualifies the backward label.
+        EvalConfig testCfg = new EvalConfig(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 20, 0, 0);
+        Evaluator testEval = new Evaluator(testCfg);
+        Evaluator zeroEval = new Evaluator(new EvalConfig(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
+
+        Board pos = new Board("4k3/8/3p4/8/4P3/3P4/8/4K3 w - - 0 1");
+        assertEquals(zeroEval.evaluate(pos), testEval.evaluate(pos),
+                "e4 supported from behind (d3) should NOT be counted as backward");
+    }
+
     // --- King safety tests ---
 
     @Test
@@ -396,6 +443,40 @@ class EvaluatorTest {
 
         assertEquals(evalA, evalB,
                 "King safety should be symmetric for mirrored positions");
+    }
+
+    @Test
+    void pawnAttackPenaltyMirrorSymmetryRegression() {
+        // Sign-sensitive scenario: only White has a pawn-attacked minor piece.
+        // Compare the SAME position under PIECE_ATTACKED_BY_PAWN_MG=0 vs +20.
+        // Correct relative application must not increase White's score when penalty magnitude grows.
+        int old = EvalParams.PIECE_ATTACKED_BY_PAWN_MG;
+        try {
+            // From Phase 14 rollback postmortem (non-zero pawn-atk taper observed).
+            String fen = "1b4k1/3Q3p/p3p1p1/1Np2pq1/P7/2P1P1nP/1P6/5N1K w - - 68 35";
+
+            EvalParams.PIECE_ATTACKED_BY_PAWN_MG = 0;
+            int evalNoPenalty = evaluator.evaluate(new Board(fen));
+
+            EvalParams.PIECE_ATTACKED_BY_PAWN_MG = 20;
+            int evalPositivePenalty = evaluator.evaluate(new Board(fen));
+
+            assertTrue(evalPositivePenalty <= evalNoPenalty,
+                    "Pawn-attack perspective regression: increasing penalty magnitude must not improve White score. "
+                            + "evalNoPenalty=" + evalNoPenalty + " evalPositivePenalty=" + evalPositivePenalty);
+        } finally {
+            EvalParams.PIECE_ATTACKED_BY_PAWN_MG = old;
+        }
+    }
+
+    @Test
+    void oppositeFlankDirectionalPressureRegression() {
+        // Opposite flanks: White king on g1, Black king on c8, open h-file with White rook on h1.
+        // White has concrete kingside attacking pressure and should evaluate positively.
+        String fen = "2k5/ppp3p1/8/7Q/8/3B4/6P1/6KR w - - 0 1";
+        int score = evaluator.evaluate(new Board(fen));
+        assertTrue(score > 20,
+                "Opposite-flank directional regression: expected White advantage in attacking structure, got " + score + "cp");
     }
 
     // --- Mop-up evaluation tests ---

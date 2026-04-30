@@ -208,9 +208,19 @@ public class UciApplication {
             } else if ("quit".equals(line)) {
                 stopRequested.set(true);
                 break;
+            } else if ("eval".equals(line)) {
+                handleEval();
             }
 
             System.out.flush();
+        }
+    }
+
+    private void handleEval() {
+        coeusyk.game.chess.core.eval.Evaluator ev = new coeusyk.game.chess.core.eval.Evaluator();
+        String breakdown = ev.explainEval(board);
+        for (String line : breakdown.split("\n")) {
+            System.out.println("info string " + line);
         }
     }
 

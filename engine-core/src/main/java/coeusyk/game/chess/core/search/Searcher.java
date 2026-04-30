@@ -1,5 +1,6 @@
 package coeusyk.game.chess.core.search;
 
+import coeusyk.game.chess.core.eval.EvalParams;
 import coeusyk.game.chess.core.eval.Evaluator;
 import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Move;
@@ -29,7 +30,7 @@ public class Searcher {
     private static final int INF = 1_000_000;
     private static final int MATE_SCORE = 100_000;
     private static final int MAX_PLY = 128;
-    private static final int ASPIRATION_INITIAL_DELTA_CP = 50;
+    private static final int ASPIRATION_INITIAL_DELTA_CP = 25;
     private static final int NULL_MOVE_DEPTH_THRESHOLD = 4; // C-5 SPRT: threshold=4 won (+90.3 Elo vs baseline, H1 accepted)
     private static final int MAX_LEGAL_MOVES = 256;
     private static final int FUTILITY_MARGIN_DEPTH_1 = 150;
@@ -47,14 +48,13 @@ public class Searcher {
     private static final int TB_LOSS_SCORE = -(MATE_SCORE - 2 * MAX_PLY);
 
     // Minimum material+PST advantage (white-positive, centipawns, MG scale) required for
-    // contempt to activate.  Below this threshold the position is close enough to equal
-    // that a draw score of 0 is more appropriate.  Prevents balanced middlegames from
-    // being distorted by a non-zero contempt penalty.
-    private static final int CONTEMPT_THRESHOLD = 150;
+    // contempt to activate.  Loaded from EvalParams.CONTEMPT_THRESHOLD at call-time so
+    // the value can be overridden via the CLOP override file.
     // Default contempt value (centipawns) used by the UCI interface and the draw-failure
-    // regression tests.  Exposed as a public constant so tests can reference it without
-    // hard-coding the magic number 50.
-    public static final int DEFAULT_CONTEMPT_CP = 50;
+    // regression tests.  Derived from EvalParams.CONTEMPT_VALUE so both stay in sync when
+    // the tuning default is adjusted.  Exposed as a public constant so tests can reference
+    // it without hard-coding a magic number.
+    public static final int DEFAULT_CONTEMPT_CP = EvalParams.CONTEMPT_VALUE;
 
     // Correction history: maps pawn structure to a static-eval bias.
     // Stored at GRAIN scale; applied as: adjustedEval = rawEval + ch[color][key] / GRAIN.
@@ -1668,8 +1668,8 @@ public class Searcher {
         // incMgScore is white-positive; flip sign for black to get side-to-move advantage.
         int incMg = board.getIncMgScore();
         int sideToMoveAdv = Piece.isWhite(board.getActiveColor()) ? incMg : -incMg;
-        if (sideToMoveAdv >  CONTEMPT_THRESHOLD) return -contemptCp;
-        if (sideToMoveAdv < -CONTEMPT_THRESHOLD) return  contemptCp;
+        if (sideToMoveAdv >  EvalParams.CONTEMPT_THRESHOLD) return -contemptCp;
+        if (sideToMoveAdv < -EvalParams.CONTEMPT_THRESHOLD) return  contemptCp;
         return 0;
     }
 

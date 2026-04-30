@@ -224,7 +224,8 @@ public final class GradientDescent {
                                             double k,
                                             int maxIters,
                                             boolean recalibrateK,
-                                            boolean[] groupMask) {
+                                            boolean[] groupMask,
+                                            List<PositionFeatures> valFeatures) {
         int n = initialParams.length;
         double[] params = initialParams.clone();
 
@@ -283,7 +284,7 @@ public final class GradientDescent {
             }
 
             if (recalibrateK) {
-                double newK    = KFinder.findKFromFeatures(features, params);
+                double newK    = KFinder.findKFromFeatures(valFeatures, params);
                 double kDrift  = Math.abs(newK - k);
                 if (kDrift < 0.001) {
                     LOG.info(String.format("[Adam/fast] K stable (drift=%.6f < 0.001), skipping recalibration", kDrift));
@@ -323,7 +324,7 @@ public final class GradientDescent {
     public static double[] tuneWithFeatures(List<PositionFeatures> features,
                                             double[] initialParams,
                                             double k) {
-        return tuneWithFeatures(features, initialParams, k, DEFAULT_MAX_ITERATIONS, true, null);
+        return tuneWithFeatures(features, initialParams, k, DEFAULT_MAX_ITERATIONS, true, null, features);
     }
 
     /**
@@ -334,7 +335,7 @@ public final class GradientDescent {
                                             double k,
                                             int maxIters,
                                             boolean recalibrateK) {
-        return tuneWithFeatures(features, initialParams, k, maxIters, recalibrateK, null);
+        return tuneWithFeatures(features, initialParams, k, maxIters, recalibrateK, null, features);
     }
 
     /**
@@ -347,8 +348,9 @@ public final class GradientDescent {
                                             int maxIters,
                                             boolean recalibrateK,
                                             boolean[] groupMask,
+                                            List<PositionFeatures> valFeatures,
                                             TunerRunMetrics metrics) {
-        return tuneWithFeatures(features, initialParams, k, maxIters, recalibrateK, groupMask);
+        return tuneWithFeatures(features, initialParams, k, maxIters, recalibrateK, groupMask, valFeatures);
     }
 
     /**
@@ -502,7 +504,8 @@ public final class GradientDescent {
                                                  double k,
                                                  int maxIters,
                                                  boolean recalibrateK,
-                                                 boolean[] groupMask) {
+                                                 boolean[] groupMask,
+                                                 List<PositionFeatures> valFeatures) {
         final int n = initialParams.length;
         final int m = LBFGS_M;
 
@@ -634,7 +637,7 @@ public final class GradientDescent {
 
             // K recalibration
             if (recalibrateK) {
-                double newK   = KFinder.findKFromFeatures(features, params);
+                double newK   = KFinder.findKFromFeatures(valFeatures, params);
                 double kDrift = Math.abs(newK - k);
                 if (kDrift >= 0.001) {
                     LOG.info(String.format("[L-BFGS] K recalibrated: %.6f \u2192 %.6f (drift=%.6f)", k, newK, kDrift));
@@ -671,7 +674,7 @@ public final class GradientDescent {
     public static double[] tuneWithFeaturesLBFGS(List<PositionFeatures> features,
                                                  double[] initialParams,
                                                  double k) {
-        return tuneWithFeaturesLBFGS(features, initialParams, k, DEFAULT_MAX_ITERATIONS, true, null);
+        return tuneWithFeaturesLBFGS(features, initialParams, k, DEFAULT_MAX_ITERATIONS, true, null, features);
     }
 
     /**
@@ -682,7 +685,7 @@ public final class GradientDescent {
                                                  double k,
                                                  int maxIters,
                                                  boolean recalibrateK) {
-        return tuneWithFeaturesLBFGS(features, initialParams, k, maxIters, recalibrateK, null);
+        return tuneWithFeaturesLBFGS(features, initialParams, k, maxIters, recalibrateK, null, features);
     }
 
     /**
@@ -695,8 +698,9 @@ public final class GradientDescent {
                                                  int maxIters,
                                                  boolean recalibrateK,
                                                  boolean[] groupMask,
+                                                 List<PositionFeatures> valFeatures,
                                                  TunerRunMetrics metrics) {
-        return tuneWithFeaturesLBFGS(features, initialParams, k, maxIters, recalibrateK, groupMask);
+        return tuneWithFeaturesLBFGS(features, initialParams, k, maxIters, recalibrateK, groupMask, valFeatures);
     }
 
     // -------------------------------------------------------------------------

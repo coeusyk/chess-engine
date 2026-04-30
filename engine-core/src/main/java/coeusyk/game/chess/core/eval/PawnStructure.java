@@ -4,9 +4,6 @@ public final class PawnStructure {
 
     private PawnStructure() {}
 
-    private static final int[] PASSED_MG = {0, 8, 4, 0, 8, 10, 52, 0};
-    private static final int[] PASSED_EG = {0, 5, 11, 32, 59, 129, 129, 0};
-
     private static final int ISOLATED_MG = 14;
     private static final int ISOLATED_EG = 7;
 
@@ -72,12 +69,23 @@ public final class PawnStructure {
             if ((enemy & masks[sq]) == 0) {
                 int row = sq / 8;
                 int idx = white ? (7 - row) : row;
-                mg += PASSED_MG[idx];
-                eg += PASSED_EG[idx];
+                mg += EvalParams.PASSED_PAWN_RANK_BONUS_MG[idx];
+                eg += EvalParams.PASSED_PAWN_RANK_BONUS_EG[idx];
             }
             temp &= temp - 1;
         }
         return new int[]{mg, eg};
+    }
+
+    /**
+     * Returns the net passed-pawn score [mg, eg] = white minus black.
+     * Exposed as a public method so {@link Evaluator#explainEval()} can report
+     * the passed-pawn contribution as a separate line from the overall pawn-structure total.
+     */
+    public static int[] passedPawnResult(long whitePawns, long blackPawns) {
+        int[] wp = passedPawnScores(whitePawns, blackPawns, true);
+        int[] bp = passedPawnScores(blackPawns, whitePawns, false);
+        return new int[]{wp[0] - bp[0], wp[1] - bp[1]};
     }
 
     private static int isolatedCount(long pawns) {

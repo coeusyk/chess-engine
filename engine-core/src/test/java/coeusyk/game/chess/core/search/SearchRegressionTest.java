@@ -212,7 +212,10 @@ class SearchRegressionTest {
             //     Lower hanging penalty (52→40) and higher rook attack weight (9→12) slightly
             //     shift depth-8 king-advance ordering toward b4b5 (pawn push). All of
             //     c1c2, c1d2, c1b2, c4c5, b4b5 win; choice is eval-dependent.
-            Arguments.of("P5",  P5_FEN,  "b4b5"),
+            //     Updated Phase 14 A-4: ASPIRATION_INITIAL_DELTA_CP 50→25 shifts TT ordering;
+            //     depth-8 preference returns to c1d2 (king activation). All of c1c2, c1d2,
+            //     c1b2, c4c5, b4b5 win; choice is eval-dependent.
+            Arguments.of("P5",  P5_FEN,  "c1d2"),
             Arguments.of("P6",  P6_FEN,  "f4f5"),
             // P7: 8/3P4/8/8/8/8/8/3K1k2 — Kd1+Pd7 vs Kf1. d7d8q (immediate promotion)
             //     and d1d2 (king advance toward f1 before promoting) both win. d7d8q gains
@@ -273,7 +276,10 @@ class SearchRegressionTest {
             //     d7/e6). Both f1f6 and f1b5 are winning KQK continuations; equivalent.
             //     Reverted 2026-04-10: eval-mode PSTs reverted (issue #141 post-mortem); depth-8
             //     preference returns to f1f6 (textbook 6th-rank restriction). Both win; equivalent.
-            Arguments.of("E1",  E1_FEN,  "f1f6"),
+            //     Updated Phase 14 A-4: ASPIRATION_INITIAL_DELTA_CP 50→25 shifts TT ordering;
+            //     depth-8 preference shifts to f1b5 (queen to bishop-5 diagonal — restricts BK
+            //     from d7/e6). Both f1f6 and f1b5 are winning KQK continuations; equivalent.
+            Arguments.of("E1",  E1_FEN,  "f1b5"),
             // E2: 4k3/8/8/8/8/8/8/4KR2 — KR vs K.  f1f6 (rook-to-6th restriction) and
             //     e1d2 (king activation toward centre) both win; known theoretical equivalence.
             //     Updated 2026-04-03: cheap bitboard hanging-penalty (replacing SEE-based form)
@@ -328,7 +334,11 @@ class SearchRegressionTest {
             //     Knight weight bump (5→6) slightly raises knight-centralisation scores;
             //     depth-8 preference shifts to d2f3 (knight to f3, attacks e5+h4). Both
             //     b2c3 and d2f3 are correct KBN technique; choice is eval-dependent.
-            Arguments.of("E7",  E7_FEN,  "d2f3"),
+            //     Updated 2026-04-25: Phase 14 asymmetry fixes (pawn-attack perspective +
+            //     opposite-flank defender scaling) rebalance king-safety/mobility terms;
+            //     depth-8 preference shifts back to b2c3 (king centralisation). Both b2c3
+            //     and d2f3 remain valid KBN winning technique; ordering is eval-dependent.
+            Arguments.of("E7",  E7_FEN,  "b2c3"),
             // E8: 7k/p7/8/8/8/8/7P/6RK — Kh1+Rg1+Ph2 vs Kh8+Pa7. g1g5 (active rook,
             //     centralises to 5th rank) and h2h4 (pawn race) both win. Choice is eval-dependent.
             //     Updated 2026-04-02: new terms shift preference to g1g5.
@@ -451,6 +461,28 @@ class SearchRegressionTest {
                 "Horizon blindness regression (Issue #138): engine returned "
                 + result.scoreCp() + "cp from Q1_FEN — expected > 200cp (Black winning). "
                 + "Bestmove: " + (result.bestMove() != null ? toUci(result.bestMove()) : "null"));
+    }
+
+    // ── Contempt prevents repetition draw — Issue #174 ─────────────────
+    // With contempt enabled, the engine must NOT return a draw score (0) from the
+    // Phase 13 regression FEN where Black is clearly winning.  This test specifically
+    // validates that EvalParams.CONTEMPT_THRESHOLD is applied correctly when
+    // setContempt() is active — independent of Fix 2 (hanging penalty suppression).
+    @Test
+    @Tag("regression")
+    void contemptPreventsRepetitionDrawFromWinningPosition() {
+        Board board = new Board(Q1_FEN);
+        Searcher searcher = new Searcher();
+        searcher.setContempt(Searcher.DEFAULT_CONTEMPT_CP);
+        SearchResult result = searcher.searchDepth(board, Q1_DEPTH);
+        assertNotEquals(0, result.scoreCp(),
+                "Contempt regression (Issue #174): engine returned neutral draw score (0) from "
+                + Q1_FEN + " with contempt=" + Searcher.DEFAULT_CONTEMPT_CP + "cp. "
+                + "Engine should not accept a repetition draw when winning. Bestmove: "
+                + (result.bestMove() != null ? toUci(result.bestMove()) : "null"));
+        assertTrue(result.scoreCp() > 0,
+                "Contempt regression (Issue #174): engine should score Q1_FEN as winning for "
+                + "Black with contempt enabled, got: " + result.scoreCp() + "cp");
     }
 
     // ── Helper ──────────────────────────────────────────────────────

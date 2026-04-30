@@ -20,6 +20,7 @@ Update the active phase file instead of appending to this index.
 - [dev-entries/phase-11.md](dev-entries/phase-11.md)
 - [dev-entries/phase-12.md](dev-entries/phase-12.md)
 - [dev-entries/phase-13.md](dev-entries/phase-13.md)
+- [dev-entries/phase-14.md](dev-entries/phase-14.md)
 
 ## Notes
 - Keep one entry per meaningful implementation/change day.
