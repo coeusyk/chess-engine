@@ -34,3 +34,5 @@ jobs:
         run: mvn -B test -pl engine-core -Dgroups=benchmark -Dbenchmark.enabled=true -Dnps.baseline=160000 -Dnps.threshold=0.05
         # Baseline calibrated to GitHub-hosted ubuntu-latest runner (~183k NPS measured).
         # 5% tolerance → floor of 152,000 NPS. Pawn-hash hit rate ≥85% checked inside the test.
+        # Local Ryzen 7 7700X Phase 14 baseline: 316,964 NPS (31-pos/d13 BenchRunner, gate floor 301,116).
+        # These are different measurement protocols — do not conflate the CI runner value with the local bench value.

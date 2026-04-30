@@ -30,7 +30,7 @@
     H1 Elo difference (default 10).
 
 .PARAMETER TC
-    Time control string passed to cutechess-cli (default '100+1').
+    Time control string passed to cutechess-cli (default '60+0.6').
 
 .PARAMETER Concurrency
     Number of games to run in parallel (default 2).
@@ -53,7 +53,7 @@ param(
     [double]$Beta         = 0.05,
     [double]$Elo0         = 0,
     [double]$Elo1         = 10,
-    [string]$TC           = "100+1",
+    [string]$TC           = "60+0.6",
     [int]   $Concurrency  = 2,
     [int]   $EngineThreads = 1,
     [int]   $MinGames     = 0,
@@ -136,7 +136,7 @@ $ccArgs = @(
     "-games", "$maxGames",
     "-repeat",
     "-recover",
-    "-resign", "movecount=5", "score=600",
+    "-resign", "movecount=5", "score=400",
     "-draw", "movenumber=40", "movecount=8", "score=10",
     "-sprt", "elo0=$Elo0", "elo1=$Elo1", "alpha=$alpha", "beta=$beta",
     "-concurrency", "$Concurrency",

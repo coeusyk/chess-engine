@@ -209,7 +209,7 @@ public class Evaluator {
         mgScore += pawnMg;
         egScore += pawnEg;
 
-        mgScore += KingSafety.evaluatePawnShieldAndFiles(board)
+        mgScore += KingSafety.evaluatePawnShieldAndFiles(board, tempWhiteAttackWeight, tempBlackAttackWeight)
                  + KingSafety.safetyTablePenalty(tempWhiteAttackWeight)
                  - KingSafety.safetyTablePenalty(tempBlackAttackWeight);
 
@@ -265,7 +265,7 @@ public class Evaluator {
 
         // --- Piece attacked by pawn penalty: full weight in opening/MG (phase >= 5),
         //     linear taper to 0 below that threshold (~20% of TOTAL_PHASE). ---
-        score += (pieceAttackedByPawnPenalty(board, whitePawnAtk, blackPawnAtk, allOccupancy)
+        score += (pieceAttackedByPawnRelative(board, whitePawnAtk, blackPawnAtk, allOccupancy)
                  * Math.min(TOTAL_PHASE, phase * 5)) / TOTAL_PHASE;
 
         // --- Tempo bonus (applied after phase interpolation) ---
@@ -307,7 +307,7 @@ public class Evaluator {
         int pawnMg = ps[0], pawnEg = ps[1];
         int[] pp = PawnStructure.passedPawnResult(board.getWhitePawns(), board.getBlackPawns());
 
-        int kingSafetyMg = KingSafety.evaluatePawnShieldAndFiles(board)
+        int kingSafetyMg = KingSafety.evaluatePawnShieldAndFiles(board, tempWhiteAttackWeight, tempBlackAttackWeight)
                          + KingSafety.safetyTablePenalty(tempWhiteAttackWeight)
                          - KingSafety.safetyTablePenalty(tempBlackAttackWeight);
 
@@ -354,7 +354,7 @@ public class Evaluator {
         int interpolated = (totalMg * phase + (totalEg + mopUp) * (TOTAL_PHASE - phase)) / TOTAL_PHASE;
 
         int papTaper = Math.min(TOTAL_PHASE, phase * 5);
-        int pap = (pieceAttackedByPawnPenalty(board, whitePawnAtk, blackPawnAtk, allOcc) * papTaper) / TOTAL_PHASE;
+        int pap = (pieceAttackedByPawnRelative(board, whitePawnAtk, blackPawnAtk, allOcc) * papTaper) / TOTAL_PHASE;
 
         int tempo = Piece.isWhite(board.getActiveColor()) ? EvalParams.TEMPO : -EvalParams.TEMPO;
         int hanging = hangingPenalty(board);
@@ -388,23 +388,26 @@ public class Evaluator {
         return sb.toString();
     }
 
-    /**
-     * Penalty for minor pieces and rooks that are attacked by an enemy pawn and have at
-     * most one safe retreat square (not occupied by a friendly piece, not enemy-controlled).
-     *
-     * <p>Returns a white-positive score: negative when white has such attacked pieces,
-     * positive when black does.  The caller applies a custom taper: full weight for
-     * phase &ge; 5 (opening + middlegame), linear fade to zero below that threshold.</p>
-     */
-    private int pieceAttackedByPawnPenalty(Board board, long whitePawnAtk, long blackPawnAtk,
-                                           long allOcc) {
-        int wCount = countPiecesAtkByPawnWithFewRetreats(
+        /**
+         * Relative piece-attacked-by-pawn term (white-positive):
+         * {@code penalty(black) - penalty(white)}.
+         *
+         * <p>Each side penalty is the count of minor pieces/rooks attacked by enemy pawns with
+         * at most one safe retreat square, multiplied by the configured penalty magnitude.
+         */
+        private int pieceAttackedByPawnRelative(Board board, long whitePawnAtk, long blackPawnAtk,
+                            long allOcc) {
+        int whiteCount = countPiecesAtkByPawnWithFewRetreats(
                 board.getWhiteKnights(), board.getWhiteBishops(), board.getWhiteRooks(),
                 blackPawnAtk, allOcc, board.getWhiteOccupancy(), board.getAttackedByBlack());
-        int bCount = countPiecesAtkByPawnWithFewRetreats(
+        int blackCount = countPiecesAtkByPawnWithFewRetreats(
                 board.getBlackKnights(), board.getBlackBishops(), board.getBlackRooks(),
                 whitePawnAtk, allOcc, board.getBlackOccupancy(), board.getAttackedByWhite());
-        return (wCount - bCount) * EvalParams.PIECE_ATTACKED_BY_PAWN_MG;
+
+        int penaltyMagnitude = Math.abs(EvalParams.PIECE_ATTACKED_BY_PAWN_MG);
+        int whitePenalty = whiteCount * penaltyMagnitude;
+        int blackPenalty = blackCount * penaltyMagnitude;
+        return blackPenalty - whitePenalty;
     }
 
     /**

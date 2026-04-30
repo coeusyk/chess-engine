@@ -37,6 +37,12 @@ public final class EvalParams {
     /** Penalty per half-open file adjacent to (or on) the king's file. */
     public static int HALF_OPEN_FILE_PENALTY = 13;
 
+    /**
+     * Scale (in percent) applied to defender-side pawn-shield/open-file score when kings are
+     * on opposite flanks. 100 = no discount, 75 = 0.75x.
+     */
+    public static int OPPOSITE_FLANK_SHIELD_SCALE = 75;
+
     /** Attacker-pressure weight for enemy knights near the king. */
     public static int ATK_WEIGHT_KNIGHT = 6;
 
@@ -124,7 +130,7 @@ public final class EvalParams {
      * silently ignored. Lines starting with {@code #} and blank lines are skipped.
      *
      * <p><b>Recognised keys:</b> SHIELD_RANK2, SHIELD_RANK3, OPEN_FILE_PENALTY,
-     * HALF_OPEN_FILE_PENALTY, ATK_WEIGHT_KNIGHT, ATK_WEIGHT_BISHOP,
+    * HALF_OPEN_FILE_PENALTY, OPPOSITE_FLANK_SHIELD_SCALE, ATK_WEIGHT_KNIGHT, ATK_WEIGHT_BISHOP,
      * ATK_WEIGHT_ROOK, ATK_WEIGHT_QUEEN, KING_SAFETY_SCALE, HANGING_PENALTY,
      * PIECE_ATTACKED_BY_PAWN_MG, TEMPO, CONTEMPT_THRESHOLD, CONTEMPT_VALUE,
      * PASSED_MG_1..PASSED_MG_6, PASSED_EG_1..PASSED_EG_6.
@@ -147,6 +153,7 @@ public final class EvalParams {
                     case "SHIELD_RANK3":           SHIELD_RANK3           = v; break;
                     case "OPEN_FILE_PENALTY":      OPEN_FILE_PENALTY      = v; break;
                     case "HALF_OPEN_FILE_PENALTY": HALF_OPEN_FILE_PENALTY = v; break;
+                    case "OPPOSITE_FLANK_SHIELD_SCALE": OPPOSITE_FLANK_SHIELD_SCALE = Math.max(0, Math.min(100, v)); break;
                     case "ATK_WEIGHT_KNIGHT":      ATK_WEIGHT_KNIGHT      = v; break;
                     case "ATK_WEIGHT_BISHOP":      ATK_WEIGHT_BISHOP      = v; break;
                     case "ATK_WEIGHT_ROOK":        ATK_WEIGHT_ROOK        = v; break;

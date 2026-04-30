@@ -95,6 +95,8 @@ public class Board {
 
     private static final long FILE_A = 0x0101010101010101L;
     private static final long FILE_H = 0x8080808080808080L;
+    private static final long RANK_8 = 0x00000000000000FFL;
+    private static final long RANK_1 = 0xFF00000000000000L;
 
     // Board Attributes:
     private int activeColor = Piece.White;  // The color to move
@@ -364,6 +366,53 @@ public class Board {
         fenString.append(fullMoves);
 
         return new String(fenString);
+    }
+
+    /**
+     * Validates whether the provided FEN represents a legal chess position.
+     *
+     * <p>This performs stricter checks than basic FEN parsing:
+     * exactly one king per side, no pawns on first/eighth rank,
+     * kings not adjacent, and check-state consistency with side-to-move.
+     */
+    public static boolean isLegalFen(String fenString) {
+        try {
+            Board board = new Board(fenString);
+
+            if (Long.bitCount(board.whiteKing) != 1 || Long.bitCount(board.blackKing) != 1) {
+                return false;
+            }
+
+            long allPawns = board.whitePawns | board.blackPawns;
+            if ((allPawns & (RANK_1 | RANK_8)) != 0L) {
+                return false;
+            }
+
+            int whiteKingSquare = Long.numberOfTrailingZeros(board.whiteKing);
+            int blackKingSquare = Long.numberOfTrailingZeros(board.blackKing);
+            if ((AttackTables.KING_ATTACKS[whiteKingSquare] & (1L << blackKingSquare)) != 0L) {
+                return false;
+            }
+
+            boolean whiteInCheck = board.isSquareAttackedBy(whiteKingSquare, Piece.Black);
+            boolean blackInCheck = board.isSquareAttackedBy(blackKingSquare, Piece.White);
+
+            if (whiteInCheck && blackInCheck) {
+                return false;
+            }
+
+            // In a legal position, the side that just moved cannot have left its own king in check.
+            if (Piece.isWhite(board.activeColor) && blackInCheck) {
+                return false;
+            }
+            if (Piece.isBlack(board.activeColor) && whiteInCheck) {
+                return false;
+            }
+
+            return true;
+        } catch (RuntimeException ignored) {
+            return false;
+        }
     }
 
     private void checkEPTargetSquare(String epts) {

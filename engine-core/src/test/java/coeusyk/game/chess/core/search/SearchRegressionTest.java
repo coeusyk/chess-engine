@@ -334,7 +334,11 @@ class SearchRegressionTest {
             //     Knight weight bump (5→6) slightly raises knight-centralisation scores;
             //     depth-8 preference shifts to d2f3 (knight to f3, attacks e5+h4). Both
             //     b2c3 and d2f3 are correct KBN technique; choice is eval-dependent.
-            Arguments.of("E7",  E7_FEN,  "d2f3"),
+            //     Updated 2026-04-25: Phase 14 asymmetry fixes (pawn-attack perspective +
+            //     opposite-flank defender scaling) rebalance king-safety/mobility terms;
+            //     depth-8 preference shifts back to b2c3 (king centralisation). Both b2c3
+            //     and d2f3 remain valid KBN winning technique; ordering is eval-dependent.
+            Arguments.of("E7",  E7_FEN,  "b2c3"),
             // E8: 7k/p7/8/8/8/8/7P/6RK — Kh1+Rg1+Ph2 vs Kh8+Pa7. g1g5 (active rook,
             //     centralises to 5th rank) and h2h4 (pawn race) both win. Choice is eval-dependent.
             //     Updated 2026-04-02: new terms shift preference to g1g5.

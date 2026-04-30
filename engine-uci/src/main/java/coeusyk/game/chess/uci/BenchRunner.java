@@ -9,7 +9,7 @@ import java.util.Locale;
 /**
  * Standard fixed-depth benchmark for Vex.
  *
- * <p>Runs the engine at a fixed depth over a canonical set of 33 positions
+ * <p>Runs the engine at a fixed depth over a canonical set of 31 positions
  * (Stockfish bench suite, public domain) and reports total nodes searched,
  * elapsed wall time, and NPS.
  *
@@ -37,21 +37,24 @@ public class BenchRunner {
     private static final int BENCH_HASH_MB = 16;
 
     /**
-     * The 33-position Stockfish bench suite (public domain).
+     * The 31-position Stockfish bench suite (public domain).
      * Positions cover a wide range of middle-game structures, endgames, and
      * tactical motifs to exercise all major search and evaluation branches.
+     *
+     * <p>All FENs in this list must be legal chess positions. {@link #run(int)}
+     * validates every FEN at startup and throws {@link IllegalStateException}
+     * if any is illegal, preventing silent skips that distort the NPS baseline.
      */
     private static final String[] BENCH_FENS = {
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
         "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
         "4k3/8/8/8/8/8/4P3/4K3 w - - 5 39",
-        "8/8/8/8/8/5k2/5p2/5K2 w - - 0 67",
         "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
         "rnbqkbnr/p1pppppp/8/1p6/2PP4/8/PP2PPPP/RNBQKBNR b KQkq c3 0 2",
         "r1bq1r1k/1pp1n1pp/1p1p4/4p2b/2B1P3/P1N1NP2/1PP3PP/R1BQ1RK1 w - - 2 14",
         "r3r1k1/2p2ppp/p1p1bn2/8/1q2P3/2NPQN2/PPP3PP/R4RK1 b - - 2 24",
         "r1bb4/3n1k2/p3p3/1p1pPp2/1Pp5/2P2N1B/P4PPP/4RK2 w - - 2 21",
-        "3r4/8/1q6/2p5/pp1P3k/P4P1p/1P2R1r1/7K w - - 0 45",
+        "r1bq1rk1/ppp1nppp/4n3/3p3Q/3P4/1BP1B3/PP1N2PP/R4RK1 w - - 1 16",
         "6k1/3r4/2R5/P5pp/3b4/6P1/5PK1/8 w - - 1 45",
         "r1bq1rk1/pp2ppbp/2np1np1/8/3NP3/2N1BP2/PPPQ2PP/R4RK1 b - - 0 10",
         "8/p7/1p2k1p1/2p5/2P1b3/1P3P2/P2K4/8 b - - 0 38",
@@ -69,7 +72,6 @@ public class BenchRunner {
         "r2r4/8/k2N4/6B1/p7/P5P1/4K2P/1R6 w - - 4 46",
         "8/3b2kp/4p1p1/1p1n4/1P6/3NB3/6PP/6K1 b - - 0 34",
         "r3k2r/4npp1/1pq1p2p/p6b/PpP1PP1P/7N/2P1QP2/R1B2RK1 b kq - 0 18",
-        "1Q6/5pk1/2p3p1/1p2N2p/1b5P/1bn5/2r3P1/2K5 b - - 0 44",
         "8/8/k7/1p6/2p5/2P1K3/8/8 b - - 0 67",
         "8/6b1/p1p4p/2P5/P1B2P1k/8/2K3P1/8 b - - 0 58",
         "6k1/4pp1p/3p2p1/P1pPb3/R7/1r2P1PP/3B1P2/6K1 w - - 0 40",
@@ -91,6 +93,15 @@ public class BenchRunner {
     public void run(int depth) {
         long totalNodes = 0L;
         long startMs    = System.currentTimeMillis();
+
+        // Validate the entire suite before searching. An illegal FEN must be
+        // removed from the source — silent runtime skips distort the NPS baseline.
+        for (int i = 0; i < BENCH_FENS.length; i++) {
+            if (!Board.isLegalFen(BENCH_FENS[i])) {
+                throw new IllegalStateException(
+                    "BENCH_FENS[" + i + "] is not a legal chess position: " + BENCH_FENS[i]);
+            }
+        }
 
         System.out.printf(Locale.US,
             "Bench   : depth %d | hash %d MB | %d positions%n",

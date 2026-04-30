@@ -59,11 +59,14 @@ public final class KingSafety {
      * Returns only the pawn shield + open-file components of king safety (white minus black),
      * mg-only. Attacker penalties are computed in Evaluator's merged mobility pass.
      *
-     * <p>When the kings are on opposite sides of the board (one on files a-d, the other on
-     * e-h), direct pawn-shield attacks are less relevant and the raw shield/open-file bonus
-     * is halved for both sides to avoid over-weighting static structure in dynamic positions.
+     * <p>When kings are on opposite flanks (one on files a-d, the other on e-h), defender-side
+     * shield structure is discounted to avoid over-valuing static shelter in dynamic attack races.
+     * Only the side currently under higher king-zone pressure is scaled.
+     *
+     * @param whiteAttackWeight attacker weight on Black king (from White pieces)
+     * @param blackAttackWeight attacker weight on White king (from Black pieces)
      */
-    public static int evaluatePawnShieldAndFiles(Board board) {
+    public static int evaluatePawnShieldAndFiles(Board board, int whiteAttackWeight, int blackAttackWeight) {
         long wKing = board.getWhiteKing();
         long bKing = board.getBlackKing();
         int wScore = wKing != 0L ? evaluateCheapSide(board, true)  : 0;
@@ -73,8 +76,12 @@ public final class KingSafety {
             int wFile = Long.numberOfTrailingZeros(wKing) % 8;
             int bFile = Long.numberOfTrailingZeros(bKing) % 8;
             if ((wFile < 4) != (bFile < 4)) {
-                wScore /= 2;
-                bScore /= 2;
+                int scale = EvalParams.OPPOSITE_FLANK_SHIELD_SCALE;
+                if (blackAttackWeight > whiteAttackWeight) {
+                    wScore = (wScore * scale) / 100;
+                } else if (whiteAttackWeight > blackAttackWeight) {
+                    bScore = (bScore * scale) / 100;
+                }
             }
         }
         return wScore - bScore;
