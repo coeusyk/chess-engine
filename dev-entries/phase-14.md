@@ -701,3 +701,100 @@ mobility SPRT also returning H0 (−21.4 Elo, 210 games).
   Adam LR adjustments, since this experiment shows LR is not the limiting factor.
 
 **Measurements:** See Attempt 1/2 detail above. No SPRT run for this issue.
+
+---
+
+### [2026-07-01] Phase 14 — A-3 Pawn Structure Group Tuning CLOSED — Deferred
+
+**Background:** Per Issue #172's own acceptance criteria, a deferral is valid if either (a)
+STARVED params can't be cleanly excluded, or (b) the tuning result itself doesn't clear the
+bar to justify a Windows-PC SPRT run. Fresh `--coverage-audit` run this session (post
+eval-asymmetry-fix, post-SAFETY_TABLE-extension — the tracked `coverage-audit-report.csv`
+was stale/uncommitted from before those changes) confirms condition (a) does not apply:
+
+| Param | Idx | Fisher | Status |
+|---|---|---|---|
+| CONNECTED_PAWN_MG | 823 | 4.239e-07 | ok |
+| CONNECTED_PAWN_EG | 824 | 2.420e-07 | ok |
+| BACKWARD_PAWN_MG | 825 | 4.200e-08 | ok |
+| BACKWARD_PAWN_EG | 826 | 3.336e-08 | ok |
+
+All four comfortably above the STARVED threshold (1.754e-08) — no coverage gap. Note
+`BACKWARD_PAWN_EG` is currently pinned at its upper bound (20.0); flagged for Task 14.6
+PARAMMAX audit, not a blocker here.
+
+**Single Adam pass (200 iters, K frozen at 2.773456, same corpus/split as A-1/A-2):**
+
+- Baseline val MSE (untouched eval, same corpus/split): 0.06203967
+- Early-stopped at 79/200 iterations (convergence delta-threshold)
+- Train MSE: start → 0.06777515 (net improvement)
+- **Final val MSE (K re-optimized to 2.438280): 0.06470321 — worse than baseline (+4.29%
+  relative)**
+- Validator: `OVERALL: PASS` (Convergence/MaterialBounds/Sanity/Smoke) — same caveat as
+  A-1/A-2: these gates don't test corpus-fit quality against the untouched baseline.
+
+**Decision:**
+
+- **A-3 (Issue #172) closed as deferred**, per the issue's own condition (b). This is the
+  third parameter group (after A-1 king-safety, A-2 mobility) to show the identical
+  "trains fine, val MSE regresses" pattern on this corpus, and the first with *zero*
+  coverage issues — ruling out corpus starvation as the explanation for this group.
+  Per plan, this was a single documented Adam pass — no LR/optimizer experiments were run
+  (that rabbit hole was already explored and falsified for A-2).
+- No pawn-structure params applied to `EvalParams.java` on this branch; no SPRT run.
+- Combined with A-1/A-2, this closes out all three Phase 13/14 scalar-group retunes on
+  `quiet-labeled.epd` with the same negative result, strengthening the case that the
+  pattern is corpus/gameplay-distribution mismatch rather than per-group coverage gaps —
+  see Task 14.7 (WDL self-play pilot) for the direct test of that hypothesis.
+
+**Measurements:** See Adam pass detail above. No SPRT run for this issue.
+
+---
+
+### [2026-07-01] Phase 14 — Task 14.7 (WDL Self-Play Pilot) CLOSED — Deferred Indefinitely, Superseded by NNUE (Phase 17)
+
+**Background:** After A-1/A-2/A-3 all showed the identical "trains fine on
+`quiet-labeled.epd`, val MSE regresses, SPRT/MSE-implied Elo negative" pattern with clean
+Fisher coverage in every case, Task 14.7 (self-play WDL pilot, promoted from Task 13.10) was
+proposed to test whether the pattern is corpus/gameplay-distribution mismatch rather than a
+property of the parameter groups themselves.
+
+**Investigation before committing to fresh self-play generation:**
+
+- Found `data/wdl-selfplay.epd` (100,000 positions, extracted from 12 SPRT PGN files,
+  committed 2026-04-13 during Phase 13, commit `c3f5cde`) already present and unused in the
+  repo. Confirmed it loads cleanly under the current `TunerMain --corpus-format epd` path
+  (100,000 positions, mobility group Fisher coverage clean — all 8 `MOB_*` params `ok`).
+- Checked `dev-entries/phase-13.md` for prior self-play-WDL history and found two
+  undocumented-until-now failure precedents in this exact project:
+  1. The original 28,902-position self-play corpus (Phase 12, low-depth self-play) produced
+     a **catastrophic −465 Elo regression** when its tuned params were applied (155 games,
+     4-139-12, LOS 0.0%). Root cause recorded as "the 28k selfplay corpus was too small and
+     biased, leading the tuner to massively reduce piece values" (R_MG 558→423, Q_MG
+     1200→1068, Q_EG 991→801).
+  2. A later WDL corpus-loading bug caused `PositionLoader.load()` to silently load **zero
+     positions** for an entire WDL tuning attempt — `tools/wdl_tuned_params.txt` in the repo
+     is the output of that no-op run (unchanged initial params), not a real tuning result.
+
+**Decision:**
+
+- **Task 14.7 closed as deferred indefinitely, superseded by NNUE (Phase 17).** Reasoning:
+  - The −465 Elo precedent is a structural failure mode of self-play-derived WDL labels at
+    Vex's current playing strength (noisy/inaccurate outcome labels, insufficient diversity),
+    not a one-off bug — repeating it (even with group-restricted tuning, which is immune to
+    the specific *material-collapse* mechanism but not necessarily to the underlying label-
+    noise problem) carries real risk for uncertain payoff.
+  - `data/wdl-selfplay.epd` predates the Phase 14 eval-asymmetry fix (`44aea1a`) and the
+    SAFETY_TABLE 18→32 extension (`063bb1a`) — its positions were generated under a
+    materially different eval than current HEAD, so its labels are stale relative to the
+    engine being tuned. **Not used** for a pilot run, per explicit decision.
+  - Combined with A-1/A-2/A-3 (6 independent tuning attempts across Phase 13 and Phase 14,
+    3 parameter groups, all with clean or resolved Fisher coverage, 0 H1 results), this is
+    treated as sufficient evidence that the classical eval scalars are near a local optimum
+    for Vex's current strength on any corpus tried so far. Further classical-eval tuning
+    investment is deprioritized in favor of Phase 15 search tuning (which has a confirmed
+    +156 Elo precedent this phase, via A-4 aspiration delta) and eventual NNUE work
+    (Phase 17), rather than a fourth corpus-quality experiment.
+- No self-play games were generated. No Windows-PC time was spent on this task.
+
+**Measurements:** N/A — no tuning run was executed against real (non-stale) data.
