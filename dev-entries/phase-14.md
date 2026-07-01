@@ -635,3 +635,69 @@ but the group as a whole still fits the corpus worse than the hand-tuned baselin
   a Windows-PC SPRT run).
 
 **Measurements:** See Attempt 4 detail above. No SPRT run for this attempt.
+
+---
+
+### [2026-07-01] Phase 14 — A-2 Mobility Group Tuning CLOSED — Inconclusive
+
+**Background:** Chosen next per Issue #171 rationale: mobility scalars have the highest
+confirmed Fisher diagonal values of any non-PST scalar group and showed no known
+saturation/coverage issues (`coverage-audit-report.csv`: all 8 mobility params — MOB_MG/EG
+KNIGHT/BISHOP/ROOK/QUEEN — status `ok`, no STARVED/LOCKED entries). No A-1 params were
+committed, so `v0.5.7` (current branch HEAD) was used as the SPRT baseline per Issue #171's
+dependency clause.
+
+**Attempt 1 — Adam 300 iters (default LR=1.0), K-frozen at 2.773456:**
+
+- Baseline val MSE (untouched eval, same corpus/split): 0.06203967
+- Early-stopped at 135/300 iterations (convergence delta-threshold)
+- Train MSE: 0.06964843 (start) → 0.07158695 (peak, iter 9) → 0.06760077 (final) — net
+  improvement vs. start, but with a pronounced early overshoot
+- **Final val MSE (K re-optimized to 2.515861): 0.06420281 — worse than baseline (+3.5% relative)**
+- Internal train/val gap: −0.0034 (val slightly better than train — no overfitting by this
+  run's own metric, yet still worse than the untouched baseline on the same val split)
+- Validator: `OVERALL: PASS` (Convergence/MaterialBounds/Sanity/Smoke) — none of these
+  checks test corpus-fit quality against the untouched baseline
+
+**Hypothesis tested — Adam learning rate too large for group-restricted runs:**
+
+`GradientDescent.java`'s Adam hyperparameters (`LR=1.0, BETA1=0.9, BETA2=0.999,
+EPSILON=1e-8`) are shared, unscaled, between full 832-param runs and group-restricted runs
+(`tuneWithFeatures`'s `groupMask` only skips inactive params in the update loop — it does
+not rescale `LR` by active-parameter count). Hypothesis: with fewer free parameters, each
+must absorb more of the necessary fit adjustment, and the fixed integer-scale Adam step
+(≈±1cp/iteration once bias-correction stabilizes) overshoots for a small group.
+
+**Attempt 2 — Adam 300 iters, LR reduced to 25% (0.25), identical corpus/group/K:**
+
+- Early-stopped at 122/300 iterations
+- First-15-iteration trace: the discretization (`Math.round(accum[i])`) delays but does not
+  eliminate the spike — `accum` needs ~4x more iterations to accumulate a full integer unit
+  at LR=0.25, so the same jump that appeared at iter 1 (LR=1.0) instead appears at iter 3;
+  MSE is otherwise flat/unchanged for iters 1-2 purely due to rounding lag
+- **Final val MSE: 0.06420268 — virtually identical to the LR=1.0 run (0.06420281)**
+- Final K: 2.516004 (vs. 2.515861 at LR=1.0) — essentially the same converged point
+
+**Conclusion:** The LR-overshoot hypothesis is **falsified** — reducing LR by 4x only delays
+the discretized integer step by a proportional number of iterations; the optimizer converges
+to the same local optimum regardless. The early MSE spike is a byproduct of Adam's
+bias-correction being large in the first few iterations (standard Adam behavior, not
+specific to this LR value) combined with integer rounding, not a miscalibrated step size.
+The root cause of the val-MSE regression is therefore not the optimizer's hyperparameters —
+it more likely reflects that the current hand-tuned mobility baseline is already close to a
+local optimum for this corpus/eval-form combination, consistent with Phase 13's original
+mobility SPRT also returning H0 (−21.4 Elo, 210 games).
+
+**Decision:**
+
+- **A-2 (Issue #171) closed as inconclusive.** No mobility params applied to `EvalParams.java`
+  on this branch; no SPRT run (the tuning result did not clear the bar to justify spending a
+  Windows-PC SPRT run).
+- The LR=0.25 experiment was reverted (`git checkout`) — `GradientDescent.java` LR remains
+  at its default `1.0`. No tuner hyperparameter changes were committed.
+- Deferred to Phase 15: if mobility retuning is attempted again, consider a fundamentally
+  different approach (e.g. coordinate descent instead of Adam, or joint tuning of multiple
+  interacting groups simultaneously rather than one group at a time) rather than further
+  Adam LR adjustments, since this experiment shows LR is not the limiting factor.
+
+**Measurements:** See Attempt 1/2 detail above. No SPRT run for this issue.
