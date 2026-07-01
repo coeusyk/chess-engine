@@ -518,3 +518,46 @@ H0 accepted at essentially zero Elo difference (+0.1 ±4.1). This is a successfu
 - The fix is a correctness patch that eliminates the regression. It does not produce a positive Elo gain vs 0.5.7.
 
 **Decision:** Keep fix on branch. The eval correctness fix is necessary regardless of SPRT outcome. Proceed to A-1 (king-safety group tuning) using this branch as the new evaluation baseline. No parameter rollback.
+
+---
+
+### [2026-07-01] Phase 14 — SAFETY_TABLE Extension (Phase 15 Prerequisite Fix, unblocks Issue #170 A-1)
+
+**Background:** Before restarting Issue #170 (A-1 king-safety Texel tuning), re-verified the
+"King Safety Retune Postmortem" blocker above. `KingSafety.SAFETY_TABLE` /
+`TunerEvaluator.SAFETY_TABLE` / `PositionFeatures.SAFETY_TABLE` were confirmed still at the
+original 18 entries, saturating at attacker weight `w >= 17` — i.e. the architectural
+prerequisite the postmortem required was never implemented. Running Adam tuning on
+king-safety again without fixing this would reproduce the same flat-MSE / zero-gradient
+result for any ATK weight combination that pushes `w` past 17.
+
+Also discovered (and discarded before this fix): an abandoned, uncommitted prior tuning
+attempt was sitting in the working tree (`tuned_params.txt`, `EvalParams.java` in both
+engine-core and engine-tuner) with `ATK_WEIGHT_KNIGHT=29`, `ATK_WEIGHT_ROOK=24` — never
+rebuilt, SPRT'd, committed, or reverted. Reset to committed baseline
+(`git checkout -- tuned_params.txt <both EvalParams.java>`) before starting this fix.
+
+**Fix:** Extended `SAFETY_TABLE` from 18 to 32 entries in all three mirrored copies
+(`engine-core/.../KingSafety.java`, `engine-tuner/.../TunerEvaluator.java`,
+`engine-tuner/.../PositionFeatures.java`). Indices 0-17 are byte-for-byte unchanged
+(no behavior change at existing attacker-weight levels); indices 18-31 continue the
+same diff-growth pattern already present in the table (the per-step increment rises by
+1 every 3 entries), keeping the curve quadratic-like with no premature plateau:
+
+```
+0, 0, 1, 2, 3, 5, 7, 9, 12, 15, 18, 22, 26, 30, 35, 40, 45, 50,
+56, 62, 68, 75, 82, 89, 97, 105, 113, 122, 131, 140, 150, 160
+```
+
+New cap is 160 cp (was 50 cp). This is a pure eval-table change — no search changes.
+
+**Tests:** Added `KingSafetyTest.java` (engine-core) — `safetyTablePenaltyIsNonSaturatingAtFormerPlateauWeights()`
+asserts strictly increasing penalty at w=17→20→25→30→31 (the former plateau region),
+and `safetyTablePenaltyStillPlateausBeyondTableLength()` confirms the table still clamps
+safely beyond its new length. engine-core: 177 run, 0 failures, 2 skipped. engine-tuner:
+131 run, 0 failures, 1 skipped (existing `PositionFeaturesTest` gradient/linearity tests
+unaffected — they exercise `KING_SAFETY_SCALE`, not the ATK-weight saturation region).
+
+**Decision:** This is a mandatory prerequisite for Issue #170 (A-1). Proceeding to Step 2
+(K-calibration) and Step 3 (Adam 300 iterations, king-safety group) now that the
+gradient-dead-zone is resolved for the tuning range this issue is expected to explore.

@@ -80,9 +80,12 @@ public final class PositionFeatures {
     // Safety table helpers (piecewise-linear, mirrors KingSafety.SAFETY_TABLE)
     // =========================================================================
 
+    // Extended from 18 to 32 entries — see KingSafety.SAFETY_TABLE in engine-core for
+    // the full rationale (Phase 15 prerequisite: fixes zero-gradient saturation at w>=17).
     // Must match TunerEvaluator.SAFETY_TABLE and KingSafety.SAFETY_TABLE.
     private static final int[] SAFETY_TABLE = {
-        0, 0, 1, 2, 3, 5, 7, 9, 12, 15, 18, 22, 26, 30, 35, 40, 45, 50
+        0, 0, 1, 2, 3, 5, 7, 9, 12, 15, 18, 22, 26, 30, 35, 40, 45, 50,
+        56, 62, 68, 75, 82, 89, 97, 105, 113, 122, 131, 140, 150, 160
     };
 
     /**
