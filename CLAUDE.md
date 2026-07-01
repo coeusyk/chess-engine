@@ -33,6 +33,9 @@ java -jar engine-uci/target/engine-uci-<version>-SNAPSHOT.jar --bench   # bench 
 
 ## 4. Issue Workflow
 
+No GitHub MCP server is configured in this repo's environment. Use the `gh` CLI to read
+issue content: `gh issue view <N> --json number,title,state,body,labels`.
+
 When working on any GitHub issue, ALL acceptance criteria in the issue body must be met
 and verified before the closing commit. Do not write a commit message that says
 "Closes #N" until every checkbox in the issue's acceptance criteria is checked and
