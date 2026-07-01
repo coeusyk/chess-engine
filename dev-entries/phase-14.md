@@ -404,22 +404,54 @@ without this gradient active, so their tuning results are suspect. All three wil
 ### [TBD] Phase 14 — Merge + Version Bump (Issue #175, A-6)
 
 **Pre-merge checklist:**
-- [x] All A-1 through A-5 verdicts recorded in this file
-- [ ] `engine-core` tests: 0 failures, ≤2 skips
-- [ ] `engine-tuner` tests: 0 failures, ≤1 skip
-- [x] NPS bench ≥ 301,116 NPS (gate floor = 316,964 × 0.95, Phase 14 BenchRunner 31-pos/d13)
+- [ ] All A-1 through A-5 verdicts recorded in this file — A-1/A-2/A-3/A-4 closed; **A-5
+  (#174) still open, pending isolated `phase14-a5-contempt` SPRT on native Windows**
+- [x] `engine-core` tests: 177 run, 0 failures, 2 skipped (verified 2026-07-01)
+- [x] `engine-tuner` tests: 131 run, 0 failures, 1 skipped (verified 2026-07-01)
+- [ ] NPS bench ≥ 301,116 NPS — **gate SUSPENDED**, see "NPS Baseline Staleness" note below
 - [x] At least one SPRT H1 accepted across A-1 through A-5 (A-4: delta25 +156 Elo)
 - [ ] `dev-entries/phase-14.md` complete; CHANGELOG.md entry added
 
 **Built:**
 
-- (PC-pending)
+- (PC-pending — blocked on #174 isolated SPRT + native-Windows NPS re-baseline)
 
 **Measurements:**
 
-- Final NPS: **316,964 NPS** ± 12,584 — gate floor 301,116 NPS ✅ (see NPS Baseline section below)
+- Final NPS: gate suspended, not yet re-measured on native Windows (see below)
 - CHANGELOG.md updated: PC-pending
 - Tag `v0.5.7` pushed: PC-pending
+
+---
+
+### [2026-07-01] Phase 14 — NPS Baseline Staleness: Node Count Drifted, Gate Suspended
+
+**Finding:** Ran `--bench` on this session's WSL2 environment (informational only — WSL2 NPS
+is never a valid regression gate per project convention). Result: **313,954 NPS, 77,265,370
+total nodes** over the 31-position/depth-13 suite.
+
+The node count is the actionable finding, not the NPS number: the "NPS Baseline
+Establishment" entry above recorded **101,771,086 nodes, bit-for-bit deterministic across
+5 runs** for this exact suite. Search node counts are deterministic for a fixed eval + search
+config, so a ~24% node-count delta (77.3M vs 101.8M) is not measurement noise — it means the
+search tree shape has genuinely changed since that baseline was established (2026-04-29).
+
+**Root cause:** accumulated eval changes on this branch since the baseline was set —
+SAFETY_TABLE 18→32 extension, the eval-asymmetry fix, and `PIECE_ATTACKED_BY_PAWN_MG`
+becoming colour-relative — all shift move ordering and pruning cutoffs, which legitimately
+changes node counts even though the search algorithm itself hasn't changed.
+
+**Decision:**
+
+- The recorded gate floors (301,116 NPS aggregate / 228,490 NPS per issue #175's checklist)
+  are **suspended, not re-verified** — they were computed against a node-count baseline that
+  no longer matches this branch's HEAD. Do not treat any NPS number (WSL2 or native) as a
+  pass/fail gate input until a fresh 5-run middle-3 baseline is established on native Windows
+  against current HEAD, following the same protocol as the original 2026-04-29 entry.
+- Explicitly not re-baselined on WSL2 — native Windows re-baseline will run in the same
+  session as the #174 SPRT (Issue #174, isolated `phase14-a5-contempt` test).
+- `#175`'s "NPS bench ≥ 301,116 NPS" checklist item stays unchecked until that fresh baseline
+  exists and current HEAD is measured against it.
 
 ---
 
