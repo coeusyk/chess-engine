@@ -26,6 +26,8 @@ java -jar engine-uci/target/engine-uci-<version>-SNAPSHOT.jar --bench   # bench 
 - `engine-core` must never have Spring/HTTP dependencies.
 - No object allocation in hot paths (Searcher, Evaluator inner loops).
 - NPS bench floor: aggregate >= 301,116 NPS (5% below 316,964 baseline).
+- NPS bench on WSL2 is not a valid regression gate — baseline was measured on native
+  Windows. Only enforce NPS gates when running on native Windows.
 - Perft counts must pass before any Board/MoveGenerator commit.
 - Eval must be symmetric — run mirror symmetry test after every Evaluator change.
 
