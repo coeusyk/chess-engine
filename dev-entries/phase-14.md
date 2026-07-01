@@ -561,3 +561,77 @@ unaffected — they exercise `KING_SAFETY_SCALE`, not the ATK-weight saturation 
 **Decision:** This is a mandatory prerequisite for Issue #170 (A-1). Proceeding to Step 2
 (K-calibration) and Step 3 (Adam 300 iterations, king-safety group) now that the
 gradient-dead-zone is resolved for the tuning range this issue is expected to explore.
+
+---
+
+### A-1 King Safety — K Calibration
+
+**Command:** `java -jar engine-tuner-0.5.7-SNAPSHOT-shaded.jar tools/quiet-labeled.epd 2147483646 500 --corpus-format epd --freeze-params`
+(Phase A — calibrates K only, optimizer skipped; matches `tune-groups.ps1`'s Phase A step.
+Note: the originally suggested `mvn exec:java ... --find-k` command does not work — no
+`exec-maven-plugin` is configured in `engine-tuner/pom.xml` and `TunerMain` has no
+`--find-k` flag; its real usage is the positional-args form above.)
+
+| Metric | Value |
+|---|---|
+| Corpus | `tools/quiet-labeled.epd` (725,000 lines; 21,245 filtered/unparseable; 703,755 loaded) |
+| Corpus fingerprint | `f75d2719effeecc38d4e774535c1f1fe783ca12e5ff971139fa2dbed23360b21` |
+| Train / Val / Test split | 563,004 / 70,376 / 70,375 (80/10/10, seed=default) |
+| Parameter count | 832 |
+| **K** | **2.773456** |
+| **MSE (val)** | **0.06203967** |
+
+K written to `tuned_params.txt`. Re-run with `--freeze-k` to begin Phase B (Adam) tuning.
+
+---
+
+### [2026-07-01] Phase 14 — A-1 King Safety CLOSED — Inconclusive, Deferred to Phase 15
+
+**Attempt count: 4 total, all non-improving.**
+
+| # | Method | Result |
+|---|---|---|
+| 1 | Adam 300 iters, Phase 13 baseline start (original A-1) | SPRT H0 — 185 games, Elo −28.1 ±25.4, LOS 14% |
+| 2 | Constrained re-tune (ATK_R/ATK_N focus) | Stalled at identical MSE every iteration — SAFETY_TABLE saturation discovered (postmortem above) |
+| 3 | (abandoned/uncommitted, discovered and discarded this session) | ATK_KNIGHT=29, ATK_ROOK=24 sitting uncommitted in working tree; never rebuilt, SPRT'd, committed, or reverted — discarded via `git checkout` before this run |
+| 4 | Adam 300 iters (requested), post-SAFETY_TABLE-extension (this session) | Early-stopped at 22 iterations; validator `OVERALL: PASS` but val MSE **worse** than baseline (see below) |
+
+**Attempt 4 detail (this session, post-SAFETY_TABLE fix):**
+
+- K-calibration baseline (untouched eval, same corpus/split/K methodology): val MSE = **0.06203967**
+- Adam king-safety run: 300 iterations requested, converged (delta-threshold early-stop) after **22**
+- Final val MSE (K re-optimized for tuned params): **0.06572268** — **+5.6% relative, worse than baseline**
+- Parameter movement: `ATK_WEIGHT_KNIGHT` 6→30, `ATK_WEIGHT_ROOK` 12→25. `ATK_WEIGHT_BISHOP` (2) and
+  `ATK_WEIGHT_QUEEN` (0) did not move at all — gradient-dead for the full 22 iterations.
+  `SHIELD_RANK2/3`, `OPEN_FILE_PENALTY`, `HALF_OPEN_FILE_PENALTY`, `KING_SAFETY_SCALE`,
+  `HANGING_PENALTY`, `PIECE_ATTACKED_BY_PAWN_MG` also did not move.
+- Validator: Convergence/MaterialBounds/Sanity/Smoke all reported PASS — but the smoke test
+  (100 depth-3 self-play games, LOS threshold 0.30) and sanity/material-bounds checks do not
+  test corpus-fit quality, so they passed despite the MSE regression.
+
+**Root cause:** Corpus coverage gap for bishop/queen king-zone attack positions, not an
+optimizer or `SAFETY_TABLE` issue. `ATK_WEIGHT_BISHOP`/`ATK_WEIGHT_QUEEN` staying frozen
+at exactly their starting values for 22 iterations — even with the saturation fix in
+place — indicates `tools/quiet-labeled.epd` (KierenP corpus) does not contain enough
+positions where a bishop or queen is the sole/primary king-zone attacker to produce a
+usable gradient signal for those two parameters. `ATK_WEIGHT_KNIGHT`/`ATK_WEIGHT_ROOK` did
+move (confirming the `SAFETY_TABLE` fix works as intended for weights that do get gradient),
+but the group as a whole still fits the corpus worse than the hand-tuned baseline.
+
+**Decision:**
+
+- **King-safety ATK-weight tuning is deferred to Phase 15**, pending corpus seed
+  augmentation with bishop/queen king-zone attack positions (self-play games biased toward
+  bishop/queen attacking formations, or synthetic FEN generation targeting this feature).
+- All uncommitted tuning artifacts from this attempt (`tuned_params.txt`, both
+  `EvalParams.java` files) were reverted via `git checkout` — no king-safety ATK/shield/scale
+  values changed on this branch as a result of Issue #170.
+- The `SAFETY_TABLE` 18→32 extension (commit `063bb1a`) is **retained** as a standalone
+  correctness/infrastructure improvement — it is a real prerequisite fix independent of
+  whether this specific tuning attempt succeeded, and unblocks any future king-safety
+  retune once corpus coverage is addressed.
+- Issue #170 closed as inconclusive/deferred (not H1, not a clean H0 either — no SPRT was
+  run this session since the tuning result itself didn't clear the bar to justify spending
+  a Windows-PC SPRT run).
+
+**Measurements:** See Attempt 4 detail above. No SPRT run for this attempt.
