@@ -50,7 +50,7 @@ public class UciApplication {
     private String bookFile = "Performance.bin";
     private int bookDepth = 20;
     private int bookVariance = 50;
-    private int contempt = 50;
+    private int contempt = 0;
 
     // Pondering
     private volatile TimeManager activePonderTimeManager = null;
@@ -160,7 +160,7 @@ public class UciApplication {
                 System.out.println("option name BookFile type string default Performance.bin");
                 System.out.println("option name BookDepth type spin default 20 min 0 max 50");
                 System.out.println("option name BookVariance type spin default 50 min 0 max 100");
-                System.out.println("option name Contempt type spin default 50 min 0 max 200");
+                System.out.println("option name Contempt type spin default 0 min 0 max 200");
                 System.out.println("uciok");
             } else if ("isready".equals(line)) {
                 System.out.println("readyok");

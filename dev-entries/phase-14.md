@@ -830,3 +830,51 @@ property of the parameter groups themselves.
 - No self-play games were generated. No Windows-PC time was spent on this task.
 
 **Measurements:** N/A — no tuning run was executed against real (non-stale) data.
+
+---
+
+### [2026-07-02] Phase 14 — A-5 Contempt Isolated SPRT CLOSED — H0, Default Reverted
+
+**Background:** The earlier `phase14-a5-eval-features` SPRT (see 2026-04-21 entry above)
+bundled contempt exposure with two unrelated correctness fixes (`backwardPawnCount`,
+passed-pawn wiring) and hit the game cap with no verdict (LLR -0.091, never approached either
+bound). It did not satisfy #174's acceptance criterion requiring an isolated
+`phase14-a5-contempt` SPRT with a real verdict. Two purpose-built JARs were prepared this
+session — `engine-uci-phase14-a5-contempt-new.jar` (current HEAD, contempt=50 default) vs
+`engine-uci-phase14-a5-contempt-old.jar` (byte-identical except contempt=0 default) — so this
+run isolates only the contempt effect.
+
+**SPRT (Tag: `phase14-a5-contempt`, H0=0, H1=10, α=0.05, β=0.05, TC=60+0.6, run on native
+Windows PC 2026-07-02):**
+
+| Games | W | D | L | Score | Elo | SE | LOS | LLR | Verdict |
+|-------|---|---|---|-------|-----|-----|-----|-----|---------|
+| 871 | 210 | 409 | 252 | 0.476 | −16.8 | ±16.8 | 2.5% | −2.97 (crossed lbound −2.94) | **H0** |
+
+Per-colour: NEW as White 0.466, NEW as Black 0.486 — no meaningful colour asymmetry.
+DrawRatio 47.0%. Log/PGN: `tools/results/sprt_phase14-a5-contempt_20260702_192824.{log,pgn}`
+— verified against the pasted result (file exists, TC/engine names/game count all match).
+
+**Decision:**
+
+- **Clean, decisive H0** — LOS 2.5% means it's very unlikely contempt=50 is neutral-or-better;
+  this is not a marginal/inconclusive result like the earlier bundled run. Asymmetric contempt
+  (avoid draws when winning by >150cp, accept them when losing by the same margin) measurably
+  *hurts* Vex at TC 60+0.6.
+- **`UciApplication.contempt` default reverted 50 → 0** (`engine-uci/.../UciApplication.java`,
+  both the field initializer and the advertised `option name Contempt ... default 0`). This
+  matches the established A-1/A-2/A-3 pattern: revert the value, keep the infrastructure.
+  `setoption Contempt <cp>` still works for opponent-specific or CLOP-driven tuning; the engine
+  simply no longer applies contempt out of the box.
+- `EvalParams.CONTEMPT_THRESHOLD`/`CONTEMPT_VALUE` (the tunable scalars) are unchanged — only
+  the UCI-facing default that determines out-of-the-box behavior moved.
+- `SearchRegressionTest.contemptPreventsRepetitionDrawFromWinningPosition()` calls
+  `setContempt(Searcher.DEFAULT_CONTEMPT_CP)` explicitly and is unaffected by this default
+  change; re-verified passing (engine-core 177/0/2, engine-uci suite green) after the edit.
+- Issue #174 closed — H0 documented, verdict acted on. This is the real (isolated,
+  game-cap-free) test the acceptance criteria asked for; supersedes the inconclusive bundled
+  `phase14-a5-eval-features` run as the governing verdict for contempt specifically. The
+  `backwardPawnCount` fix and passed-pawn wiring from that bundled commit remain on the branch
+  on their own correctness merits, independent of this Elo verdict.
+
+**Measurements:** See SPRT table above. 871 games, H0, Elo −16.8 ±16.8, LOS 2.5%.
