@@ -404,23 +404,26 @@ without this gradient active, so their tuning results are suspect. All three wil
 ### [TBD] Phase 14 — Merge + Version Bump (Issue #175, A-6)
 
 **Pre-merge checklist:**
-- [ ] All A-1 through A-5 verdicts recorded in this file — A-1/A-2/A-3/A-4 closed; **A-5
-  (#174) still open, pending isolated `phase14-a5-contempt` SPRT on native Windows**
-- [x] `engine-core` tests: 177 run, 0 failures, 2 skipped (verified 2026-07-01)
+- [x] All A-1 through A-5 verdicts recorded in this file — A-1/A-2/A-3/A-4/A-5 all closed
+  (A-5/#174: isolated SPRT H0, contempt default reverted 50→0, 2026-07-02)
+- [x] `engine-core` tests: 177 run, 0 failures, 2 skipped (verified 2026-07-01, re-verified
+  2026-07-02 after contempt-default revert)
 - [x] `engine-tuner` tests: 131 run, 0 failures, 1 skipped (verified 2026-07-01)
-- [ ] NPS bench ≥ 301,116 NPS — **gate SUSPENDED**, see "NPS Baseline Staleness" note below
+- [x] NPS bench ≥ 312,192 NPS (new gate floor, re-baselined 2026-07-02 — see "NPS Baseline
+  Re-Established" entry below; satisfied by construction since this run **is** the baseline)
 - [x] At least one SPRT H1 accepted across A-1 through A-5 (A-4: delta25 +156 Elo)
 - [ ] `dev-entries/phase-14.md` complete; CHANGELOG.md entry added
 
 **Built:**
 
-- (PC-pending — blocked on #174 isolated SPRT + native-Windows NPS re-baseline)
+- All A-1 through A-5 tuning/SPRT work complete. Remaining: CHANGELOG.md Phase 14 entry,
+  then merge to `develop` via `release.yml` (pending explicit user confirmation — not run yet).
 
 **Measurements:**
 
-- Final NPS: gate suspended, not yet re-measured on native Windows (see below)
-- CHANGELOG.md updated: PC-pending
-- Tag `v0.5.7` pushed: PC-pending
+- Final NPS: **328,623 NPS** ±6,286 (native Windows, current HEAD) — gate floor 312,192 NPS ✅
+- CHANGELOG.md updated: pending
+- Tag `v0.5.7` pushed: pending
 
 ---
 
@@ -878,3 +881,50 @@ DrawRatio 47.0%. Log/PGN: `tools/results/sprt_phase14-a5-contempt_20260702_19282
   on their own correctness merits, independent of this Elo verdict.
 
 **Measurements:** See SPRT table above. 871 games, H0, Elo −16.8 ±16.8, LOS 2.5%.
+
+---
+
+### [2026-07-02] Phase 14 — NPS Baseline Re-Established (Native Windows, Current HEAD)
+
+**Context:** The 2026-04-29 baseline (316,964 NPS / 101,771,086 nodes) was flagged stale
+2026-07-01 after a WSL2 run of the same suite produced 77,265,370 nodes — a ~24% drop
+consistent with accumulated eval changes (SAFETY_TABLE 18→32, eval-asymmetry fix,
+`PIECE_ATTACKED_BY_PAWN_MG`) shifting move ordering/pruning. Re-run on native Windows
+(same session as the #174 SPRT, `engine-uci-0.5.7-SNAPSHOT.jar`, current HEAD incl. the
+contempt-default revert) to re-establish the gate on real hardware.
+
+**5-run results (bit-for-bit deterministic node count across all runs — and matching the
+WSL2 run's 77,265,370 exactly, confirming the node-tree change is real, not WSL2 noise):**
+
+| Run | NPS | Time (ms) |
+|-----|-----|-----------|
+| 1 | 335,908 | 230,019 |
+| 2 | 324,683 | 237,971 |
+| 3 | 311,792 | 247,810 |
+| 4 | 325,314 | 237,510 |
+| 5 | 335,872 | 230,044 |
+
+Sorted ascending: 311,792 · **324,683 · 325,314 · 335,872** · 335,908
+
+- Discarded MIN: 311,792 (run 3)
+- Discarded MAX: 335,908 (run 1)
+- Middle 3: 324,683 / 325,314 / 335,872
+
+**Statistics (same middle-3 protocol as 2026-04-29):**
+- Mean (μ): **328,623 NPS**
+- Sample stddev (σ): **±6,286 NPS** (CV = 1.91% — tighter than the original 3.97%)
+- Gate floor (μ × 0.95): **312,192 NPS**
+- Node count: **77,265,370** (deterministic, same suite/depth-13/31-positions)
+
+**Decision:**
+
+- New baseline **supersedes** the 2026-04-29 entry above (316,964 NPS / 301,116 floor /
+  101,771,086 nodes) — that baseline no longer reflects current HEAD's search tree and should
+  not be used for regression comparisons going forward.
+- **NPS gate un-suspended.** Current HEAD is by definition the reference point (328,623 NPS),
+  so the gate trivially passes for this commit. Floor for future Phase 14/15 regression checks:
+  **312,192 NPS aggregate** (native Windows only — WSL2 remains invalid per project convention).
+- `#175`'s "NPS bench ≥ 301,116 NPS" checklist item updated to reflect the new floor;
+  satisfied by construction (this run *is* the new baseline).
+
+**Measurements:** See table above. Mean 328,623 NPS ±6,286, floor 312,192 NPS, 77,265,370 nodes.
