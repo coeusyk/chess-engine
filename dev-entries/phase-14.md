@@ -412,7 +412,7 @@ without this gradient active, so their tuning results are suspect. All three wil
 - [x] NPS bench ≥ 312,192 NPS (new gate floor, re-baselined 2026-07-02 — see "NPS Baseline
   Re-Established" entry below; satisfied by construction since this run **is** the baseline)
 - [x] At least one SPRT H1 accepted across A-1 through A-5 (A-4: delta25 +156 Elo)
-- [ ] `dev-entries/phase-14.md` complete; CHANGELOG.md entry added
+- [x] `dev-entries/phase-14.md` complete; CHANGELOG.md entry added
 
 **Built:**
 
@@ -422,8 +422,9 @@ without this gradient active, so their tuning results are suspect. All three wil
 **Measurements:**
 
 - Final NPS: **328,623 NPS** ±6,286 (native Windows, current HEAD) — gate floor 312,192 NPS ✅
-- CHANGELOG.md updated: pending
-- Tag `v0.5.7` pushed: pending
+- CHANGELOG.md updated: ✅ `[0.5.7] — Phase 14: Eval Optimization` entry added
+- Tag `v0.5.7` pushed: pending — awaiting explicit confirmation to merge to `develop` and
+  trigger `release.yml`
 
 ---
 
