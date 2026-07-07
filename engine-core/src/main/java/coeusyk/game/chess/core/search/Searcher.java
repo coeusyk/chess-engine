@@ -400,6 +400,10 @@ public class Searcher {
         int effectiveMaxDepth = Math.min(maxDepth, MAX_PLY - 1);
         int effectiveStartDepth = Math.max(1, Math.min(startDepth, effectiveMaxDepth));
 
+        // Root change: every public entry point funnels through here, so this is the
+        // single place to rebuild any incremental evaluator state from scratch.
+        evaluator.reset(board);
+
         Move previousBestMove = null;
         int bestScore = 0;
         int depthReached = 0;
