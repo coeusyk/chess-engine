@@ -404,22 +404,58 @@ without this gradient active, so their tuning results are suspect. All three wil
 ### [TBD] Phase 14 — Merge + Version Bump (Issue #175, A-6)
 
 **Pre-merge checklist:**
-- [x] All A-1 through A-5 verdicts recorded in this file
-- [ ] `engine-core` tests: 0 failures, ≤2 skips
-- [ ] `engine-tuner` tests: 0 failures, ≤1 skip
-- [x] NPS bench ≥ 301,116 NPS (gate floor = 316,964 × 0.95, Phase 14 BenchRunner 31-pos/d13)
+- [x] All A-1 through A-5 verdicts recorded in this file — A-1/A-2/A-3/A-4/A-5 all closed
+  (A-5/#174: isolated SPRT H0, contempt default reverted 50→0, 2026-07-02)
+- [x] `engine-core` tests: 177 run, 0 failures, 2 skipped (verified 2026-07-01, re-verified
+  2026-07-02 after contempt-default revert)
+- [x] `engine-tuner` tests: 131 run, 0 failures, 1 skipped (verified 2026-07-01)
+- [x] NPS bench ≥ 312,192 NPS (new gate floor, re-baselined 2026-07-02 — see "NPS Baseline
+  Re-Established" entry below; satisfied by construction since this run **is** the baseline)
 - [x] At least one SPRT H1 accepted across A-1 through A-5 (A-4: delta25 +156 Elo)
-- [ ] `dev-entries/phase-14.md` complete; CHANGELOG.md entry added
+- [x] `dev-entries/phase-14.md` complete; CHANGELOG.md entry added
 
 **Built:**
 
-- (PC-pending)
+- All A-1 through A-5 tuning/SPRT work complete. Remaining: CHANGELOG.md Phase 14 entry,
+  then merge to `develop` via `release.yml` (pending explicit user confirmation — not run yet).
 
 **Measurements:**
 
-- Final NPS: **316,964 NPS** ± 12,584 — gate floor 301,116 NPS ✅ (see NPS Baseline section below)
-- CHANGELOG.md updated: PC-pending
-- Tag `v0.5.7` pushed: PC-pending
+- Final NPS: **328,623 NPS** ±6,286 (native Windows, current HEAD) — gate floor 312,192 NPS ✅
+- CHANGELOG.md updated: ✅ `[0.5.7] — Phase 14: Eval Optimization` entry added
+- Tag `v0.5.7` pushed: pending — awaiting explicit confirmation to merge to `develop` and
+  trigger `release.yml`
+
+---
+
+### [2026-07-01] Phase 14 — NPS Baseline Staleness: Node Count Drifted, Gate Suspended
+
+**Finding:** Ran `--bench` on this session's WSL2 environment (informational only — WSL2 NPS
+is never a valid regression gate per project convention). Result: **313,954 NPS, 77,265,370
+total nodes** over the 31-position/depth-13 suite.
+
+The node count is the actionable finding, not the NPS number: the "NPS Baseline
+Establishment" entry above recorded **101,771,086 nodes, bit-for-bit deterministic across
+5 runs** for this exact suite. Search node counts are deterministic for a fixed eval + search
+config, so a ~24% node-count delta (77.3M vs 101.8M) is not measurement noise — it means the
+search tree shape has genuinely changed since that baseline was established (2026-04-29).
+
+**Root cause:** accumulated eval changes on this branch since the baseline was set —
+SAFETY_TABLE 18→32 extension, the eval-asymmetry fix, and `PIECE_ATTACKED_BY_PAWN_MG`
+becoming colour-relative — all shift move ordering and pruning cutoffs, which legitimately
+changes node counts even though the search algorithm itself hasn't changed.
+
+**Decision:**
+
+- The recorded gate floors (301,116 NPS aggregate / 228,490 NPS per issue #175's checklist)
+  are **suspended, not re-verified** — they were computed against a node-count baseline that
+  no longer matches this branch's HEAD. Do not treat any NPS number (WSL2 or native) as a
+  pass/fail gate input until a fresh 5-run middle-3 baseline is established on native Windows
+  against current HEAD, following the same protocol as the original 2026-04-29 entry.
+- Explicitly not re-baselined on WSL2 — native Windows re-baseline will run in the same
+  session as the #174 SPRT (Issue #174, isolated `phase14-a5-contempt` test).
+- `#175`'s "NPS bench ≥ 301,116 NPS" checklist item stays unchecked until that fresh baseline
+  exists and current HEAD is measured against it.
 
 ---
 
@@ -518,3 +554,378 @@ H0 accepted at essentially zero Elo difference (+0.1 ±4.1). This is a successfu
 - The fix is a correctness patch that eliminates the regression. It does not produce a positive Elo gain vs 0.5.7.
 
 **Decision:** Keep fix on branch. The eval correctness fix is necessary regardless of SPRT outcome. Proceed to A-1 (king-safety group tuning) using this branch as the new evaluation baseline. No parameter rollback.
+
+---
+
+### [2026-07-01] Phase 14 — SAFETY_TABLE Extension (Phase 15 Prerequisite Fix, unblocks Issue #170 A-1)
+
+**Background:** Before restarting Issue #170 (A-1 king-safety Texel tuning), re-verified the
+"King Safety Retune Postmortem" blocker above. `KingSafety.SAFETY_TABLE` /
+`TunerEvaluator.SAFETY_TABLE` / `PositionFeatures.SAFETY_TABLE` were confirmed still at the
+original 18 entries, saturating at attacker weight `w >= 17` — i.e. the architectural
+prerequisite the postmortem required was never implemented. Running Adam tuning on
+king-safety again without fixing this would reproduce the same flat-MSE / zero-gradient
+result for any ATK weight combination that pushes `w` past 17.
+
+Also discovered (and discarded before this fix): an abandoned, uncommitted prior tuning
+attempt was sitting in the working tree (`tuned_params.txt`, `EvalParams.java` in both
+engine-core and engine-tuner) with `ATK_WEIGHT_KNIGHT=29`, `ATK_WEIGHT_ROOK=24` — never
+rebuilt, SPRT'd, committed, or reverted. Reset to committed baseline
+(`git checkout -- tuned_params.txt <both EvalParams.java>`) before starting this fix.
+
+**Fix:** Extended `SAFETY_TABLE` from 18 to 32 entries in all three mirrored copies
+(`engine-core/.../KingSafety.java`, `engine-tuner/.../TunerEvaluator.java`,
+`engine-tuner/.../PositionFeatures.java`). Indices 0-17 are byte-for-byte unchanged
+(no behavior change at existing attacker-weight levels); indices 18-31 continue the
+same diff-growth pattern already present in the table (the per-step increment rises by
+1 every 3 entries), keeping the curve quadratic-like with no premature plateau:
+
+```
+0, 0, 1, 2, 3, 5, 7, 9, 12, 15, 18, 22, 26, 30, 35, 40, 45, 50,
+56, 62, 68, 75, 82, 89, 97, 105, 113, 122, 131, 140, 150, 160
+```
+
+New cap is 160 cp (was 50 cp). This is a pure eval-table change — no search changes.
+
+**Tests:** Added `KingSafetyTest.java` (engine-core) — `safetyTablePenaltyIsNonSaturatingAtFormerPlateauWeights()`
+asserts strictly increasing penalty at w=17→20→25→30→31 (the former plateau region),
+and `safetyTablePenaltyStillPlateausBeyondTableLength()` confirms the table still clamps
+safely beyond its new length. engine-core: 177 run, 0 failures, 2 skipped. engine-tuner:
+131 run, 0 failures, 1 skipped (existing `PositionFeaturesTest` gradient/linearity tests
+unaffected — they exercise `KING_SAFETY_SCALE`, not the ATK-weight saturation region).
+
+**Decision:** This is a mandatory prerequisite for Issue #170 (A-1). Proceeding to Step 2
+(K-calibration) and Step 3 (Adam 300 iterations, king-safety group) now that the
+gradient-dead-zone is resolved for the tuning range this issue is expected to explore.
+
+---
+
+### A-1 King Safety — K Calibration
+
+**Command:** `java -jar engine-tuner-0.5.7-SNAPSHOT-shaded.jar tools/quiet-labeled.epd 2147483646 500 --corpus-format epd --freeze-params`
+(Phase A — calibrates K only, optimizer skipped; matches `tune-groups.ps1`'s Phase A step.
+Note: the originally suggested `mvn exec:java ... --find-k` command does not work — no
+`exec-maven-plugin` is configured in `engine-tuner/pom.xml` and `TunerMain` has no
+`--find-k` flag; its real usage is the positional-args form above.)
+
+| Metric | Value |
+|---|---|
+| Corpus | `tools/quiet-labeled.epd` (725,000 lines; 21,245 filtered/unparseable; 703,755 loaded) |
+| Corpus fingerprint | `f75d2719effeecc38d4e774535c1f1fe783ca12e5ff971139fa2dbed23360b21` |
+| Train / Val / Test split | 563,004 / 70,376 / 70,375 (80/10/10, seed=default) |
+| Parameter count | 832 |
+| **K** | **2.773456** |
+| **MSE (val)** | **0.06203967** |
+
+K written to `tuned_params.txt`. Re-run with `--freeze-k` to begin Phase B (Adam) tuning.
+
+---
+
+### [2026-07-01] Phase 14 — A-1 King Safety CLOSED — Inconclusive, Deferred to Phase 15
+
+**Attempt count: 4 total, all non-improving.**
+
+| # | Method | Result |
+|---|---|---|
+| 1 | Adam 300 iters, Phase 13 baseline start (original A-1) | SPRT H0 — 185 games, Elo −28.1 ±25.4, LOS 14% |
+| 2 | Constrained re-tune (ATK_R/ATK_N focus) | Stalled at identical MSE every iteration — SAFETY_TABLE saturation discovered (postmortem above) |
+| 3 | (abandoned/uncommitted, discovered and discarded this session) | ATK_KNIGHT=29, ATK_ROOK=24 sitting uncommitted in working tree; never rebuilt, SPRT'd, committed, or reverted — discarded via `git checkout` before this run |
+| 4 | Adam 300 iters (requested), post-SAFETY_TABLE-extension (this session) | Early-stopped at 22 iterations; validator `OVERALL: PASS` but val MSE **worse** than baseline (see below) |
+
+**Attempt 4 detail (this session, post-SAFETY_TABLE fix):**
+
+- K-calibration baseline (untouched eval, same corpus/split/K methodology): val MSE = **0.06203967**
+- Adam king-safety run: 300 iterations requested, converged (delta-threshold early-stop) after **22**
+- Final val MSE (K re-optimized for tuned params): **0.06572268** — **+5.6% relative, worse than baseline**
+- Parameter movement: `ATK_WEIGHT_KNIGHT` 6→30, `ATK_WEIGHT_ROOK` 12→25. `ATK_WEIGHT_BISHOP` (2) and
+  `ATK_WEIGHT_QUEEN` (0) did not move at all — gradient-dead for the full 22 iterations.
+  `SHIELD_RANK2/3`, `OPEN_FILE_PENALTY`, `HALF_OPEN_FILE_PENALTY`, `KING_SAFETY_SCALE`,
+  `HANGING_PENALTY`, `PIECE_ATTACKED_BY_PAWN_MG` also did not move.
+- Validator: Convergence/MaterialBounds/Sanity/Smoke all reported PASS — but the smoke test
+  (100 depth-3 self-play games, LOS threshold 0.30) and sanity/material-bounds checks do not
+  test corpus-fit quality, so they passed despite the MSE regression.
+
+**Root cause:** Corpus coverage gap for bishop/queen king-zone attack positions, not an
+optimizer or `SAFETY_TABLE` issue. `ATK_WEIGHT_BISHOP`/`ATK_WEIGHT_QUEEN` staying frozen
+at exactly their starting values for 22 iterations — even with the saturation fix in
+place — indicates `tools/quiet-labeled.epd` (KierenP corpus) does not contain enough
+positions where a bishop or queen is the sole/primary king-zone attacker to produce a
+usable gradient signal for those two parameters. `ATK_WEIGHT_KNIGHT`/`ATK_WEIGHT_ROOK` did
+move (confirming the `SAFETY_TABLE` fix works as intended for weights that do get gradient),
+but the group as a whole still fits the corpus worse than the hand-tuned baseline.
+
+**Decision:**
+
+- **King-safety ATK-weight tuning is deferred to Phase 15**, pending corpus seed
+  augmentation with bishop/queen king-zone attack positions (self-play games biased toward
+  bishop/queen attacking formations, or synthetic FEN generation targeting this feature).
+- All uncommitted tuning artifacts from this attempt (`tuned_params.txt`, both
+  `EvalParams.java` files) were reverted via `git checkout` — no king-safety ATK/shield/scale
+  values changed on this branch as a result of Issue #170.
+- The `SAFETY_TABLE` 18→32 extension (commit `063bb1a`) is **retained** as a standalone
+  correctness/infrastructure improvement — it is a real prerequisite fix independent of
+  whether this specific tuning attempt succeeded, and unblocks any future king-safety
+  retune once corpus coverage is addressed.
+- Issue #170 closed as inconclusive/deferred (not H1, not a clean H0 either — no SPRT was
+  run this session since the tuning result itself didn't clear the bar to justify spending
+  a Windows-PC SPRT run).
+
+**Measurements:** See Attempt 4 detail above. No SPRT run for this attempt.
+
+---
+
+### [2026-07-01] Phase 14 — A-2 Mobility Group Tuning CLOSED — Inconclusive
+
+**Background:** Chosen next per Issue #171 rationale: mobility scalars have the highest
+confirmed Fisher diagonal values of any non-PST scalar group and showed no known
+saturation/coverage issues (`coverage-audit-report.csv`: all 8 mobility params — MOB_MG/EG
+KNIGHT/BISHOP/ROOK/QUEEN — status `ok`, no STARVED/LOCKED entries). No A-1 params were
+committed, so `v0.5.7` (current branch HEAD) was used as the SPRT baseline per Issue #171's
+dependency clause.
+
+**Attempt 1 — Adam 300 iters (default LR=1.0), K-frozen at 2.773456:**
+
+- Baseline val MSE (untouched eval, same corpus/split): 0.06203967
+- Early-stopped at 135/300 iterations (convergence delta-threshold)
+- Train MSE: 0.06964843 (start) → 0.07158695 (peak, iter 9) → 0.06760077 (final) — net
+  improvement vs. start, but with a pronounced early overshoot
+- **Final val MSE (K re-optimized to 2.515861): 0.06420281 — worse than baseline (+3.5% relative)**
+- Internal train/val gap: −0.0034 (val slightly better than train — no overfitting by this
+  run's own metric, yet still worse than the untouched baseline on the same val split)
+- Validator: `OVERALL: PASS` (Convergence/MaterialBounds/Sanity/Smoke) — none of these
+  checks test corpus-fit quality against the untouched baseline
+
+**Hypothesis tested — Adam learning rate too large for group-restricted runs:**
+
+`GradientDescent.java`'s Adam hyperparameters (`LR=1.0, BETA1=0.9, BETA2=0.999,
+EPSILON=1e-8`) are shared, unscaled, between full 832-param runs and group-restricted runs
+(`tuneWithFeatures`'s `groupMask` only skips inactive params in the update loop — it does
+not rescale `LR` by active-parameter count). Hypothesis: with fewer free parameters, each
+must absorb more of the necessary fit adjustment, and the fixed integer-scale Adam step
+(≈±1cp/iteration once bias-correction stabilizes) overshoots for a small group.
+
+**Attempt 2 — Adam 300 iters, LR reduced to 25% (0.25), identical corpus/group/K:**
+
+- Early-stopped at 122/300 iterations
+- First-15-iteration trace: the discretization (`Math.round(accum[i])`) delays but does not
+  eliminate the spike — `accum` needs ~4x more iterations to accumulate a full integer unit
+  at LR=0.25, so the same jump that appeared at iter 1 (LR=1.0) instead appears at iter 3;
+  MSE is otherwise flat/unchanged for iters 1-2 purely due to rounding lag
+- **Final val MSE: 0.06420268 — virtually identical to the LR=1.0 run (0.06420281)**
+- Final K: 2.516004 (vs. 2.515861 at LR=1.0) — essentially the same converged point
+
+**Conclusion:** The LR-overshoot hypothesis is **falsified** — reducing LR by 4x only delays
+the discretized integer step by a proportional number of iterations; the optimizer converges
+to the same local optimum regardless. The early MSE spike is a byproduct of Adam's
+bias-correction being large in the first few iterations (standard Adam behavior, not
+specific to this LR value) combined with integer rounding, not a miscalibrated step size.
+The root cause of the val-MSE regression is therefore not the optimizer's hyperparameters —
+it more likely reflects that the current hand-tuned mobility baseline is already close to a
+local optimum for this corpus/eval-form combination, consistent with Phase 13's original
+mobility SPRT also returning H0 (−21.4 Elo, 210 games).
+
+**Decision:**
+
+- **A-2 (Issue #171) closed as inconclusive.** No mobility params applied to `EvalParams.java`
+  on this branch; no SPRT run (the tuning result did not clear the bar to justify spending a
+  Windows-PC SPRT run).
+- The LR=0.25 experiment was reverted (`git checkout`) — `GradientDescent.java` LR remains
+  at its default `1.0`. No tuner hyperparameter changes were committed.
+- Deferred to Phase 15: if mobility retuning is attempted again, consider a fundamentally
+  different approach (e.g. coordinate descent instead of Adam, or joint tuning of multiple
+  interacting groups simultaneously rather than one group at a time) rather than further
+  Adam LR adjustments, since this experiment shows LR is not the limiting factor.
+
+**Measurements:** See Attempt 1/2 detail above. No SPRT run for this issue.
+
+---
+
+### [2026-07-01] Phase 14 — A-3 Pawn Structure Group Tuning CLOSED — Deferred
+
+**Background:** Per Issue #172's own acceptance criteria, a deferral is valid if either (a)
+STARVED params can't be cleanly excluded, or (b) the tuning result itself doesn't clear the
+bar to justify a Windows-PC SPRT run. Fresh `--coverage-audit` run this session (post
+eval-asymmetry-fix, post-SAFETY_TABLE-extension — the tracked `coverage-audit-report.csv`
+was stale/uncommitted from before those changes) confirms condition (a) does not apply:
+
+| Param | Idx | Fisher | Status |
+|---|---|---|---|
+| CONNECTED_PAWN_MG | 823 | 4.239e-07 | ok |
+| CONNECTED_PAWN_EG | 824 | 2.420e-07 | ok |
+| BACKWARD_PAWN_MG | 825 | 4.200e-08 | ok |
+| BACKWARD_PAWN_EG | 826 | 3.336e-08 | ok |
+
+All four comfortably above the STARVED threshold (1.754e-08) — no coverage gap. Note
+`BACKWARD_PAWN_EG` is currently pinned at its upper bound (20.0); flagged for Task 14.6
+PARAMMAX audit, not a blocker here.
+
+**Single Adam pass (200 iters, K frozen at 2.773456, same corpus/split as A-1/A-2):**
+
+- Baseline val MSE (untouched eval, same corpus/split): 0.06203967
+- Early-stopped at 79/200 iterations (convergence delta-threshold)
+- Train MSE: start → 0.06777515 (net improvement)
+- **Final val MSE (K re-optimized to 2.438280): 0.06470321 — worse than baseline (+4.29%
+  relative)**
+- Validator: `OVERALL: PASS` (Convergence/MaterialBounds/Sanity/Smoke) — same caveat as
+  A-1/A-2: these gates don't test corpus-fit quality against the untouched baseline.
+
+**Decision:**
+
+- **A-3 (Issue #172) closed as deferred**, per the issue's own condition (b). This is the
+  third parameter group (after A-1 king-safety, A-2 mobility) to show the identical
+  "trains fine, val MSE regresses" pattern on this corpus, and the first with *zero*
+  coverage issues — ruling out corpus starvation as the explanation for this group.
+  Per plan, this was a single documented Adam pass — no LR/optimizer experiments were run
+  (that rabbit hole was already explored and falsified for A-2).
+- No pawn-structure params applied to `EvalParams.java` on this branch; no SPRT run.
+- Combined with A-1/A-2, this closes out all three Phase 13/14 scalar-group retunes on
+  `quiet-labeled.epd` with the same negative result, strengthening the case that the
+  pattern is corpus/gameplay-distribution mismatch rather than per-group coverage gaps —
+  see Task 14.7 (WDL self-play pilot) for the direct test of that hypothesis.
+
+**Measurements:** See Adam pass detail above. No SPRT run for this issue.
+
+---
+
+### [2026-07-01] Phase 14 — Task 14.7 (WDL Self-Play Pilot) CLOSED — Deferred Indefinitely, Superseded by NNUE (Phase 17)
+
+**Background:** After A-1/A-2/A-3 all showed the identical "trains fine on
+`quiet-labeled.epd`, val MSE regresses, SPRT/MSE-implied Elo negative" pattern with clean
+Fisher coverage in every case, Task 14.7 (self-play WDL pilot, promoted from Task 13.10) was
+proposed to test whether the pattern is corpus/gameplay-distribution mismatch rather than a
+property of the parameter groups themselves.
+
+**Investigation before committing to fresh self-play generation:**
+
+- Found `data/wdl-selfplay.epd` (100,000 positions, extracted from 12 SPRT PGN files,
+  committed 2026-04-13 during Phase 13, commit `c3f5cde`) already present and unused in the
+  repo. Confirmed it loads cleanly under the current `TunerMain --corpus-format epd` path
+  (100,000 positions, mobility group Fisher coverage clean — all 8 `MOB_*` params `ok`).
+- Checked `dev-entries/phase-13.md` for prior self-play-WDL history and found two
+  undocumented-until-now failure precedents in this exact project:
+  1. The original 28,902-position self-play corpus (Phase 12, low-depth self-play) produced
+     a **catastrophic −465 Elo regression** when its tuned params were applied (155 games,
+     4-139-12, LOS 0.0%). Root cause recorded as "the 28k selfplay corpus was too small and
+     biased, leading the tuner to massively reduce piece values" (R_MG 558→423, Q_MG
+     1200→1068, Q_EG 991→801).
+  2. A later WDL corpus-loading bug caused `PositionLoader.load()` to silently load **zero
+     positions** for an entire WDL tuning attempt — `tools/wdl_tuned_params.txt` in the repo
+     is the output of that no-op run (unchanged initial params), not a real tuning result.
+
+**Decision:**
+
+- **Task 14.7 closed as deferred indefinitely, superseded by NNUE (Phase 17).** Reasoning:
+  - The −465 Elo precedent is a structural failure mode of self-play-derived WDL labels at
+    Vex's current playing strength (noisy/inaccurate outcome labels, insufficient diversity),
+    not a one-off bug — repeating it (even with group-restricted tuning, which is immune to
+    the specific *material-collapse* mechanism but not necessarily to the underlying label-
+    noise problem) carries real risk for uncertain payoff.
+  - `data/wdl-selfplay.epd` predates the Phase 14 eval-asymmetry fix (`44aea1a`) and the
+    SAFETY_TABLE 18→32 extension (`063bb1a`) — its positions were generated under a
+    materially different eval than current HEAD, so its labels are stale relative to the
+    engine being tuned. **Not used** for a pilot run, per explicit decision.
+  - Combined with A-1/A-2/A-3 (6 independent tuning attempts across Phase 13 and Phase 14,
+    3 parameter groups, all with clean or resolved Fisher coverage, 0 H1 results), this is
+    treated as sufficient evidence that the classical eval scalars are near a local optimum
+    for Vex's current strength on any corpus tried so far. Further classical-eval tuning
+    investment is deprioritized in favor of Phase 15 search tuning (which has a confirmed
+    +156 Elo precedent this phase, via A-4 aspiration delta) and eventual NNUE work
+    (Phase 17), rather than a fourth corpus-quality experiment.
+- No self-play games were generated. No Windows-PC time was spent on this task.
+
+**Measurements:** N/A — no tuning run was executed against real (non-stale) data.
+
+---
+
+### [2026-07-02] Phase 14 — A-5 Contempt Isolated SPRT CLOSED — H0, Default Reverted
+
+**Background:** The earlier `phase14-a5-eval-features` SPRT (see 2026-04-21 entry above)
+bundled contempt exposure with two unrelated correctness fixes (`backwardPawnCount`,
+passed-pawn wiring) and hit the game cap with no verdict (LLR -0.091, never approached either
+bound). It did not satisfy #174's acceptance criterion requiring an isolated
+`phase14-a5-contempt` SPRT with a real verdict. Two purpose-built JARs were prepared this
+session — `engine-uci-phase14-a5-contempt-new.jar` (current HEAD, contempt=50 default) vs
+`engine-uci-phase14-a5-contempt-old.jar` (byte-identical except contempt=0 default) — so this
+run isolates only the contempt effect.
+
+**SPRT (Tag: `phase14-a5-contempt`, H0=0, H1=10, α=0.05, β=0.05, TC=60+0.6, run on native
+Windows PC 2026-07-02):**
+
+| Games | W | D | L | Score | Elo | SE | LOS | LLR | Verdict |
+|-------|---|---|---|-------|-----|-----|-----|-----|---------|
+| 871 | 210 | 409 | 252 | 0.476 | −16.8 | ±16.8 | 2.5% | −2.97 (crossed lbound −2.94) | **H0** |
+
+Per-colour: NEW as White 0.466, NEW as Black 0.486 — no meaningful colour asymmetry.
+DrawRatio 47.0%. Log/PGN: `tools/results/sprt_phase14-a5-contempt_20260702_192824.{log,pgn}`
+— verified against the pasted result (file exists, TC/engine names/game count all match).
+
+**Decision:**
+
+- **Clean, decisive H0** — LOS 2.5% means it's very unlikely contempt=50 is neutral-or-better;
+  this is not a marginal/inconclusive result like the earlier bundled run. Asymmetric contempt
+  (avoid draws when winning by >150cp, accept them when losing by the same margin) measurably
+  *hurts* Vex at TC 60+0.6.
+- **`UciApplication.contempt` default reverted 50 → 0** (`engine-uci/.../UciApplication.java`,
+  both the field initializer and the advertised `option name Contempt ... default 0`). This
+  matches the established A-1/A-2/A-3 pattern: revert the value, keep the infrastructure.
+  `setoption Contempt <cp>` still works for opponent-specific or CLOP-driven tuning; the engine
+  simply no longer applies contempt out of the box.
+- `EvalParams.CONTEMPT_THRESHOLD`/`CONTEMPT_VALUE` (the tunable scalars) are unchanged — only
+  the UCI-facing default that determines out-of-the-box behavior moved.
+- `SearchRegressionTest.contemptPreventsRepetitionDrawFromWinningPosition()` calls
+  `setContempt(Searcher.DEFAULT_CONTEMPT_CP)` explicitly and is unaffected by this default
+  change; re-verified passing (engine-core 177/0/2, engine-uci suite green) after the edit.
+- Issue #174 closed — H0 documented, verdict acted on. This is the real (isolated,
+  game-cap-free) test the acceptance criteria asked for; supersedes the inconclusive bundled
+  `phase14-a5-eval-features` run as the governing verdict for contempt specifically. The
+  `backwardPawnCount` fix and passed-pawn wiring from that bundled commit remain on the branch
+  on their own correctness merits, independent of this Elo verdict.
+
+**Measurements:** See SPRT table above. 871 games, H0, Elo −16.8 ±16.8, LOS 2.5%.
+
+---
+
+### [2026-07-02] Phase 14 — NPS Baseline Re-Established (Native Windows, Current HEAD)
+
+**Context:** The 2026-04-29 baseline (316,964 NPS / 101,771,086 nodes) was flagged stale
+2026-07-01 after a WSL2 run of the same suite produced 77,265,370 nodes — a ~24% drop
+consistent with accumulated eval changes (SAFETY_TABLE 18→32, eval-asymmetry fix,
+`PIECE_ATTACKED_BY_PAWN_MG`) shifting move ordering/pruning. Re-run on native Windows
+(same session as the #174 SPRT, `engine-uci-0.5.7-SNAPSHOT.jar`, current HEAD incl. the
+contempt-default revert) to re-establish the gate on real hardware.
+
+**5-run results (bit-for-bit deterministic node count across all runs — and matching the
+WSL2 run's 77,265,370 exactly, confirming the node-tree change is real, not WSL2 noise):**
+
+| Run | NPS | Time (ms) |
+|-----|-----|-----------|
+| 1 | 335,908 | 230,019 |
+| 2 | 324,683 | 237,971 |
+| 3 | 311,792 | 247,810 |
+| 4 | 325,314 | 237,510 |
+| 5 | 335,872 | 230,044 |
+
+Sorted ascending: 311,792 · **324,683 · 325,314 · 335,872** · 335,908
+
+- Discarded MIN: 311,792 (run 3)
+- Discarded MAX: 335,908 (run 1)
+- Middle 3: 324,683 / 325,314 / 335,872
+
+**Statistics (same middle-3 protocol as 2026-04-29):**
+- Mean (μ): **328,623 NPS**
+- Sample stddev (σ): **±6,286 NPS** (CV = 1.91% — tighter than the original 3.97%)
+- Gate floor (μ × 0.95): **312,192 NPS**
+- Node count: **77,265,370** (deterministic, same suite/depth-13/31-positions)
+
+**Decision:**
+
+- New baseline **supersedes** the 2026-04-29 entry above (316,964 NPS / 301,116 floor /
+  101,771,086 nodes) — that baseline no longer reflects current HEAD's search tree and should
+  not be used for regression comparisons going forward.
+- **NPS gate un-suspended.** Current HEAD is by definition the reference point (328,623 NPS),
+  so the gate trivially passes for this commit. Floor for future Phase 14/15 regression checks:
+  **312,192 NPS aggregate** (native Windows only — WSL2 remains invalid per project convention).
+- `#175`'s "NPS bench ≥ 301,116 NPS" checklist item updated to reflect the new floor;
+  satisfied by construction (this run *is* the new baseline).
+
+**Measurements:** See table above. Mean 328,623 NPS ±6,286, floor 312,192 NPS, 77,265,370 nodes.

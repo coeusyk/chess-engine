@@ -484,9 +484,12 @@ public final class TunerEvaluator {
     }
 
     // Non-linear mapping from attacker-weight sum to centipawn penalty.
+    // Extended from 18 to 32 entries — see KingSafety.SAFETY_TABLE in engine-core for
+    // the full rationale (Phase 15 prerequisite: fixes zero-gradient saturation at w>=17).
     // Must match KingSafety.SAFETY_TABLE in engine-core and PositionFeatures.SAFETY_TABLE in engine-tuner.
     static final int[] SAFETY_TABLE = {
-        0, 0, 1, 2, 3, 5, 7, 9, 12, 15, 18, 22, 26, 30, 35, 40, 45, 50
+        0, 0, 1, 2, 3, 5, 7, 9, 12, 15, 18, 22, 26, 30, 35, 40, 45, 50,
+        56, 62, 68, 75, 82, 89, 97, 105, 113, 122, 131, 140, 150, 160
     };
 
     private static int attackerPenalty(PositionData pos, boolean white, int kingSq, double[] params) {

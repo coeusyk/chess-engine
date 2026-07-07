@@ -5,6 +5,84 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.5.7] — Phase 14: Eval Optimization — 2026-07-03
+
+### Search — SPRT-Validated Strength Gains
+
+- **A-4 Aspiration window delta** (#173): `ASPIRATION_INITIAL_DELTA_CP` changed from 50 → 25.
+  SPRT H1 at +156.2 Elo (TC 60+0.6, 185 games, LOS 100%). Bracket-verified: 25cp beats 40cp
+  beats 75cp, confirming the global optimum in the tested range. Largest single-change Elo
+  gain of the phase.
+
+### Search — No-Change Validated
+
+- **A-5 Contempt** (#174): Asymmetric draw-contempt implemented — avoids repetition/50-move
+  draws when the side to move holds a >150cp advantage, accepts them when losing by the same
+  margin — exposed via `EvalParams.CONTEMPT_THRESHOLD`/`CONTEMPT_VALUE`. Isolated SPRT
+  (`phase14-a5-contempt`, 871 games) returned H0 at −16.8 ±16.8 Elo, LOS 2.5% — a clean,
+  decisive regression at TC 60+0.6. `UciApplication`'s `Contempt` UCI option default reverted
+  50 → 0; the constants and `Searcher.contemptScore()` logic remain available via
+  `setoption Contempt <cp>` for opponent-specific or CLOP tuning.
+
+### Evaluation — Correctness Fixes
+
+- **Eval asymmetry fix** (#183): Corrected a White/Black scoring asymmetry traced to
+  `PIECE_ATTACKED_BY_PAWN_MG` applying from the wrong perspective and opposite-flank
+  king-shield over-suppression. SPRT confirmed neutral (H0, +0.1 ±4.1 Elo, 14,218 games) — a
+  correctness fix shipped regardless of Elo, not a strength change.
+- **`backwardPawnCount` fix**: corrected double-counting caused by an incorrect pawn-support
+  mask; now excludes isolated pawns and uses the correct support-square mask.
+- **`PIECE_ATTACKED_BY_PAWN_MG` taper**: full weight in the opening/middlegame, tapers to zero
+  below 20% phase; made colour-relative (symmetric) as part of the eval-asymmetry fix.
+- **Opposite-flank king-shield scale**: `OPPOSITE_FLANK_SHIELD_SCALE` changed 50 → 75
+  (defender side only) — corrects over-suppression of attacking urgency when kings castle to
+  opposite flanks.
+- **`SAFETY_TABLE` extension** (18 → 32 entries, cap 50cp → 160cp): fixes a zero-gradient
+  saturation region (attacker weight `w ≥ 17`) that made `ATK_WEIGHT_ROOK`/`ATK_WEIGHT_KNIGHT`
+  values above the old cap indistinguishable to the Texel tuner. Pure eval-table extension —
+  indices 0–17 are byte-identical, no behavior change at existing attacker-weight levels.
+- **`KING_SAFETY_SCALE` gradient wiring** (#180): fixed a tuner-only bug where parameter [830]
+  received zero gradient every iteration (missing term in
+  `PositionFeatures.accumulateGradient()`). No engine behavior change — tuner-only fix.
+- **Passed-pawn rank bonuses** wired into `EvalParams` (tunable at runtime; defaults unchanged).
+
+### Evaluation — Texel Tuning (All Deferred, No Elo Gain)
+
+Three parameter-group retuning attempts on the 703k-position `quiet-labeled.epd` corpus, all
+showing the same pattern: trains fine, validation MSE regresses, and (where SPRT-tested) real
+Elo is negative.
+
+- **A-1 King safety** (#170): 4 attempts across the phase (1 SPRT'd, 3 diagnostic-only).
+  Final attempt (post-`SAFETY_TABLE` fix): val MSE +5.6% vs. baseline;
+  `ATK_WEIGHT_BISHOP`/`ATK_WEIGHT_QUEEN` gradient-dead due to corpus coverage gaps for
+  bishop/queen king-zone attack positions. Deferred to Phase 15 pending corpus seed
+  augmentation.
+- **A-2 Mobility** (#171): val MSE +3.5% vs. baseline despite clean Fisher coverage on all 8
+  mobility parameters. LR-overshoot hypothesis tested (4× LR reduction) and falsified —
+  converges to the same point regardless of learning rate. Deferred as inconclusive; hand-tuned
+  values likely near a local optimum for this corpus.
+- **A-3 Pawn structure** (#172): val MSE +4.29% vs. baseline with clean Fisher coverage,
+  ruling out corpus starvation. Third and cleanest confirmation of the pattern.
+- **Task 14.7 (WDL self-play pilot)**: investigated as a direct test of the
+  corpus/gameplay-distribution-mismatch hypothesis; deferred indefinitely without generating
+  fresh self-play data. Uncovered two prior undocumented self-play-WDL failures in this
+  project's history (Phase 12/13): a −465 Elo material-collapse regression from an
+  under-sized/biased corpus, and a silently-broken WDL loader that produced a fake "tuned"
+  result. Superseded by planned NNUE work (Phase 17).
+
+### Tuner Infrastructure / Diagnostics
+
+- **`Evaluator.explainEval()` + UCI `eval` command**: per-term evaluation breakdown for manual
+  diagnosis.
+- **NPS baseline re-established** on native Windows: **328,623 NPS** (was 316,964 NPS,
+  now superseded). Node count on the 31-position/depth-13 bench suite shifted ~24%
+  (101,771,086 → 77,265,370 nodes) as a direct consequence of the eval changes above shifting
+  move ordering and pruning cutoffs — not a measurement artifact (deterministic and identical
+  across both WSL2 and native-Windows runs). New regression gate floor: **312,192 NPS**
+  aggregate (native Windows only — WSL2 is never a valid NPS gate).
+
+---
+
 ## [0.5.6] — Phase 13: Tuner Overhaul — 2026-04-19
 
 ### Search — SPRT-Validated Strength Gains
