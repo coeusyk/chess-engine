@@ -50,6 +50,70 @@ class UciApplicationIntegrationTest {
     }
 
     @Test
+    void uciListsEvalTypeAndEvalFileOptions() throws Exception {
+        harness = UciHarness.start();
+
+        harness.send("uci");
+        assertNotNull(harness.awaitLine(
+                "option name EvalType type combo default Classical var Classical var NNUE",
+                Duration.ofSeconds(2)),
+                "EvalType option not advertised");
+        assertNotNull(harness.awaitLine(
+                "option name EvalFile type string default <empty>",
+                Duration.ofSeconds(2)),
+                "EvalFile option not advertised");
+        assertNotNull(harness.awaitLine("uciok", Duration.ofSeconds(2)));
+    }
+
+    @Test
+    void evalTypeNnueFallsBackToClassicalWithInfoString() throws Exception {
+        harness = UciHarness.start();
+
+        harness.send("setoption name EvalType value NNUE");
+        assertNotNull(harness.awaitLine(
+                "info string NNUE evaluator is not available in this build; falling back to Classical.",
+                Duration.ofSeconds(2)),
+                "Expected NNUE fallback info string");
+
+        // Search behavior is unaffected — still produces a legal move.
+        harness.send("position startpos moves e2e4 e7e5");
+        harness.send("go depth 2");
+        String bestMoveLine = harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(10));
+        assertNotNull(bestMoveLine, "Engine did not emit bestmove after EvalType NNUE fallback");
+    }
+
+    @Test
+    void evalTypeInvalidValueRejectedWithoutCrash() throws Exception {
+        harness = UciHarness.start();
+
+        harness.send("setoption name EvalType value Bogus");
+        assertNotNull(harness.awaitLine(
+                line -> line.startsWith("info string Unknown EvalType value"),
+                Duration.ofSeconds(2)),
+                "Expected rejection info string for invalid EvalType value");
+
+        harness.send("isready");
+        assertNotNull(harness.awaitLine("readyok", Duration.ofSeconds(2)),
+                "Engine did not remain responsive after invalid EvalType value");
+    }
+
+    @Test
+    void evalFileIsAcceptedAndInert() throws Exception {
+        harness = UciHarness.start();
+
+        harness.send("setoption name EvalFile value some-network.nnue");
+        harness.send("isready");
+        assertNotNull(harness.awaitLine("readyok", Duration.ofSeconds(2)),
+                "Engine did not remain responsive after setting EvalFile");
+
+        // Still searches normally — EvalFile has no effect in Phase A.
+        harness.send("position startpos");
+        harness.send("go depth 2");
+        assertNotNull(harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(10)),
+                "Engine did not emit bestmove after setting EvalFile");
+    }
+
+    @Test
     void goDepthReturnsLegalMoveForPosition() throws Exception {
         harness = UciHarness.start();
 

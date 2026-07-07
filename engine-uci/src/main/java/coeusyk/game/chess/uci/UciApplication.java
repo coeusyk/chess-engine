@@ -36,6 +36,11 @@ public class UciApplication {
     private int multiPV = 1;
     private int hashSizeMb = 64;
     private int pawnHashSizeMb = 1;
+    // NNUE is not implemented yet (Phase B) — "NNUE" is parsed and acknowledged
+    // via an info string fallback, but the effective evaluator is always Classical.
+    private String evalType = "Classical";
+    @SuppressWarnings("unused") // UCI setoption stub — wired up when the NNUE loader lands (Phase B)
+    private String evalFile = "";
     private int threads = 1;
     private long moveOverheadMs = 30;
     @SuppressWarnings("unused") // UCI setoption stub — wired up when local Syzygy probing is added
@@ -161,6 +166,8 @@ public class UciApplication {
                 System.out.println("option name BookDepth type spin default 20 min 0 max 50");
                 System.out.println("option name BookVariance type spin default 50 min 0 max 100");
                 System.out.println("option name Contempt type spin default 0 min 0 max 200");
+                System.out.println("option name EvalType type combo default Classical var Classical var NNUE");
+                System.out.println("option name EvalFile type string default <empty>");
                 System.out.println("uciok");
             } else if ("isready".equals(line)) {
                 System.out.println("readyok");
@@ -394,6 +401,21 @@ public class UciApplication {
                 contempt = Math.max(0, Math.min(200, Integer.parseInt(valuePart)));
             } catch (NumberFormatException ignored) {
             }
+        } else if ("evaltype".equals(optionNameLower)) {
+            String trimmed = valuePart.trim();
+            if ("classical".equalsIgnoreCase(trimmed)) {
+                evalType = "Classical";
+            } else if ("nnue".equalsIgnoreCase(trimmed)) {
+                System.out.println("info string NNUE evaluator is not available in this build; "
+                        + "falling back to Classical.");
+                evalType = "Classical";
+            } else {
+                System.out.println("info string Unknown EvalType value '" + trimmed
+                        + "' — expected Classical or NNUE. Keeping " + evalType + ".");
+            }
+        } else if ("evalfile".equals(optionNameLower)) {
+            // Inert in Phase A — no NNUE loader exists yet to consume this path.
+            evalFile = valuePart.trim();
         }
         // Unknown options are silently ignored per UCI spec.
     }
