@@ -1,7 +1,8 @@
 package coeusyk.game.chess.core.search;
 
+import coeusyk.game.chess.core.eval.ClassicalEvaluator;
 import coeusyk.game.chess.core.eval.EvalParams;
-import coeusyk.game.chess.core.eval.Evaluator;
+import coeusyk.game.chess.core.eval.EvaluatorStrategy;
 import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Move;
 import coeusyk.game.chess.core.models.Piece;
@@ -111,7 +112,10 @@ public class Searcher {
     private final boolean checkExtensionsEnabled;
     private final boolean singularExtensionsEnabled = true;
     private boolean seeEnabled = true;
-    private final Evaluator evaluator = new Evaluator();
+    // Not final: replaceable via setEvaluatorStrategy (e.g. for NNUE), mirroring the
+    // syzygyProber setter-injection pattern below. Defaults to classical so Searcher
+    // is fully functional standalone (tests, tuner) without any wiring.
+    private EvaluatorStrategy evaluator = new ClassicalEvaluator();
     private final MoveOrderer moveOrderer = new MoveOrderer();
     private final StaticExchangeEvaluator staticExchangeEvaluator = new StaticExchangeEvaluator();
     private final int[][] killerMoves = initKillerMoves();
@@ -284,19 +288,41 @@ public class Searcher {
         transpositionTable.enableStats();
     }
 
-    /** Enables pawn-hash statistics tracking in the evaluator. Resets counters. */
+    /**
+     * Enables pawn-hash statistics tracking in the evaluator. Resets counters.
+     * Classical-only: a no-op when a non-classical strategy is active.
+     */
     void enablePawnHashStats() {
-        evaluator.enablePawnHashStats();
+        if (evaluator instanceof ClassicalEvaluator ce) {
+            ce.enablePawnHashStats();
+        }
     }
 
-    /** Returns the pawn-hash hit rate [0.0, 1.0] since stats were last enabled. */
+    /**
+     * Returns the pawn-hash hit rate [0.0, 1.0] since stats were last enabled.
+     * Classical-only: returns 0.0 when a non-classical strategy is active
+     * (the concept does not apply — there is no pawn hash to report on).
+     */
     double getPawnHashHitRate() {
-        return evaluator.getPawnHashHitRate();
+        return evaluator instanceof ClassicalEvaluator ce ? ce.getPawnHashHitRate() : 0.0;
     }
 
-    /** Resizes the pawn hash table in the evaluator. See {@link Evaluator#setPawnHashSizeMb}. */
+    /**
+     * Resizes the pawn hash table. Classical-only: a no-op when a non-classical
+     * strategy is active. See {@link ClassicalEvaluator#setPawnHashSizeMb}.
+     */
     public void setPawnHashSizeMb(int mb) {
-        evaluator.setPawnHashSizeMb(mb);
+        if (evaluator instanceof ClassicalEvaluator ce) {
+            ce.setPawnHashSizeMb(mb);
+        }
+    }
+
+    /**
+     * Replaces this searcher's evaluator strategy. Defaults to {@link ClassicalEvaluator};
+     * falls back to it if {@code strategy} is {@code null}.
+     */
+    public void setEvaluatorStrategy(EvaluatorStrategy strategy) {
+        this.evaluator = strategy != null ? strategy : new ClassicalEvaluator();
     }
 
     public void setSyzygyProber(SyzygyProber prober) {
@@ -690,6 +716,7 @@ public class Searcher {
             }
 
             board.makeMove(move);
+            evaluator.onMake(board, move.pack());
             boolean childIsPvNode = rootMoveIndex == 0;
                 int score = -alphaBeta(
                     board,
@@ -704,6 +731,7 @@ public class Searcher {
                     maxCheckExtensions,
                     false
                 );
+            evaluator.onUnmake();
             board.unmakeMove();
             rootMoveIndex++;
 
@@ -840,6 +868,7 @@ public class Searcher {
                 sideToMoveInCheck, staticEval)) {
             int nullReduction = effectiveDepth > 6 ? 3 : 2;
             Board.NullMoveState nullMoveState = board.makeNullMove();
+            evaluator.onMakeNull();
             int nullScore = -alphaBeta(
                     board,
                 effectiveDepth - nullReduction - 1,
@@ -853,6 +882,7 @@ public class Searcher {
                 maxExtensions,
                 false
             );
+            evaluator.onUnmakeNull();
             board.unmakeNullMove(nullMoveState);
 
             if (aborted) {
@@ -925,6 +955,7 @@ public class Searcher {
                     && moveOrderer.scoringBuffer[mi] < 0;
 
             board.makeMove(move);
+            evaluator.onMake(board, move);
 
             boolean moveGivesCheck = board.isActiveColorInCheck();
             
@@ -950,6 +981,7 @@ public class Searcher {
                     sideToMoveInCheck,
                     moveGivesCheck
             )) {
+                evaluator.onUnmake();
                 board.unmakeMove();
                 moveIndex++;
                 continue;
@@ -966,6 +998,7 @@ public class Searcher {
                     moveGivesCheck
             )) {
                 futilitySkips++;
+                evaluator.onUnmake();
                 board.unmakeMove();
                 moveIndex++;
                 continue;
@@ -1024,6 +1057,7 @@ public class Searcher {
                 );
             }
 
+            evaluator.onUnmake();
             board.unmakeMove();
             moveIndex++;
 
@@ -1244,6 +1278,7 @@ public class Searcher {
 
             searchedAlternative = true;
             board.makeMove(move);
+            evaluator.onMake(board, move);
             int score = -alphaBeta(
                     board,
                     Math.max(0, reducedDepth - 1),
@@ -1257,6 +1292,7 @@ public class Searcher {
                     maxExtensions,
                     true
             );
+            evaluator.onUnmake();
             board.unmakeMove();
 
             if (aborted) {
@@ -1472,7 +1508,9 @@ public class Searcher {
             for (int qi = 0; qi < legalCount; qi++) {
                 int move = legalMoves[qi];
                 board.makeMove(move);
+                evaluator.onMake(board, move);
                 int score = -quiescence(board, -beta, -alpha, ply + 1, qPly + 1, shouldStopHard);
+                evaluator.onUnmake();
                 board.unmakeMove();
 
                 if (aborted) {
@@ -1546,7 +1584,9 @@ public class Searcher {
             }
 
             board.makeMove(move);
+            evaluator.onMake(board, move);
             int score = -quiescence(board, -beta, -alpha, ply + 1, qPly + 1, shouldStopHard);
+            evaluator.onUnmake();
             board.unmakeMove();
 
             if (aborted) {
@@ -1606,7 +1646,9 @@ public class Searcher {
             }
 
             board.makeMove(move);
+            evaluator.onMake(board, move);
             int score = -quiescence(board, -beta, -alpha, ply + 1, qPly + 1, shouldStopHard);
+            evaluator.onUnmake();
             board.unmakeMove();
 
             if (aborted) {
