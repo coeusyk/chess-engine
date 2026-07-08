@@ -720,7 +720,7 @@ public class Searcher {
             }
 
             board.makeMove(move);
-            evaluator.onMake(board, move.pack());
+            evaluator.onMake(board, move.pack(), board.lastCapturedPiece());
             boolean childIsPvNode = rootMoveIndex == 0;
                 int score = -alphaBeta(
                     board,
@@ -959,7 +959,7 @@ public class Searcher {
                     && moveOrderer.scoringBuffer[mi] < 0;
 
             board.makeMove(move);
-            evaluator.onMake(board, move);
+            evaluator.onMake(board, move, board.lastCapturedPiece());
 
             boolean moveGivesCheck = board.isActiveColorInCheck();
             
@@ -1282,7 +1282,7 @@ public class Searcher {
 
             searchedAlternative = true;
             board.makeMove(move);
-            evaluator.onMake(board, move);
+            evaluator.onMake(board, move, board.lastCapturedPiece());
             int score = -alphaBeta(
                     board,
                     Math.max(0, reducedDepth - 1),
@@ -1512,7 +1512,7 @@ public class Searcher {
             for (int qi = 0; qi < legalCount; qi++) {
                 int move = legalMoves[qi];
                 board.makeMove(move);
-                evaluator.onMake(board, move);
+                evaluator.onMake(board, move, board.lastCapturedPiece());
                 int score = -quiescence(board, -beta, -alpha, ply + 1, qPly + 1, shouldStopHard);
                 evaluator.onUnmake();
                 board.unmakeMove();
@@ -1588,7 +1588,7 @@ public class Searcher {
             }
 
             board.makeMove(move);
-            evaluator.onMake(board, move);
+            evaluator.onMake(board, move, board.lastCapturedPiece());
             int score = -quiescence(board, -beta, -alpha, ply + 1, qPly + 1, shouldStopHard);
             evaluator.onUnmake();
             board.unmakeMove();
@@ -1650,7 +1650,7 @@ public class Searcher {
             }
 
             board.makeMove(move);
-            evaluator.onMake(board, move);
+            evaluator.onMake(board, move, board.lastCapturedPiece());
             int score = -quiescence(board, -beta, -alpha, ply + 1, qPly + 1, shouldStopHard);
             evaluator.onUnmake();
             board.unmakeMove();

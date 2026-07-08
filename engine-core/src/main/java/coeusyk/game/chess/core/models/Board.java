@@ -818,6 +818,18 @@ public class Board {
         zobristStack[zobristSP++] = zobristHash;
     }
 
+    /**
+     * Returns the piece captured by the most recently made move ({@link Piece#None} if
+     * none), or by the not-yet-unmade move at the top of the undo stack more generally.
+     * Valid only between a {@link #makeMove(int)} call returning and the matching
+     * {@link #unmakeMove()} — the same window {@code Searcher}'s make/unmake sites
+     * already observe for lifecycle hooks. Reads the existing pooled undo record;
+     * allocates nothing.
+     */
+    public int lastCapturedPiece() {
+        return unmakePool[unmakeSP - 1].capturedPiece;
+    }
+
     // Reversing the latest move made using efficient bitboard operations:
     public void unmakeMove() {
         if (unmakeSP == 0) {
