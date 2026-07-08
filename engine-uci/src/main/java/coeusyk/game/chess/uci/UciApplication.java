@@ -1,6 +1,8 @@
 package coeusyk.game.chess.uci;
 
 import coeusyk.game.chess.core.eval.EvalParams;
+import coeusyk.game.chess.core.eval.nnue.NnueEvaluator;
+import coeusyk.game.chess.core.eval.nnue.NnueNetwork;
 import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Move;
 import coeusyk.game.chess.core.movegen.MovesGenerator;
@@ -15,6 +17,7 @@ import coeusyk.game.chess.uci.syzygy.OnlineSyzygyProber;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -36,11 +39,16 @@ public class UciApplication {
     private int multiPV = 1;
     private int hashSizeMb = 64;
     private int pawnHashSizeMb = 1;
-    // NNUE is not implemented yet (Phase B) — "NNUE" is parsed and acknowledged
-    // via an info string fallback, but the effective evaluator is always Classical.
+    // "NNUE" is accepted at setoption time; whether a search actually uses NNUE is
+    // resolved lazily at go-time (resolveNnueNetworkForSearch), since EvalFile may
+    // not be set yet, or may point to a file that fails to load — either falls back
+    // to Classical with an info string rather than crashing (PRD US-2).
     private String evalType = "Classical";
-    @SuppressWarnings("unused") // UCI setoption stub — wired up when the NNUE loader lands (Phase B)
     private String evalFile = "";
+    // Cache of the last successfully loaded network, keyed by evalFile's value at
+    // load time, so a network isn't re-read from disk on every go.
+    private NnueNetwork nnueNetwork;
+    private String loadedNnueFilePath;
     private int threads = 1;
     private long moveOverheadMs = 30;
     @SuppressWarnings("unused") // UCI setoption stub — wired up when local Syzygy probing is added
@@ -406,18 +414,53 @@ public class UciApplication {
             if ("classical".equalsIgnoreCase(trimmed)) {
                 evalType = "Classical";
             } else if ("nnue".equalsIgnoreCase(trimmed)) {
-                System.out.println("info string NNUE evaluator is not available in this build; "
-                        + "falling back to Classical.");
-                evalType = "Classical";
+                // Whether this actually resolves to NNUE (valid EvalFile, loads OK) is
+                // decided lazily at go-time — EvalFile may not be set yet.
+                evalType = "NNUE";
             } else {
                 System.out.println("info string Unknown EvalType value '" + trimmed
                         + "' — expected Classical or NNUE. Keeping " + evalType + ".");
             }
         } else if ("evalfile".equals(optionNameLower)) {
-            // Inert in Phase A — no NNUE loader exists yet to consume this path.
             evalFile = valuePart.trim();
         }
         // Unknown options are silently ignored per UCI spec.
+    }
+
+    /**
+     * Resolves which {@link NnueNetwork} (if any) this search should use, called once
+     * per {@code go} before the main searcher and any Lazy SMP helpers are
+     * constructed — not once per thread, so the fallback info string (if any) is
+     * printed exactly once, not once per helper. Returns {@code null} whenever the
+     * search should use Classical: {@code EvalType} isn't {@code NNUE}, no
+     * {@code EvalFile} is set, or the file failed to load (PRD US-2: never crash,
+     * always fall back with an info string).
+     */
+    private NnueNetwork resolveNnueNetworkForSearch() {
+        if (!"NNUE".equals(evalType)) {
+            return null;
+        }
+        if (evalFile.isEmpty()) {
+            System.out.println("info string NNUE evaluator requested but EvalFile is not set; "
+                    + "falling back to Classical.");
+            return null;
+        }
+        if (nnueNetwork != null && evalFile.equals(loadedNnueFilePath)) {
+            return nnueNetwork;
+        }
+        try {
+            NnueNetwork loaded = NnueNetwork.load(Path.of(evalFile));
+            nnueNetwork = loaded;
+            loadedNnueFilePath = evalFile;
+            System.out.println("info string NNUE network loaded: " + loaded.networkUuid());
+            return loaded;
+        } catch (Exception e) {
+            System.out.println("info string Failed to load NNUE network from '" + evalFile
+                    + "' (" + e.getMessage() + "); falling back to Classical.");
+            nnueNetwork = null;
+            loadedNnueFilePath = null;
+            return null;
+        }
     }
 
     private void openNewBook() {
@@ -562,6 +605,10 @@ public class UciApplication {
             // already be running at generation N while the main thread bumps to N+1,
             // immediately evicting any shallow entries deposited by the helpers.
             sharedTT.incrementGeneration();
+            // Resolved once per go (not once per thread) so any fallback info string
+            // prints exactly once; each thread below still gets its own NnueEvaluator
+            // instance — never the same instance shared across threads.
+            NnueNetwork nnueNetworkForSearch = resolveNnueNetworkForSearch();
             if (effectiveHelpers > 0) {
                 // Snapshot the current position string from the board so each
                 // helper can create an independent Board without sharing state.
@@ -579,6 +626,9 @@ public class UciApplication {
                             helper.setSharedTranspositionTable(sharedTT);
                             helper.setPawnHashSizeMb(pawnHashSizeMb);
                             helper.setContempt(contempt);
+                            if (nnueNetworkForSearch != null) {
+                                helper.setEvaluatorStrategy(new NnueEvaluator(nnueNetworkForSearch));
+                            }
                             Board helperBoard = new Board(positionFen);
                             helperBoard.setSearchMode(true);
                             helper.iterativeDeepening(
@@ -617,6 +667,9 @@ public class UciApplication {
             searcher.setSharedTranspositionTable(sharedTT);
             searcher.setPawnHashSizeMb(pawnHashSizeMb);
             searcher.setContempt(contempt);
+            if (nnueNetworkForSearch != null) {
+                searcher.setEvaluatorStrategy(new NnueEvaluator(nnueNetworkForSearch));
+            }
             if (multiPV > 1) {
                 searcher.setMultiPV(multiPV);
             }

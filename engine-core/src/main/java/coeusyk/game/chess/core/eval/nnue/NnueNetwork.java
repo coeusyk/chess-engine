@@ -4,7 +4,6 @@ import java.io.BufferedInputStream;
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -122,15 +121,6 @@ public final class NnueNetwork {
             values[i] = in.readShort();
         }
         return values;
-    }
-
-    /** Rethrows a checked {@link IOException} from {@link #load} as unchecked, for callers in contexts (e.g. UCI option parsing) that can't declare it. */
-    public static NnueNetwork loadUnchecked(Path path) {
-        try {
-            return load(path);
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
     }
 
     public int hiddenWidth() {

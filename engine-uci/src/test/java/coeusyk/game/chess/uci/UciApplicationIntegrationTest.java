@@ -5,13 +5,16 @@ import coeusyk.game.chess.core.models.Move;
 import coeusyk.game.chess.core.movegen.MovesGenerator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
@@ -66,20 +69,77 @@ class UciApplicationIntegrationTest {
     }
 
     @Test
-    void evalTypeNnueFallsBackToClassicalWithInfoString() throws Exception {
+    void evalTypeNnueWithoutEvalFileFallsBackAtGoTime() throws Exception {
+        harness = UciHarness.start();
+
+        // setoption alone no longer decides the fallback — EvalFile might arrive
+        // later — so no info string is expected here yet.
+        harness.send("setoption name EvalType value NNUE");
+
+        harness.send("position startpos moves e2e4 e7e5");
+        harness.send("go depth 2");
+        assertNotNull(harness.awaitLine(
+                "info string NNUE evaluator requested but EvalFile is not set; falling back to Classical.",
+                Duration.ofSeconds(5)),
+                "Expected NNUE fallback info string at go-time");
+        String bestMoveLine = harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(10));
+        assertNotNull(bestMoveLine, "Engine did not emit bestmove after EvalType NNUE fallback");
+    }
+
+    @Test
+    void evalTypeNnueWithInvalidEvalFileFallsBackAtGoTime() throws Exception {
         harness = UciHarness.start();
 
         harness.send("setoption name EvalType value NNUE");
-        assertNotNull(harness.awaitLine(
-                "info string NNUE evaluator is not available in this build; falling back to Classical.",
-                Duration.ofSeconds(2)),
-                "Expected NNUE fallback info string");
-
-        // Search behavior is unaffected — still produces a legal move.
-        harness.send("position startpos moves e2e4 e7e5");
+        harness.send("setoption name EvalFile value /nonexistent/path/does-not-exist.nnue");
+        harness.send("position startpos");
         harness.send("go depth 2");
-        String bestMoveLine = harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(10));
-        assertNotNull(bestMoveLine, "Engine did not emit bestmove after EvalType NNUE fallback");
+
+        assertNotNull(harness.awaitLine(
+                line -> line.startsWith("info string Failed to load NNUE network"),
+                Duration.ofSeconds(5)),
+                "Expected NNUE load-failure fallback info string");
+        assertNotNull(harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(10)),
+                "Engine did not emit bestmove after NNUE load failure");
+    }
+
+    @Test
+    void evalTypeNnueWithValidEvalFileActuallySearchesWithNnue(@TempDir Path tempDir) throws Exception {
+        Path networkFile = tempDir.resolve("tiny.nnue");
+        writeTinyNnueFile(networkFile, "integration-test-uuid");
+
+        harness = UciHarness.start();
+        harness.send("setoption name EvalType value NNUE");
+        harness.send("setoption name EvalFile value " + networkFile);
+        harness.send("position startpos");
+        harness.send("go depth 2");
+
+        assertNotNull(harness.awaitLine(
+                "info string NNUE network loaded: integration-test-uuid",
+                Duration.ofSeconds(5)),
+                "Expected NNUE network-loaded info string, not a fallback");
+        assertNotNull(harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(10)),
+                "Engine did not emit bestmove with a loaded NNUE network");
+    }
+
+    @Test
+    void evalTypeNnueWithValidEvalFileAndLazySmpGivesEachHelperItsOwnEvaluator(@TempDir Path tempDir) throws Exception {
+        Path networkFile = tempDir.resolve("tiny.nnue");
+        writeTinyNnueFile(networkFile, "smp-test-uuid");
+
+        harness = UciHarness.start();
+        harness.send("setoption name Threads value 2");
+        harness.send("setoption name EvalType value NNUE");
+        harness.send("setoption name EvalFile value " + networkFile);
+        harness.send("position startpos");
+        harness.send("go depth 4");
+
+        // Not a direct instance-identity assertion (that's a code-review/construction
+        // guarantee, not something observable over the UCI wire) — this exercises the
+        // actual helper-spawn path with a live NnueEvaluator per thread and asserts it
+        // doesn't crash or hang, which a shared/corrupted accumulator would eventually do.
+        assertNotNull(harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(15)),
+                "Engine did not emit bestmove with NNUE + Threads=2");
     }
 
     @Test
@@ -98,7 +158,7 @@ class UciApplicationIntegrationTest {
     }
 
     @Test
-    void evalFileIsAcceptedAndInert() throws Exception {
+    void evalFileAloneIsInertWhileEvalTypeStaysClassical() throws Exception {
         harness = UciHarness.start();
 
         harness.send("setoption name EvalFile value some-network.nnue");
@@ -106,11 +166,41 @@ class UciApplicationIntegrationTest {
         assertNotNull(harness.awaitLine("readyok", Duration.ofSeconds(2)),
                 "Engine did not remain responsive after setting EvalFile");
 
-        // Still searches normally — EvalFile has no effect in Phase A.
+        // EvalType defaults to Classical, so EvalFile (even pointing at a file that
+        // doesn't exist) is never consulted — no load attempt, no fallback string.
         harness.send("position startpos");
         harness.send("go depth 2");
         assertNotNull(harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(10)),
                 "Engine did not emit bestmove after setting EvalFile");
+    }
+
+    /** Minimal valid file in NnueNetwork's documented binary format — see NnueNetwork's Javadoc. */
+    private static void writeTinyNnueFile(Path path, String uuid) throws IOException {
+        int width = 4;
+        try (DataOutputStream out = new DataOutputStream(Files.newOutputStream(path))) {
+            out.writeBytes("VNUE");
+            out.writeInt(1); // formatVersion
+            out.writeInt(1); // architectureId
+            out.writeInt(1); // featureSetId
+            out.writeInt(width);
+            out.writeInt(1); // quantVersion
+            out.writeInt(127); // qa
+            out.writeInt(64);  // qb
+            out.writeInt(400); // outputScale
+            out.writeUTF(uuid);
+            out.writeUTF("test-commit");
+            out.writeLong(0L);
+            for (int i = 0; i < 768 * width; i++) {
+                out.writeShort(0);
+            }
+            for (int i = 0; i < width; i++) {
+                out.writeShort(0);
+            }
+            for (int i = 0; i < 2 * width; i++) {
+                out.writeShort(0);
+            }
+            out.writeInt(0); // outputBias
+        }
     }
 
     @Test
