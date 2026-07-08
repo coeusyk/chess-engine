@@ -2,6 +2,7 @@ package coeusyk.game.chess.core.eval.nnue;
 
 import java.io.BufferedInputStream;
 import java.io.DataInputStream;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -36,6 +37,10 @@ public final class NnueNetwork {
 
     private static final byte[] MAGIC = {'V', 'N', 'U', 'E'};
     private static final int FORMAT_VERSION = 1;
+    // Sane upper bound on hiddenWidth, checked before any large array is allocated —
+    // a .nnue path is user-supplied input to the UCI process (PRD §4), so a corrupt
+    // or hostile header must be rejected before it can force a huge allocation.
+    private static final int MAX_HIDDEN_WIDTH = 4096;
 
     private final int hiddenWidth;
     private final short[] ftWeights;
@@ -78,13 +83,27 @@ public final class NnueNetwork {
     }
 
     public static NnueNetwork load(Path path) throws IOException {
+        long fileSize = Files.size(path);
         try (InputStream in = new BufferedInputStream(Files.newInputStream(path))) {
-            return load(in);
+            return load(in, fileSize);
         }
     }
 
     public static NnueNetwork load(InputStream rawIn) throws IOException {
-        DataInputStream in = new DataInputStream(rawIn);
+        return load(rawIn, null);
+    }
+
+    /**
+     * @param knownTotalBytes the exact file size, when known (the {@link Path} entry
+     *                        point), so the body's declared length can be checked
+     *                        against it before the (potentially large) weight arrays
+     *                        are allocated; {@code null} for the generic
+     *                        {@link InputStream} entry point, which has no length to
+     *                        check against (used by tests with in-memory streams).
+     */
+    private static NnueNetwork load(InputStream rawIn, Long knownTotalBytes) throws IOException {
+        CountingInputStream counting = new CountingInputStream(rawIn);
+        DataInputStream in = new DataInputStream(counting);
         byte[] magic = new byte[4];
         in.readFully(magic);
         if (magic[0] != MAGIC[0] || magic[1] != MAGIC[1] || magic[2] != MAGIC[2] || magic[3] != MAGIC[3]) {
@@ -98,6 +117,9 @@ public final class NnueNetwork {
         in.readInt(); // architectureId — reserved for a future topology change; unused until then
         in.readInt(); // featureSetId — reserved for a future feature-set change; unused until then
         int hiddenWidth = in.readInt();
+        if (hiddenWidth <= 0 || hiddenWidth > MAX_HIDDEN_WIDTH) {
+            throw new IOException("hiddenWidth " + hiddenWidth + " out of range (1.." + MAX_HIDDEN_WIDTH + ")");
+        }
         in.readInt(); // quantVersion — reserved for a future quantization scheme change
         int qa = in.readInt();
         int qb = in.readInt();
@@ -105,6 +127,18 @@ public final class NnueNetwork {
         String networkUuid = in.readUTF();
         String trainerCommit = in.readUTF();
         long createdAtEpochSeconds = in.readLong();
+
+        if (knownTotalBytes != null) {
+            long expectedBodyBytes = 2L * FeatureExtractor.FEATURES_PER_PERSPECTIVE * hiddenWidth // ftWeights
+                    + 2L * hiddenWidth                                                              // ftBiases
+                    + 2L * 2 * hiddenWidth                                                          // outputWeights
+                    + 4L;                                                                            // outputBias
+            long expectedTotal = counting.bytesRead() + expectedBodyBytes;
+            if (knownTotalBytes != expectedTotal) {
+                throw new IOException("file size " + knownTotalBytes + " does not match expected size "
+                        + expectedTotal + " for hiddenWidth=" + hiddenWidth + " (truncated, oversized, or corrupt)");
+            }
+        }
 
         short[] ftWeights = readShorts(in, FeatureExtractor.FEATURES_PER_PERSPECTIVE * hiddenWidth);
         short[] ftBiases = readShorts(in, hiddenWidth);
@@ -121,6 +155,37 @@ public final class NnueNetwork {
             values[i] = in.readShort();
         }
         return values;
+    }
+
+    /** Tracks bytes consumed so the header's declared size can be checked before allocating the body arrays. */
+    private static final class CountingInputStream extends FilterInputStream {
+        private long count = 0;
+
+        CountingInputStream(InputStream in) {
+            super(in);
+        }
+
+        @Override
+        public int read() throws IOException {
+            int b = super.read();
+            if (b != -1) {
+                count++;
+            }
+            return b;
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws IOException {
+            int n = super.read(b, off, len);
+            if (n > 0) {
+                count += n;
+            }
+            return n;
+        }
+
+        long bytesRead() {
+            return count;
+        }
     }
 
     public int hiddenWidth() {

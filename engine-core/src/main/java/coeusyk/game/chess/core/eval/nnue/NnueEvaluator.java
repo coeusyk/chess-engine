@@ -21,9 +21,10 @@ import coeusyk.game.chess.core.models.Piece;
  */
 public final class NnueEvaluator implements EvaluatorStrategy, FeatureExtractor.ChangeVisitor {
 
-    // Matches Board.UNMAKE_POOL_SIZE — the accumulator stack can't need to outlive
-    // Board's own per-move undo stack, since both are pushed/popped in lockstep.
-    private static final int ACCUMULATOR_POOL_SIZE = 768;
+    // References Board's own constant (not a duplicated literal) — the accumulator
+    // stack is pushed/popped in lockstep with Board's unmake stack and can't safely
+    // be sized independently of it.
+    private static final int ACCUMULATOR_POOL_SIZE = Board.UNMAKE_POOL_SIZE;
 
     private final NnueNetwork network;
     private final int width;

@@ -53,8 +53,13 @@ public class Board {
     /**
      * Maximum depth of the unmake stack: max search ply (128) + max game length (512)
      * plus a safety margin. Pooled to avoid per-node GC pressure.
+     *
+     * <p>Public: {@code NnueEvaluator}'s accumulator stack is pushed/popped in lockstep
+     * with this pool and must never be sized independently of it — referencing this
+     * constant directly (rather than duplicating the literal) is load-bearing, not
+     * cosmetic.
      */
-    private static final int UNMAKE_POOL_SIZE = 768;
+    public static final int UNMAKE_POOL_SIZE = 768;
 
     /**
      * When {@code true}, {@link #makeMove} and {@link #unmakeMove} skip recording

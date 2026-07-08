@@ -1,15 +1,19 @@
 package coeusyk.game.chess.core.eval.nnue;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Round-trips {@link NnueNetwork}'s documented binary format through a hand-written encoder. */
 class NnueNetworkLoaderTest {
@@ -47,6 +51,51 @@ class NnueNetworkLoaderTest {
     void loadRejectsBadMagicBytes() {
         byte[] bytes = {'X', 'X', 'X', 'X'};
         assertThrows(IOException.class, () -> NnueNetwork.load(new ByteArrayInputStream(bytes)));
+    }
+
+    @Test
+    void loadRejectsOversizedHiddenWidthBeforeAllocatingAnything() throws IOException {
+        // A corrupt/hostile header claiming an enormous hiddenWidth must be rejected
+        // right after reading that field — never let it drive a huge allocation.
+        // No body bytes follow; if the width check didn't run first, this would throw
+        // an unrelated EOFException from readShorts instead.
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DataOutputStream out = new DataOutputStream(bytes);
+        out.writeBytes("VNUE");
+        out.writeInt(1);
+        out.writeInt(1);
+        out.writeInt(1);
+        out.writeInt(100_000_000); // hiddenWidth — nonsense
+        out.writeInt(1);
+        out.writeInt(1);
+        out.writeInt(1);
+        out.writeInt(1);
+        out.writeUTF("uuid");
+        out.writeUTF("commit");
+        out.writeLong(0L);
+
+        IOException thrown = assertThrows(IOException.class,
+                () -> NnueNetwork.load(new ByteArrayInputStream(bytes.toByteArray())));
+        assertTrue(thrown.getMessage().contains("hiddenWidth"));
+    }
+
+    @Test
+    void loadRejectsTruncatedFile(@TempDir Path tempDir) throws IOException {
+        int width = 4;
+        short[] ftWeights = new short[FeatureExtractor.FEATURES_PER_PERSPECTIVE * width];
+        short[] ftBiases = new short[width];
+        short[] outputWeights = new short[2 * width];
+        byte[] fullFile = writeNetwork(width, ftWeights, ftBiases, outputWeights, 0,
+                1, 1, 1, "uuid", "commit", 0L);
+
+        Path truncated = tempDir.resolve("truncated.nnue");
+        // Chop off the last 10 bytes — the file no longer matches its own declared width.
+        byte[] shortBytes = new byte[fullFile.length - 10];
+        System.arraycopy(fullFile, 0, shortBytes, 0, shortBytes.length);
+        Files.write(truncated, shortBytes);
+
+        IOException thrown = assertThrows(IOException.class, () -> NnueNetwork.load(truncated));
+        assertTrue(thrown.getMessage().contains("does not match expected size"));
     }
 
     private static byte[] writeNetwork(int width, short[] ftWeights, short[] ftBiases, short[] outputWeights,
