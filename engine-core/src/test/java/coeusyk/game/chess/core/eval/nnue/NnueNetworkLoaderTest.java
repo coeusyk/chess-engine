@@ -54,6 +54,33 @@ class NnueNetworkLoaderTest {
     }
 
     @Test
+    void loadRejectsUnsupportedArchitectureId() throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DataOutputStream out = new DataOutputStream(bytes);
+        out.writeBytes("VNUE");
+        out.writeInt(1); // formatVersion
+        out.writeInt(99); // architectureId — unsupported
+
+        IOException thrown = assertThrows(IOException.class,
+                () -> NnueNetwork.load(new ByteArrayInputStream(bytes.toByteArray())));
+        assertTrue(thrown.getMessage().contains("architectureId"));
+    }
+
+    @Test
+    void loadRejectsUnsupportedFeatureSetId() throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DataOutputStream out = new DataOutputStream(bytes);
+        out.writeBytes("VNUE");
+        out.writeInt(1); // formatVersion
+        out.writeInt(1); // architectureId
+        out.writeInt(99); // featureSetId — unsupported
+
+        IOException thrown = assertThrows(IOException.class,
+                () -> NnueNetwork.load(new ByteArrayInputStream(bytes.toByteArray())));
+        assertTrue(thrown.getMessage().contains("featureSetId"));
+    }
+
+    @Test
     void loadRejectsOversizedHiddenWidthBeforeAllocatingAnything() throws IOException {
         // A corrupt/hostile header claiming an enormous hiddenWidth must be rejected
         // right after reading that field — never let it drive a huge allocation.

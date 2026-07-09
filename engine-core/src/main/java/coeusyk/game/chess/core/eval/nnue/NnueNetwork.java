@@ -37,6 +37,12 @@ public final class NnueNetwork {
 
     private static final byte[] MAGIC = {'V', 'N', 'U', 'E'};
     private static final int FORMAT_VERSION = 1;
+    // This build implements exactly one network topology and one feature set
+    // (plain 768 dual-perspective, see FeatureExtractor). No forward-compat
+    // logic — a file declaring any other id is rejected outright, not
+    // best-effort interpreted.
+    private static final int SUPPORTED_ARCHITECTURE_ID = 1;
+    private static final int SUPPORTED_FEATURE_SET_ID = 1;
     // Sane upper bound on hiddenWidth, checked before any large array is allocated —
     // a .nnue path is user-supplied input to the UCI process (PRD §4), so a corrupt
     // or hostile header must be rejected before it can force a huge allocation.
@@ -114,8 +120,16 @@ public final class NnueNetwork {
             throw new IOException("unsupported .nnue format version " + formatVersion
                     + " (expected " + FORMAT_VERSION + ")");
         }
-        in.readInt(); // architectureId — reserved for a future topology change; unused until then
-        in.readInt(); // featureSetId — reserved for a future feature-set change; unused until then
+        int architectureId = in.readInt();
+        if (architectureId != SUPPORTED_ARCHITECTURE_ID) {
+            throw new IOException("unsupported architectureId " + architectureId
+                    + " (this build only supports architectureId " + SUPPORTED_ARCHITECTURE_ID + ")");
+        }
+        int featureSetId = in.readInt();
+        if (featureSetId != SUPPORTED_FEATURE_SET_ID) {
+            throw new IOException("unsupported featureSetId " + featureSetId
+                    + " (this build only supports featureSetId " + SUPPORTED_FEATURE_SET_ID + ")");
+        }
         int hiddenWidth = in.readInt();
         if (hiddenWidth <= 0 || hiddenWidth > MAX_HIDDEN_WIDTH) {
             throw new IOException("hiddenWidth " + hiddenWidth + " out of range (1.." + MAX_HIDDEN_WIDTH + ")");
