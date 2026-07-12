@@ -1,4 +1,4 @@
-# ADR-006: NNUE evaluator ownership — one instance per Searcher, never shared
+# ADR-009: NNUE evaluator ownership — one instance per Searcher, never shared
 
 Date: 2026-07-09  Status: accepted
 
