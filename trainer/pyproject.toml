@@ -1,0 +1,16 @@
+[project]
+name = "vex-trainer"
+version = "0.1.0"
+description = "Self-written PyTorch training pipeline for Vex's NNUE evaluator (docs/NNUE_PRD.md, docs/architecture/NNUE_TRAINER_ARCHITECTURE.md)"
+requires-python = ">=3.11"
+dependencies = [
+    "torch>=2.0",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

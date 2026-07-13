@@ -331,6 +331,14 @@ ADRs live in `docs/adr/`, numbered, immutable once accepted (superseded, never e
 - **ADR-003:** Copy-per-ply accumulator stack vs. in-place reverse deltas — Phase B.
 - **ADR-004:** Evaluator lifecycle hooks vs. Board change-listeners — Phase A.
 - **ADR-005:** Pure NNUE runtime vs. hybrid blending — Phase A.
-- **ADR-006:** Self-written PyTorch trainer vs. pure-Java trainer vs. existing framework (bullet) — Phase D.
-- **ADR-007:** Staged training data (public text → SF labeling → self-play); binpack exclusion — Phase D.
+- **[ADR-006](adr/ADR-006-self-written-pytorch-trainer.md):** Self-written PyTorch trainer vs. pure-Java trainer vs. existing framework (bullet) — Phase D.
+- **[ADR-007](adr/ADR-007-staged-training-data.md):** Staged training data (public text → SF labeling → self-play); binpack exclusion — Phase D.
 - **ADR-008:** Scalar-first inference with Vector API as a validated optimization phase — Phase E (written even if the Vector API is never needed, recording why).
+
+**Addendum (2026-07-13, not part of the original 2026-07-07 grilling session above):**
+during Phase D planning, one further decision emerged that this session never
+anticipated — trainer repository location (§5 Open Questions item 4 above), resolved
+via a dedicated `/grilling` round and recorded as
+**[ADR-010](adr/ADR-010-trainer-repository-location.md):** trainer repository
+location (`trainer/` in-repo vs. separate repo) — Phase D start, per
+`docs/architecture/NNUE_TRAINER_ARCHITECTURE.md` §16.

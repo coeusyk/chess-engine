@@ -1,0 +1,16 @@
+name: Trainer CI
+
+on:
+  push:
+    paths:
+      - 'trainer/**'
+  pull_request:
+    paths:
+      - 'trainer/**'
+
+jobs:
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "Trainer CI skeleton — real jobs land in PR D-7 (trainer reproducibility CI)."
