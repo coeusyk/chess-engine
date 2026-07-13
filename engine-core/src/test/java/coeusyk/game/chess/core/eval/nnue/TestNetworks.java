@@ -8,14 +8,14 @@ import java.util.Random;
  * accumulator/inference arithmetic without a real {@code .nnue} file (the trainer
  * that produces those is a separate, later Python project per the PRD).
  */
-final class TestNetworks {
+public final class TestNetworks {
 
     private static final int SEED = 42;
 
     private TestNetworks() {
     }
 
-    static NnueNetwork synthetic(int hiddenWidth) {
+    public static NnueNetwork synthetic(int hiddenWidth) {
         Random random = new Random(SEED);
         short[] ftWeights = randomShorts(random, FeatureExtractor.FEATURES_PER_PERSPECTIVE * hiddenWidth, 20);
         short[] ftBiases = randomShorts(random, hiddenWidth, 10);

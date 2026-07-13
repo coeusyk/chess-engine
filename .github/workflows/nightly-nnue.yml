@@ -1,0 +1,47 @@
+name: Nightly NNUE
+
+on:
+  schedule:
+    - cron: '30 0 * * *'   # 00:30 UTC every night — offset from nightly-sprt.yml's 00:00 slot
+  workflow_dispatch:        # manual trigger
+
+jobs:
+  nnue-nightly:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      # No explicit `ref:` (unlike nightly-sprt.yml's `ref: develop`, which is correct
+      # for that workflow's baseline-comparison purpose) — checkout@v4 defaults to
+      # `github.ref`, which resolves to the default branch on `schedule` and to
+      # whichever branch the caller picked on `workflow_dispatch`. Pinning to `develop`
+      # here would defeat the point of workflow_dispatch (issue #189's acceptance
+      # criterion is that this must be runnable/green on phase/15-nnue itself, which
+      # doesn't yet exist on develop) and — separately — would be a real bug even after
+      # merge: NnueOracleBatchReportTest and the -Dfuzz.seed/-Doracle.batch.enabled
+      # overrides only exist on this branch until it's merged, so a pinned-to-develop
+      # checkout would fail with surefire's "no tests matching -Dtest=..." error today.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # PR C-5 (issue #189), plan Task 4: nightly-only, unfixed seed + larger game
+      # count — the PR-blocking fuzz run (part of "Build and test modules" in ci.yml)
+      # stays fixed-seed for reproducibility; this is the broader, slower sweep.
+      # Seed is derived from the run's own start time and printed by the test itself,
+      # so a red run is reproducible via -Dfuzz.seed=<logged value>.
+      - name: Incremental-vs-rebuild fuzz (unfixed seed, larger game count)
+        run: mvn -B test -pl engine-core -Dtest=NnueIncrementalVsRebuildFuzzTest -Dfuzz.seed=$(date +%s) -Dfuzz.games=200
+
+      # ADR-002: oracle-bound batch report over the full bench/nnue-corpus/ — reporting
+      # only, no gate, until a real trained network exists to calibrate a threshold
+      # against (the CI test net is untrained seeded-random weights).
+      - name: Oracle-bound batch report (int16 vs float32, full corpus)
+        run: mvn -B test -pl engine-core -Dgroups=nnue-oracle-batch -Doracle.batch.enabled=true -Dtest=NnueOracleBatchReportTest

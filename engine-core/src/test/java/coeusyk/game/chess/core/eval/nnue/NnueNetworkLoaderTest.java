@@ -107,6 +107,64 @@ class NnueNetworkLoaderTest {
     }
 
     @Test
+    void loadRejectsZeroHiddenWidth() throws IOException {
+        // Boundary case for the same `hiddenWidth <= 0` guard exercised above at the
+        // oversized end — zero is the other edge of "<= 0" and wasn't separately covered.
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DataOutputStream out = new DataOutputStream(bytes);
+        out.writeBytes("VNUE");
+        out.writeInt(1);
+        out.writeInt(1);
+        out.writeInt(1);
+        out.writeInt(0); // hiddenWidth — zero, not just "very large"
+        out.writeInt(1);
+        out.writeInt(1);
+        out.writeInt(1);
+        out.writeInt(1);
+        out.writeUTF("uuid");
+        out.writeUTF("commit");
+        out.writeLong(0L);
+
+        IOException thrown = assertThrows(IOException.class,
+                () -> NnueNetwork.load(new ByteArrayInputStream(bytes.toByteArray())));
+        assertTrue(thrown.getMessage().contains("hiddenWidth"));
+    }
+
+    @Test
+    void loadRejectsCorruptUtfString() throws IOException {
+        // A 3-byte modified-UTF-8 lead (0xE0) whose continuation bytes don't match the
+        // required 10xxxxxx pattern (0x00, 0x00) is malformed per DataInput.readUTF's
+        // spec — confirmed empirically to throw UTFDataFormatException, unlike an
+        // unpaired surrogate byte sequence, which Java's readUTF accepts without error.
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DataOutputStream out = new DataOutputStream(bytes);
+        out.writeBytes("VNUE");
+        out.writeInt(1);
+        out.writeInt(1);
+        out.writeInt(1);
+        out.writeInt(4); // hiddenWidth
+        out.writeInt(1);
+        out.writeInt(1);
+        out.writeInt(1);
+        out.writeInt(1);
+        out.writeShort(3);
+        out.write(0xE0);
+        out.write(0x00);
+        out.write(0x00);
+
+        IOException thrown = assertThrows(IOException.class,
+                () -> NnueNetwork.load(new ByteArrayInputStream(bytes.toByteArray())));
+        assertTrue(thrown instanceof java.io.UTFDataFormatException,
+                "expected UTFDataFormatException for a corrupt UTF string, got " + thrown.getClass());
+    }
+
+    // qa/qb are read with no validation at all (unlike every other header field in this
+    // class) — a zero or negative value loads successfully and only fails later, at
+    // evaluation time, with an ArithmeticException (divide by zero) or silently wrong
+    // output. Deliberately not fixed here — PR C-5's scope is CI/test-only, no production
+    // behavior changes; tracked in issue #191 rather than guarded inline.
+
+    @Test
     void loadRejectsTruncatedFile(@TempDir Path tempDir) throws IOException {
         int width = 4;
         short[] ftWeights = new short[FeatureExtractor.FEATURES_PER_PERSPECTIVE * width];

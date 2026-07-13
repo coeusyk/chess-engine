@@ -10,9 +10,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Supplier;
@@ -52,7 +50,7 @@ class NnueCorpusBenchmarkTest {
         System.out.println("---------------|-------------|------------|-------------|------------");
 
         for (String category : NnueCorpusCategories.FILE_NAMES) {
-            List<String> fens = loadFens(category);
+            List<String> fens = NnueCorpusCategories.readFens(CORPUS_DIR.resolve(category));
             List<String> npsSample = fens.subList(0, Math.min(NPS_SAMPLE_SIZE, fens.size()));
 
             long nnueEvalRate = evalThroughput(fens, () -> new NnueEvaluator(network));
@@ -63,19 +61,6 @@ class NnueCorpusBenchmarkTest {
             System.out.printf(Locale.US, "%-14s | %,11d | %,10d | %,11d | %,10d%n",
                     category, nnueEvalRate, nnueNps, classicalEvalRate, classicalNps);
         }
-    }
-
-    private static List<String> loadFens(String category) throws IOException {
-        List<String> fens = new ArrayList<>();
-        for (String line : Files.readAllLines(CORPUS_DIR.resolve(category))) {
-            String trimmed = line.trim();
-            if (trimmed.isEmpty() || trimmed.startsWith("#")) {
-                continue;
-            }
-            String[] tokens = trimmed.split("\\s+");
-            fens.add(String.join(" ", tokens[0], tokens[1], tokens[2], tokens[3]));
-        }
-        return fens;
     }
 
     /** evals/sec over {@link #EVAL_REPS} passes across every position in {@code fens}. */

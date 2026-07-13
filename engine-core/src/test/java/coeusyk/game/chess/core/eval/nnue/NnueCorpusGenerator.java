@@ -117,7 +117,7 @@ class NnueCorpusGenerator {
             }
         }
 
-        endgameFens.addAll(readFensFromEpd(DRAW_FAILURES_EPD));
+        endgameFens.addAll(NnueCorpusCategories.readFens(DRAW_FAILURES_EPD));
 
         writeCategory("opening.epd",
                 "Opening (ply 1-15) — fixed-seed (" + SEED + ") random-legal self-play.", openingFens);
@@ -138,7 +138,7 @@ class NnueCorpusGenerator {
         List<String> lines = new ArrayList<>();
         lines.add("fen,eval");
         for (String category : NnueCorpusCategories.FILE_NAMES) {
-            for (String fen : readFensFromEpd(CORPUS_DIR.resolve(category))) {
+            for (String fen : NnueCorpusCategories.readFens(CORPUS_DIR.resolve(category))) {
                 Board board = NnueCorpusCategories.toBoard(fen);
                 evaluator.reset(board);
                 short eval = (short) evaluator.evaluate(board);
@@ -212,19 +212,6 @@ class NnueCorpusGenerator {
             }
         }
         return legalMoves.get(random.nextInt(legalMoves.size()));
-    }
-
-    private static List<String> readFensFromEpd(Path path) throws IOException {
-        List<String> fens = new ArrayList<>();
-        for (String line : Files.readAllLines(path)) {
-            String trimmed = line.trim();
-            if (trimmed.isEmpty() || trimmed.startsWith("#")) {
-                continue;
-            }
-            String[] tokens = trimmed.split("\\s+");
-            fens.add(String.join(" ", tokens[0], tokens[1], tokens[2], tokens[3]));
-        }
-        return fens;
     }
 
     private static int pieceCount(String fen) {

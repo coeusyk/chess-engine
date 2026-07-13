@@ -17,15 +17,24 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
  * covering every move type (quiet, capture, en passant, castling, promotion,
  * promotion+capture, null move). A single mismatch here is the dominant NNUE bug
  * class (silent accumulator desync) — PRD §"Developer Tooling".
+ *
+ * <p>PR C-5 (issue #189): {@code GAMES}/{@code SEED} are overridable via system
+ * properties — defaults unchanged (fixed seed, 40 games), so the default and
+ * PR-blocking behavior is identical to before this change. The nightly workflow
+ * overrides both ({@code -Dfuzz.seed=$(date +%s) -Dfuzz.games=<larger>}) for the
+ * plan's "unfixed seed, larger game count" nightly-only variant (Task 4) — the seed
+ * actually used is printed so a red nightly run is reproducible via
+ * {@code -Dfuzz.seed=<logged value>}.
  */
 class NnueIncrementalVsRebuildFuzzTest {
 
-    private static final int GAMES = 40;
+    private static final int GAMES = Integer.getInteger("fuzz.games", 40);
     private static final int PLIES_PER_GAME = 60;
-    private static final int SEED = 20260707;
+    private static final long SEED = Long.getLong("fuzz.seed", 20260707L);
 
     @Test
     void incrementalAccumulatorMatchesFullRebuildOverRandomLegalGames() {
+        System.out.println("[NnueFuzz] seed=" + SEED + " games=" + GAMES);
         NnueNetwork network = TestNetworks.synthetic(8);
         NnueEvaluator incremental = new NnueEvaluator(network);
         NnueEvaluator rebuildOracle = new NnueEvaluator(network);

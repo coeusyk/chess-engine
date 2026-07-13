@@ -36,3 +36,23 @@ jobs:
         # 5% tolerance → floor of 152,000 NPS. Pawn-hash hit rate ≥85% checked inside the test.
         # Local Ryzen 7 7700X Phase 14 baseline: 316,964 NPS (31-pos/d13 BenchRunner, gate floor 301,116).
         # These are different measurement protocols — do not conflate the CI runner value with the local bench value.
+
+      # PR C-5 (issue #189): NNUE integration hardening CI. Loader validation
+      # (NnueNetworkLoaderTest's malformed-network matrix) and the UCI-level
+      # "genuinely searches under EvalType=NNUE, not a silent Classical fallback"
+      # confirmation (UciApplicationIntegrationTest#evalTypeNnueWithValidEvalFileActuallySearchesWithNnue,
+      # which asserts the positive "NNUE network loaded" info string, not just the
+      # absence of a fallback string — ADR-005) are both untagged and already covered
+      # by "Build and test modules" above; no separate step needed for either.
+
+      - name: NNUE-mode regression (search tree under EvalType=NNUE)
+        run: mvn -B test -pl engine-core -Dgroups=nnue-mode
+
+      - name: NNUE golden-eval regression
+        run: mvn -B test -pl engine-core -Dgroups=nnue-golden
+
+      - name: NNUE benchmark throughput (tracked, not gated)
+        run: mvn -B test -pl engine-core -Dgroups=nnue-benchmark -Dbenchmark.enabled=true
+        # Per-category eval throughput/NPS is reported for tracking (plan Task 3,
+        # "Regression thresholds") — the single aggregate NPS gate above remains the
+        # only enforced number; this step has no assertions of its own to fail on.
