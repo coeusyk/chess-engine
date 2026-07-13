@@ -1,7 +1,9 @@
 package coeusyk.game.chess.uci;
 
+import coeusyk.game.chess.core.eval.nnue.NnueEvaluator;
 import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Move;
+import coeusyk.game.chess.core.models.Piece;
 import coeusyk.game.chess.core.movegen.MovesGenerator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -26,6 +28,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -235,6 +238,149 @@ class UciApplicationIntegrationTest {
         harness.send("go depth 2");
         assertNotNull(harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(10)),
                 "Engine did not emit bestmove after setting EvalFile");
+    }
+
+    @Test
+    void uciListsNnueDebugOption() throws Exception {
+        harness = UciHarness.start();
+
+        harness.send("uci");
+        assertNotNull(harness.awaitLine(
+                "option name NnueDebug type check default false",
+                Duration.ofSeconds(2)),
+                "NnueDebug option not advertised");
+        assertNotNull(harness.awaitLine("uciok", Duration.ofSeconds(2)));
+    }
+
+    @Test
+    void nnueDebugCommandsRejectedWhenNnueDebugOff(@TempDir Path tempDir) throws Exception {
+        Path networkFile = tempDir.resolve("debug-off.nnue");
+        writeTinyNnueFile(networkFile, "debug-off-uuid");
+
+        harness = UciHarness.start();
+        harness.send("setoption name EvalType value NNUE");
+        harness.send("setoption name EvalFile value " + networkFile);
+        harness.send("position startpos");
+        harness.send("nnue features");
+
+        assertNotNull(harness.awaitLine(
+                "info string nnue debug commands require NnueDebug=true",
+                Duration.ofSeconds(2)),
+                "Expected rejection info string when NnueDebug is off");
+    }
+
+    @Test
+    void nnueDebugCommandsRejectedWhenEvalTypeIsClassical() throws Exception {
+        harness = UciHarness.start();
+        harness.send("setoption name NnueDebug value true");
+        harness.send("position startpos");
+        harness.send("nnue acc");
+
+        assertNotNull(harness.awaitLine(
+                "info string nnue debug commands require EvalType=NNUE",
+                Duration.ofSeconds(2)),
+                "Expected rejection info string when active eval type is Classical");
+    }
+
+    @Test
+    void nnueFeaturesCommandListsActiveFeaturesWhenEnabled(@TempDir Path tempDir) throws Exception {
+        Path networkFile = tempDir.resolve("features.nnue");
+        writeTinyNnueFile(networkFile, "features-uuid");
+
+        harness = UciHarness.start();
+        harness.send("setoption name NnueDebug value true");
+        harness.send("setoption name EvalType value NNUE");
+        harness.send("setoption name EvalFile value " + networkFile);
+        harness.send("position startpos");
+        harness.send("nnue features");
+
+        assertNotNull(harness.awaitLine(
+                "info string NNUE network loaded: features-uuid",
+                Duration.ofSeconds(5)),
+                "Expected NNUE network-loaded info string before the feature list");
+        assertNotNull(harness.awaitLine(
+                line -> line.startsWith("info string active features:"),
+                Duration.ofSeconds(2)),
+                "Expected the active-features header");
+        assertNotNull(harness.awaitLine(
+                line -> line.startsWith("info string white=["),
+                Duration.ofSeconds(2)),
+                "Expected the white-perspective active feature index list");
+        assertNotNull(harness.awaitLine(
+                line -> line.startsWith("info string black=["),
+                Duration.ofSeconds(2)),
+                "Expected the black-perspective active feature index list");
+    }
+
+    @Test
+    void nnueAccCommandDumpsRootAccumulatorWhenEnabled(@TempDir Path tempDir) throws Exception {
+        Path networkFile = tempDir.resolve("acc.nnue");
+        writeTinyNnueFile(networkFile, "acc-uuid");
+
+        harness = UciHarness.start();
+        harness.send("setoption name NnueDebug value true");
+        harness.send("setoption name EvalType value NNUE");
+        harness.send("setoption name EvalFile value " + networkFile);
+        harness.send("position startpos");
+        harness.send("nnue acc");
+
+        assertNotNull(harness.awaitLine(
+                "info string NNUE network loaded: acc-uuid",
+                Duration.ofSeconds(5)),
+                "Expected NNUE network-loaded info string before the accumulator dump");
+        assertNotNull(harness.awaitLine(
+                line -> line.startsWith("info string sp=0"),
+                Duration.ofSeconds(2)),
+                "Expected the root-position accumulator dump (sp=0)");
+    }
+
+    @Test
+    void nnueVerifyCommandReportsNoDivergenceAtRootWhenEnabled(@TempDir Path tempDir) throws Exception {
+        Path networkFile = tempDir.resolve("verify.nnue");
+        writeTinyNnueFile(networkFile, "verify-uuid");
+
+        harness = UciHarness.start();
+        harness.send("setoption name NnueDebug value true");
+        harness.send("setoption name EvalType value NNUE");
+        harness.send("setoption name EvalFile value " + networkFile);
+        harness.send("position startpos");
+        harness.send("nnue verify");
+
+        assertNotNull(harness.awaitLine(
+                "info string NNUE network loaded: verify-uuid",
+                Duration.ofSeconds(5)),
+                "Expected NNUE network-loaded info string before the verify result");
+        assertNotNull(harness.awaitLine(
+                "info string verify: OK (incremental matches from-scratch rebuild)",
+                Duration.ofSeconds(2)),
+                "Expected an OK verify result — a freshly reset root evaluator must match its own rebuild");
+    }
+
+    /**
+     * {@link UciApplication#formatVerifyResult} formats {@link
+     * NnueEvaluator.RebuildDiff} for a human reading the UCI console — direct unit
+     * tests (not through the subprocess harness) since the divergent path can't be
+     * reached over the wire: {@code corruptForTest} is package-private to {@code
+     * eval.nnue} and there's no UCI command to trigger it (nor should there be —
+     * that's a test-only hook, not debug-tool scope).
+     */
+    @Test
+    void formatVerifyResultReportsOkWhenDiffMatches() {
+        assertEquals("verify: OK (incremental matches from-scratch rebuild)",
+                UciApplication.formatVerifyResult(NnueEvaluator.RebuildDiff.NONE));
+    }
+
+    @Test
+    void formatVerifyResultReportsSymbolicPerspectiveOnMismatch() {
+        NnueEvaluator.RebuildDiff whiteDiff = new NnueEvaluator.RebuildDiff(Piece.White, 3, 7);
+        assertEquals("verify: MISMATCH perspective=white index=3 delta=7",
+                UciApplication.formatVerifyResult(whiteDiff),
+                "raw perspectiveColor int (8) must be translated to the symbolic label");
+
+        NnueEvaluator.RebuildDiff blackDiff = new NnueEvaluator.RebuildDiff(Piece.Black, 5, -4);
+        assertEquals("verify: MISMATCH perspective=black index=5 delta=-4",
+                UciApplication.formatVerifyResult(blackDiff),
+                "raw perspectiveColor int (16) must be translated to the symbolic label");
     }
 
     /** Minimal valid file in NnueNetwork's documented binary format — see NnueNetwork's Javadoc. */

@@ -3,6 +3,8 @@ package coeusyk.game.chess.core.eval.nnue;
 import coeusyk.game.chess.core.eval.EvaluatorStrategy;
 import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Piece;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Arrays;
 
@@ -23,23 +25,55 @@ import java.util.Arrays;
  */
 public final class NnueEvaluator implements EvaluatorStrategy, FeatureExtractor.ChangeVisitor {
 
+    private static final Logger LOG = LoggerFactory.getLogger(NnueEvaluator.class);
+
     // References Board's own constant (not a duplicated literal) — the accumulator
     // stack is pushed/popped in lockstep with Board's unmake stack and can't safely
     // be sized independently of it.
     private static final int ACCUMULATOR_POOL_SIZE = Board.UNMAKE_POOL_SIZE;
 
+    // PR C-3 (issue #187): "~1-in-256" sampled rebuild assertion. Deterministic, not
+    // RNG-driven — a fixed period gives a hard bound on how stale a desync can go
+    // undetected, and avoids the test flakiness the plan's own risk review flagged
+    // for a probabilistic firing rate.
+    //
+    // CLAUDE.md §3's no-hot-path-allocation rule has one sanctioned, scoped exception
+    // here: the sampled call allocates via verifyAgainstRebuild (PR C-1's existing
+    // public API — not reimplemented here to avoid duplicating it or widening its
+    // frozen signature). Issue #187 explicitly asks for exactly this comparison.
+    // Zero-overhead-when-disabled is what §3 actually protects for production use;
+    // that's proven both structurally (every debug code path is behind `if
+    // (debugMode)`, defaulting false) and empirically (NnueEvaluatorDebugModeTest's
+    // debugModeDisabledNeverLogsEvenWithCorruption; bench with NnueDebug unset —
+    // its default — reproduced the pre-PR node count exactly, see PR C-3's commit).
+    private static final int DEBUG_ASSERTION_SAMPLE_PERIOD = 256;
+
     private final NnueNetwork network;
     private final int width;
     private final short[][] whiteAcc;
     private final short[][] blackAcc;
+    private final boolean debugMode;
     private int sp; // next-to-read index (top of stack); mirrors Board's unmakeSP convention pre-decrement
+    private int onMakeCount; // only read/written when debugMode — sampling cadence for the rebuild assertion
 
     public NnueEvaluator(NnueNetwork network) {
+        this(network, false);
+    }
+
+    /**
+     * @param debugMode when {@code true}, enables the sampled incremental-vs-rebuild
+     * assertion and stack-depth bounds check inside {@link #onMake} (PR C-3, issue
+     * #187). Both are gated entirely behind this flag — zero overhead when {@code
+     * false}, since the {@code if (debugMode)} checks in {@link #onMake} are the only
+     * added cost and never execute their bodies.
+     */
+    public NnueEvaluator(NnueNetwork network, boolean debugMode) {
         this.network = network;
         this.width = network.hiddenWidth();
         this.whiteAcc = new short[ACCUMULATOR_POOL_SIZE][width];
         this.blackAcc = new short[ACCUMULATOR_POOL_SIZE][width];
         this.sp = 0;
+        this.debugMode = debugMode;
     }
 
     @Override
@@ -60,10 +94,57 @@ public final class NnueEvaluator implements EvaluatorStrategy, FeatureExtractor.
 
     @Override
     public void onMake(Board board, int move, int capturedPiece) {
+        if (debugMode) {
+            assertStackBounds();
+        }
         System.arraycopy(whiteAcc[sp], 0, whiteAcc[sp + 1], 0, width);
         System.arraycopy(blackAcc[sp], 0, blackAcc[sp + 1], 0, width);
         sp++;
         FeatureExtractor.forEachChange(board, move, capturedPiece, this);
+        if (debugMode && ++onMakeCount % DEBUG_ASSERTION_SAMPLE_PERIOD == 0) {
+            assertIncrementalMatchesRebuild(board);
+        }
+    }
+
+    /**
+     * Debug-only stack-depth bounds check — the Phase C plan's "stack-depth==ply
+     * invariant", reinterpreted as a self-contained check rather than the literal
+     * {@code sp == Board.unmakeSP}: {@code Board.unmakeSP} is private (frozen API,
+     * ADR-004), and isn't even a true invariant against {@link #sp} since {@code
+     * Board.makeNullMove}/{@code unmakeNullMove} never touch it while {@link
+     * #onMakeNull}/{@link #onUnmakeNull} do move {@link #sp}. Warns on the same
+     * failure mode (unbalanced onMake/onUnmake calls) without widening Board's API
+     * — advisory only: an actual overflow still throws {@link
+     * ArrayIndexOutOfBoundsException} from the arraycopy immediately below (this
+     * check runs first purely so that crash is preceded by a clear diagnostic
+     * instead of a bare stack trace, not to prevent it). Runs every debug-mode
+     * {@link #onMake} call (O(1), no allocation) rather than only on the sampled
+     * calls below — only {@link #verifyAgainstRebuild} allocates.
+     */
+    private void assertStackBounds() {
+        if (sp < 0 || sp + 1 >= ACCUMULATOR_POOL_SIZE) {
+            LOG.warn("NNUE accumulator stack pointer out of bounds before onMake: sp={} (pool size {})",
+                    sp, ACCUMULATOR_POOL_SIZE);
+        }
+    }
+
+    /**
+     * Debug-only, periodic (every {@link #DEBUG_ASSERTION_SAMPLE_PERIOD}th {@link
+     * #onMake} call, not every call — {@link #verifyAgainstRebuild} allocates scratch
+     * arrays and per-perspective visitor lambdas): compares the live incrementally-
+     * maintained accumulator against a from-scratch rebuild (PR C-1), per issue
+     * #187. Never throws — a debug assertion that crashes the live search it's
+     * diagnosing is hostile to the diagnosis workflow it exists to support;
+     * divergence is logged instead. A real, sustained desync logs once per sample
+     * for the rest of the search rather than once — acceptable for a debug-only
+     * tool that exists to surface exactly that.
+     */
+    private void assertIncrementalMatchesRebuild(Board board) {
+        RebuildDiff diff = verifyAgainstRebuild(board);
+        if (!diff.matches()) {
+            LOG.warn("NNUE accumulator desync detected: perspective={} index={} delta={}",
+                    diff.perspectiveColor(), diff.firstDivergingIndex(), diff.delta());
+        }
     }
 
     @Override
@@ -153,6 +234,20 @@ public final class NnueEvaluator implements EvaluatorStrategy, FeatureExtractor.
         return "sp=" + sp
                 + "\nwhite=" + Arrays.toString(whiteAcc[sp])
                 + "\nblack=" + Arrays.toString(blackAcc[sp]);
+    }
+
+    /**
+     * Debug tool: lists every active feature index (both perspectives) for {@code
+     * board}'s current pieces, via {@link FeatureExtractor#activeFeatureIndices} —
+     * the PRD's own "active feature dump" tool, not reimplemented here. Same
+     * white=/black= shape as {@link #dumpAccumulators}. Root-position-only, like
+     * {@link #dumpAccumulators} — takes {@code board} fresh rather than reading
+     * live search state.
+     */
+    public String dumpActiveFeatures(Board board) {
+        return "active features:"
+                + "\nwhite=" + Arrays.toString(FeatureExtractor.activeFeatureIndices(board, Piece.White))
+                + "\nblack=" + Arrays.toString(FeatureExtractor.activeFeatureIndices(board, Piece.Black));
     }
 
     /**

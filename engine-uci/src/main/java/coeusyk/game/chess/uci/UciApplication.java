@@ -5,6 +5,7 @@ import coeusyk.game.chess.core.eval.nnue.NnueEvaluator;
 import coeusyk.game.chess.core.eval.nnue.NnueNetwork;
 import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Move;
+import coeusyk.game.chess.core.models.Piece;
 import coeusyk.game.chess.core.movegen.MovesGenerator;
 import coeusyk.game.chess.core.search.IterationInfo;
 import coeusyk.game.chess.core.search.SearchResult;
@@ -45,6 +46,9 @@ public class UciApplication {
     // to Classical with an info string rather than crashing (PRD US-2).
     private String evalType = "Classical";
     private String evalFile = "";
+    // PR C-3 (issue #187): gates the sampled rebuild assertion inside NnueEvaluator's
+    // onMake (zero overhead when false) and the nnue features/acc/verify UCI commands.
+    private boolean nnueDebug = false;
     // Cache of the last successfully loaded network, keyed by evalFile's value at
     // load time, so a network isn't re-read from disk on every go.
     private NnueNetwork nnueNetwork;
@@ -176,6 +180,7 @@ public class UciApplication {
                 System.out.println("option name Contempt type spin default 0 min 0 max 200");
                 System.out.println("option name EvalType type combo default Classical var Classical var NNUE");
                 System.out.println("option name EvalFile type string default <empty>");
+                System.out.println("option name NnueDebug type check default false");
                 System.out.println("uciok");
             } else if ("isready".equals(line)) {
                 System.out.println("readyok");
@@ -225,18 +230,70 @@ public class UciApplication {
                 break;
             } else if ("eval".equals(line)) {
                 handleEval();
+            } else if (line.startsWith("nnue ")) {
+                handleNnueDebug(line);
             }
 
             System.out.flush();
         }
     }
 
+    /**
+     * PR C-3 (issue #187): {@code nnue features}/{@code nnue acc}/{@code nnue
+     * verify} — gated behind {@code NnueDebug}, root-position-only (no persistent
+     * live-search reference exists once {@code go} returns; see class-level note on
+     * {@link #resolveNnueNetworkForSearch}). Builds a throwaway {@link NnueEvaluator}
+     * over the current {@link #board}, matching {@link #handleEval}'s pattern —
+     * never touches the live search's own evaluator instance.
+     */
+    private void handleNnueDebug(String line) {
+        if (!nnueDebug) {
+            System.out.println("info string nnue debug commands require NnueDebug=true");
+            return;
+        }
+        if (!"NNUE".equals(evalType)) {
+            System.out.println("info string nnue debug commands require EvalType=NNUE");
+            return;
+        }
+        NnueEvaluator nnueEvaluator = buildRootNnueEvaluator();
+        if (nnueEvaluator == null) {
+            // resolveNnueNetworkForSearch() already printed its own fallback info string.
+            return;
+        }
+
+        String subcommand = line.substring("nnue ".length()).trim();
+        if ("features".equals(subcommand)) {
+            printBreakdown(nnueEvaluator.dumpActiveFeatures(board));
+        } else if ("acc".equals(subcommand)) {
+            printBreakdown(nnueEvaluator.dumpAccumulators());
+        } else if ("verify".equals(subcommand)) {
+            printBreakdown(formatVerifyResult(nnueEvaluator.verifyAgainstRebuild(board)));
+        } else {
+            System.out.println("info string Unknown nnue subcommand '" + subcommand
+                    + "' — expected features, acc, or verify.");
+        }
+    }
+
+    /**
+     * {@link NnueEvaluator.RebuildDiff}'s default record {@code toString()} prints
+     * raw {@code perspectiveColor} ints ({@link Piece#White}=8, {@link
+     * Piece#Black}=16) — opaque over a UCI console. Formats it the way {@link
+     * NnueEvaluator#dumpAccumulators} already labels perspectives (white=/black=).
+     */
+    static String formatVerifyResult(NnueEvaluator.RebuildDiff diff) {
+        if (diff.matches()) {
+            return "verify: OK (incremental matches from-scratch rebuild)";
+        }
+        String perspective = diff.perspectiveColor() == Piece.White ? "white" : "black";
+        return "verify: MISMATCH perspective=" + perspective
+                + " index=" + diff.firstDivergingIndex()
+                + " delta=" + diff.delta();
+    }
+
     private void handleEval() {
         if ("NNUE".equals(evalType)) {
-            NnueNetwork network = resolveNnueNetworkForSearch();
-            if (network != null) {
-                NnueEvaluator nnueEvaluator = new NnueEvaluator(network);
-                nnueEvaluator.reset(board);
+            NnueEvaluator nnueEvaluator = buildRootNnueEvaluator();
+            if (nnueEvaluator != null) {
                 printBreakdown(nnueEvaluator.explainEval(board));
                 return;
             }
@@ -245,6 +302,23 @@ public class UciApplication {
         }
         coeusyk.game.chess.core.eval.Evaluator ev = new coeusyk.game.chess.core.eval.Evaluator();
         printBreakdown(ev.explainEval(board));
+    }
+
+    /**
+     * Shared by {@link #handleEval} and {@link #handleNnueDebug}: a throwaway,
+     * non-debug-mode {@link NnueEvaluator} reset over the current root {@link
+     * #board} — never the live search's own evaluator instance. Returns {@code
+     * null} if {@code EvalType} isn't NNUE or the network fails to resolve (the
+     * caller's own fallback/rejection message applies in that case).
+     */
+    private NnueEvaluator buildRootNnueEvaluator() {
+        NnueNetwork network = resolveNnueNetworkForSearch();
+        if (network == null) {
+            return null;
+        }
+        NnueEvaluator nnueEvaluator = new NnueEvaluator(network);
+        nnueEvaluator.reset(board);
+        return nnueEvaluator;
     }
 
     private static void printBreakdown(String breakdown) {
@@ -437,6 +511,8 @@ public class UciApplication {
             }
         } else if ("evalfile".equals(optionNameLower)) {
             evalFile = valuePart.trim();
+        } else if ("nnuedebug".equals(optionNameLower)) {
+            nnueDebug = "true".equalsIgnoreCase(valuePart);
         }
         // Unknown options are silently ignored per UCI spec.
     }
@@ -641,7 +717,7 @@ public class UciApplication {
                             helper.setPawnHashSizeMb(pawnHashSizeMb);
                             helper.setContempt(contempt);
                             if (nnueNetworkForSearch != null) {
-                                helper.setEvaluatorStrategy(new NnueEvaluator(nnueNetworkForSearch));
+                                helper.setEvaluatorStrategy(new NnueEvaluator(nnueNetworkForSearch, nnueDebug));
                             }
                             Board helperBoard = new Board(positionFen);
                             helperBoard.setSearchMode(true);
@@ -682,7 +758,7 @@ public class UciApplication {
             searcher.setPawnHashSizeMb(pawnHashSizeMb);
             searcher.setContempt(contempt);
             if (nnueNetworkForSearch != null) {
-                searcher.setEvaluatorStrategy(new NnueEvaluator(nnueNetworkForSearch));
+                searcher.setEvaluatorStrategy(new NnueEvaluator(nnueNetworkForSearch, nnueDebug));
             }
             if (multiPV > 1) {
                 searcher.setMultiPV(multiPV);
