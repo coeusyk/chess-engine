@@ -1,0 +1,13 @@
+{
+  "spec_version": 1,
+  "feature_set_id": "plain-768",
+  "piece_types": ["pawn", "knight", "bishop", "rook", "queen", "king"],
+  "colors": ["white", "black"],
+  "squares": 64,
+  "square_numbering": "a8=0, row-major top-to-bottom -- matches Board.getChessSquare (rank = 8 - square/8), NOT the a1=0 convention",
+  "features_per_perspective": 768,
+  "relative_color_rule": "0 if piece_color == perspective_color else 1",
+  "relative_square_rule": "square if perspective_color == white else square XOR 56",
+  "piece_type_index_rule": "0-based ordinal into piece_types, i.e. Java's pieceType - 1",
+  "index_formula": "relative_color * (len(piece_types) * squares) + piece_type_index * squares + relative_square"
+}

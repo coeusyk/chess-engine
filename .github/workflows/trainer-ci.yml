@@ -4,13 +4,19 @@ on:
   push:
     paths:
       - 'trainer/**'
+      - 'docs/architecture/feature-spec/**'
   pull_request:
     paths:
       - 'trainer/**'
+      - 'docs/architecture/feature-spec/**'
 
 jobs:
-  placeholder:
+  parity:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: echo "Trainer CI skeleton — real jobs land in PR D-7 (trainer reproducibility CI)."
+      - uses: astral-sh/setup-uv@v3
+      - name: Trainer unit tests (includes Java/Python feature parity, D-3 #194)
+        working-directory: trainer
+        run: uv run --extra dev pytest tests/ -v
+      # Further jobs (full training/reproducibility pipeline) land in PR D-7.

@@ -163,6 +163,126 @@ language boundary (no JNI, no codegen from Java, per §1's hard boundary). Valid
 CI. Duplication of eight lines of arithmetic is cheaper and safer here than either
 alternative's added machinery.
 
+### 4.1 Executable Feature Specification — `docs/architecture/feature-spec/v1.json`
+
+Grilled 2026-07-13, informed by
+`docs/architecture/research/2026-07-13-executable-feature-specification.md` (a
+primary-source survey of Feast, TFX, ONNX, protobuf, SemVer, and
+Specification-by-Example/Pact).
+
+**Problem.** The formula above is duplicated as prose in this document, as Java
+constants in `FeatureExtractor.java`, and (from D-3 onward) as Python constants in
+`feature_encoder.py`. Three independently maintained copies of "6 piece types, 2
+colors, 64 squares, a8=0 numbering,
+`relativeColor*384 + pieceTypeIndex*64 + relativeSquare`" is a duplication distinct
+from — and upstream of — the index-*value* duplication `FeatureIndexParityTest.CORPUS`
+already guards against.
+
+**Design.** A single versioned, machine-readable JSON file is the canonical
+declaration of the feature set's *shape and rules* (not its golden index values —
+that stays the parity corpus's job, see below):
+
+```json
+{
+  "spec_version": 1,
+  "feature_set_id": "plain-768",
+  "piece_types": ["pawn", "knight", "bishop", "rook", "queen", "king"],
+  "colors": ["white", "black"],
+  "squares": 64,
+  "square_numbering": "a8=0, row-major top-to-bottom -- matches Board.getChessSquare (rank = 8 - square/8), NOT the a1=0 convention",
+  "features_per_perspective": 768,
+  "relative_color_rule": "0 if piece_color == perspective_color else 1",
+  "relative_square_rule": "square if perspective_color == white else square XOR 56",
+  "piece_type_index_rule": "0-based ordinal into piece_types, i.e. Java's pieceType - 1",
+  "index_formula": "relative_color * (len(piece_types) * squares) + piece_type_index * squares + relative_square"
+}
+```
+
+**Location is deliberate.** The file lives under `docs/architecture/`, not inside
+`trainer/`, specifically so a Java *test* reading it never becomes a Java artifact
+depending on "any `trainer/`-tree artifact" — the exact phrase Invariant 8 (§15)
+prohibits for production code. Test-scope-only, and outside `trainer/` entirely: both
+independently sufficient to keep this file's existence from eroding Invariant 8, even
+though it's a belt-and-suspenders precaution here since Invariant 8 only binds
+*production* code in the first place.
+
+**Consumers, asymmetric by design:**
+- **Python (`trainer/trainer/encoding/feature_encoder.py`, D-3):** loads `v1.json` at
+  import time and builds its formula from these fields — genuinely *derives* behavior,
+  satisfying this improvement's goal directly. Python carries no hot-path allocation
+  constraint (CLAUDE.md §3 binds `engine-core`/`engine-uci` only), so runtime parsing
+  costs nothing that matters here.
+- **Java (`FeatureExtractor.java`):** stays exactly as written today — hardcoded,
+  hot-path, allocation-free, zero behavior or code change. §4's already-approved
+  rejection of runtime spec-parsing stands, freshly reconfirmed by the research note:
+  Feast, TFX, and ONNX all compile or pin specs *before* the hot/serving path, never
+  parse them on it. A new test, `FeatureSpecConformanceTest.java` (test scope only,
+  never on the production classpath), loads the same `v1.json` and asserts
+  `FeatureExtractor.PIECE_TYPES`, `.SQUARES`, `.FEATURES_PER_PERSPECTIVE`, and
+  re-derives `featureIndex()` against the spec's documented rules for a sample of
+  (color, piece, square) triples — proving equality, not merely documenting an
+  intention to match.
+
+**Path resolution.** Both consumers locate `v1.json` by walking upward from their own
+source file's location to the repository root (the first ancestor directory
+containing `.git`), then resolving `docs/architecture/feature-spec/v1.json` from
+there — avoiding the working-directory fragility of hardcoded relative-segment counts
+across Maven's and `uv`'s differing invocation conventions.
+
+**No new Java dependency (architecture-review finding, resolved).** `engine-core`'s
+`pom.xml` has zero JSON libraries today, in any scope — confirmed by inspection before
+finalizing this design. Adding one (Jackson, Gson, `org.json`) solely for one
+test-scope file, whose schema is small, flat, and fixed in advance, would be a
+disproportionate dependency for the need. `FeatureSpecConformanceTest.java` (D-3)
+reads `v1.json` with a purpose-built minimal parser for this file's known shape
+(string/int/string-array fields only, no nesting) — not a general JSON library and not
+a general parser. Python needs no equivalent decision; `json` is stdlib.
+
+**Honest scoping of "derive."** Python derives literally. Java is *provably and
+continuously verified equal to* the contract via a dedicated CI-gated test — the
+strongest relationship achievable without reopening the hot-path constraint that
+Invariant 8 and CLAUDE.md §3 already freeze. This asymmetry is the deliberate
+resolution of a real tension between eliminating duplicated constants and the
+pre-existing, still-binding engine/trainer isolation boundary — not an oversight. A
+future reader should not mistake Java's hardcoded constants for an unfinished
+migration; they are permanent, by design.
+
+**Relationship to the existing parity corpus.** The spec file and
+`FeatureIndexParityTest.CORPUS` are complementary, not redundant: the spec is the
+*shallow* structural contract (shape, ordering, rule names — human-legible; drift here
+is a copy-paste-level bug); the corpus is the *deep* enforcement layer (golden index
+values for real positions — drift here is a formula-level bug the spec alone can't
+catch, e.g. an off-by-one in `relativeSquare`'s XOR that still produces the "right
+shape" of output). Both stay. D-3 decides the corpus's cross-language sharing
+mechanism; this improvement decides the shape contract's.
+
+**Versioning.** `spec_version` (starts at 1) tracks the JSON schema's own shape,
+independent of `feature_set_id`. A new feature set (HalfKP, §13) gets a new file
+(`v2.json`, its own `feature_set_id`) rather than mutating `v1.json` — mirroring
+ONNX's per-operator opset versioning and this document's existing "frozen contract,
+describe don't redesign" treatment of the `.nnue` format. `v1.json` is the
+authoritative definition of what today's `.nnue` `featureSetId` byte *means*
+structurally; the two are the same concept viewed from two contracts (§18, updated).
+
+**Alternatives considered (beyond §4's own, which still stand):**
+1. *Codegen Java from `v1.json` at build time (rejected).* The same objection §4
+   already raised for the reverse direction — a build-time toolchain for eight lines
+   of arithmetic, requiring a code-generation step before every `engine-core` compile
+   that nothing else in this project currently needs.
+2. *A single spec file both sides parse at runtime, including Java (rejected,
+   reconfirmed).* Exactly what §4 already rejected, and the fresh research found no
+   counterexample to among Feast/TFX/ONNX — parsing a spec on the hot path is not how
+   any surveyed system achieves parity.
+3. *No spec file — keep three independent copies, pinned only by the golden corpus
+   (rejected).* The status quo this improvement was requested to move past; the golden
+   corpus alone gives no single legible place to read "6 piece types, a8=0 numbering"
+   without reverse-engineering it from index values.
+
+**Chosen:** the file above — Python derives from it directly; Java is tested against
+it. Resolves this improvement's goal on the side that can safely bear runtime parsing,
+and strengthens (via a new conformance test) rather than weakens the guarantee on the
+side that cannot.
+
 ---
 
 ## 5. Canonical Network Intermediate Representation
@@ -560,6 +680,10 @@ explicitly revising the invariant — never a silent regression.
    (Java, `engine-core/.../eval/nnue/FeatureExtractor.java`) produce identical feature
    indices for every position in the shared parity corpus. Any change to either side's
    formula requires updating both and re-passing the parity check in the same PR.
+   Enforced at two depths (§4.1): the shallow structural contract
+   (`docs/architecture/feature-spec/v1.json`, which `FeatureEncoder` derives from
+   directly and `FeatureSpecConformanceTest.java` verifies Java against), and the deep
+   golden-value corpus (`FeatureIndexParityTest.CORPUS`).
 3. **Canonical Network intermediate representation.** `Exporter` and `Quantizer`
    consume only `CanonicalNetwork`, never a raw PyTorch `state_dict` or `nn.Module`.
    Training-code refactors (layer renaming, module wrapping) must not require
@@ -701,7 +825,7 @@ happens to be closest to each contract.
 
 | Contract | Producer | Consumer | Owner | Versioned? | Scope |
 |---|---|---|---|---|---|
-| **Feature specification** (§4) | `FeatureExtractor.java` (Java) and `FeatureEncoder` (Python) — dual, independent implementations of one formula | `NnueEvaluator`/`NnueNetwork` (Java, inference); `Trainer`/model (Python, training) | Split: the *feature-set choice* (768, dual-perspective, non-king-relative) is shared via ADR-001; the *exact index-layout arithmetic* within that choice has no ADR of its own — it's enforced purely by Invariant 2 plus the parity corpus below, so a layout-only tweak needs a coordinated PR, not a superseding ADR | Yes — `featureSetId`, checked by `NnueNetwork.load()` (gates the feature-set choice; layout changes within the same `featureSetId` are not independently version-gated today) | Shared |
+| **Feature specification** (§4, §4.1) | `docs/architecture/feature-spec/v1.json` (shape contract, both sides derive-from/tested-against); `FeatureExtractor.java` (Java, hardcoded, hot-path) and `FeatureEncoder` (Python, derives from `v1.json` at runtime) | `NnueEvaluator`/`NnueNetwork` (Java, inference); `Trainer`/model (Python, training); `FeatureSpecConformanceTest.java` (Java test scope, verifies Java against `v1.json`) | Split: the *feature-set choice* (768, dual-perspective, non-king-relative) is shared via ADR-001; the *exact index-layout arithmetic* within that choice has no ADR of its own — it's enforced by Invariant 2, `v1.json`, and the parity corpus below together, so a layout-only tweak needs a coordinated PR (`v1.json` + both languages + the corpus), not a superseding ADR | Yes — `spec_version` inside `v1.json` (schema shape), `feature_set_id` inside `v1.json` mirroring the `.nnue` header's `featureSetId` byte checked by `NnueNetwork.load()` (layout changes within the same `featureSetId` are not independently version-gated today) | Shared |
 | **Feature parity corpus** (§4) | `FeatureIndexParityTest.java`'s `CORPUS` (Java) today; a future Python parity test consumes the same values | Both `FeatureExtractor.java` and (once it exists) `FeatureEncoder`'s test suite — the fixture both sides are pinned against | Shared — the enforcement mechanism for the index-layout arithmetic (see previous row); a change to this corpus alone (no formula change) is a normal code review, not an ADR matter | No explicit version field — a plain FEN list; a change is a normal code review on the shared fixture, not a format bump | Shared |
 | **`.nnue` binary format** (§8) | `Exporter` (Python) | `NnueNetwork.load()` (Java) | Engine, enforced by `NnueNetwork.java` — "read-only from the trainer's perspective" (§8); the exporter conforms to it, not the reverse | Yes — `formatVersion`, `architectureId`, `featureSetId`, `quantVersion` fields | Shared |
 | **Canonical Network IR** (§5) | `checkpoint_to_canonical()` (Python) | `Quantizer`, `Exporter` (Python) | Trainer, enforced by this document's §5 | No independent version field — versioned indirectly via the `architecture_id`/`feature_set_id` it carries through to `.nnue` | Internal trainer detail |

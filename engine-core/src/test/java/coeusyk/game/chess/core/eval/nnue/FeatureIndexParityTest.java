@@ -4,7 +4,12 @@ import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Piece;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -76,5 +81,49 @@ class FeatureIndexParityTest {
                 }
             }
         }
+    }
+
+    /**
+     * D-3: {@code docs/architecture/feature-spec/parity-corpus-v1.json} is the ground
+     * truth the Python {@code FeatureEncoder} (D-3, {@code trainer/tests/encoding/
+     * test_feature_encoder.py}) is pinned against. This test closes the loop by
+     * asserting {@link FeatureExtractor}'s own live output still matches the same
+     * committed fixture exactly (all four positions, both perspectives) -- so a
+     * regression on either side of the language boundary fails in the same PR
+     * (architecture doc Section 4.1).
+     */
+    @Test
+    void everyCorpusPositionMatchesTheSharedCrossLanguageParityFixture() throws IOException {
+        Path fixturePath = RepoPaths.repoRoot().resolve("docs/architecture/feature-spec/parity-corpus-v1.json");
+        String text = Files.readString(fixturePath);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> root = (Map<String, Object>) MinimalJson.parse(text);
+        @SuppressWarnings("unchecked")
+        List<Object> positions = (List<Object>) root.get("positions");
+
+        for (Object rawPosition : positions) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> position = (Map<String, Object>) rawPosition;
+            String fen = (String) position.get("fen");
+            Board board = new Board(fen);
+
+            @SuppressWarnings("unchecked")
+            int[] expectedWhite = toIntArray((List<Object>) position.get("white_indices"));
+            @SuppressWarnings("unchecked")
+            int[] expectedBlack = toIntArray((List<Object>) position.get("black_indices"));
+
+            assertArrayEquals(expectedWhite, FeatureExtractor.activeFeatureIndices(board, Piece.White),
+                    fen + ": white perspective");
+            assertArrayEquals(expectedBlack, FeatureExtractor.activeFeatureIndices(board, Piece.Black),
+                    fen + ": black perspective");
+        }
+    }
+
+    private static int[] toIntArray(List<Object> values) {
+        int[] result = new int[values.size()];
+        for (int i = 0; i < result.length; i++) {
+            result[i] = ((Long) values.get(i)).intValue();
+        }
+        return result;
     }
 }
