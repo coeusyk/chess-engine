@@ -69,3 +69,29 @@ mvn -pl engine-core test -Dtest=NnueGoldenEvalTest
 
 Runs as part of the standard `mvn test` reactor build (no flag needed) —
 any mismatch is a hard failure, not a threshold.
+
+## Known issues
+
+FEN lines in this corpus were repaired at generation time to work around
+a real bug in `Board.getCurrentFEN()` (it drops trailing empty squares on
+the final rank — see [#190](https://github.com/coeusyk/chess-engine/issues/190)
+for the root cause and the proper fix, tracked separately and deliberately
+not applied to production code by C-4). `NnueCorpusGenerator.repairTruncatedLastRank()`
+is the workaround; regenerating this corpus after #190 lands should produce
+identical output (the repair becomes a no-op once `Board.toFen()` emits
+valid FEN directly) — if it doesn't, that's a signal the repair and the
+real fix have diverged.
+
+## Provenance
+
+| Field | Value |
+|---|---|
+| Corpus version | v1 (initial cut, PR C-4) |
+| Generator commit | `42aa8b9` (`feat(bench): add NNUE benchmark corpus and golden-eval regression test (C-4)`) |
+| Unbiased generation seed | `20260713` — `opening.epd`, `middlegame.epd`, `random-legal.epd` (plain random-legal move selection, matching `NnueIncrementalVsRebuildFuzzTest`'s machinery verbatim) |
+| Endgame generation seed | `20260714` (`SEED + 1`) — `endgame.epd` only, capture-biased pass (`CAPTURE_BIAS = 0.35`), confined to this category so `random-legal.epd` stays a faithful unbiased reuse |
+| Self-play parameters | `GAMES = 60`, `MAX_PLIES = 150`, `PER_CATEGORY = 60` cap per generated file |
+| Category definitions | Opening = ply 1-15; Middlegame = ply 16-40; Endgame = <= 12 pieces on board (self-play tail) + 3 curated `draw_failures.epd` positions; Random-legal = uniformly sampled across full-length games at any ply; Tactical/Quiet = static curation, see Categories table above |
+| Golden-eval network | `TestNetworks.synthetic(8)` — `engine-core/src/test/java/.../eval/nnue/TestNetworks.java`, fixed `Random(42)` seed, hidden width 8, `qa=127 qb=64 outputScale=400`. Not a trained network — synthetic weights, deterministic across JVMs/platforms per `java.util.Random`'s spec. |
+| Golden-eval version | Tied 1:1 to the network above and to the six category files' content — regenerate `golden-evals.csv` (never hand-edit) whenever either changes |
+| Regeneration workflow | See "Regenerating" above: one command regenerates all four self-play-derived `.epd` files + `golden-evals.csv` together; `tactical.epd`/`quiet.epd` are re-copied by hand from their static sources; reproducibility verified byte-identical across repeated runs |
