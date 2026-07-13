@@ -4,13 +4,21 @@ version = "0.1.0"
 description = "Self-written PyTorch training pipeline for Vex's NNUE evaluator (docs/NNUE_PRD.md, docs/architecture/NNUE_TRAINER_ARCHITECTURE.md)"
 requires-python = ">=3.11"
 dependencies = [
-    "torch>=2.0",
     "numpy>=1.24",
 ]
 
 [project.optional-dependencies]
+# torch is a real, already-decided dependency (ADR-006) -- split into an extra so
+# dataset/contract-layer work (D-2, D-3) doesn't pull a multi-GB CUDA stack just to
+# run tests that never import torch. Installed via `uv sync --extra train` from D-4
+# (PyTorch Model + Trainer) onward.
+train = ["torch>=2.0"]
 dev = ["pytest>=7.0"]
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["trainer*"]
