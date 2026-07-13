@@ -4,6 +4,8 @@ import coeusyk.game.chess.core.eval.EvaluatorStrategy;
 import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Piece;
 
+import java.util.Arrays;
+
 /**
  * NNUE evaluator: dual-perspective accumulator maintained incrementally across the
  * search tree via {@link FeatureExtractor}, scored through a shared, immutable
@@ -140,5 +142,63 @@ public final class NnueEvaluator implements EvaluatorStrategy, FeatureExtractor.
     /** Test/debug hook: exposes the current top-of-stack accumulator for the fuzz test's rebuild comparison. */
     short[] currentAccumulator(int perspectiveColor) {
         return perspectiveColor == Piece.White ? whiteAcc[sp] : blackAcc[sp];
+    }
+
+    /**
+     * Debug tool: dumps both perspectives' current-ply accumulator values in a stable,
+     * diffable text format. {@code sp} doubles as the ply index — there is no separate
+     * ply counter in this class. Read-only — never mutates {@link #whiteAcc}/{@link #blackAcc}.
+     */
+    public String dumpAccumulators() {
+        return "sp=" + sp
+                + "\nwhite=" + Arrays.toString(whiteAcc[sp])
+                + "\nblack=" + Arrays.toString(blackAcc[sp]);
+    }
+
+    /**
+     * Debug tool: rebuilds both perspectives from scratch into scratch arrays and compares
+     * against the live top-of-stack accumulator, reporting the first diverging index (or
+     * {@link RebuildDiff#NONE}). Never mutates {@link #whiteAcc}/{@link #blackAcc} — the
+     * rebuild target is local, discarded after comparison.
+     */
+    public RebuildDiff verifyAgainstRebuild(Board board) {
+        short[] whiteRebuilt = new short[width];
+        short[] blackRebuilt = new short[width];
+        rebuild(board, Piece.White, whiteRebuilt);
+        rebuild(board, Piece.Black, blackRebuilt);
+
+        RebuildDiff whiteDiff = firstDivergence(Piece.White, whiteAcc[sp], whiteRebuilt);
+        if (!whiteDiff.matches()) {
+            return whiteDiff;
+        }
+        return firstDivergence(Piece.Black, blackAcc[sp], blackRebuilt);
+    }
+
+    private static RebuildDiff firstDivergence(int perspectiveColor, short[] live, short[] rebuilt) {
+        for (int i = 0; i < live.length; i++) {
+            if (live[i] != rebuilt[i]) {
+                return new RebuildDiff(perspectiveColor, i, live[i] - rebuilt[i]);
+            }
+        }
+        return RebuildDiff.NONE;
+    }
+
+    /** Test/debug hook: perturbs one live accumulator index to exercise {@link #verifyAgainstRebuild}. */
+    void corruptForTest(int perspectiveColor, int firstDivergingIndex, short delta) {
+        short[] acc = perspectiveColor == Piece.White ? whiteAcc[sp] : blackAcc[sp];
+        acc[firstDivergingIndex] += delta;
+    }
+
+    /**
+     * Result of {@link #verifyAgainstRebuild}: the first index where the live accumulator
+     * diverges from a from-scratch rebuild, or {@link #NONE} if they match exactly.
+     * {@code delta} is {@code live - rebuilt} at {@code firstDivergingIndex}.
+     */
+    public record RebuildDiff(int perspectiveColor, int firstDivergingIndex, int delta) {
+        public static final RebuildDiff NONE = new RebuildDiff(-1, -1, 0);
+
+        public boolean matches() {
+            return firstDivergingIndex == -1;
+        }
     }
 }
