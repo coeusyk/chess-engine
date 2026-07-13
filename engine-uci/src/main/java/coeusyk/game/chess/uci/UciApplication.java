@@ -305,6 +305,16 @@ public class UciApplication {
     }
 
     /**
+     * Shared by both search-thread construction sites in {@code handleGo}: builds
+     * the live search's own {@link NnueEvaluator}, configured with the current
+     * {@link #nnueDebug} flag, so every future construction site stays in sync
+     * with that flag by construction rather than by convention.
+     */
+    private NnueEvaluator newSearchNnueEvaluator(NnueNetwork network) {
+        return new NnueEvaluator(network, nnueDebug);
+    }
+
+    /**
      * Shared by {@link #handleEval} and {@link #handleNnueDebug}: a throwaway,
      * non-debug-mode {@link NnueEvaluator} reset over the current root {@link
      * #board} — never the live search's own evaluator instance. Returns {@code
@@ -717,7 +727,7 @@ public class UciApplication {
                             helper.setPawnHashSizeMb(pawnHashSizeMb);
                             helper.setContempt(contempt);
                             if (nnueNetworkForSearch != null) {
-                                helper.setEvaluatorStrategy(new NnueEvaluator(nnueNetworkForSearch, nnueDebug));
+                                helper.setEvaluatorStrategy(newSearchNnueEvaluator(nnueNetworkForSearch));
                             }
                             Board helperBoard = new Board(positionFen);
                             helperBoard.setSearchMode(true);
@@ -758,7 +768,7 @@ public class UciApplication {
             searcher.setPawnHashSizeMb(pawnHashSizeMb);
             searcher.setContempt(contempt);
             if (nnueNetworkForSearch != null) {
-                searcher.setEvaluatorStrategy(new NnueEvaluator(nnueNetworkForSearch, nnueDebug));
+                searcher.setEvaluatorStrategy(newSearchNnueEvaluator(nnueNetworkForSearch));
             }
             if (multiPV > 1) {
                 searcher.setMultiPV(multiPV);
