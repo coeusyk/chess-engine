@@ -70,3 +70,6 @@ tools/noob_3moves.epd.zip
 
 ### Analysis output artifacts ###
 tools/output/
+
+### Graphify ###
+graphify-out/

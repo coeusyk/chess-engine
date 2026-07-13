@@ -232,8 +232,22 @@ public class UciApplication {
     }
 
     private void handleEval() {
+        if ("NNUE".equals(evalType)) {
+            NnueNetwork network = resolveNnueNetworkForSearch();
+            if (network != null) {
+                NnueEvaluator nnueEvaluator = new NnueEvaluator(network);
+                nnueEvaluator.reset(board);
+                printBreakdown(nnueEvaluator.explainEval(board));
+                return;
+            }
+            // resolveNnueNetworkForSearch() already printed its own fallback info
+            // string (missing/invalid EvalFile) — fall through to Classical below.
+        }
         coeusyk.game.chess.core.eval.Evaluator ev = new coeusyk.game.chess.core.eval.Evaluator();
-        String breakdown = ev.explainEval(board);
+        printBreakdown(ev.explainEval(board));
+    }
+
+    private static void printBreakdown(String breakdown) {
         for (String line : breakdown.split("\n")) {
             System.out.println("info string " + line);
         }

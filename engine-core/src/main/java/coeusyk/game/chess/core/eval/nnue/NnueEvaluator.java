@@ -156,6 +156,63 @@ public final class NnueEvaluator implements EvaluatorStrategy, FeatureExtractor.
     }
 
     /**
+     * Debug tool: reports pre-activation ranges, clip counts, output-layer parameters,
+     * the int16 score, and (via {@link NnueOracle}) the float32 oracle score and its
+     * delta from the int16 score. Same name/shape as the classical
+     * {@code Evaluator.explainEval(Board)} precedent. Read-only.
+     */
+    public String explainEval(Board board) {
+        boolean whiteToMove = Piece.isWhite(board.getActiveColor());
+        short[] us = whiteToMove ? whiteAcc[sp] : blackAcc[sp];
+        short[] them = whiteToMove ? blackAcc[sp] : whiteAcc[sp];
+        int qa = network.qa();
+
+        RangeAndClipCount usRange = rangeAndClipCount(us, qa);
+        RangeAndClipCount themRange = rangeAndClipCount(them, qa);
+
+        short[] outWeights = network.outputWeights();
+        long usContribution = 0;
+        long themContribution = 0;
+        for (int i = 0; i < width; i++) {
+            usContribution += clamp(us[i], qa) * (long) outWeights[i];
+            themContribution += clamp(them[i], qa) * (long) outWeights[width + i];
+        }
+
+        int int16Score = evaluate(board);
+        NnueOracle.OracleResult oracle = NnueOracle.compareInt16VsFloat32(network, board);
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("--- nnue eval breakdown ---\n");
+        sb.append(String.format("  pre-activation us    min=%d max=%d clipped=%d/%d\n",
+                usRange.min(), usRange.max(), usRange.clipped(), width));
+        sb.append(String.format("  pre-activation them  min=%d max=%d clipped=%d/%d\n",
+                themRange.min(), themRange.max(), themRange.clipped(), width));
+        sb.append(String.format("  output contribution  us=%d them=%d bias=%d qa=%d qb=%d outputScale=%d\n",
+                usContribution, themContribution, network.outputBias(), qa, network.qb(), network.outputScale()));
+        sb.append(String.format("  int16 score           %+d cp\n", int16Score));
+        sb.append(String.format("  float32 oracle score  %+.4f cp  delta=%.4f",
+                oracle.float32Score(), oracle.absoluteError()));
+        return sb.toString();
+    }
+
+    private record RangeAndClipCount(int min, int max, int clipped) {
+    }
+
+    private static RangeAndClipCount rangeAndClipCount(short[] acc, int qa) {
+        int min = Integer.MAX_VALUE;
+        int max = Integer.MIN_VALUE;
+        int clipped = 0;
+        for (short value : acc) {
+            min = Math.min(min, value);
+            max = Math.max(max, value);
+            if (value < 0 || value > qa) {
+                clipped++;
+            }
+        }
+        return new RangeAndClipCount(min, max, clipped);
+    }
+
+    /**
      * Debug tool: rebuilds both perspectives from scratch into scratch arrays and compares
      * against the live top-of-stack accumulator, reporting the first diverging index (or
      * {@link RebuildDiff#NONE}). Never mutates {@link #whiteAcc}/{@link #blackAcc} — the

@@ -158,6 +158,69 @@ class UciApplicationIntegrationTest {
     }
 
     @Test
+    void evalCommandInClassicalModeReturnsBreakdown() throws Exception {
+        harness = UciHarness.start();
+
+        harness.send("position startpos");
+        harness.send("eval");
+
+        assertNotNull(harness.awaitLine(
+                line -> line.startsWith("info string --- eval breakdown"),
+                Duration.ofSeconds(2)),
+                "Expected classical eval breakdown header");
+        assertNotNull(harness.awaitLine(
+                line -> line.startsWith("info string") && line.contains("final"),
+                Duration.ofSeconds(2)),
+                "Expected classical eval breakdown final-score line");
+
+        harness.send("isready");
+        assertNotNull(harness.awaitLine("readyok", Duration.ofSeconds(2)),
+                "Engine did not remain responsive after eval in Classical mode");
+    }
+
+    @Test
+    void evalCommandInNnueModeReturnsNnueBreakdown(@TempDir Path tempDir) throws Exception {
+        Path networkFile = tempDir.resolve("eval-cmd.nnue");
+        writeTinyNnueFile(networkFile, "eval-cmd-uuid");
+
+        harness = UciHarness.start();
+        harness.send("setoption name EvalType value NNUE");
+        harness.send("setoption name EvalFile value " + networkFile);
+        harness.send("position startpos");
+        harness.send("eval");
+
+        assertNotNull(harness.awaitLine(
+                "info string NNUE network loaded: eval-cmd-uuid",
+                Duration.ofSeconds(5)),
+                "Expected NNUE network-loaded info string before the breakdown");
+        assertNotNull(harness.awaitLine(
+                line -> line.startsWith("info string --- nnue eval breakdown"),
+                Duration.ofSeconds(2)),
+                "Expected NNUE eval breakdown header, not the classical one");
+        assertNotNull(harness.awaitLine(
+                line -> line.startsWith("info string") && line.contains("float32 oracle score"),
+                Duration.ofSeconds(2)),
+                "Expected the float32 oracle score line in the NNUE breakdown");
+    }
+
+    @Test
+    void evalCommandInNnueModeWithoutEvalFileFallsBackToClassicalBreakdown() throws Exception {
+        harness = UciHarness.start();
+        harness.send("setoption name EvalType value NNUE");
+        harness.send("position startpos");
+        harness.send("eval");
+
+        assertNotNull(harness.awaitLine(
+                "info string NNUE evaluator requested but EvalFile is not set; falling back to Classical.",
+                Duration.ofSeconds(5)),
+                "Expected the same go-time NNUE fallback info string, reused for eval");
+        assertNotNull(harness.awaitLine(
+                line -> line.startsWith("info string --- eval breakdown"),
+                Duration.ofSeconds(2)),
+                "Expected the classical breakdown after falling back, not a crash or silence");
+    }
+
+    @Test
     void evalFileAloneIsInertWhileEvalTypeStaysClassical() throws Exception {
         harness = UciHarness.start();
 
