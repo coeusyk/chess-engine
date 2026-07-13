@@ -46,6 +46,45 @@ def module_of(node):
     return src.split("/", 1)[0] if src else None
 
 
+# Phase D prep (NNUE_TRAINER_ARCHITECTURE.md): split reports into Engine Architecture
+# vs Trainer Architecture sections. "trainer" is a forward-declared prefix — the
+# directory doesn't exist until Phase D lands, so every report until then reports the
+# Trainer Architecture section empty, which is expected, not a bug.
+ENGINE_MODULE_PREFIXES = {"engine-core", "engine-uci", "engine-tuner", "chess-engine-api"}
+TRAINER_MODULE_PREFIXES = {"trainer"}
+
+
+def architecture_group(node):
+    """'engine' / 'trainer' / None (docs, CI config, graphify's own dev-entries, etc. —
+    neither engine nor trainer, excluded from both split sections)."""
+    mod = module_of(node)
+    if mod in ENGINE_MODULE_PREFIXES:
+        return "engine"
+    if mod in TRAINER_MODULE_PREFIXES:
+        return "trainer"
+    return None
+
+
+def group_summary_lines(title, before_group_ids, after_group_ids):
+    """One-paragraph summary for an architecture-group split section: node/edge counts
+    scoped to that group only. Detailed per-class/centrality analysis stays whole-graph
+    (splitting betweenness centrality etc. per group would be misleading — centrality is
+    a whole-graph measure), so this is deliberately just a scoping summary, not a
+    duplicate of the sections below."""
+    lines = [f"## {title}"]
+    if not before_group_ids and not after_group_ids:
+        lines.append("- No nodes in this group in either snapshot (expected until this "
+                      "subsystem's source tree exists).")
+        lines.append("")
+        return lines
+    added = after_group_ids - before_group_ids
+    removed = before_group_ids - after_group_ids
+    lines.append(f"- Before: {len(before_group_ids)} nodes; After: {len(after_group_ids)} nodes")
+    lines.append(f"- Node delta: +{len(added)} / -{len(removed)}")
+    lines.append("")
+    return lines
+
+
 def label_of(g, node_id):
     return g.nodes[node_id].get("label", node_id) if node_id in g else node_id
 
@@ -237,6 +276,11 @@ def main():
 
     moved = community_moves(before_g, after_g, common_ids)
 
+    before_engine_ids = {n for n in before_ids if architecture_group(before_g.nodes[n]) == "engine"}
+    after_engine_ids = {n for n in after_ids if architecture_group(after_g.nodes[n]) == "engine"}
+    before_trainer_ids = {n for n in before_ids if architecture_group(before_g.nodes[n]) == "trainer"}
+    after_trainer_ids = {n for n in after_ids if architecture_group(after_g.nodes[n]) == "trainer"}
+
     GOD_NODE_TOP_N = 15
     before_god = {nid for nid, _ in sorted(before_degree.items(), key=lambda t: t[1], reverse=True)[:GOD_NODE_TOP_N]}
     after_god = {nid for nid, _ in sorted(after_degree.items(), key=lambda t: t[1], reverse=True)[:GOD_NODE_TOP_N]}
@@ -265,6 +309,14 @@ def main():
     lines.append(f"- Node delta: +{len(added_ids)} / -{len(removed_ids)}")
     lines.append(f"- Edge delta: +{len(added_edges)} / -{len(removed_edges)}")
     lines.append("")
+
+    lines.append("## Architecture Split")
+    lines.append("_Scoping summary only — the detailed sections below (centrality, degree, "
+                 "boundary report, etc.) remain whole-graph, since those measures are not "
+                 "meaningful computed on a subgraph alone._")
+    lines.append("")
+    lines.extend(group_summary_lines("Engine Architecture", before_engine_ids, after_engine_ids))
+    lines.extend(group_summary_lines("Trainer Architecture", before_trainer_ids, after_trainer_ids))
 
     lines.append("## Top 10 nodes by betweenness centrality change")
     if bc_deltas:
