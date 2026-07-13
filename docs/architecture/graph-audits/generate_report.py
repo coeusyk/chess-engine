@@ -50,6 +50,86 @@ def label_of(g, node_id):
     return g.nodes[node_id].get("label", node_id) if node_id in g else node_id
 
 
+# Phase C: classes that live under src/main but are debug/oracle-only by design
+# (ADR-002: NnueOracle's float32 path is test/debug-only, never part of the live
+# int16 eval path). Extend this set as future debug-only src/main classes land
+# (e.g. C-3's NnueDebug) — everything else under src/main is "production".
+DEBUG_ONLY_MAIN_CLASSES = {"NnueOracle.java"}
+
+# The one production -> debug file pair this boundary is known to allow, guarded
+# at the bytecode level (method granularity: explainEval only) by
+# OracleArchitecturalBoundaryTest. Keyed by file, not node label, since the same
+# file pair can produce edges from several node granularities (class, method).
+# Any other production -> debug edge is a regression.
+APPROVED_PROD_TO_DEBUG_FILE_PAIRS = {("NnueEvaluator.java", "NnueOracle.java")}
+
+# The five classes this Phase's ADRs (002/003/004/005/009) freeze the shape of —
+# coupling drift here is the signal this report exists to catch.
+FROZEN_BOUNDARY_CLASSES = ["EvaluatorStrategy", "Searcher", "NnueEvaluator", "FeatureExtractor", "NnueNetwork"]
+
+
+def classify(node):
+    """'production' / 'debug' for any node (file/class/method — graphify emits all three granularities
+    sharing one source_file) belonging to a src/main/*.java file, else None (test/doc/concept nodes
+    excluded — the boundary this report guards is production code reaching into debug-only code, not
+    tests depending on production code, which is normal and not interesting to flag). Classifying by
+    node label instead of source_file would miss almost all real coupling: call/reference edges connect
+    class- and method-level nodes (e.g. `NnueOracle`, `.explainEval()`), not the file-level node itself."""
+    src = node.get("source_file") or ""
+    if not src.endswith(".java") or "/src/main/" not in src:
+        return None
+    filename = src.rsplit("/", 1)[-1]
+    return "debug" if filename in DEBUG_ONLY_MAIN_CLASSES else "production"
+
+
+def file_of(node):
+    src = node.get("source_file") or ""
+    return src.rsplit("/", 1)[-1] if src else None
+
+
+def boundary_edges(g):
+    """(production, debug) edge sets across every node granularity, as
+    (from_file, from_label, to_file, to_label, relation) tuples."""
+    prod_to_debug, debug_to_prod = set(), set()
+    for u, v, data in g.edges(data=True):
+        un, vn = g.nodes[u], g.nodes[v]
+        cu, cv = classify(un), classify(vn)
+        rel = data.get("relation", "")
+        if cu == "production" and cv == "debug":
+            prod_to_debug.add((file_of(un), label_of(g, u), file_of(vn), label_of(g, v), rel))
+        elif cu == "debug" and cv == "production":
+            debug_to_prod.add((file_of(un), label_of(g, u), file_of(vn), label_of(g, v), rel))
+    return prod_to_debug, debug_to_prod
+
+
+def find_class_node(g, class_name):
+    """The class-construct node (label == "Searcher"), not the file node (label == "Searcher.java") —
+    graphify's call/inherits/implements edges attach to the class node, per class_neighbors's docstring."""
+    suffix = f"/{class_name}.java"
+    for nid, data in g.nodes(data=True):
+        if data.get("label") == class_name and (data.get("source_file") or "").endswith(suffix):
+            return nid
+    return None
+
+
+def class_neighbors(g, nid):
+    """(neighbor_label, relation, direction) triples for a class-file node's direct file-level edges."""
+    if nid is None or nid not in g:
+        return set()
+    neighbors = set()
+    for _, v, data in g.out_edges(nid, data=True):
+        neighbors.add((label_of(g, v), data.get("relation", ""), "out"))
+    for u, _, data in g.in_edges(nid, data=True):
+        neighbors.add((label_of(g, u), data.get("relation", ""), "in"))
+    return neighbors
+
+
+def class_coupling_delta(before_g, after_g, class_name):
+    before_neighbors = class_neighbors(before_g, find_class_node(before_g, class_name))
+    after_neighbors = class_neighbors(after_g, find_class_node(after_g, class_name))
+    return after_neighbors - before_neighbors, before_neighbors - after_neighbors
+
+
 def top_by_abs_delta(before_map, after_map, common_ids, n=10):
     deltas = [(nid, after_map.get(nid, 0) - before_map.get(nid, 0)) for nid in common_ids]
     deltas.sort(key=lambda t: abs(t[1]), reverse=True)
@@ -268,6 +348,73 @@ def main():
 
     lines.append("## Architectural cohesion")
     lines.append(f"- {cohesion_verdict}")
+    lines.append("")
+
+    # --- Architectural Boundary Report -----------------------------------
+    before_p2d, before_d2p = boundary_edges(before_g)
+    after_p2d, after_d2p = boundary_edges(after_g)
+    new_p2d, removed_p2d = after_p2d - before_p2d, before_p2d - after_p2d
+    new_d2p, removed_d2p = after_d2p - before_d2p, before_d2p - after_d2p
+    unapproved_new_p2d = [e for e in new_p2d if (e[0], e[2]) not in APPROVED_PROD_TO_DEBUG_FILE_PAIRS]
+
+    lines.append("## Architectural Boundary Report")
+    lines.append(
+        "_`production` = src/main/*.java outside `DEBUG_ONLY_MAIN_CLASSES`; `debug` = "
+        f"{', '.join(sorted(DEBUG_ONLY_MAIN_CLASSES))} (ADR-002). Test files are excluded — "
+        "test-to-production coupling is normal and not a boundary risk. Edges are reported at whichever "
+        "node granularity graphify attaches them to (class/method), grouped by owning file._"
+    )
+    lines.append("")
+
+    lines.append("### production -> debug dependencies")
+    if new_p2d or removed_p2d:
+        for uf, ul, vf, vl, rel in sorted(new_p2d):
+            flag = "" if (uf, vf) in APPROVED_PROD_TO_DEBUG_FILE_PAIRS else " **UNAPPROVED**"
+            lines.append(f"- + `{ul}` ({uf}) -> `{vl}` ({vf}) [{rel}]{flag}")
+        for uf, ul, vf, vl, rel in sorted(removed_p2d):
+            lines.append(f"- - `{ul}` ({uf}) -> `{vl}` ({vf}) [{rel}]")
+    else:
+        lines.append("- No change")
+    lines.append("")
+
+    lines.append("### debug -> production dependencies")
+    if new_d2p or removed_d2p:
+        for uf, ul, vf, vl, rel in sorted(new_d2p):
+            lines.append(f"- + `{ul}` ({uf}) -> `{vl}` ({vf}) [{rel}]")
+        for uf, ul, vf, vl, rel in sorted(removed_d2p):
+            lines.append(f"- - `{ul}` ({uf}) -> `{vl}` ({vf}) [{rel}]")
+    else:
+        lines.append("- No change")
+    lines.append("")
+
+    lines.append("### cross-module dependency changes")
+    lines.append("_See \"Cross-module dependency changes\" above._")
+    lines.append("")
+
+    for class_name in FROZEN_BOUNDARY_CLASSES:
+        added, removed = class_coupling_delta(before_g, after_g, class_name)
+        lines.append(f"### {class_name} coupling changes")
+        if added or removed:
+            for label, rel, direction in sorted(added):
+                arrow = "->" if direction == "out" else "<-"
+                lines.append(f"- + `{class_name}` {arrow} `{label}` ({rel})")
+            for label, rel, direction in sorted(removed):
+                arrow = "->" if direction == "out" else "<-"
+                lines.append(f"- - `{class_name}` {arrow} `{label}` ({rel})")
+        else:
+            lines.append("- No change")
+        lines.append("")
+
+    lines.append("### Frozen boundary verdict")
+    if unapproved_new_p2d:
+        lines.append(
+            f"- **CHANGED — {len(unapproved_new_p2d)} unapproved production -> debug "
+            "edge(s) introduced, review required:**"
+        )
+        for uf, ul, vf, vl, rel in sorted(unapproved_new_p2d):
+            lines.append(f"  - `{ul}` ({uf}) -> `{vl}` ({vf}) [{rel}]")
+    else:
+        lines.append("- UNCHANGED — no unapproved production -> debug edges introduced.")
     lines.append("")
 
     lines.append("## Narrative")
