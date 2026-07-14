@@ -334,6 +334,11 @@ public class Board {
             }
         }
 
+        if (rankEmptySquares > 0) {
+            fenString.append(rankEmptySquares);
+            rankEmptySquares = 0;
+        }
+
         fenString.append(" ");
 
         // Adding the active color field:
