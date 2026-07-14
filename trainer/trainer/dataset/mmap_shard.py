@@ -9,13 +9,13 @@ DatasetProvider produced the records (works the same for Stage 1/2/3), matching
 docs/architecture/NNUE_TRAINER_ARCHITECTURE.md Section 3's DatasetProvider isolation
 Invariant -- this module is not a DatasetProvider itself and does not import one.
 
-Only the fields Stage 1 actually populates (fen, eval_cp, eval_mate, ply) are stored.
-This is not a claim that Stage 2/3 will reuse this exact layout unmodified -- wdl/
-game_id/search_depth/search_nodes are real PositionMetadata/PositionLabel fields
-(docs/architecture/NNUE_TRAINER_ARCHITECTURE.md's DatasetProvider contract already
-carries them) that this shard format does not yet need to store, since nothing writes
-them yet; extending SHARD_DTYPE when Stage 2/3 land is expected, not a design flaw
-being deferred.
+`search_depth`/`search_nodes` were added in D-8 (issue #199, Stage 2 Stockfish
+labeling) -- exactly the extension this module's own D-2-era docstring anticipated
+("extending SHARD_DTYPE when Stage 2/3 land is expected, not a design flaw being
+deferred"). `wdl`/`game_id` remain unstored -- Stage 3 (self-play) concerns, per
+ADR-007's staging, out of scope until that stage lands. No existing committed shard
+files use the old layout (confirmed: nothing has shipped real `.bin` shards from this
+format yet, only ephemeral test fixtures), so this is a safe, non-breaking extension.
 """
 
 from __future__ import annotations
@@ -41,6 +41,11 @@ SHARD_DTYPE = np.dtype(
         ("has_eval_mate", "?"),
         ("ply", "i4"),
         ("has_ply", "?"),
+        ("search_depth", "i4"),
+        ("has_search_depth", "?"),
+        # i8: a node budget can exceed int32 range at high search depth/time.
+        ("search_nodes", "i8"),
+        ("has_search_nodes", "?"),
     ]
 )
 
@@ -68,6 +73,10 @@ def _encode(record: PositionRecord) -> tuple:
         label.eval_mate is not None,
         metadata.ply if metadata.ply is not None else 0,
         metadata.ply is not None,
+        metadata.search_depth if metadata.search_depth is not None else 0,
+        metadata.search_depth is not None,
+        metadata.search_nodes if metadata.search_nodes is not None else 0,
+        metadata.search_nodes is not None,
     )
 
 
@@ -77,7 +86,11 @@ def _decode(row: np.void) -> PositionRecord:
         eval_cp=int(row["eval_cp"]) if bool(row["has_eval_cp"]) else None,
         eval_mate=int(row["eval_mate"]) if bool(row["has_eval_mate"]) else None,
     )
-    metadata = PositionMetadata(ply=int(row["ply"]) if bool(row["has_ply"]) else None)
+    metadata = PositionMetadata(
+        ply=int(row["ply"]) if bool(row["has_ply"]) else None,
+        search_depth=int(row["search_depth"]) if bool(row["has_search_depth"]) else None,
+        search_nodes=int(row["search_nodes"]) if bool(row["has_search_nodes"]) else None,
+    )
     return PositionRecord(fen=fen, label=label, metadata=metadata)
 
 

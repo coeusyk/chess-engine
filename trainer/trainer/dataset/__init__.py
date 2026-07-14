@@ -1,4 +1,5 @@
 from trainer.dataset.mmap_shard import SHARD_DTYPE, read_shard, write_shard
+from trainer.dataset.stockfish_provider import StockfishLabeledProvider
 from trainer.dataset.text_provider import TextDatasetProvider
 from trainer.dataset.transform import (
     Transform,
@@ -13,6 +14,7 @@ __all__ = [
     "SHARD_DTYPE",
     "read_shard",
     "write_shard",
+    "StockfishLabeledProvider",
     "TextDatasetProvider",
     "Transform",
     "balance_phases",

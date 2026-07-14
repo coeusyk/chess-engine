@@ -55,6 +55,34 @@ def test_absent_optional_fields_round_trip_as_none(tmp_path):
     assert restored.metadata.ply is None
 
 
+def test_search_depth_and_nodes_round_trip(tmp_path):
+    record = PositionRecord(
+        fen="4k3/8/8/8/8/8/4Q3/4K3 w - - 0 1",
+        label=PositionLabel(eval_cp=123),
+        metadata=PositionMetadata(search_depth=12, search_nodes=4_000_000_000),
+    )
+    shard_ref = write_shard([record], tmp_path / "shard-depth-nodes.bin")
+
+    restored = list(read_shard(shard_ref))[0]
+    assert restored.metadata.search_depth == 12
+    # search_nodes stored as i8 specifically so a budget exceeding int32 range
+    # (2_147_483_647) round-trips correctly.
+    assert restored.metadata.search_nodes == 4_000_000_000
+
+
+def test_absent_search_depth_and_nodes_round_trip_as_none(tmp_path):
+    record = PositionRecord(
+        fen="4k3/8/8/8/8/8/4Q3/4K3 w - - 0 1",
+        label=PositionLabel(eval_cp=1),
+        metadata=PositionMetadata(),
+    )
+    shard_ref = write_shard([record], tmp_path / "shard-no-depth-nodes.bin")
+
+    restored = list(read_shard(shard_ref))[0]
+    assert restored.metadata.search_depth is None
+    assert restored.metadata.search_nodes is None
+
+
 def test_oversized_fen_is_rejected(tmp_path):
     record = PositionRecord(
         fen="x" * 200,
