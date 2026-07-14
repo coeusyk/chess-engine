@@ -652,9 +652,8 @@ the header-declared `hiddenWidth`, and (fixed 2026-07-14, issue
 which would otherwise surface as a divide-by-zero at evaluation time rather than at
 load time. Even with the loader now rejecting this, the trainer's own export-time
 validation (assert `qa > 0`, `qb > 0` before writing) should not be skipped just
-because the Java loader is expected
-to eventually reject it too — defense in depth, not redundant work, since the exporter
-and loader are maintained independently and can drift.
+because the Java loader already rejects it too — defense in depth, not redundant work,
+since the exporter and loader are maintained independently and can drift.
 
 ---
 

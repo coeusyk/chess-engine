@@ -136,9 +136,12 @@ public final class NnueNetwork {
         }
         in.readInt(); // quantVersion — reserved for a future quantization scheme change
         int qa = in.readInt();
+        if (qa <= 0) {
+            throw new IOException("qa " + qa + " out of range (must be positive)");
+        }
         int qb = in.readInt();
-        if (qa <= 0 || qb <= 0) {
-            throw new IOException("qa/qb must be positive (qa=" + qa + ", qb=" + qb + ")");
+        if (qb <= 0) {
+            throw new IOException("qb " + qb + " out of range (must be positive)");
         }
         int outputScale = in.readInt();
         String networkUuid = in.readUTF();

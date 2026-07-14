@@ -12,7 +12,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Random;
@@ -160,43 +159,15 @@ class NnueCorpusGenerator {
         Files.write(CORPUS_DIR.resolve(fileName), lines);
     }
 
-    /** Repo-wide corpus convention is a 4-field FEN — {@link Board#toFen()} includes the clocks too. */
+    /**
+     * Repo-wide corpus convention is a 4-field FEN — {@link Board#toFen()} includes the
+     * clocks too. Issue #190 (Board.getCurrentFEN() never flushing a trailing-empty-rank
+     * count on the final rank) is now fixed directly in {@code Board.java}, so no repair
+     * step is needed here anymore — {@code toFen()}'s output is standards-valid as-is.
+     */
     private static String fourFieldFen(Board board) {
         String[] tokens = board.toFen().split("\\s+");
-        String fen = String.join(" ", tokens[0], tokens[1], tokens[2], tokens[3]);
-        return repairTruncatedLastRank(fen);
-    }
-
-    /**
-     * {@link Board#toFen()} never flushes a trailing run of empty squares on the last
-     * rank (no rank-transition follows it to trigger the flush) — the affected squares
-     * are genuinely empty so this repo's own {@code Board(String)} round-trips it
-     * correctly regardless, but a committed corpus file should hold standards-valid FEN,
-     * not lean on that internal coincidence. Repairs it externally rather than editing
-     * {@code Board.java}, which is out of C-4's scope (no production behavior changes).
-     */
-    private static String repairTruncatedLastRank(String fen) {
-        String[] fields = fen.split(" ");
-        String[] rawRanks = fields[0].split("/");
-        // A wholly-empty last rank never emits any segment at all (no piece to trigger
-        // the piece-branch flush either) — 7 segments instead of 8, not just a short one.
-        String[] ranks;
-        if (rawRanks.length == 7) {
-            ranks = Arrays.copyOf(rawRanks, 8);
-            ranks[7] = "8";
-        } else {
-            ranks = rawRanks;
-        }
-        String lastRank = ranks[ranks.length - 1];
-        int squares = 0;
-        for (char c : lastRank.toCharArray()) {
-            squares += Character.isDigit(c) ? (c - '0') : 1;
-        }
-        if (squares < 8) {
-            ranks[ranks.length - 1] = lastRank + (8 - squares);
-        }
-        fields[0] = String.join("/", ranks);
-        return String.join(" ", fields);
+        return String.join(" ", tokens[0], tokens[1], tokens[2], tokens[3]);
     }
 
     private static Move pickMove(Board board, List<Move> legalMoves, Random random) {
