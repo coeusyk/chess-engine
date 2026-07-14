@@ -85,12 +85,12 @@ real Stage 1+2 data and exported successfully (a real `.nnue` + manifest in the 
 registry, held-out correlation reported, eval scale checked against a real classical
 corpus — the PRD §5 Phase D exit criterion, now actually satisfied).
 
-| PR | Title | Depends on | Key refs |
-|---|---|---|---|
-| E-0 | Fix issue #190 (`Board.getCurrentFEN()` trailing-empty-rank bug) | none | Grilled 2026-07-14: fix directly, do not copy-paste `repairTruncatedLastRank()`-style workarounds a third time |
-| E-1 | Classical-eval-labeled corpus generator (Java test-scope tool) | E-0 | Architecture doc §14 failure-modes table; `NnueCorpusGenerator.java` (template, minus the workaround now that #190 is fixed) |
-| E-2 | Real Stage 1+2 data acquisition/labeling run at scale | E-1 not required but should land first (avoids validating against a still-synthetic scale check) | ADR-007, D-2's `TextDatasetProvider`, D-8's `stockfish_label.py` |
-| E-3 | First real candidate net: train, quantize, export, `nets/` registry entry | E-2 | Architecture doc §5-§11, PRD §4 Provenance |
+| PR | Issue | Title | Depends on | Key refs |
+|---|---|---|---|---|
+| E-0 | [#200](https://github.com/coeusyk/chess-engine/issues/200) | Fix issue #190 (`Board.getCurrentFEN()` trailing-empty-rank bug) | none | Grilled 2026-07-14: fix directly, do not copy-paste `repairTruncatedLastRank()`-style workarounds a third time |
+| E-1 | [#201](https://github.com/coeusyk/chess-engine/issues/201) | Classical-eval-labeled corpus generator (Java test-scope tool) | E-0 | Architecture doc §14 failure-modes table; `NnueCorpusGenerator.java` (template, minus the workaround now that #190 is fixed) |
+| E-2 | [#202](https://github.com/coeusyk/chess-engine/issues/202) | Real Stage 1+2 data acquisition/labeling run at scale | E-1 not required but should land first (avoids validating against a still-synthetic scale check) | ADR-007, D-2's `TextDatasetProvider`, D-8's `stockfish_label.py` |
+| E-3 | [#203](https://github.com/coeusyk/chess-engine/issues/203) | First real candidate net: train, quantize, export, `nets/` registry entry | E-2 | Architecture doc §5-§11, PRD §4 Provenance |
 
 ### Track B — Validation (Phase E's own named PRD scope)
 
@@ -100,11 +100,11 @@ decision has been recorded in a release report (PRD §4), whichever way that dec
 goes — "not promoted yet" is a valid, recorded outcome, not a blocker to calling the
 track complete.
 
-| PR | Title | Depends on | Key refs |
-|---|---|---|---|
-| E-4 | NNUE-mode gauntlet harness (candidate net vs. classical baseline) | E-3 | `tools/match.ps1`, `tools/sprt.ps1`, PRD §1 three gates |
-| E-5 | SPRT run(s) against the three release gates + release report | E-4 | CLAUDE.md §5, `docs/sprt-guidelines.md`, PRD §4 "Network Release Reports" |
-| E-6 | Performance gate: NNUE-mode bench + profiling; Vector API **only if the gate fails** | E-3 (can run parallel to E-4/E-5) | PRD §5 Phased Rollout row E; CLAUDE.md §2 bench command |
+| PR | Issue | Title | Depends on | Key refs |
+|---|---|---|---|---|
+| E-4 | [#204](https://github.com/coeusyk/chess-engine/issues/204) | NNUE-mode gauntlet harness (candidate net vs. classical baseline) | E-3 | `tools/match.ps1`, `tools/sprt.ps1`, PRD §1 three gates |
+| E-5 | [#205](https://github.com/coeusyk/chess-engine/issues/205) | SPRT run(s) against the three release gates + release report | E-4 | CLAUDE.md §5, `docs/sprt-guidelines.md`, PRD §4 "Network Release Reports" |
+| E-6 | [#206](https://github.com/coeusyk/chess-engine/issues/206) | Performance gate: NNUE-mode bench + profiling; Vector API **only if the gate fails** | E-3 (can run parallel to E-4/E-5) | PRD §5 Phased Rollout row E; CLAUDE.md §2 bench command |
 
 ### Track C — Self-play data generation (Stage 3, per DR-E1)
 
@@ -144,13 +144,13 @@ A `null`/absent value (for manifests written before this field existed) must be 
 as "unknown, not confirmed validated" by any future consumer, never as an implicit
 `true`.
 
-| PR | Title | Depends on | Key refs |
-|---|---|---|---|
-| E-7 | Extend `SHARD_DTYPE` with `wdl`/`game_id` fields | none (shared infra, can land anytime, but blocks E-9/E-10) | `mmap_shard.py`'s own docstring ("extending... is expected") |
-| E-8 | `Labeler` stage (λ-blend, K-scaling) | E-7 | PRD §3 table; DR-E1 §7; `train.py`'s `target_cp` current WDL-raise |
-| E-9 | Self-play mode: `GameLoop`/`MoveSelector`/`QuietWalk`/`GameRecord`/`VsprSerializer` (mechanics in `engine-core`, invocation/config/I/O in `engine-uci`) | E-3 only — **not** gated on E-4/E-5 (Bootstrap exception, above) | DR-E1 §5-§6, §12-§15 |
-| E-10 | `selfplay_ingest.py` + `SelfPlayProvider` | E-7, E-8, E-9 | DR-E1 §6, §9 |
-| E-11 | Self-play provenance fields + statistical-reproducibility golden-fixture test | E-9, E-10 | DR-E1 §9, §14 |
+| PR | Issue | Title | Depends on | Key refs |
+|---|---|---|---|---|
+| E-7 | [#207](https://github.com/coeusyk/chess-engine/issues/207) | Extend `SHARD_DTYPE` with `wdl`/`game_id` fields | none (shared infra, can land anytime, but blocks E-9/E-10) | `mmap_shard.py`'s own docstring ("extending... is expected") |
+| E-8 | [#208](https://github.com/coeusyk/chess-engine/issues/208) | `Labeler` stage (λ-blend, K-scaling) | E-7 | PRD §3 table; DR-E1 §7; `train.py`'s `target_cp` current WDL-raise |
+| E-9 | [#209](https://github.com/coeusyk/chess-engine/issues/209) | Self-play mode: `GameLoop`/`MoveSelector`/`QuietWalk`/`GameRecord`/`VsprSerializer` (mechanics in `engine-core`, invocation/config/I/O in `engine-uci`) | E-3 only — **not** gated on E-4/E-5 (Bootstrap exception, above) | DR-E1 §5-§6, §12-§15 |
+| E-10 | [#210](https://github.com/coeusyk/chess-engine/issues/210) | `selfplay_ingest.py` + `SelfPlayProvider` | E-7, E-8, E-9 | DR-E1 §6, §9 |
+| E-11 | [#211](https://github.com/coeusyk/chess-engine/issues/211) | Self-play provenance fields + statistical-reproducibility golden-fixture test | E-9, E-10 | DR-E1 §9, §14 |
 
 ### Track D — Policy documentation (no new mechanism)
 
@@ -158,9 +158,9 @@ as "unknown, not confirmed validated" by any future consumer, never as an implic
 architectural decisions block steady-state iteration (generate → retrain → validate →
 promote-or-not, repeating).
 
-| PR | Title | Depends on | Key refs |
-|---|---|---|---|
-| E-12 | ADR: the iterative-retraining policy — two separate gates (no generator-eligibility gate; existing SPRT remains the sole release/promotion gate) | none — this is a policy record, fully justified by DR-E1's own research; does not need to wait for a real generation cycle (grilled 2026-07-14, matching how ADR-006/007 were written ahead of Phase D's first PR) | DR-E1 §11, §17 |
+| PR | Issue | Title | Depends on | Key refs |
+|---|---|---|---|---|
+| E-12 | [#212](https://github.com/coeusyk/chess-engine/issues/212) | ADR: the iterative-retraining policy — two separate gates (no generator-eligibility gate; existing SPRT remains the sole release/promotion gate) | none — this is a policy record, fully justified by DR-E1's own research; does not need to wait for a real generation cycle (grilled 2026-07-14, matching how ADR-006/007 were written ahead of Phase D's first PR) | DR-E1 §11, §17 |
 
 **Phase E exit = the conjunction of all four track exits above** (Track A ∧ Track B ∧
 Track C ∧ Track D), not merely "all E-N issues closed" — this is the explicit fix for
