@@ -644,15 +644,15 @@ This is **read-only from the trainer's perspective** — `Exporter` must produce
 format, only implement a writer for it.
 
 **Validation the exporter cannot assume is already correct on the read side.**
-`NnueNetwork.load()` currently validates: magic bytes, exact `formatVersion`/
+`NnueNetwork.load()` validates: magic bytes, exact `formatVersion`/
 `architectureId`/`featureSetId` match (any mismatch is rejected outright, not
-best-effort interpreted), `hiddenWidth` in `(0, 4096]`, and exact body length against
-the header-declared `hiddenWidth`. **Known current gap:** issue
-[#191](https://github.com/coeusyk/chess-engine/issues/191) — the loader does not yet
-reject non-positive `qa`/`qb`, which would otherwise surface as a divide-by-zero at
-evaluation time rather than at load time. The exporter cannot rely on this being fixed
-until #191 lands; the trainer's own export-time validation (assert `qa > 0`,
-`qb > 0` before writing) should not be skipped just because the Java loader is expected
+best-effort interpreted), `hiddenWidth` in `(0, 4096]`, exact body length against
+the header-declared `hiddenWidth`, and (fixed 2026-07-14, issue
+[#191](https://github.com/coeusyk/chess-engine/issues/191)) non-positive `qa`/`qb`,
+which would otherwise surface as a divide-by-zero at evaluation time rather than at
+load time. Even with the loader now rejecting this, the trainer's own export-time
+validation (assert `qa > 0`, `qb > 0` before writing) should not be skipped just
+because the Java loader is expected
 to eventually reject it too — defense in depth, not redundant work, since the exporter
 and loader are maintained independently and can drift.
 
@@ -1050,7 +1050,7 @@ already-encoded feature indices and never inspect what feature set produced them
 | Java/Python feature-index drift | Shared-corpus parity CI check (§4) |
 | int16 overflow from insufficient weight clipping | Quantization validator's clipping-boundary report (§7); ADR-002's oracle-bound test on the Java side catches it post-export |
 | Non-deterministic quantization/export | Byte-identical re-run assertion (§7, §12 trainer CI) |
-| Malformed/truncated `.nnue` written by Exporter | `NnueNetwork.load()`'s header/length validation (§8) — but only if the Java-side loader is itself correct; issue [#191](https://github.com/coeusyk/chess-engine/issues/191) (qa/qb=0 not rejected) is a known current gap the exporter must not rely on |
+| Malformed/truncated `.nnue` written by Exporter | `NnueNetwork.load()`'s header/length validation (§8), including non-positive `qa`/`qb` rejection (issue [#191](https://github.com/coeusyk/chess-engine/issues/191), fixed 2026-07-14) — the exporter's own export-time validation remains defense in depth regardless, since the exporter and loader are maintained independently |
 | Missing/incomplete provenance manifest | Manifest schema validation in trainer CI (§12); "a net without a complete report cannot be promoted to default" per PRD §4 |
 | Eval-scale mismatch destabilizing tuned search margins | KFinder-calibrated training targets (PRD §"Trainer Requirements"); corpus-level scale comparison, a named Phase D exit criterion (PRD §5 Risks table). **Current status (D-6):** `Validator.eval_scale_check()` (§11) is implemented and tested against a synthetic fixture, but has no classical-eval-labeled corpus to run against yet — `bench/nnue-corpus/golden-evals.csv` is pinned to the synthetic CI test net, not classical evaluation. Generating a real corpus needs a small Java test-scope tool (analogous to `NnueCorpusGenerator`), tracked as separate follow-up work, not yet built. **This must be resolved before NNUE is promoted past a candidate net** (PRD §1's Strength gate depends on search margins being correctly calibrated) — do not treat the mechanism's existence as satisfying the release gate itself. |
 | `QuantizedCanonicalNetwork` drifting from what `Exporter` actually writes | Round-trip test: `QuantizedCanonicalNetwork` → `.nnue` bytes → `NnueNetwork.load()` (Java, via a committed test fixture) → assert loaded values equal the original `QuantizedCanonicalNetwork` |

@@ -158,11 +158,67 @@ class NnueNetworkLoaderTest {
                 "expected UTFDataFormatException for a corrupt UTF string, got " + thrown.getClass());
     }
 
-    // qa/qb are read with no validation at all (unlike every other header field in this
-    // class) — a zero or negative value loads successfully and only fails later, at
-    // evaluation time, with an ArithmeticException (divide by zero) or silently wrong
-    // output. Deliberately not fixed here — PR C-5's scope is CI/test-only, no production
-    // behavior changes; tracked in issue #191 rather than guarded inline.
+    // Issue #191, fixed: qa/qb previously loaded with no validation at all (unlike every
+    // other header field in this class) — a zero or negative value would load successfully
+    // and only fail later, at evaluation time, with an ArithmeticException (divide by
+    // zero) or silently wrong output. Four boundary cases below, mirroring the
+    // zero/oversized-hiddenWidth pair already covered above.
+
+    @Test
+    void loadRejectsZeroQa() throws IOException {
+        int width = 4;
+        short[] ftWeights = new short[FeatureExtractor.FEATURES_PER_PERSPECTIVE * width];
+        short[] ftBiases = new short[width];
+        short[] outputWeights = new short[2 * width];
+        byte[] bytes = writeNetwork(width, ftWeights, ftBiases, outputWeights, 0,
+                0, 64, 400, "uuid", "commit", 0L);
+
+        IOException thrown = assertThrows(IOException.class,
+                () -> NnueNetwork.load(new ByteArrayInputStream(bytes)));
+        assertTrue(thrown.getMessage().contains("qa"));
+    }
+
+    @Test
+    void loadRejectsNegativeQa() throws IOException {
+        int width = 4;
+        short[] ftWeights = new short[FeatureExtractor.FEATURES_PER_PERSPECTIVE * width];
+        short[] ftBiases = new short[width];
+        short[] outputWeights = new short[2 * width];
+        byte[] bytes = writeNetwork(width, ftWeights, ftBiases, outputWeights, 0,
+                -127, 64, 400, "uuid", "commit", 0L);
+
+        IOException thrown = assertThrows(IOException.class,
+                () -> NnueNetwork.load(new ByteArrayInputStream(bytes)));
+        assertTrue(thrown.getMessage().contains("qa"));
+    }
+
+    @Test
+    void loadRejectsZeroQb() throws IOException {
+        int width = 4;
+        short[] ftWeights = new short[FeatureExtractor.FEATURES_PER_PERSPECTIVE * width];
+        short[] ftBiases = new short[width];
+        short[] outputWeights = new short[2 * width];
+        byte[] bytes = writeNetwork(width, ftWeights, ftBiases, outputWeights, 0,
+                127, 0, 400, "uuid", "commit", 0L);
+
+        IOException thrown = assertThrows(IOException.class,
+                () -> NnueNetwork.load(new ByteArrayInputStream(bytes)));
+        assertTrue(thrown.getMessage().contains("qb"));
+    }
+
+    @Test
+    void loadRejectsNegativeQb() throws IOException {
+        int width = 4;
+        short[] ftWeights = new short[FeatureExtractor.FEATURES_PER_PERSPECTIVE * width];
+        short[] ftBiases = new short[width];
+        short[] outputWeights = new short[2 * width];
+        byte[] bytes = writeNetwork(width, ftWeights, ftBiases, outputWeights, 0,
+                127, -64, 400, "uuid", "commit", 0L);
+
+        IOException thrown = assertThrows(IOException.class,
+                () -> NnueNetwork.load(new ByteArrayInputStream(bytes)));
+        assertTrue(thrown.getMessage().contains("qb"));
+    }
 
     @Test
     void loadRejectsTruncatedFile(@TempDir Path tempDir) throws IOException {

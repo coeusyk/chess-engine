@@ -137,6 +137,9 @@ public final class NnueNetwork {
         in.readInt(); // quantVersion — reserved for a future quantization scheme change
         int qa = in.readInt();
         int qb = in.readInt();
+        if (qa <= 0 || qb <= 0) {
+            throw new IOException("qa/qb must be positive (qa=" + qa + ", qb=" + qb + ")");
+        }
         int outputScale = in.readInt();
         String networkUuid = in.readUTF();
         String trainerCommit = in.readUTF();
