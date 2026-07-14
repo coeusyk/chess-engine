@@ -43,17 +43,26 @@ def _flatten(index_lists: List[List[int]]) -> Tuple[torch.Tensor, torch.Tensor]:
     )
 
 
-def encode_batch(records: Iterable[PositionRecord]) -> EncodedBatch:
-    """Encodes a batch of positions into flat `EmbeddingBag` (indices, offsets)
-    tensors, two perspectives ("us" = side to move, "them" = opponent).
+def encode_fens(fens: Iterable[str]) -> EncodedBatch:
+    """The FEN-only half of `encode_batch()` -- for callers (e.g. `Validator`'s
+    `eval_scale_check`) that have positions with no training label and would
+    otherwise need to construct a throwaway `PositionRecord` just to reach this
+    encoding, which reads only `.fen` in the first place.
     """
     us_lists: List[List[int]] = []
     them_lists: List[List[int]] = []
-    for record in records:
-        mover = _side_to_move(record.fen)
-        us_lists.append(active_feature_indices(record.fen, mover))
-        them_lists.append(active_feature_indices(record.fen, _opposite(mover)))
+    for fen in fens:
+        mover = _side_to_move(fen)
+        us_lists.append(active_feature_indices(fen, mover))
+        them_lists.append(active_feature_indices(fen, _opposite(mover)))
 
     us_indices, us_offsets = _flatten(us_lists)
     them_indices, them_offsets = _flatten(them_lists)
     return EncodedBatch(us_indices, us_offsets, them_indices, them_offsets)
+
+
+def encode_batch(records: Iterable[PositionRecord]) -> EncodedBatch:
+    """Encodes a batch of positions into flat `EmbeddingBag` (indices, offsets)
+    tensors, two perspectives ("us" = side to move, "them" = opponent).
+    """
+    return encode_fens(record.fen for record in records)

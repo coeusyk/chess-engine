@@ -1,6 +1,6 @@
 from trainer.contracts import PositionLabel, PositionMetadata, PositionRecord
 from trainer.encoding.feature_encoder import BLACK, WHITE, active_feature_indices
-from trainer.model.batching import encode_batch
+from trainer.model.batching import encode_batch, encode_fens
 
 WHITE_TO_MOVE_FEN = "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1"
 BLACK_TO_MOVE_FEN = "r4rk1/3qppbp/6p1/2p1n3/2B1P3/2P5/P2Q1PPP/R4RK1 b - - 0 20"
@@ -40,3 +40,13 @@ def test_flat_indices_length_matches_total_active_features():
     batch = encode_batch([_record(WHITE_TO_MOVE_FEN)])
     expected = len(active_feature_indices(WHITE_TO_MOVE_FEN, WHITE))
     assert batch.us_indices.shape[0] == expected
+
+
+def test_encode_batch_delegates_to_encode_fens():
+    from_records = encode_batch([_record(WHITE_TO_MOVE_FEN), _record(BLACK_TO_MOVE_FEN)])
+    from_fens = encode_fens([WHITE_TO_MOVE_FEN, BLACK_TO_MOVE_FEN])
+
+    assert from_records.us_indices.tolist() == from_fens.us_indices.tolist()
+    assert from_records.us_offsets.tolist() == from_fens.us_offsets.tolist()
+    assert from_records.them_indices.tolist() == from_fens.them_indices.tolist()
+    assert from_records.them_offsets.tolist() == from_fens.them_offsets.tolist()

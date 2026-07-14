@@ -682,6 +682,30 @@ code, the exporter, the engine's loader, the documentation, the benchmarks, and 
 configuration that validated the release — no cross-repo commit-pinning is needed to
 answer "what exact state of everything produced this file."
 
+### 9.1 Integrity checksum placement — resolved D-6, recorded here
+
+**Decision (D-6, 2026-07-14).** The manifest carries an `nnue_sha256` field (SHA-256 of
+the exported `.nnue` file's bytes) — **not** a checksum embedded in the `.nnue` binary
+itself. This closes the same integrity-detection goal a from-scratch design would
+solve with an embedded checksum, without touching the frozen `.nnue` byte layout (§8)
+at all.
+
+**Consumer.** `nnue_sha256` is an offline/tooling check — a CI or release-report step
+(PRD §4 "Network Release Reports") re-hashes the committed `.nnue` and compares against
+the manifest before a net is promoted, and anyone auditing the `nets/` registry can spot
+a mismatched or corrupted file. **The Java engine never reads or verifies this field at
+runtime** — the manifest lives in the `nets/` registry, not alongside a distributed
+`.nnue` release binary the engine loads, so there is no runtime consumer by design, not
+by oversight. This is a deliberate scope boundary: `NnueNetwork.load()`'s own existing
+header/length validation (§8) is the runtime integrity check; `nnue_sha256` is the
+release-pipeline integrity check, layered on top, not a replacement for it.
+
+**Why not embed it in the binary (the alternative a from-scratch design might pick).**
+`NnueNetwork.load()` is frozen (§8) — adding a trailing checksum field would be a
+binary-format version bump requiring a coordinated Java loader change, exactly the
+scope this decision avoids. The manifest already exists as an atomically-exported
+sidecar (this section, above) with plenty of room for one more field.
+
 ---
 
 ## 10. Reproducibility Guarantees
@@ -846,7 +870,7 @@ already-encoded feature indices and never inspect what feature set produced them
 | Non-deterministic quantization/export | Byte-identical re-run assertion (§7, §12 trainer CI) |
 | Malformed/truncated `.nnue` written by Exporter | `NnueNetwork.load()`'s header/length validation (§8) — but only if the Java-side loader is itself correct; issue [#191](https://github.com/coeusyk/chess-engine/issues/191) (qa/qb=0 not rejected) is a known current gap the exporter must not rely on |
 | Missing/incomplete provenance manifest | Manifest schema validation in trainer CI (§12); "a net without a complete report cannot be promoted to default" per PRD §4 |
-| Eval-scale mismatch destabilizing tuned search margins | KFinder-calibrated training targets (PRD §"Trainer Requirements"); corpus-level scale comparison, a named Phase D exit criterion (PRD §5 Risks table) |
+| Eval-scale mismatch destabilizing tuned search margins | KFinder-calibrated training targets (PRD §"Trainer Requirements"); corpus-level scale comparison, a named Phase D exit criterion (PRD §5 Risks table). **Current status (D-6):** `Validator.eval_scale_check()` (§11) is implemented and tested against a synthetic fixture, but has no classical-eval-labeled corpus to run against yet — `bench/nnue-corpus/golden-evals.csv` is pinned to the synthetic CI test net, not classical evaluation. Generating a real corpus needs a small Java test-scope tool (analogous to `NnueCorpusGenerator`), tracked as separate follow-up work, not yet built. **This must be resolved before NNUE is promoted past a candidate net** (PRD §1's Strength gate depends on search margins being correctly calibrated) — do not treat the mechanism's existence as satisfying the release gate itself. |
 | `QuantizedCanonicalNetwork` drifting from what `Exporter` actually writes | Round-trip test: `QuantizedCanonicalNetwork` → `.nnue` bytes → `NnueNetwork.load()` (Java, via a committed test fixture) → assert loaded values equal the original `QuantizedCanonicalNetwork` |
 | Engine accidentally gaining a Python/PyTorch dependency | Boundary check (§15 Invariant 8), enforceable the same way `generate_report.py`'s Architectural Boundary Report already flags unapproved production→debug edges — extended to flag any `engine-core`/`engine-uci`/`engine-tuner`/`chess-engine-api` node depending on a `trainer/` node |
 

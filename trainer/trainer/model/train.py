@@ -16,7 +16,7 @@ the target as a "blend of sigmoid-scaled eval and WDL outcome." Only the eval_cp
 eval_mate half of that blend is implemented here -- every `DatasetProvider` reachable
 from this PR's dependency chain (D-1/D-2/D-3, Stage 1 text data) has no WDL field at
 all (`trainer/trainer/contracts/dataset.py`'s `PositionLabel` allows it, but
-`TextDatasetProvider` never populates it). `_target_cp` raises loudly on a WDL-only
+`TextDatasetProvider` never populates it). `target_cp` raises loudly on a WDL-only
 label rather than silently treating the blend as satisfied. The actual lambda-blend
 becomes real work once a WDL-bearing source exists (Stage 3 self-play, Phase E, or a
 future `Labeler` stage per the PRD's own component table) -- not built preemptively
@@ -73,7 +73,7 @@ def texel_sigmoid(x: torch.Tensor, k: float) -> torch.Tensor:
     return 1.0 / (1.0 + torch.pow(torch.tensor(10.0), -k * x / 400.0))
 
 
-def _target_cp(label: PositionLabel) -> float:
+def target_cp(label: PositionLabel) -> float:
     if label.eval_cp is not None:
         return float(label.eval_cp)
     if label.eval_mate is not None:
@@ -107,7 +107,7 @@ def train(config: TrainingConfig, records: Iterable[PositionRecord], checkpoint_
             cursor += 1
 
         batch = encode_batch(batch_records)
-        target_cps = torch.tensor([_target_cp(r.label) for r in batch_records], dtype=torch.float32)
+        target_cps = torch.tensor([target_cp(r.label) for r in batch_records], dtype=torch.float32)
         targets = texel_sigmoid(target_cps, config.k)
 
         optimizer.zero_grad()
