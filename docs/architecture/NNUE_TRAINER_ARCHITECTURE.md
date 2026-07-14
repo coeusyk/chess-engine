@@ -588,6 +588,80 @@ Reproducibility"'s target property is that a second developer, given the repo an
 documented commands, can reproduce a released network and its validation results
 without asking anyone.
 
+### 10.1 Reproducibility Infrastructure — `trainer/trainer/reproducibility/`
+
+Grilled 2026-07-14, informed by
+`docs/architecture/research/2026-07-14-reproducibility-infrastructure.md` (primary-source
+survey: PyTorch's own randomness/DataLoader/checkpoint-saving docs, NeurIPS's
+reproducibility checklist, PyTorch Lightning's `deterministic=` flag docs).
+
+**Problem.** Before any training loop exists (D-4), RNG seeding, deterministic-execution
+configuration, and run-identification metadata need one owner — otherwise each future
+script (`train.py`, a future eval/sweep script) reinvents its own seeding convention,
+and drift between them silently breaks the "same seed → statistically equivalent net"
+guarantee this section already promises.
+
+**Design.** A dedicated package, three narrow modules, no training-loop or checkpoint-
+serialization code (that lands in D-4's `train.py`, which *uses* this package):
+
+- **`seeding.py`** — `seed_everything(seed)` threads one top-level seed through
+  `random`, `numpy.random`, and `torch.manual_seed`/`torch.cuda.manual_seed_all`.
+  `dataloader_generator(seed)` returns a seeded `torch.Generator` for
+  `DataLoader(generator=...)`. `worker_init_fn(worker_id)` reseeds `numpy`/`random`
+  inside each `DataLoader` worker process — closing a real, easy-to-miss gap: PyTorch's
+  own multi-worker default only reseeds *its own* RNG per worker, so `numpy`/`random`
+  calls inside `Dataset.__getitem__` silently duplicate across workers otherwise
+  (research note, idea #3).
+- **`determinism.py`** — `configure_deterministic_execution(enabled)`, opt-in only
+  (default off for real training runs). When enabled: `torch.use_deterministic_algorithms(True)`,
+  `cudnn.deterministic=True`, `cudnn.benchmark=False`. Useful for small/CI-scale runs
+  (§12) where the throughput cost is negligible; not the default because some ops have
+  no deterministic kernel and raise at runtime when forced (research note, idea #5).
+- **`experiment_metadata.py`** — `ExperimentMetadata` (seed, trainer git commit,
+  start timestamp, resolved config) and `capture(seed, config)`. The lighter of two
+  reproducibility tiers PyTorch's own docs distinguish: "identify this run" vs. "exact
+  mid-training resume" (full RNG-state dumps). Vex deliberately implements only the
+  first — full RNG-state checkpoint fields would be dead weight given this section's
+  own "not bit-exact across GPU hardware" disclaimer already rules out exact resume as
+  a goal (research note, idea #4).
+
+**Relationship to §9's provenance manifest.** `ExperimentMetadata` is not the manifest
+— it is lighter, and scoped to what a *training run* needs to be identified while it is
+still running or freshly checkpointed. `Exporter` (D-6) assembles the full §9 manifest
+at export time, using a checkpoint produced with this metadata as one of its inputs, not
+the reverse. Keeping these separate avoids forcing every checkpoint to carry
+export-time-only fields (dataset stage mix, quantization version) that don't exist yet
+when a checkpoint is written mid-training.
+
+**Single seed, not per-component seeds.** Data-shuffle, weight-init, and (future)
+augmentation seeds are not split apart. Per-component seeds are a variance-isolation
+tool for sweep-scale research operations; Vex is single-maintainer scale with no
+demonstrated need to isolate those sources today (research note, idea #2) — revisit if
+Stage 3 self-play variance debugging (Phase E) actually needs it, not preemptively.
+
+**Alternatives considered.**
+1. *Fold seeding/determinism directly into `train.py`, no separate package (rejected).*
+   Works for exactly one script; the moment a second script needs the same seeding
+   convention (an eval/sweep script, or a future Stage 3 self-play driver), the choice
+   is duplicate-and-drift or retrofit a shared module under time pressure. Establishing
+   ownership now costs three small files.
+2. *RNG-state-exact checkpoint resumability (rejected for v1).* PyTorch's own
+   saving/loading tutorial recommends `state_dict` + optimizer + epoch and does not
+   include RNG state; exact resume is a separate, heavier tier the tutorial itself
+   doesn't bundle in by default (research note, idea #4). Nothing in Invariant 7 or
+   this section's own guarantees requires it — adding it now would be unrequested
+   scope with no consumer.
+3. *Full determinism as the training default (rejected).* PyTorch's own
+   `use_deterministic_algorithms(True)` raises for ops with no deterministic kernel,
+   and disabling `cudnn.benchmark` costs real throughput industry-wide (research note,
+   idea #1, #5) — matches this section's existing "not bit-exact on GPU" framing
+   exactly, so keeping full determinism opt-in requires no change to that framing.
+
+**Chosen:** the three-module package above. `configure_deterministic_execution`,
+`seed_everything`, `dataloader_generator`, `worker_init_fn`, `ExperimentMetadata`, and
+`capture` are the only public surface; D-4's `train.py` is this package's first
+consumer.
+
 ---
 
 ## 11. Validation Strategy
