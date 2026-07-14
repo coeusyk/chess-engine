@@ -16,7 +16,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
-      - name: Trainer unit tests (includes Java/Python feature parity, D-3 #194)
+      - name: Trainer unit tests (includes Java/Python feature parity D-3 #194,
+          PyTorch model/training D-4 #195, Canonical Network/Quantizer D-5 #196)
         working-directory: trainer
-        run: uv run --extra dev pytest tests/ -v
+        # --extra train is required from D-4 onward: trainer.model, trainer.reproducibility,
+        # and (D-5) trainer.export/trainer.quantization import torch. A bare `--extra dev`
+        # passed collection locally only because this dev environment already had torch
+        # synced from an earlier `uv sync --extra train` -- a clean CI runner would fail
+        # ModuleNotFoundError on every torch-dependent test file without this.
+        run: uv run --extra dev --extra train pytest tests/ -v
       # Further jobs (full training/reproducibility pipeline) land in PR D-7.

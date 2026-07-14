@@ -57,8 +57,8 @@ framework, just separation of responsibilities":
 | `Labeler` | Produce/blend targets (search score, WDL, λ blend, K scaling) | record → training target |
 | `Trainer` | Model definition, loss, optimization loop | shards → checkpoints |
 | `Validator` | Held-out metrics, correlation vs. labels, eval-scale check | checkpoint → report |
-| `Quantizer` | float32 → int16 weights with clipping verification | `CanonicalNetwork` (float) → `CanonicalNetwork` (int16) |
-| `Exporter` | Quantized representation + provenance → `.nnue` + manifest | `CanonicalNetwork` (int16) → artifact |
+| `Quantizer` | float32 → int16 weights with clipping verification | `CanonicalNetwork` → `QuantizedCanonicalNetwork` |
+| `Exporter` | Quantized representation + provenance → `.nnue` + manifest | `QuantizedCanonicalNetwork` → artifact |
 
 This doc adds exactly one new boundary the PRD's table doesn't yet name: a
 **`CanonicalNetwork`** representation sitting between `Trainer`'s checkpoint output and
@@ -287,75 +287,153 @@ side that cannot.
 
 ## 5. Canonical Network Intermediate Representation
 
-**Definition.** `CanonicalNetwork`: a framework-agnostic, serializable representation
-of exactly the tensors and metadata the `.nnue` format needs — nothing else.
+**Revised 2026-07-14** (pre-D-5 architectural improvement), informed by
+`docs/architecture/research/2026-07-14-immutable-canonical-network.md` (primary-source
+survey of MLIR's SSA-value immutability, `torch.export`'s "functionalized... no
+operations are mutations" graph contract, and the PT2E `prepare_pt2e`/`convert_pt2e`
+pure-function usage pattern). Supersedes the original single-dataclass-plus-`bool`
+design; see that design's own text below for what changed and why.
+
+**Definition.** Two framework-agnostic, immutable, serializable dataclasses — not one
+dataclass with a state flag — each representing exactly the tensors and metadata the
+`.nnue` format needs at its stage, nothing else:
 
 ```python
-@dataclass
+@dataclass(frozen=True)
 class CanonicalNetwork:
+    """Mathematical network state -- float32, framework-agnostic, not yet deployable."""
     hidden_width: int
-    quantized: bool             # False until Quantizer runs — Exporter refuses quantized=False
-    ft_weights: np.ndarray      # shape [768, hidden_width], row-major per feature
-    ft_biases: np.ndarray       # shape [hidden_width]
-    output_weights: np.ndarray  # shape [2, hidden_width], perspective-major ("us" then "them")
+    ft_weights: np.ndarray      # float32, shape [768, hidden_width], row-major per feature
+    ft_biases: np.ndarray       # float32, shape [hidden_width]
+    output_weights: np.ndarray  # float32, shape [2, hidden_width], perspective-major ("us" then "them")
+    output_bias: float
+    qa: int
+    qb: int
+    output_scale: int
+    architecture_id: int
+    feature_set_id: int
+
+
+@dataclass(frozen=True)
+class QuantizedCanonicalNetwork:
+    """Deployable engine state -- int16 (int32 for output_bias), byte-for-byte what
+    Exporter needs to write into the .nnue body (§8); still framework- and
+    provenance-agnostic."""
+    hidden_width: int
+    ft_weights: np.ndarray      # int16, shape [768, hidden_width], row-major per feature
+    ft_biases: np.ndarray       # int16, shape [hidden_width]
+    output_weights: np.ndarray  # int16, shape [2, hidden_width], perspective-major
     output_bias: int
     qa: int
     qb: int
     output_scale: int
     architecture_id: int
     feature_set_id: int
-    network_uuid: str | None             # None until Exporter assigns one — see Pipeline position
-    trainer_commit: str | None           # None until Exporter assigns one
-    created_at_epoch_seconds: int | None # None until Exporter assigns one
 ```
 
-This is deliberately minimal: **one dataclass, one converter function
-(`checkpoint_to_canonical(model) -> CanonicalNetwork`), one round-trip test.** It is not
-a class hierarchy, not a plugin interface, and it does not grow beyond what `.nnue`
-actually needs — resisting the temptation to make it "general" is itself part of the
-design (see Tradeoffs below).
+Both are minimal — **two dataclasses, two converter functions
+(`checkpoint_to_canonical(checkpoint) -> CanonicalNetwork`,
+`quantize(network: CanonicalNetwork) -> QuantizedCanonicalNetwork`), round-trip tests
+for each.** Neither is a class hierarchy or a plugin interface, and neither grows
+beyond what `.nnue` actually needs (see Tradeoffs below) — this restraint is carried
+over unchanged from the original design; only the flag-vs-type-split decision changed.
 
-**Why `quantized: bool`, not two separate dataclasses.** `Quantizer` and `Exporter`
-otherwise share every other field verbatim; a second dataclass would duplicate all of
-them for one bit of information. The flag is checked at the two points precision
-actually matters: `Quantizer` asserts its input has `quantized=False`, `Exporter`
-asserts its input has `quantized=True` — turning "was this network quantized before
-export" from an implicit, array-dtype-inferred convention (the ADR-002-style bug this
-review flagged) into an explicit, checkable field. If the trainer later needs more than
-one axis of type state, revisit — two dataclasses would be the better call at that
-point, not this one.
+**Genuinely immutable, not just `frozen=True`.** `@dataclass(frozen=True)` blocks
+attribute reassignment but does not block in-place mutation of a `numpy.ndarray`
+field's contents (`network.ft_weights[0] = 5` still succeeds on a frozen dataclass).
+Both dataclasses set `array.flags.writeable = False` on every ndarray field in
+`__post_init__`, matching NumPy's own documented mechanism
+(`numpy.ndarray.flags`) for a read-only buffer — a one-line-per-array fix, not a custom
+immutable-array wrapper class. Attempting an in-place write raises
+`ValueError: assignment destination is read-only`, the same failure class
+`frozen=True` already gives for attribute reassignment.
 
-**Provenance timing.** `network_uuid`, `trainer_commit`, and `created_at_epoch_seconds`
-are `None` from `checkpoint_to_canonical()` through `Quantizer` — a network only
-becomes identifiable once `Exporter` decides to actually emit it, matching §6's "model
-is not responsible for provenance metadata... attached at export time." `Exporter`
-populates all three immediately before serializing and refuses to write a `.nnue` file
-if any of the three is still `None`.
+**Honest limits of this guarantee (architecture-review + agentic-eval finding,
+resolved by documentation, not code).** `flags.writeable = False` is a permission bit,
+not tamper-proofing: any holder of the array object can flip it back
+(`network.ft_weights.flags.writeable = True`), the same way `object.__setattr__` can
+always bypass `frozen=True` for anyone determined to. Neither this design nor the
+stdlib primitives it builds on defend against a caller deliberately working around
+Python's access controls — that has never been this project's threat model. The one
+real, non-adversarial gap is **aliasing**: a NumPy array created via `.numpy()` on a
+live PyTorch tensor is a zero-copy view sharing that tensor's underlying buffer, so
+setting the *view's* `writeable=False` does not stop the original tensor from being
+mutated elsewhere, which would silently change the "immutable" array's values through
+the shared buffer. `checkpoint_to_canonical()` and `quantize()` must call `.copy()`
+(or NumPy's own `np.array(..., copy=True)`) on any array sourced from a live tensor or
+another array before constructing either dataclass — this is a real implementation
+requirement, not a documentation nicety, and D-5's tests must cover it (mutate the
+source tensor/array after construction, assert the `CanonicalNetwork`/
+`QuantizedCanonicalNetwork` field is unaffected).
+
+**Pickling gotcha (implementation finding, D-5).** `pickle` does not preserve a NumPy
+array's `writeable` flag across a round-trip — unpickling reconstructs a fresh, plain
+writeable array regardless of the source's flags — and a frozen dataclass's default
+unpickling restores `__dict__` directly, bypassing `__post_init__` entirely. Without an
+explicit `__setstate__` that re-applies the same freeze helper `__post_init__` uses,
+`pickle.loads(pickle.dumps(network))` would silently return an object that claims
+immutability but isn't. Both dataclasses define `__setstate__` for exactly this reason;
+D-5's tests cover it directly (round-trip through `pickle`, assert the restored array is
+still read-only).
+
+**Why two dataclasses now, not the `quantized: bool` flag this section previously
+specified.** The original design shared one dataclass with a boolean, reasoned as: "if
+the trainer later needs more than one axis of type state, revisit — two dataclasses
+would be the better call at that point, not this one." This revision is exactly that
+revisit, prompted directly by the requirement that `Quantizer` must not mutate its
+input: a single mutable-in-spirit object toggling a flag makes "does quantizing mutate
+the network I already have a reference to, or hand me a new one" ambiguous by
+construction — the research note found no compiler or ML system surveyed representing
+"before this pass" / "after this pass" as the same object with a state flag; MLIR's
+passes and PyTorch's own `prepare_pt2e`/`convert_pt2e` both produce a distinct value
+per stage. The type itself now carries what the bool used to (`isinstance` answers
+"is this quantized" with the same certainty `quantized=True` did, with no way to
+construct a mixed-precision object the old design's runtime-only bool couldn't prevent
+either).
+
+**Provenance fields removed from both types (a second, related simplification).** The
+original design carried `network_uuid`, `trainer_commit`, `created_at_epoch_seconds` as
+`Optional[...] = None` on `CanonicalNetwork`, unpopulated through both `Quantizer` and
+into `Exporter`'s input. Splitting into two types makes this dead weight visible: three
+always-`None` fields would now duplicate across *two* frozen dataclasses instead of
+one, for information neither stage produces or consumes. `CanonicalNetwork` represents
+mathematical network state; `QuantizedCanonicalNetwork` represents deployable engine
+state — provenance is neither, it is artifact identity assigned once, at the moment
+`Exporter` (D-6) decides to actually emit a file, unchanged from this document's
+existing §6 framing ("the model is not responsible for provenance metadata... attached
+at export time"). `Exporter`'s own signature (a D-6 design decision, not this
+section's) will accept a `QuantizedCanonicalNetwork` plus the provenance triple
+separately, rather than mutating fields on a network that was otherwise fully immutable
+one stage earlier.
 
 **Pipeline position:**
 
 ```
 Trainer (PyTorch, state_dict + optimizer state, training-only)
-    │  checkpoint_to_canonical()
+    │  Checkpoint Loader (checkpoint_to_canonical())
     ▼
-CanonicalNetwork (float32, quantized=False, provenance fields None)
-    │  Quantizer
+CanonicalNetwork (immutable, float32)
+    │  Quantizer (quantize() -- pure function, does not mutate its input)
     ▼
-CanonicalNetwork (int16, quantized=True, provenance fields still None)
-    │  Exporter (assigns network_uuid / trainer_commit / created_at_epoch_seconds)
+QuantizedCanonicalNetwork (immutable, int16)
+    │  Exporter (D-6; takes QuantizedCanonicalNetwork + ExperimentMetadata (§10.1,
+    │            already travels with the checkpoint, not with the IR) + a freshly
+    │            assigned network_uuid/created_at_epoch_seconds; assembles the
+    │            provenance triple from outside the IR, never as IR fields)
     ▼
 .nnue bytes  +  <uuid>.json manifest
 ```
 
-**Rationale.** Two downstream stages — `Quantizer` and `Exporter` — both need to pull
-the same fixed set of tensors out of whatever the training loop produced. Without a
-named intermediate, that extraction logic either duplicates across both stages, or
+**Rationale (carried over, still the core justification for having an IR at all).**
+Two downstream stages — `Quantizer` and `Exporter` — both need to pull the same fixed
+set of tensors out of whatever the training loop produced. Without a named
+intermediate, that extraction logic either duplicates across both stages, or
 `Quantizer`'s output becomes a private, undocumented shape that only `Exporter` happens
-to understand — an implicit contract with no test surface of its own.
-`CanonicalNetwork` is what stops that duplication: it is the one place that understands
-"what a network *is*" (the fixed set of named tensors matching the frozen `.nnue`
-layout, §8); `Exporter` and `Quantizer` only understand `CanonicalNetwork`, never a raw
-`state_dict`.
+to understand — an implicit contract with no test surface of its own. The
+`CanonicalNetwork`/`QuantizedCanonicalNetwork` pair is what stops that duplication:
+together they are the one place that understands "what a network *is*" at each stage
+(the fixed set of named tensors matching the frozen `.nnue` layout, §8); `Exporter` and
+`Quantizer` only understand these two types, never a raw `state_dict`.
 
 A secondary but real benefit: PyTorch checkpoint internals (layer naming, module
 nesting, a `torch.compile` wrapper adding key prefixes to `state_dict`) are far more
@@ -380,6 +458,15 @@ a silent bug (a malformed `.nnue` byte layout fails far more obscurely than a Py
    ("checkpoint → quantized tensors") (rejected).* This is exactly the coupling this
    section exists to remove: two stages independently reaching into checkpoint
    internals instead of one shared, tested seam.
+4. *One dataclass with a `quantized: bool` flag (this section's own prior design,
+   rejected on revisit).* Superseded above — ambiguous mutation semantics, and no
+   surveyed compiler/ML system represents a transformed value this way.
+5. *A `TypeVar`/generic `CanonicalNetwork[Precision]` parameterized over dtype
+   (rejected).* Would express "same shape, different dtype" with less field
+   duplication than two plain dataclasses, but adds a generics layer for two concrete
+   instantiations that will only ever be two — speculative flexibility CLAUDE.md
+   already warns against ("no config for a value that never changes"). Two plain
+   dataclasses is the more boring, more readable choice for exactly two cases.
 
 **Tradeoffs accepted.** This is one more stage boundary in a project that explicitly
 avoids unrequested abstraction (CLAUDE.md, ponytail conventions). It is justified here
@@ -389,14 +476,16 @@ surface instead of inlined; (b) it is the one seam most likely to be hit by chur
 outside this project's control (PyTorch version upgrades), unlike the frozen `.nnue`
 format which changes only by this project's own deliberate version bump; (c) it makes
 `Quantizer` and `Exporter` unit-testable without a full PyTorch training environment —
-a `CanonicalNetwork` round-trips to `.nnue` bytes and back with no `torch` import
-required at all.
+both `CanonicalNetwork` and `QuantizedCanonicalNetwork` round-trip to `.nnue` bytes and
+back with no `torch` import required at all. Splitting into two types over one
+flag-bearing type adds one more class definition (a handful of lines) in exchange for
+removing an entire class of "did this mutate or not" ambiguity — a cheap trade.
 
 **Future evolution.** If `.nnue` ever gains a version 2 (larger topology, HalfKP
-features per §13), `CanonicalNetwork` gains new optional fields behind the same
-`architecture_id`/`feature_set_id` versioning `NnueNetwork.load()` already
-rejects-on-mismatch. `Exporter` and the Java loader change together; `Trainer` and
-`Quantizer` do not need to change their checkpoint-side code at all.
+features per §13), both `CanonicalNetwork` and `QuantizedCanonicalNetwork` gain new
+optional fields behind the same `architecture_id`/`feature_set_id` versioning
+`NnueNetwork.load()` already rejects-on-mismatch. `Exporter` and the Java loader change
+together; `Trainer` does not need to change its checkpoint-side code at all.
 
 ---
 
@@ -472,20 +561,44 @@ a suggestion): FT weights must be clipped during training such that
 after quantization. The clipping bound is derived from `QA` and documented in the
 trainer's training config, not hardcoded.
 
-**Pipeline shape:**
+**Pipeline shape (revised 2026-07-14 alongside §5's immutable-IR split):**
 
 ```
-CanonicalNetwork (float32)
-    │  per-tensor scale application: qa for FT layer, qb for output layer
-    │  (matching NnueNetwork's stored qa/qb fields exactly — §8)
+CanonicalNetwork (immutable, float32)
+    │  quantize() -- pure function, does not mutate its input (§5)
+    │  round-to-nearest int16 for ft_weights / ft_biases / output_weights
+    │  (no additional x qa / x qb multiply -- see "No additional scale multiply" below)
+    │  round-to-nearest int32 for output_bias -- a separate, wider range (§8: `i32
+    │  outputBias`), not part of the int16 tensor clip
+    │  qa / qb / output_scale / architecture_id / feature_set_id / hidden_width pass
+    │  through unchanged -- already integers, not transformed by quantize() at all
     ▼
-round-to-nearest int16
-    ▼
-clipping-boundary report (flags weights at the saturation edge —
-    PRD's "Weight histogram + clipping report" analysis tool)
-    ▼
-CanonicalNetwork (int16, quantized)
+QuantizedCanonicalNetwork (immutable, int16 tensors + int32 output_bias)
 ```
+
+**The clipping-boundary report is a separate function, not a `quantize()` return
+value.** `quantize()`'s signature stays exactly `CanonicalNetwork ->
+QuantizedCanonicalNetwork` — no tuple, no side-channel result — for the same reason §5
+rejected bundling `quantized: bool` onto one dataclass: don't overload one return value
+with two concerns. A second, independent function
+(`clipping_report(network: CanonicalNetwork) -> ...`) inspects the pre-rounding float
+values directly (flags values at the int16 saturation edge — PRD's "Weight histogram +
+clipping report" analysis tool) and can be called whether or not `quantize()` is ever
+invoked. `output_bias`'s int32 range is not a realistic overflow target and is not part
+of this report.
+
+**No additional scale multiply at quantization time.** FT weights already train in
+qa-native (int16-scale) float units, established in §6/D-4: `NnueOracle.java`'s float64
+reference oracle clamps to the *same* `qa` ceiling as the int16 inference path, proving
+training happens directly in the target int16 scale, not a normalized range requiring a
+later `x qa`. The identical reasoning holds for the output layer: D-4's `NnueNet.forward()`
+substitutes `self.output_layer`'s raw float weight/bias directly into the same formula
+`NnueEvaluator.java` uses with `outWeight`/`outputBias` (int16/int32) — no `x qb` step
+appears anywhere in that formula on either side. `quantize()` is therefore
+round-to-nearest (ties-to-even, `numpy.round`'s default) plus an int16 range clip for
+every tensor, uniformly — never a scale-then-round step. "qa for FT layer, qb for
+output layer" (this section's original phrasing) describes which scale each layer's
+values were already trained against, not an operation `Quantizer` performs.
 
 **Determinism requirement (feeds §15 Invariant 5).** Given the same float32
 `CanonicalNetwork` and the same `qa`/`qb`, quantization must be a pure function: no
@@ -558,8 +671,8 @@ Reproduced from PRD §4 "Provenance (mandatory for every exported network)":
 §"End-to-End Reproducibility":
 
 ```
-dataset id → training config → checkpoint → CanonicalNetwork (float)
-    → CanonicalNetwork (quantized) → .nnue + manifest (atomic pair)
+dataset id → training config → checkpoint → CanonicalNetwork
+    → QuantizedCanonicalNetwork → .nnue + manifest (atomic pair)
     → benchmark-corpus results → SPRT log → release report (PRD §4)
 ```
 
@@ -734,7 +847,7 @@ already-encoded feature indices and never inspect what feature set produced them
 | Malformed/truncated `.nnue` written by Exporter | `NnueNetwork.load()`'s header/length validation (§8) — but only if the Java-side loader is itself correct; issue [#191](https://github.com/coeusyk/chess-engine/issues/191) (qa/qb=0 not rejected) is a known current gap the exporter must not rely on |
 | Missing/incomplete provenance manifest | Manifest schema validation in trainer CI (§12); "a net without a complete report cannot be promoted to default" per PRD §4 |
 | Eval-scale mismatch destabilizing tuned search margins | KFinder-calibrated training targets (PRD §"Trainer Requirements"); corpus-level scale comparison, a named Phase D exit criterion (PRD §5 Risks table) |
-| `CanonicalNetwork` drifting from what `Exporter` actually writes | Round-trip test: `CanonicalNetwork` → `.nnue` bytes → `NnueNetwork.load()` (Java, via a committed test fixture) → assert loaded values equal the original `CanonicalNetwork` |
+| `QuantizedCanonicalNetwork` drifting from what `Exporter` actually writes | Round-trip test: `QuantizedCanonicalNetwork` → `.nnue` bytes → `NnueNetwork.load()` (Java, via a committed test fixture) → assert loaded values equal the original `QuantizedCanonicalNetwork` |
 | Engine accidentally gaining a Python/PyTorch dependency | Boundary check (§15 Invariant 8), enforceable the same way `generate_report.py`'s Architectural Boundary Report already flags unapproved production→debug edges — extended to flag any `engine-core`/`engine-uci`/`engine-tuner`/`chess-engine-api` node depending on a `trainer/` node |
 
 ---
@@ -758,8 +871,10 @@ explicitly revising the invariant — never a silent regression.
    (`docs/architecture/feature-spec/v1.json`, which `FeatureEncoder` derives from
    directly and `FeatureSpecConformanceTest.java` verifies Java against), and the deep
    golden-value corpus (`FeatureIndexParityTest.CORPUS`).
-3. **Canonical Network intermediate representation.** `Exporter` and `Quantizer`
-   consume only `CanonicalNetwork`, never a raw PyTorch `state_dict` or `nn.Module`.
+3. **Canonical Network intermediate representation.** `Quantizer` consumes only
+   `CanonicalNetwork`, never a raw PyTorch `state_dict` or `nn.Module`; `Exporter`
+   consumes only `QuantizedCanonicalNetwork`. Both types are immutable (§5) —
+   `Quantizer` is a pure function that never mutates the `CanonicalNetwork` it is given.
    Training-code refactors (layer renaming, module wrapping) must not require
    `Exporter`/`Quantizer` changes unless the actual tensor shapes or semantics change.
 4. **Export contract.** `Exporter`'s output byte-for-byte satisfies
@@ -902,7 +1017,7 @@ happens to be closest to each contract.
 | **Feature specification** (§4, §4.1) | `docs/architecture/feature-spec/v1.json` (shape contract, both sides derive-from/tested-against); `FeatureExtractor.java` (Java, hardcoded, hot-path) and `FeatureEncoder` (Python, derives from `v1.json` at runtime) | `NnueEvaluator`/`NnueNetwork` (Java, inference); `Trainer`/model (Python, training); `FeatureSpecConformanceTest.java` (Java test scope, verifies Java against `v1.json`) | Split: the *feature-set choice* (768, dual-perspective, non-king-relative) is shared via ADR-001; the *exact index-layout arithmetic* within that choice has no ADR of its own — it's enforced by Invariant 2, `v1.json`, and the parity corpus below together, so a layout-only tweak needs a coordinated PR (`v1.json` + both languages + the corpus), not a superseding ADR | Yes — `spec_version` inside `v1.json` (schema shape), `feature_set_id` inside `v1.json` mirroring the `.nnue` header's `featureSetId` byte checked by `NnueNetwork.load()` (layout changes within the same `featureSetId` are not independently version-gated today) | Shared |
 | **Feature parity corpus** (§4) | `FeatureIndexParityTest.java`'s `CORPUS` (Java) today; a future Python parity test consumes the same values | Both `FeatureExtractor.java` and (once it exists) `FeatureEncoder`'s test suite — the fixture both sides are pinned against | Shared — the enforcement mechanism for the index-layout arithmetic (see previous row); a change to this corpus alone (no formula change) is a normal code review, not an ADR matter | No explicit version field — a plain FEN list; a change is a normal code review on the shared fixture, not a format bump | Shared |
 | **`.nnue` binary format** (§8) | `Exporter` (Python) | `NnueNetwork.load()` (Java) | Engine, enforced by `NnueNetwork.java` — "read-only from the trainer's perspective" (§8); the exporter conforms to it, not the reverse | Yes — `formatVersion`, `architectureId`, `featureSetId`, `quantVersion` fields | Shared |
-| **Canonical Network IR** (§5) | `checkpoint_to_canonical()` (Python) | `Quantizer`, `Exporter` (Python) | Trainer, enforced by this document's §5 | No independent version field — versioned indirectly via the `architecture_id`/`feature_set_id` it carries through to `.nnue` | Internal trainer detail |
+| **Canonical Network IR** (§5) | `checkpoint_to_canonical()` produces `CanonicalNetwork`; `quantize()` produces `QuantizedCanonicalNetwork` (both Python) | `quantize()` consumes `CanonicalNetwork`; `Exporter` (D-6) consumes `QuantizedCanonicalNetwork` | Trainer, enforced by this document's §5 | No independent version field — versioned indirectly via the `architecture_id`/`feature_set_id` both types carry through to `.nnue` | Internal trainer detail |
 | **`DatasetProvider` API** (§3) | Each `DatasetProvider` implementation (`text_provider.py`, future Stockfish/self-play providers) | `Transform`/`FeatureEncoder`/`Labeler` pipeline (Python) | Trainer, enforced by this document's §3 — the iterator contract itself, not any one provider implementation | No — an in-process interface, not a serialized/persisted format | Internal trainer detail |
 | **Quantization pipeline** (§7) | `Quantizer` (Python), consuming training-time-chosen `qa`/`qb` | `Exporter` — writes `qa`/`qb` into the `.nnue` header | Trainer owns the *procedure* (enforced by this document's §7); the resulting `qa`/`qb` *values* fall under the Engine-owned `.nnue` contract once exported (see row above) | Yes — `quantVersion`, reserved in the `.nnue` header for a future quantization scheme change, not yet used (`NnueNetwork.java` reads and discards it today) | Internal trainer detail (procedure); shared (its output values, via the `.nnue` row) |
 | **Provenance manifest** (§9) | `Exporter` (Python) | `nets/` registry (humans, release reports); the engine reads only the embedded UUID via `info string` | Trainer owns the manifest schema (enforced by this document's §9); the UUID join-key falls under the Engine-owned `.nnue` header contract | Yes — the manifest's own "format version" field (PRD §4) | Shared — mostly trainer-internal, but the UUID crosses into the `.nnue` header |
