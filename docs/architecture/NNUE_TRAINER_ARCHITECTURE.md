@@ -12,6 +12,14 @@ downstream of the contract those ADRs already fixed on the Java side.
 **Grilled and accepted, 2026-07-13** (see §16 for the recorded decision record): trainer
 location is `trainer/`, a top-level directory in this repository — not a separate repo.
 
+**Deep Research reports index.** `docs/architecture/research/` holds one primary-source-cited
+Deep Research report per major design fork this document's decisions were informed by —
+each report is referenced inline, at the section whose decision it informed, rather than
+only listed here: the executable feature specification (§4.1), the immutable Canonical
+Network IR (§5), reproducibility infrastructure (§10.1), and the Stage 2 Stockfish
+labeling driver (§9.3). A report not yet referenced inline elsewhere in this document
+(e.g. the D-6 Exporter report) is still findable directly in that directory.
+
 ---
 
 ## 1. Overview & Scope
@@ -752,6 +760,80 @@ says what happens when they don't.
   no-silent-cross-version-compatibility posture, for the same reason (a schema/format
   reader that tries to be clever about old shapes is exactly where NNUE toolchains
   accumulate silent correctness bugs).
+
+---
+
+### 9.3 Stage 2 Labeling Driver — Supported Operating Envelope (D-8, recorded here)
+
+**No code or behavior change here — documentation only.** `trainer/scripts/stockfish_label.py`
+(D-8, issue #199) implements the sequential v1 scope of the architecture surveyed and
+recommended in `docs/architecture/research/DR-D8-stockfish-labeling-driver.md` — a
+~8300-word Deep Research report (Reader/Scheduler/Labeler/Filter/Writer/Checkpointing/
+Recovery/Metrics decomposition, surveyed against Stockfish's historical `gensfen`,
+OpenBench's `genfens`, lc0's client/server architecture, Ceres/CeresTrain, and general
+data-processing systems) that this driver's own module docstring already cites inline as
+its architectural source. That report is the authoritative rationale for every design
+choice below; this subsection records only what the *implementation* currently guarantees
+and does not, so a future contributor extending the driver toward the report's full
+eight-component recommendation doesn't have to reverse-engineer the gap from source code
+alone.
+
+- **Supported Stockfish version(s).** None pinned in code or config. The driver is
+  engine-identity-agnostic by design: it captures the binary's self-reported `id name`
+  (UCI handshake) and a SHA-256 of the binary's bytes into the run manifest at labeling
+  time (DR-D8 §11's engine-identity provenance field), rather than asserting a specific
+  version string at startup. Any UCI-speaking engine binary the operator points
+  `engine_path` at is accepted; the manifest is where a reader later confirms which
+  version actually produced a given shard. Developed and exercised against Stockfish 16
+  (`/usr/games/stockfish` via `apt` in this project's dev environment) — not asserted as
+  a compatibility floor or a tested-version guarantee.
+- **Required UCI options.** Exactly one is set explicitly: `setoption name Threads value 1`,
+  sent once at startup, non-configurable (no config knob exposes it) — every determinism
+  guarantee below depends on it. No other UCI option (`Hash`, `MultiPV`, `Ponder`, etc.) is
+  set; the engine's own defaults apply to everything else.
+- **Timeout assumptions.** Two independent timeouts: a 10-second UCI handshake timeout
+  (`_UCI_STARTUP_TIMEOUT_SECONDS`, a module-level constant, not exposed via config)
+  covering `uci`/`isready` at engine startup or respawn, and a per-position search timeout
+  (`StockfishLabelConfig.timeout_seconds`, default 30.0s) covering the `go` → `bestmove`
+  round trip. The per-position timeout is a fixed config value, not scaled from the
+  configured node/depth budget — DR-D8 §8's recommendation that it "should scale with
+  search cost" is not implemented in this v1.
+- **Determinism guarantees.** Byte-identical labels are guaranteed only when `nodes` (not
+  `depth`) is used, `Threads=1` (always true, non-configurable), and the same engine
+  binary is used — matching DR-D8 §10/§12's conditional-determinism argument exactly.
+  `depth`-based search is accepted (`StockfishLabelConfig` allows either, exactly one)
+  but is not guaranteed byte-identical across engine builds/hardware, per DR-D8 §17's own
+  caveat about some engines' internal depth accounting.
+- **Resumability guarantees: none.** This v1 is a single sequential pass over the full
+  input file into one shard (`shard-0.bin`); there is no checkpoint manifest, no
+  resume-from-N, and no crash recovery of already-labeled positions — an interrupted run
+  must be restarted from the beginning of its input file. This is a deliberate, explicitly
+  scoped v1 gap (the module's own docstring: "no manifest-based crash-recovery... deferred
+  because issue #199's actual acceptance criteria do not require them"), not an oversight.
+  DR-D8 §12's manifest-based checkpoint design is the recommended future upgrade path, not
+  yet built.
+- **Current limitations, stated explicitly:**
+  - **Sequential, not parallel.** One persistent Stockfish subprocess, driven
+    synchronously, position after position — no worker pool, no dynamic work-stealing
+    scheduler (DR-D8 §5/§8's recommended architecture), no multi-core utilization within
+    a single run.
+  - **No PGN ingestion.** Input is a plain FEN/EPD-line file, one position per line; no
+    PGN parsing, no Java↔Python bridge to `PgnExtractor`/`PositionLoader` (issue #199's
+    "reusing... where practical" is satisfied only at the FEN-format level, per the
+    module's own docstring).
+  - **No pre-search structural filtering.** DR-D8 §10's cheap not-in-check pre-filter is
+    not implemented (no chess-logic library exists on this repo's Python side today); the
+    driver assumes its input already passed quiet/not-in-check extraction upstream.
+  - **No circuit breaker.** A persistently broken engine binary causes every position to
+    be skipped (logged, surfaced via `skipped_count` in the manifest), not an aborted run
+    — DR-D8 §12's circuit-breaker recommendation is not implemented.
+  - **Single output shard per run.** No shard rotation (DR-D8 §13's fixed-size shard
+    rotation) — one run produces exactly one `shard-0.bin`, regardless of input size.
+
+None of the above are defects relative to issue #199's acceptance criteria — they are the
+explicit, documented boundary of what "minimal v1 scope" means, kept in one place so
+Phase E planning (which depends on this driver's precedent, per ADR-007) does not have to
+re-derive it from the source.
 
 ---
 
