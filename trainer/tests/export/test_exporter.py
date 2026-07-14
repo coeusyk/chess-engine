@@ -11,31 +11,7 @@ from trainer.export.exporter import DatasetComposition, MAGIC, QUANT_VERSION, _n
 from trainer.export.canonical import QuantizedCanonicalNetwork
 from trainer.reproducibility.experiment_metadata import ExperimentMetadata
 
-
-def _quantized_network(hidden_width: int = 2) -> QuantizedCanonicalNetwork:
-    return QuantizedCanonicalNetwork(
-        hidden_width=hidden_width,
-        ft_weights=np.arange(FEATURES_PER_PERSPECTIVE * hidden_width, dtype=np.int16).reshape(
-            FEATURES_PER_PERSPECTIVE, hidden_width
-        ),
-        ft_biases=np.array([1, -2], dtype=np.int16)[:hidden_width],
-        output_weights=np.array([[3, -4], [5, -6]], dtype=np.int16)[:, :hidden_width],
-        output_bias=7,
-        qa=127,
-        qb=64,
-        output_scale=400,
-        architecture_id=ARCHITECTURE_ID,
-        feature_set_id=FEATURE_SET_ID,
-    )
-
-
-def _metadata() -> ExperimentMetadata:
-    return ExperimentMetadata(
-        seed=42,
-        trainer_commit="a" * 40,
-        started_at_epoch_seconds=1000,
-        config={"hidden_width": 2, "qa": 127, "qb": 64, "output_scale": 400, "k": 1.0},
-    )
+from tests.export._fixtures import metadata as _metadata, quantized_network as _quantized_network
 
 
 def test_write_utf_matches_java_writeutf_length_prefix_format():

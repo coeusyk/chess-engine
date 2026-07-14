@@ -842,6 +842,59 @@ doesn't accidentally fold Python setup into the existing unscoped job.
 `FeatureEncoder`'s output diverge on the shared corpus. Made practical by the §16
 in-repo decision — both sides are checked in the same PR, in the same CI run.
 
+**Resolved D-7 (#198), recorded here.**
+
+- **Path-scoping is implemented, both directions — with asymmetric verification
+  evidence, stated honestly rather than claimed as equally proven.**
+  `.github/workflows/ci.yml` now carries `paths-ignore: ['trainer/**']` on both `push`
+  and `pull_request` triggers, so a trainer-only change no longer pays Java/Maven setup
+  cost. `trainer-ci.yml`'s existing `paths: ['trainer/**', 'docs/architecture/feature-spec/**']`
+  already covered the other direction (unchanged from D-1).
+  **`trainer-ci.yml`'s direction has real historical trigger evidence**: `gh run list
+  --workflow=trainer-ci.yml` cross-referenced against this branch's actual commit
+  content, including the parse-failure finding below. **`ci.yml`'s `paths-ignore`
+  direction does not yet have equivalent live-trigger evidence** — `gh run list
+  --workflow=ci.yml` shows zero runs on `phase/15-nnue` ever, because `ci.yml`'s `push`
+  trigger is scoped to `branches: [develop, master]` (it structurally cannot fire on a
+  phase branch via push) and no pull request has been opened from this branch yet.
+  What's actually verified for this direction: both workflow files parse as valid YAML
+  (`yaml.safe_load` on each, confirmed directly), and `paths-ignore` glob-matching is
+  well-documented, stable GitHub Actions platform behavior. What remains unverified by
+  direct observation: whether `ci.yml` is actually skipped the first time a PR opens
+  from this branch touching only `trainer/**`. A throwaway verification branch was
+  considered and rejected — CLAUDE.md §6 forbids per-issue branches, and this repo's
+  established workflow already opens a PR from `phase/15-nnue` before merge, which will
+  be the first real, natural confirmation of this direction; that PR's run history
+  should be checked against this claim when it happens, not assumed to already match it.
+- **A real, previously-undetected CI defect was found and fixed in the same PR.**
+  `trainer-ci.yml`'s step name (`"Trainer unit tests (includes ... D-3 #194, ... D-5
+  #196)"`) was an *unquoted* YAML plain scalar containing ` #194`/` #195`/` #196` —
+  standard YAML treats a `#` preceded by whitespace as a comment start, which silently
+  truncated the value and corrupted the surrounding block mapping. `gh run view` on the
+  most recent trainer-ci.yml run (triggered by the D-3 through D-6 push) confirms this
+  empirically: conclusion `failure`, zero jobs created, "This run likely failed because
+  of a workflow file issue." **Trainer CI had not actually executed since D-2** — D-3
+  through D-6 were never gated by it, despite each PR's own reports claiming trainer
+  tests were green in CI (they were green locally, via direct `pytest` invocation; the
+  CI *workflow* itself silently failed to parse). Fixed by quoting the step name.
+  Recorded here rather than left as a silent fix, since it affects the "run on every PR"
+  guarantee §"Continuous Validation (CI)" promises.
+- **"Byte-identical export across two runs" is scoped, not narrowed.** `Exporter.export()`
+  assigns a fresh `network_uuid`/`created_at_epoch_seconds` on every call, by design
+  (§5, D-6) — full-file byte-identity across two independent `export()` calls is
+  therefore impossible by construction, not a bug to fix. The trainer CI reproducibility
+  check (`trainer/tests/cli/test_reproducibility_check.py`) instead asserts the two
+  guarantees this section and Invariant 5 actually make: quantized-tensor
+  bit-identity given the same seed/data, and that the `.nnue` byte-writer
+  (`_nnue_bytes`) is a pure function of its inputs (checked by supplying matching
+  identity fields to both runs' outputs, rather than comparing real export() output
+  files whose identity fields are supposed to differ).
+- **Manifest schema now has a real, checkable definition.** `trainer/trainer/export/
+  manifest_schema.py`'s `validate_manifest()` — a hand-rolled required-field/type check
+  (no `jsonschema` dependency added; the shape is small, flat, and already fully
+  determined by `exporter.py::_write_manifest`, matching this codebase's existing
+  hand-rolled-validation convention rather than introducing a new library for it).
+
 ---
 
 ## 13. Extensibility for Future Feature Sets

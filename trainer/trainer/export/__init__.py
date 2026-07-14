@@ -6,6 +6,7 @@ from trainer.export.canonical import (
     checkpoint_to_canonical,
 )
 from trainer.export.exporter import DatasetComposition, ExportResult, export
+from trainer.export.manifest_schema import validate_manifest
 
 __all__ = [
     "ARCHITECTURE_ID",
@@ -16,4 +17,5 @@ __all__ = [
     "DatasetComposition",
     "ExportResult",
     "export",
+    "validate_manifest",
 ]

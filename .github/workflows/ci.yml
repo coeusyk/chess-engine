@@ -5,7 +5,11 @@ on:
     branches:
       - develop
       - master
+    paths-ignore:
+      - 'trainer/**'
   pull_request:
+    paths-ignore:
+      - 'trainer/**'
 
 jobs:
   build-and-test:
