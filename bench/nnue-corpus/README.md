@@ -16,6 +16,7 @@ Not wired into CI yet — that's PR C-5.
 | `endgame.epd` | Self-play tail (<= 12 pieces on board) + all 3 curated positions from `engine-core/src/test/resources/regression/draw_failures.epd` | Generated + folded |
 | `random-legal.epd` | Same self-play run, uniformly sampled across full-length games (any ply) | Generated |
 | `golden-evals.csv` | `fen,eval` — every FEN above, evaluated once by the CI test net (`TestNetworks.synthetic(8)`) | Generated |
+| `classical-golden-evals.csv` | `fen,eval` — every FEN above, evaluated once by `ClassicalEvaluator` (issue #201) | Generated |
 
 Each `.epd` line is a 4-field FEN (`<board> <side> <castling> <ep>`), matching
 this repo's existing `.epd` convention (see `engine-core/src/test/resources/regression/wac.epd`).
@@ -43,6 +44,19 @@ re-copy them by hand from their sources above if they ever need refreshing.
 
 If the CI test net's weights ever change, `golden-evals.csv` must be
 regenerated (never hand-edited) — the expected values are net-specific.
+
+`classical-golden-evals.csv` is generated separately, by its own tool
+(`ClassicalCorpusGenerator`, same directory), since it evaluates with
+`ClassicalEvaluator` rather than the CI test net and only reads the
+already-committed category files above — it does not regenerate them:
+
+```
+mvn -pl engine-core test -Dgroups=corpus-generation -Dcorpus.generate=true -Dtest=ClassicalCorpusGenerator
+```
+
+If `Evaluator`'s tuned `EvalParams` weights ever change (e.g. a new Texel
+tuning run), `classical-golden-evals.csv` must be regenerated too — the
+expected values are tied to those weights, not just the FEN set.
 
 ## Running the benchmark harness
 
@@ -95,3 +109,5 @@ real fix have diverged.
 | Golden-eval network | `TestNetworks.synthetic(8)` — `engine-core/src/test/java/.../eval/nnue/TestNetworks.java`, fixed `Random(42)` seed, hidden width 8, `qa=127 qb=64 outputScale=400`. Not a trained network — synthetic weights, deterministic across JVMs/platforms per `java.util.Random`'s spec. |
 | Golden-eval version | Tied 1:1 to the network above and to the six category files' content — regenerate `golden-evals.csv` (never hand-edit) whenever either changes |
 | Regeneration workflow | See "Regenerating" above: one command regenerates all four self-play-derived `.epd` files + `golden-evals.csv` together; `tactical.epd`/`quiet.epd` are re-copied by hand from their static sources; reproducibility verified byte-identical across repeated runs |
+| Classical golden-eval source | `Evaluator` (`engine-core/src/main/java/.../eval/Evaluator.java`) via `ClassicalEvaluator` — the repo's current tuned `EvalParams` weights, not a separate pinned network; drifts whenever those weights are re-tuned |
+| Classical golden-eval version | Tied to the six category files' content and to whatever `EvalParams` weights are checked in at generation time — regenerate `classical-golden-evals.csv` (never hand-edit) after any material/PST re-tune (issue #201) |

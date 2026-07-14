@@ -6,9 +6,17 @@ import torch
 from trainer.dataset.text_provider import TextDatasetProvider
 from trainer.model.network import NnueNet
 from trainer.model.train import TrainingConfig, train
-from trainer.validation.validator import ClassicalEvalRecord, eval_scale_check, evaluate_held_out
+from trainer.validation.validator import (
+    ClassicalEvalRecord,
+    eval_scale_check,
+    evaluate_held_out,
+    load_classical_eval_corpus,
+)
 
 FIXTURE_DIR = Path(__file__).parent.parent / "fixtures"
+CLASSICAL_CORPUS_PATH = (
+    Path(__file__).parent.parent.parent.parent / "bench" / "nnue-corpus" / "classical-golden-evals.csv"
+)
 
 TINY_CONFIG = TrainingConfig(
     hidden_width=4,
@@ -89,3 +97,16 @@ def test_eval_scale_check_rejects_empty_records(tmp_path: Path):
     model = _trained_model(tmp_path)
     with pytest.raises(ValueError, match="at least one record"):
         eval_scale_check(model, [])
+
+
+def test_eval_scale_check_runs_against_the_real_classical_corpus(tmp_path: Path):
+    # Not a trained net yet (E-3 is where a real net exists to check against) --
+    # this only proves the real corpus loads and flows through eval_scale_check
+    # end to end, per issue #201's acceptance criteria.
+    model = _trained_model(tmp_path)
+    records = load_classical_eval_corpus(CLASSICAL_CORPUS_PATH)
+
+    result = eval_scale_check(model, records)
+
+    assert result.position_count == len(records)
+    assert result.mean_absolute_difference_cp == pytest.approx(result.mean_absolute_difference_cp)  # finite, no NaN
