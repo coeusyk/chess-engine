@@ -706,6 +706,53 @@ binary-format version bump requiring a coordinated Java loader change, exactly t
 scope this decision avoids. The manifest already exists as an atomically-exported
 sidecar (this section, above) with plenty of room for one more field.
 
+### 9.2 Manifest as a versioned compatibility contract — clarified pre-D-8, recorded here
+
+**No code or behavior changes here — documentation only**, addressing a real gap: the
+manifest's `format_version` field (`exporter.py::FORMAT_VERSION`, currently `1`) has,
+since D-6, silently done double duty as *both* the `.nnue` binary format version
+(matching `NnueNetwork.java`'s own `formatVersion` header field, §8) *and*, implicitly,
+the JSON manifest's own shape version — because the two have moved in lockstep so far
+(one constant, reused). Nothing forces them to keep moving together, and nothing today
+says what happens when they don't.
+
+**The policy, stated explicitly for the first time:**
+
+- **A required-field addition, removal, retyping, or meaning change to the manifest
+  JSON** is a manifest schema change. `trainer/trainer/export/manifest_schema.py`'s
+  `_REQUIRED_FIELDS`/`_DATASET_COMPOSITION_ENTRY_FIELDS` dicts are the executable
+  specification of "the current schema" — a schema change means editing those dicts,
+  and every consumer of `validate_manifest()` (today: the D-7 reproducibility CI check,
+  §12) re-validates against the new shape in the same PR that changes it, the same
+  co-located-change discipline Invariant 2 already applies to the feature spec.
+- **An additive, optional field with a sensible absent-value convention (matching
+  `label_engine_version`'s existing `None`-is-valid precedent, D-6) is *not* a schema
+  version bump.** `validate_manifest()` only checks required fields are present with
+  the right type — it does not reject unknown extra keys — so an old reader encountering
+  a manifest with one new optional field already degrades gracefully today, with no
+  validator change needed.
+- **A `.nnue` binary format version bump (§8) does not automatically imply a manifest
+  schema change**, and vice versa — they are two different contracts that happen to
+  share one version number today purely because neither has ever needed to diverge.
+  The day one changes without the other, `format_version` stops being an honest single
+  source of truth for both, and that is the trigger — not a calendar date, not this
+  PR — for introducing a separate `manifest_schema_version` field. **Not introduced
+  now**, preemptively, with no concrete case forcing it: that would be exactly the kind
+  of unrequested-flexibility redesign this document elsewhere avoids (§5's Canonical
+  Network alternatives-considered list rejects speculative generality on the same
+  grounds). Recorded as a Revisit Condition (§17) instead of built ahead of need.
+- **Backward compatibility for old manifests already on disk (the `nets/` registry, §9)
+  is out of scope for `validate_manifest()` as it exists today** — it validates against
+  *the current* schema only, not a version-dispatch table. A committed historical
+  manifest from before a future schema change remains valid PRD §4 provenance evidence
+  as a historical record; it is not expected to pass a *later* `validate_manifest()`
+  call unless explicitly migrated. This mirrors how a `.nnue` file with an old
+  `formatVersion` is handled today: `NnueNetwork.load()` rejects it outright (§8) rather
+  than attempting cross-version parsing — the manifest schema inherits the same
+  no-silent-cross-version-compatibility posture, for the same reason (a schema/format
+  reader that tries to be clever about old shapes is exactly where NNUE toolchains
+  accumulate silent correctness bugs).
+
 ---
 
 ## 10. Reproducibility Guarantees
@@ -1075,6 +1122,21 @@ trainer/
   data volume, feature-set ceiling (ADR-001), or search-margin miscalibration — not
   preemptively, and not on the first trained net (PRD §5 Risks: "first bootstrap net
   lands near parity" is an expected, not diagnostic, outcome).
+- **Introduce a separate `manifest_schema_version` field (§9.2)** the first time a
+  manifest JSON shape change and a `.nnue` binary format version bump genuinely need to
+  happen independently of each other — not preemptively. Until that happens,
+  `format_version` continues to double as both, and `manifest_schema.py`'s
+  `_REQUIRED_FIELDS` dict remains the sole executable source of truth for "the current
+  schema."
+- **Confirm `ci.yml`'s `paths-ignore: ['trainer/**']` skip direction against a real
+  GitHub Actions run (§12, "Resolved D-7")** the first time a pull request opens from
+  this branch touching only `trainer/**`. As of D-7, this direction is verified by YAML
+  validity and documented platform semantics only — it has zero live-trigger evidence,
+  because `ci.yml`'s `push` trigger cannot fire on a phase branch and no PR has opened
+  from `phase/15-nnue` yet. This is an outstanding operational verification, not a known
+  defect — `gh run list --workflow=ci.yml` on that first PR's head SHA should show no
+  `ci.yml` run triggered by a trainer-only diff; if it does run, that is a real
+  regression to investigate immediately, not an expected artifact of this note.
 
 ---
 

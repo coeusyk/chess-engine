@@ -5,6 +5,13 @@ in advance (it is exactly `exporter.py::_write_manifest`'s own field set), so a 
 rolled check follows this codebase's existing convention for shape validation
 (`canonical.py::_validate_shapes`, `contracts/dataset.py`'s construction-time checks)
 rather than adding a new dependency for a few lines of key/type checking.
+
+`_REQUIRED_FIELDS` and `_DATASET_COMPOSITION_ENTRY_FIELDS` below are the executable
+specification of "the current manifest schema version" (Section 9.2's versioning
+policy). A required-field change here is a schema change and must ship in the same PR
+as whatever manifest-writing change motivated it; an additive optional field does not
+require a version bump (Section 9.2 explains why, including why no separate
+`manifest_schema_version` field exists yet).
 """
 
 from __future__ import annotations
