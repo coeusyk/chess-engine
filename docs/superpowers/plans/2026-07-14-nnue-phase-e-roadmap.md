@@ -29,9 +29,11 @@ binding, unchanged), `docs/architecture/research/DR-E1-self-play-data-generation
 reviewed, tested, and frozen **training pipeline** — dataset ingestion, feature
 encoding, trainer, quantizer, exporter, CI, and Stockfish labeling — validated against
 synthetic and tiny fixture data, exactly as its own issues (#192–199) scoped and closed
-it. Training the **first production-quality network** is not an infrastructure
-milestone; it is the first real execution of that infrastructure, and belongs to the
-next phase. This is an execution milestone, not a correction to Phase D — Phase D's
+it. Training the **first real trained network** is not an infrastructure milestone; it
+is the first real execution of that infrastructure, and belongs to the next phase.
+Track A proves the pipeline can produce a real network — it does not claim, and Track
+A's own exit criterion (below) never requires, that the network is already strong;
+that question belongs entirely to Track B. This is an execution milestone, not a correction to Phase D — Phase D's
 closed issues are not reopened, and none of them were falsely closed (each one's
 acceptance criteria were about its own pipeline component, never about "a real net
 exists," which is a PRD-level criterion, not an issue-level one).
@@ -45,7 +47,7 @@ anywhere in this repository" (`bench/nnue-corpus/golden-evals.csv` is pinned to
 `TestNetworks.synthetic(8)`, not classical evaluation).
 
 **Conclusion: Phase E begins by exercising the Phase D pipeline end-to-end to produce
-the first production-quality network.** Track A below is this exercise. Phase E cannot
+the first real trained network.** Track A below is this exercise. Phase E cannot
 start at "gauntlets and SPRT for the existing candidate net" (there isn't one yet) or
 "self-play using the current net" (ADR-007 alternative 3 already rejected bootstrapping
 self-play with no working net to generate from) — Track A produces that net first, and
@@ -146,7 +148,7 @@ as "unknown, not confirmed validated" by any future consumer, never as an implic
 |---|---|---|---|
 | E-7 | Extend `SHARD_DTYPE` with `wdl`/`game_id` fields | none (shared infra, can land anytime, but blocks E-9/E-10) | `mmap_shard.py`'s own docstring ("extending... is expected") |
 | E-8 | `Labeler` stage (λ-blend, K-scaling) | E-7 | PRD §3 table; DR-E1 §7; `train.py`'s `target_cp` current WDL-raise |
-| E-9 | Self-play mode: `GameLoop`/`MoveSelector`/`QuietWalk`/`GameRecordWriter` (mechanics in `engine-core`, invocation/config/I/O in `engine-uci`) | E-3 only — **not** gated on E-4/E-5 (Bootstrap exception, above) | DR-E1 §5-§6, §12-§15 |
+| E-9 | Self-play mode: `GameLoop`/`MoveSelector`/`QuietWalk`/`GameRecord`/`VsprSerializer` (mechanics in `engine-core`, invocation/config/I/O in `engine-uci`) | E-3 only — **not** gated on E-4/E-5 (Bootstrap exception, above) | DR-E1 §5-§6, §12-§15 |
 | E-10 | `selfplay_ingest.py` + `SelfPlayProvider` | E-7, E-8, E-9 | DR-E1 §6, §9 |
 | E-11 | Self-play provenance fields + statistical-reproducibility golden-fixture test | E-9, E-10 | DR-E1 §9, §14 |
 
@@ -263,12 +265,26 @@ E-4/E-5, per the Bootstrap exception), and **E-7+E-8+E-9 must all exist before E
       undocumented translation. No existing `DatasetProvider` populates `game_id` today
       (grep confirms zero call sites), so this is a zero-risk type change, not a
       breaking one.
+      **Final refinement pass (2026-07-14) — semantic scope clarified, schema
+      unchanged:** `game_id` is scoped to the single ingestion run that produced a
+      given shard — an internal grouping key (which positions came from the same
+      game, for split-leakage avoidance and same-game correlation), **not** a
+      persistent, cross-run provenance identifier. This is a documentation
+      clarification only; the field is not split into a separate local/persistent
+      pair (`game_local_id` + `game_uuid`) — dataset/run-level provenance already
+      lives in the manifest (generator network UUID, engine commit, etc., §9 of the
+      architecture doc), the same place every other stage's provenance already lives,
+      and duplicating it per-position would repeat information the manifest already
+      carries for no consumer this roadmap or DR-E1 identifies. If a future need
+      arises to trace a specific position back to its originating VSPR game file,
+      that is a manifest-level addition (e.g., an ordered list of ingested VSPR
+      files) — not a per-position field.
 - [ ] **E-8**: Implement `Labeler.blend(label, lambda_, k) -> float` per DR-E1 §7's
       cited formula (`λ·sigmoid(cp/K) + (1−λ)·wdl`); wire `train.py`'s `target_cp` to
       call it instead of raising on WDL-only labels; no default `λ` hardcoded — a named,
       versioned training-config field per DR-E1 §7's own recommendation.
 - [ ] **E-9** (grilled 2026-07-14 — module placement decided): `GameLoop`/
-      `MoveSelector`/`QuietWalk`/`GameRecordWriter` mechanics live in a new
+      `MoveSelector`/`QuietWalk` and VSPR encoding/decoding all live in a new
       `engine-core` package (e.g. `core.selfplay`) — self-play is a core engine
       capability, needing direct access to `Board`/`Searcher`/`MovesGenerator`
       internals (make/unmake, game-end detection) the same way engine-core's own tests
@@ -276,13 +292,30 @@ E-4/E-5, per the Bootstrap exception), and **E-7+E-8+E-9 must all exist before E
       invocation, configuration parsing, and file I/O (a `--selfplay` mode, analogous
       to how `--bench` is already an `engine-uci`-owned entry point over `engine-core`
       internals) — the same separation of responsibilities already used elsewhere in
-      this project. **Architecture-review finding (2026-07-14), clarified:**
-      `GameRecordWriter` performs byte-level VSPR serialization itself, inside
-      `engine-core` — mirroring `NnueNetwork`'s own in-`engine-core` load/write
-      precedent for a bespoke binary format — not merely in-memory record assembly
-      handed to `engine-uci` for I/O. `engine-uci`'s role is invoking self-play mode,
-      passing configuration (output path, game count, etc.), and moving/managing the
-      resulting files — never re-serializing or interpreting VSPR bytes itself.
+      this project.
+      **Final refinement pass (2026-07-14) — internal factoring, not a module-boundary
+      change:** rather than one `GameRecordWriter` class doing both in-memory record
+      assembly and byte-level encoding, the preferred internal shape is:
+      ```
+      GameLoop
+          ↓
+      GameRecord           (immutable in-memory value object: move list,
+          ↓                 per-sampled-ply score, generator UUID, outcome)
+      VsprSerializer       (byte-level VSPR encode/decode — the only class
+                             that knows the on-disk layout)
+      ```
+      `GameRecord` and `VsprSerializer` are two separately-testable units, both still
+      in `engine-core` — mirroring this project's own precedent of preferring a named
+      data value plus a named encoder/converter over one class doing both (the same
+      shape `CanonicalNetwork`/`Quantizer` and `QuantizedCanonicalNetwork`/`Exporter`
+      already use, `NNUE_TRAINER_ARCHITECTURE.md` §5). Placement stays in `engine-core`
+      (matching `NnueNetwork`'s own in-`engine-core` load/write precedent for a bespoke
+      binary format) — this is not a repeat of the module-placement question already
+      settled above, only a refinement of how the `engine-core` side is factored
+      internally. `engine-uci`'s role is unchanged: invoking self-play mode, passing
+      configuration (output path, game count, etc.), and calling
+      `VsprSerializer.write(record, path)` — never re-implementing or interpreting
+      VSPR bytes itself.
 - [ ] **E-9 (continued)**: Game-record output format — **the "Vex Self-Play Record"
       (VSPR)**, a bespoke, internal, versioned format, treated exactly like `.nnue`
       itself (magic bytes, format version, documented byte layout — not borrowed from
@@ -294,6 +327,15 @@ E-4/E-5, per the Bootstrap exception), and **E-7+E-8+E-9 must all exist before E
       generator network UUID and per-ply score as first-class typed fields directly.
       **If human inspection ever becomes important, add a PGN *exporter* as a separate,
       later tool — PGN is never the canonical storage format.**
+      **Final refinement pass (2026-07-14) — versioning policy confirmed, unchanged:**
+      VSPR intentionally follows the exact same evolution policy `.nnue` already uses
+      (`NNUE_TRAINER_ARCHITECTURE.md` §9.2) — an explicit `formatVersion` field, a
+      hard version-match check that rejects any mismatch outright, and no reserved
+      bytes/flags/feature-bit space for speculative forward compatibility. This is a
+      deliberate consistency with `.nnue`'s own already-reaffirmed posture ("a
+      schema/format reader that tries to be clever about old shapes is exactly where
+      NNUE toolchains accumulate silent correctness bugs"), not an oversight — VSPR
+      evolves by version bump, same as `.nnue`, never by parsing around an old shape.
 - [ ] **E-10**: `selfplay_ingest.py` mirrors `stockfish_label.py`'s shape (per DR-E1 §6)
       but does no searching/labeling — pure format translation into `PositionRecord`s
       then `write_shard`. `SelfPlayProvider` mirrors `StockfishLabeledProvider`
@@ -371,7 +413,7 @@ E-4/E-5, per the Bootstrap exception), and **E-7+E-8+E-9 must all exist before E
 | D-8's Stage 2 driver is v1-sequential (no parallelism, no resume) — E-2's real-scale run is the first real stress test of that design's throughput ceiling | Medium | DR-D8 Open Question 4 already flagged this; if E-2 proves the sequential driver too slow at real scale, that is exactly the trigger DR-D8 §16 names for building the worker-pool architecture — a mid-roadmap scope addition to plan for, not to pre-build speculatively |
 | A category error importing MCTS-specific self-play mechanics (Dirichlet noise/temperature over visit counts) into Vex's alpha-beta search | High if it happens, but explicitly headed off | DR-E1 identifies this as its single highest-consequence risk (§18) and names the correct alpha-beta-native analog (`gensfen`'s bounded multi-PV substitution) — E-9's implementation must cite DR-E1 §6/§17 directly, not the AlphaZero paper, when justifying `MoveSelector`'s design |
 | Self-play's reproducibility guarantees get documented as stronger than they are (copy-pasting Stage 2's provenance language without adjustment) | Medium | DR-E1 §9/§18 flags this explicitly; E-11's test and E-10's manifest schema docstring must state "statistical, not bit-exact" in the field descriptions themselves, not just in this roadmap |
-| Module-placement decision for `GameLoop`/`GameRecordWriter` (`engine-core` for mechanics, `engine-uci` for invocation — ratified via grilling 2026-07-14) turns out wrong once implementation starts | Low | Recorded as a ratified decision with rationale (§ "Architectural Conflicts Discovered" item 5) — architecture-review is still asked to confirm it survives scrutiny before E-9 begins, not to make the call fresh |
+| Module-placement decision for `GameLoop`/`GameRecord`/`VsprSerializer` (`engine-core` for mechanics, `engine-uci` for invocation — ratified via grilling 2026-07-14, internal factoring refined 2026-07-14) turns out wrong once implementation starts | Low | Recorded as a ratified decision with rationale (§ "Architectural Conflicts Discovered" item 5) — architecture-review is still asked to confirm it survives scrutiny before E-9 begins, not to make the call fresh |
 | Retraining cadence, λ default, and adjudication thresholds are all genuinely unresolved empirical questions (DR-E1 §19) | Low (expected, not a defect) | Explicitly deferred to post-E-3/E-11 empirical tuning, per DR-E1's own discipline of not inventing unearned numbers — not this roadmap's job to resolve |
 
 ---
@@ -409,14 +451,17 @@ E-4/E-5, per the Bootstrap exception), and **E-7+E-8+E-9 must all exist before E
    elsewhere — but it means E-8 is not truly "Stage-3-specific" despite living in
    Track C; it is shared-pipeline work that Stage 3 happens to be the first real trigger
    for. Track ordering reflects this (E-8 has no hard dependency on E-9).
-5. **DR-E1 left `GameLoop`/`GameRecordWriter`'s exact module placement and the
-   game-record file encoding as open implementation decisions** (§5/§6 of the report,
-   explicit: "exact module TBD at implementation, not this report's decision"). Both
-   were resolved during this roadmap's grilling pass (2026-07-14): mechanics in a new
-   `engine-core` package, invocation/config/I/O in `engine-uci`; a bespoke, versioned
-   "Vex Self-Play Record" format, never PGN as canonical storage. Recorded here so a
-   future reader sees these as ratified decisions with a rationale, not silently
-   resolved by omission — architecture-review is still asked to confirm both survive
+5. **DR-E1 left `GameLoop`/`GameRecord`/`VsprSerializer`'s exact module placement and
+   the game-record file encoding as open implementation decisions** (§5/§6 of the
+   report, explicit: "exact module TBD at implementation, not this report's
+   decision"). Both were resolved during this roadmap's grilling pass (2026-07-14):
+   mechanics in a new `engine-core` package, invocation/config/I/O in `engine-uci`; a
+   bespoke, versioned "Vex Self-Play Record" format, never PGN as canonical storage —
+   internally factored (final refinement pass, 2026-07-14) as a `GameRecord` value
+   object plus a separate `VsprSerializer`, not one combined writer class. Recorded
+   here so a future reader sees these as ratified decisions with a rationale, not
+   silently resolved by omission — architecture-review is still asked to confirm both
+   survive
    scrutiny, not to make the calls fresh.
 
 ---
