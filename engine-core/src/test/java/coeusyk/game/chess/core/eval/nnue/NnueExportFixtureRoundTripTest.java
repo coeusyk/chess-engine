@@ -14,6 +14,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * that directory's README) via the real, unmodified {@link NnueNetwork#load}. This is
  * the trainer-to-engine integration boundary Invariant 8 sanctions — a test-scope-only
  * dependency on a trainer-produced artifact, never a production one.
+ *
+ * <p>This fixture is a permanent compatibility artifact, not a one-off snapshot of
+ * D-6's implementation. It must never be regenerated to match a future Python or Java
+ * change — its entire value is staying frozen while both sides evolve around it. If a
+ * future change to either {@code exporter.py} or {@link NnueNetwork#load} breaks this
+ * test, that is a real cross-language contract regression, not a stale fixture; fix the
+ * regression, do not "fix" the test by re-exporting the fixture to match the new
+ * behavior.
  */
 class NnueExportFixtureRoundTripTest {
 

@@ -14,6 +14,21 @@ that is a separate, scoped addition, not a side effect of this Python-focused
 PR. `eval_scale_check()` itself is fully implemented and tested against a
 hand-built fixture now, so its own logic is verified independently of that
 corpus's existence -- wiring it to a real corpus is later work.
+
+Future work (documentation only -- not implemented, do not build ahead of a
+real corpus to test against): once a real classical-eval-labeled corpus and
+real trained checkpoints exist, `eval_scale_check()` should grow beyond a
+single `mean_absolute_difference_cp` scalar. Candidates: calibration metrics
+(e.g. a binned reliability curve of predicted vs. classical eval, not just
+mean absolute difference, since a net can have a low mean error while being
+systematically miscalibrated at the tails); prediction distribution
+diagnostics (variance, skew, outlier rate against classical eval, to catch a
+net that is well-centered on average but wildly noisy per-position); and
+trend analysis across training runs (tracking eval-scale drift checkpoint to
+checkpoint, so a regression is caught at the run that introduced it instead
+of only at final validation). None of this is buildable against the current
+hand-built fixture in a way that would be meaningful -- it needs the real
+corpus this module's scope boundary above already defers.
 """
 
 from __future__ import annotations
