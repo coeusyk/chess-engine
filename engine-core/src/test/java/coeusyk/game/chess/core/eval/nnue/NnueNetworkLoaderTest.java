@@ -47,6 +47,44 @@ class NnueNetworkLoaderTest {
         assertEquals(1720000000L, loaded.createdAtEpochSeconds());
     }
 
+    // Issue #203 (E-3): every other round-trip test in this class uses width 4 --
+    // too small to catch an off-by-one or indexing bug that only manifests at the
+    // real candidate net's actual scale (hidden_width=256, PRD Section 4 Network
+    // Specification). The real .nnue trainer/scripts/train_candidate_net.py produces
+    // is gitignored, never committed (architecture doc Section 9: manifests only,
+    // never weight binaries except the tiny CI net), so this exercises the loader at
+    // that real scale with synthetic weights instead.
+    @Test
+    void loadRoundTripsAtRealCandidateNetworkScale() throws IOException {
+        int width = 256;
+        short[] ftWeights = new short[FeatureExtractor.FEATURES_PER_PERSPECTIVE * width];
+        for (int i = 0; i < ftWeights.length; i++) {
+            ftWeights[i] = (short) (i % 65536 - 32768);
+        }
+        short[] ftBiases = new short[width];
+        for (int i = 0; i < ftBiases.length; i++) {
+            ftBiases[i] = (short) (i % 65536 - 32768);
+        }
+        short[] outputWeights = new short[2 * width];
+        for (int i = 0; i < outputWeights.length; i++) {
+            outputWeights[i] = (short) (i % 65536 - 32768);
+        }
+        int outputBias = 12345;
+
+        byte[] bytes = writeNetwork(width, ftWeights, ftBiases, outputWeights, outputBias,
+                127, 64, 400, "real-scale-uuid", "commit-1", 1720000000L);
+
+        NnueNetwork loaded = NnueNetwork.load(new ByteArrayInputStream(bytes));
+
+        assertEquals(width, loaded.hiddenWidth());
+        assertArrayEquals(ftWeights, loaded.ftWeights());
+        assertArrayEquals(ftBiases, loaded.ftBiases());
+        assertArrayEquals(outputWeights, loaded.outputWeights());
+        assertEquals(outputBias, loaded.outputBias());
+        assertEquals(127, loaded.qa());
+        assertEquals(64, loaded.qb());
+    }
+
     @Test
     void loadRejectsBadMagicBytes() {
         byte[] bytes = {'X', 'X', 'X', 'X'};
