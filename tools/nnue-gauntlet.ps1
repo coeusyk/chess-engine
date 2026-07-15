@@ -65,11 +65,13 @@ if (-not (Test-Path $ResultsDir)) { New-Item -ItemType Directory -Path $ResultsD
 
 $TS     = Get-Date -Format 'yyyyMMdd_HHmmss'
 $PgnOut = Join-Path $ResultsDir "gauntlet_nnue_$TS.pgn"
+$LogOut = Join-Path $ResultsDir "gauntlet_nnue_$TS.log"
 
 Write-Host "Gauntlet: Vex-NNUE vs Vex-Classical  games=$Games  TC=$TC"
 Write-Host "ENGINE : $EngineJar"
 Write-Host "NNUE   : $NnuePath"
 Write-Host "PGN    : $PgnOut"
+Write-Host "LOG    : $LogOut"
 Write-Host ""
 
 & $Cutechess `
@@ -82,7 +84,7 @@ Write-Host ""
     -resign movecount=5 score=600 `
     -draw movenumber=40 movecount=8 score=10 `
     -pgnout $PgnOut `
-    -concurrency 2
+    -concurrency 2 2>&1 | Tee-Object -FilePath $LogOut
 
 Write-Host ""
-Write-Host "PGN saved to: $PgnOut"
+Write-Host "Gauntlet complete. PGN: $PgnOut  Log: $LogOut"
