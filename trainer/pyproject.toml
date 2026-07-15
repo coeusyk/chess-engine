@@ -14,6 +14,12 @@ dependencies = [
 # (PyTorch Model + Trainer) onward.
 train = ["torch>=2.0"]
 dev = ["pytest>=7.0"]
+# zstandard is needed only by trainer/scripts/acquire_stage1_lichess.py, to
+# stream-decode the published Lichess evals dump (database.lichess.org, .jsonl.zst)
+# without downloading or decompressing the full multi-GB file -- split into its own
+# extra for the same reason `train` is split: acquisition tooling is not a test-suite
+# or training-loop dependency, so most trainer work never needs it installed.
+acquire = ["zstandard>=0.22"]
 
 [build-system]
 requires = ["setuptools>=68"]

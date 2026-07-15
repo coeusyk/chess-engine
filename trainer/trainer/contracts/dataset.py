@@ -25,14 +25,22 @@ from dataclasses import dataclass
 from typing import Iterator, Optional
 
 
+VALID_STAGES = frozenset({"public", "sf-labeled", "self-play"})
+"""The three sources this contract must serve (PRD Section 2 US-5) -- the single
+source of truth for this enum. `DatasetMetadata.stage` does not validate against it
+at construction time (this dataclass has no `__post_init__`, matching this contract
+module's minimal-interface, value-object-only design), but any consumer that *does*
+need to validate a stage value (e.g. a provenance manifest schema) should import this
+constant rather than re-declaring the three literals independently."""
+
+
 @dataclass(frozen=True)
 class DatasetMetadata:
     """Dataset-level identity and provenance (PRD Section "End-to-End
     Reproducibility", item 1: "each dataset has an identifier, an acquisition or
     generation script, and recorded provenance").
 
-    `stage` is one of "public", "sf-labeled", "self-play" -- the three sources this
-    contract must serve (PRD Section 2 US-5) -- but this type does not otherwise vary
+    `stage` is one of `VALID_STAGES` above -- but this type does not otherwise vary
     its shape per stage; stage-specific detail belongs in `source_ref`, not in new
     fields on this dataclass.
     """

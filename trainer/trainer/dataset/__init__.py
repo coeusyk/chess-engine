@@ -1,3 +1,4 @@
+from trainer.dataset.manifest_schema import validate_dataset_manifest
 from trainer.dataset.mmap_shard import SHARD_DTYPE, read_shard, write_shard
 from trainer.dataset.stockfish_provider import StockfishLabeledProvider
 from trainer.dataset.text_provider import TextDatasetProvider
@@ -22,4 +23,5 @@ __all__ = [
     "deduplicate",
     "filter_by_ply_range",
     "phase_of",
+    "validate_dataset_manifest",
 ]

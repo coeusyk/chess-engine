@@ -283,7 +283,7 @@ Small, focused PRs per logical step; accumulator implementation and trainer loss
 
 ### Open Questions (TBD before the affected phase)
 
-1. Which public text-format dataset for Stage 1 (candidates: Zurichess quiet set, Lichess evaluated positions) — decide at Phase D start.
+1. ~~Which public text-format dataset for Stage 1 (candidates: Zurichess quiet set, Lichess evaluated positions) — decide at Phase D start.~~ **Resolved at PR D-2 (issue #193): Lichess evaluated positions.** See `trainer/configs/stage1-dataset.md` for full rationale. Re-confirmed, not re-opened, at issue #202 (E-2)'s closing commit — no further deferral.
 2. Training hardware (local GPU vs. cloud) — affects Stage 2/3 data volume targets only.
 3. Self-play opening variety source (existing book vs. external opening suite) — Phase E.
 4. Trainer location: separate repo vs. `trainer/` directory — Phase D start.

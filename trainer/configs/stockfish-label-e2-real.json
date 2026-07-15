@@ -1,0 +1,5 @@
+{
+  "engine_path": "/home/coeusyk/.local/bin/stockfish",
+  "nodes": 25000,
+  "timeout_seconds": 30.0
+}

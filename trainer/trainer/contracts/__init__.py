@@ -1,4 +1,5 @@
 from trainer.contracts.dataset import (
+    VALID_STAGES,
     DatasetMetadata,
     DatasetProvider,
     PositionLabel,
@@ -8,6 +9,7 @@ from trainer.contracts.dataset import (
 )
 
 __all__ = [
+    "VALID_STAGES",
     "DatasetMetadata",
     "DatasetProvider",
     "PositionLabel",
