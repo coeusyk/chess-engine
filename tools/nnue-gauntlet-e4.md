@@ -84,6 +84,38 @@ Vex-NNUE playing Black: 0 - 47 - 3  [0.030] 50
 Elo difference: -636.4 +/- 224.0, LOS: 0.0 %, DrawRatio: 5.0 %
 ```
 
+## Reproducibility metadata (added retroactively, E-5/#205)
+
+This session's original run did not record the exact engine commit alongside the
+jar it built — corrected here from `git log`, not re-derived from memory:
+
+- **Network UUID**: `dfffd3da-7f8f-4fc9-92dc-b3873c97fb21` (matches `nets/dfffd3da-...json`).
+- **Engine commit**: `engine-core`/`engine-uci` have had zero source changes since
+  commit `3e7558e` ("fix(engine-core): address code-review findings on #190/#191
+  fixes") through this run and through current HEAD (`918bfc5`) — so any commit in
+  that range produces an identical jar. The jar itself was `engine-uci-0.5.8-SNAPSHOT.jar`,
+  built via the command above at a point in that unchanged range.
+- **Time control**: `10+0.1` (gauntlet-specific, deliberately faster than the
+  project's established SPRT TC — this is a raw-result gauntlet, not a
+  statistical-significance test; see E-5/`docs/sprt-guidelines.md` for the SPRT TC).
+- **Opening source**: none — `nnue-gauntlet.ps1` runs `-repeat` from the standard
+  starting position with no `-openings` book (unlike `sprt.ps1`, which auto-detects
+  `tools/noob_3moves.epd`).
+- **Games**: 100.
+- **Threads**: 1 per engine instance (`nnue-gauntlet.ps1` has no `-EngineThreads`
+  parameter; cutechess-cli's own default applies, unset in either `-engine` block).
+- **Hash**: unset — both engines use `UciApplication`'s own UCI-option default
+  (`Hash` type spin, default `64` MB, `UciApplication.java:166`).
+- **Cutechess invocation** (exact, from `tools/nnue-gauntlet.ps1`):
+  ```
+  cutechess-cli `
+    -engine name=Vex-NNUE cmd=java arg=-jar arg=<engine-jar> proto=uci option.EvalType=NNUE option.EvalFile=<nnue-path> `
+    -engine name=Vex-Classical cmd=java arg=-jar arg=<engine-jar> proto=uci option.EvalType=Classical `
+    -each tc=10+0.1 -games 100 -repeat -recover `
+    -resign movecount=5 score=600 -draw movenumber=40 movecount=8 score=10 `
+    -pgnout <pgn-path> -concurrency 2
+  ```
+
 **0 wins, 95 losses, 5 draws for Vex-NNUE.** Full console log:
 `tools/results/gauntlet_nnue_20260715_192136.log`; PGN:
 `tools/results/gauntlet_nnue_20260715_192136.pgn` (both local-only — see

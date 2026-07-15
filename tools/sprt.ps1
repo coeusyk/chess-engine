@@ -43,6 +43,16 @@
 
 .PARAMETER OpeningsFile
     Path to an EPD opening book. Auto-detected from tools/noob_3moves.epd if empty.
+
+.PARAMETER NewOptions
+    Extra UCI options for the New engine only, as "Name=Value" strings (e.g.
+    "EvalType=NNUE","EvalFile=C:\path\net.nnue"). Default: none -- every existing
+    invocation of this script is unaffected. Added for issue #205 (E-5), which
+    needs the same JAR loaded with two different EvalType configs; sprt.ps1 had
+    no way to express a per-engine option beyond the existing Threads plumbing.
+
+.PARAMETER OldOptions
+    Extra UCI options for the Old engine only, as "Name=Value" strings. Default: none.
 #>
 param(
     [Parameter(Mandatory)][string]$New,
@@ -58,7 +68,9 @@ param(
     [int]   $EngineThreads = 1,
     [int]   $MinGames     = 0,
     [int]   $MaxGames     = 0,
-    [string]$OpeningsFile = ""
+    [string]$OpeningsFile = "",
+    [string[]]$NewOptions = @(),
+    [string[]]$OldOptions = @()
 )
 
 Set-StrictMode -Version Latest
@@ -129,9 +141,14 @@ Write-Host ""
 # ─── Build cutechess-cli arguments ───────────────────────────────────────────
 $maxGames = if ($MaxGames -gt 0) { $MaxGames } elseif ($MinGames -gt 0) { [math]::Max($MinGames, 20000) } else { 20000 }
 
-$ccArgs = @(
-    "-engine", "name=NEW", "cmd=$Java", "arg=-jar", "arg=$($NewResolved.Path)", "proto=uci", "option.Threads=$EngineThreads",
-    "-engine", "name=OLD", "cmd=$Java", "arg=-jar", "arg=$($OldResolved.Path)", "proto=uci", "option.Threads=$EngineThreads",
+$newOptionArgs = @($NewOptions | ForEach-Object { "option.$_" })
+$oldOptionArgs = @($OldOptions | ForEach-Object { "option.$_" })
+
+$ccArgs = @("-engine", "name=NEW", "cmd=$Java", "arg=-jar", "arg=$($NewResolved.Path)", "proto=uci", "option.Threads=$EngineThreads")
+$ccArgs += $newOptionArgs
+$ccArgs += @("-engine", "name=OLD", "cmd=$Java", "arg=-jar", "arg=$($OldResolved.Path)", "proto=uci", "option.Threads=$EngineThreads")
+$ccArgs += $oldOptionArgs
+$ccArgs += @(
     "-each", "tc=$TC",
     "-games", "$maxGames",
     "-repeat",
