@@ -61,6 +61,9 @@ tools/*_converge_log.txt
 ### SPRT baseline / experiment JARs (binary artifacts — never commit) ###
 tools/*.jar
 
+### E-4 gauntlet artifacts (local copy of a jar + .nnue for one-off runs — never commit) ###
+tools/gauntlet-artifacts/
+
 ### Logs ###
 *.log
 

@@ -50,8 +50,13 @@ if (-not $Cutechess -or -not (Test-Path $Cutechess)) {
 
 $Java = if ($env:JAVA) { $env:JAVA } else { 'java' }
 
-$EngineJar = Resolve-Path $Engine -ErrorAction SilentlyContinue
-$NnuePath = Resolve-Path $NnueFile -ErrorAction SilentlyContinue
+# Convert-Path (not Resolve-Path): Resolve-Path returns a PSPath whose .Path can be
+# provider-qualified ("Microsoft.PowerShell.Core.FileSystem::\\server\share\...") for
+# UNC locations not backed by a mapped drive letter (e.g. the \\wsl.localhost bridge),
+# and java -jar cannot open that string. Convert-Path returns the plain, provider-path
+# string cutechess-cli/java both expect, for any local or UNC path alike.
+$EngineJar = Convert-Path $Engine -ErrorAction SilentlyContinue
+$NnuePath = Convert-Path $NnueFile -ErrorAction SilentlyContinue
 if (-not $EngineJar) { Write-Error "Engine JAR not found: $Engine"; exit 1 }
 if (-not $NnuePath) { Write-Error "NNUE file not found: $NnueFile"; exit 1 }
 
@@ -62,14 +67,14 @@ $TS     = Get-Date -Format 'yyyyMMdd_HHmmss'
 $PgnOut = Join-Path $ResultsDir "gauntlet_nnue_$TS.pgn"
 
 Write-Host "Gauntlet: Vex-NNUE vs Vex-Classical  games=$Games  TC=$TC"
-Write-Host "ENGINE : $($EngineJar.Path)"
-Write-Host "NNUE   : $($NnuePath.Path)"
+Write-Host "ENGINE : $EngineJar"
+Write-Host "NNUE   : $NnuePath"
 Write-Host "PGN    : $PgnOut"
 Write-Host ""
 
 & $Cutechess `
-    -engine "name=Vex-NNUE" "cmd=$Java" "arg=-jar" "arg=$($EngineJar.Path)" proto=uci "option.EvalType=NNUE" "option.EvalFile=$($NnuePath.Path)" `
-    -engine "name=Vex-Classical" "cmd=$Java" "arg=-jar" "arg=$($EngineJar.Path)" proto=uci "option.EvalType=Classical" `
+    -engine "name=Vex-NNUE" "cmd=$Java" "arg=-jar" "arg=$EngineJar" proto=uci "option.EvalType=NNUE" "option.EvalFile=$NnuePath" `
+    -engine "name=Vex-Classical" "cmd=$Java" "arg=-jar" "arg=$EngineJar" proto=uci "option.EvalType=Classical" `
     -each tc=$TC `
     -games $Games `
     -repeat `

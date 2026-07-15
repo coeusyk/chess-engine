@@ -39,26 +39,39 @@ or simulated below.**
 
 ## Exact command to run on native Windows
 
-The candidate `.nnue` and the built jar are both local, gitignored artifacts that
-only exist in this WSL session's filesystem (`trainer/outputs/nets/` is
-intentionally never committed — architecture doc §9). Reference them directly from
-native Windows via the WSL UNC bridge (works without copying anything, since WSL2
-exposes its filesystem at `\\wsl.localhost\<distro>`):
+**First attempt used the `\\wsl.localhost\...` UNC bridge directly and failed**:
+`Resolve-Path` returns a provider-qualified string
+(`Microsoft.PowerShell.Core.FileSystem::\\wsl.localhost\...`) for UNC paths not
+backed by a mapped drive letter, which `java -jar` cannot open — every engine
+process crashed on launch (`Terminating process of engine ...` for all four,
+zero games played). Fixed in the script (`Convert-Path`, which returns the plain
+path both `java` and `cutechess-cli` expect), **and** sidestepped entirely by
+copying the two artifacts onto the Windows filesystem directly, so no
+UNC/provider-path resolution is needed at all:
+
+```
+tools/gauntlet-artifacts/engine-uci-0.5.8-SNAPSHOT.jar
+tools/gauntlet-artifacts/dfffd3da-7f8f-4fc9-92dc-b3873c97fb21.nnue
+```
+
+Run:
 
 ```powershell
 .\tools\nnue-gauntlet.ps1 `
-  -Engine   '\\wsl.localhost\Ubuntu\home\coeusyk\projects\chess-engine\engine-uci\target\engine-uci-0.5.8-SNAPSHOT.jar' `
-  -NnueFile '\\wsl.localhost\Ubuntu\home\coeusyk\projects\chess-engine\trainer\outputs\nets\dfffd3da-7f8f-4fc9-92dc-b3873c97fb21.nnue' `
+  -Engine   '.\tools\gauntlet-artifacts\engine-uci-0.5.8-SNAPSHOT.jar' `
+  -NnueFile '.\tools\gauntlet-artifacts\dfffd3da-7f8f-4fc9-92dc-b3873c97fb21.nnue' `
   -Games 100 -TC '10+0.1'
 ```
 
-If UNC access is slow or restricted, an equivalent fallback: `git pull` this
-branch on the native Windows checkout, run
-`mvn -pl engine-core,engine-uci -am package -DskipTests` there to build the same
-jar, and regenerate the identical net there via
-`trainer/scripts/train_candidate_net.py` using the exact command recorded in
+`tools/gauntlet-artifacts/` is not committed (binary build/training output,
+matching the same convention as `.nnue` files generally) — it's a one-time local
+copy for running this specific gauntlet. If regenerating from scratch is ever
+preferred instead: build the jar with
+`mvn -pl engine-core,engine-uci -am package -DskipTests`, and reproduce the exact
+net via `trainer/scripts/train_candidate_net.py` using the command recorded in
 `trainer/configs/train-e3-real.md` (E-3's reproducibility check already confirmed
-this training run is bit-identical given the same seed/config/data).
+this training run is bit-identical given the same seed/config/data) — though that
+also needs the real Stage 1+2 datasets, themselves gitignored local artifacts.
 
 ## Completion status
 
