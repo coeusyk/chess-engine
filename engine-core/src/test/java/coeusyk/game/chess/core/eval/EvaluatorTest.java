@@ -690,8 +690,9 @@ class EvaluatorTest {
      * Algorithmic color-flip of a FEN string: reverses rank order, swaps piece case,
      * toggles active color, swaps castling rights, and mirrors the en passant rank.
      * eval(pos) must equal eval(colorFlip(pos)) for a color-symmetric evaluator.
+     * Package-visible: also used by EvalMirrorSymmetryPropertyTest (issue #213).
      */
-    private static String colorFlipFen(String fen) {
+    static String colorFlipFen(String fen) {
         String[] parts = fen.split(" ");
         String placement = parts[0];
         String color     = parts[1];

@@ -73,6 +73,13 @@ param(
     [string[]]$OldOptions = @()
 )
 
+# ─── Color-balance warning thresholds (issue #213) ───────────────────────────
+# Informational only: reports the White/Black score split periodically so a
+# persistent color asymmetry (as investigated in #213) is visible during a
+# run instead of only in a post-hoc PGN audit. Never affects SPRT stopping.
+$ColorCheckMinGames    = 400
+$ColorCheckIntervalGames = 200
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
@@ -166,7 +173,65 @@ if ($openingsArgs.Count -gt 0) {
 }
 
 # ─── Run cutechess-cli ───────────────────────────────────────────────────────
-& $Cutechess @ccArgs 2>&1 | Tee-Object -FilePath $LogOut
+# Parses cutechess-cli's own "Finished game N (White vs Black): result" lines as they
+# stream by (format confirmed against real SPRT logs in tools/results/*.log) to tally a
+# running White/Black score split. This mirrors -- and never touches -- the existing
+# -sprt stopping logic: it only ever prints an extra informational line.
+$whiteWins = 0
+$whiteLosses = 0
+$draws = 0
+$nextColorCheckpoint = $ColorCheckMinGames
+
+$logWriter = New-Object System.IO.StreamWriter($LogOut, $false)
+try {
+    & $Cutechess @ccArgs 2>&1 | ForEach-Object {
+        $line = $_
+        Write-Host $line
+        $logWriter.WriteLine($line)
+
+        if ($line -match '^Finished game \d+ \(\S+ vs \S+\): (\S+)') {
+            $result = $Matches[1]
+            # Tally only recognised result strings, and derive the game count from the
+            # tallies themselves (rather than an independent counter) so an unexpected
+            # cutechess-cli result string can never silently desync numerator/denominator.
+            switch ($result) {
+                '1-0'     { $whiteWins++ }
+                '0-1'     { $whiteLosses++ }
+                '1/2-1/2' { $draws++ }
+            }
+            $completedGames = $whiteWins + $whiteLosses + $draws
+
+            if ($completedGames -ge $nextColorCheckpoint) {
+                $n = $completedGames
+                $whiteScore = ($whiteWins + 0.5 * $draws) / $n
+                $blackScore = 1 - $whiteScore
+
+                # Empirical (not assumed-binomial) per-game variance from the actual W/L/D
+                # counts -- same methodology as the #213 investigation doc.
+                $varWin  = $whiteWins   * [Math]::Pow((1   - $whiteScore), 2)
+                $varDraw = $draws       * [Math]::Pow((0.5 - $whiteScore), 2)
+                $varLoss = $whiteLosses * [Math]::Pow((0   - $whiteScore), 2)
+                $variance = ($varWin + $varDraw + $varLoss) / ($n - 1)
+                $se = [Math]::Sqrt($variance / $n)
+
+                $z = 0
+                if ($se -gt 0) { $z = ($whiteScore - 0.5) / $se }
+                $ciLow  = $whiteScore - 1.96 * $se
+                $ciHigh = $whiteScore + 1.96 * $se
+
+                $msg = "[color-balance check @ $n games] White={0:P1}  Black={1:P1}  95% CI=[{2:P1}, {3:P1}]  z={4:F3}  (informational only -- issue #213, does not affect SPRT stopping)" -f $whiteScore, $blackScore, $ciLow, $ciHigh, $z
+                Write-Host ""
+                Write-Host $msg
+                Write-Host ""
+
+                $nextColorCheckpoint += $ColorCheckIntervalGames
+            }
+        }
+    }
+} finally {
+    $logWriter.Flush()
+    $logWriter.Close()
+}
 
 Write-Host ""
 Write-Host "SPRT complete. Log: $LogOut"
