@@ -59,7 +59,7 @@
     complexity risk of going further.
 
 .EXAMPLE
-    .\tools\benchmark_concurrency.ps1 -Jar engine-uci\target\engine-uci-0.5.9-SNAPSHOT.jar
+    .\tools\benchmark_concurrency.ps1 -Jar engine-uci\target\engine-uci-0.6.0-SNAPSHOT.jar
 
 .EXAMPLE
     .\tools\benchmark_concurrency.ps1 -Jar engine-uci\target\engine-uci.jar `

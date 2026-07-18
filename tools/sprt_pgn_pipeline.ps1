@@ -76,7 +76,7 @@
 
 .EXAMPLE
     .\tools\sprt_pgn_pipeline.ps1 -Mode All -StockfishPath C:\stockfish\stockfish.exe `
-        -EngineJar engine-uci\target\engine-uci-0.5.9-SNAPSHOT.jar -DryRun
+        -EngineJar engine-uci\target\engine-uci-0.6.0-SNAPSHOT.jar -DryRun
 #>
 param(
     [Parameter(Mandatory)][ValidateSet('QuietCorpus', 'BlunderCorpus', 'OpeningStats', 'All')][string]$Mode,

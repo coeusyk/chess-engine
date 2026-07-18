@@ -28,7 +28,7 @@
     Time control string passed to cutechess-cli (default: 10+0.1, matching match.ps1).
 
 .EXAMPLE
-    .\tools\nnue-gauntlet.ps1 -Engine engine-uci\target\engine-uci-0.5.8-SNAPSHOT.jar `
+    .\tools\nnue-gauntlet.ps1 -Engine engine-uci\target\engine-uci-0.6.0-SNAPSHOT.jar `
         -NnueFile trainer\outputs\nets\dfffd3da-7f8f-4fc9-92dc-b3873c97fb21.nnue
 #>
 param(
