@@ -50,20 +50,31 @@ Elo difference: -636.4 +/- 224.0, LOS: 0.0 %, DrawRatio: 5.0 %
 ### SPRT (E-5, #205) — pinned terms H0=0, H1=+10, alpha=beta=0.05 (PRD Sec.1 gate 3)
 
 ```
-_Not yet run._
+Score of NEW vs OLD: 712 - 699 - 1206  [0.502] 2617
+Elo difference: 1.7 +/- 9.8, LOS: 63.5 %, DrawRatio: 46.1 %
 ```
-Exact command to run on native Windows (per CLAUDE.md Sec.5 -- never simulated):
 
-```
-.\tools\sprt.ps1 -New '.\tools\gauntlet-artifacts\engine-uci-0.5.8-SNAPSHOT.jar' -Old '.\tools\gauntlet-artifacts\engine-uci-0.5.8-SNAPSHOT.jar' -NewOptions 'EvalType=NNUE','EvalFile=.\tools\gauntlet-artifacts\dfffd3da-7f8f-4fc9-92dc-b3873c97fb21.nnue' -OldOptions 'EvalType=Classical' -Tag nnue-e5
-```
+**Result: INCONCLUSIVE (manually stopped by user 2026-07-17, after ~2 days 10 hours at
+`-Concurrency 2`, 2617 games).** SPRT LLR = -1.32 (-44.7%), bounds [-2.94, +2.94] — trending
+toward H0 (no strength difference) but never crossed either bound. Neither promotion nor
+rejection is supported by this run; it is not a pass or fail of the strength gate, it is an
+unresolved measurement. (Added retroactively — `generate_release_report.py`'s summary
+extraction doesn't parse the LLR/bounds line or the White/Black breakdown; see full raw
+output in `tools/results/sprt_nnue-e5_20260717_manual_stop.log`.)
+
+Supplementary note for issue #213 (color-symmetry investigation): this run's own White-vs-Black
+split narrowed from the ~3.6pp gap reported at ~1600 games to **White 49.3% / Black 50.7%
+(1.34pp) at 2617 games** (688-723-1206). This entire run predates the `connectedPawnCount`
+fix (commit `ce1e23e`) — it reflects the pre-fix evaluator throughout, not a validation of
+that fix. It is recorded here as evidence that the originally observed split did not remain
+stable as sample size grew under the old code, not as confirmation the fix worked.
 
 ## Verdict
 
 - **Correctness gate:** pass (perft/mirror-symmetry green throughout E-3/E-4, no engine-core changes since).
 - **Performance gate:** deferred to E-6 (#206) per that issue's own scope — not measured or gated here.
-- **Strength gate:** Pending
-- **Promotion decision:** Pending — no decision recorded yet; the SPRT above is the input this decision requires, and issue #205's own Acceptance Criteria treat "not promoted yet" as an equally valid *recorded* outcome once the SPRT result is in. Not yet promoted, not yet rejected. See `nets/HISTORY.md` for the running ledger.
+- **Strength gate:** Inconclusive — SPRT stopped manually before reaching either bound (see above). Re-run required for a decision.
+- **Promotion decision:** Pending — no decision recorded yet; the inconclusive SPRT above does not resolve issue #205's Acceptance Criteria, which require an actual bound crossing (or an explicit, evidenced "not promoted" call). Not yet promoted, not yet rejected. See `nets/HISTORY.md` for the running ledger.
 
 ## Engineering Notes
 

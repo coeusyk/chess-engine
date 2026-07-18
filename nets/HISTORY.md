@@ -19,8 +19,8 @@ the manifest schema or registry structure (Trainer Architecture Invariant 6,
 | **Label correlation** | 0.5043603181838989 (n=4000) |
 | **Classical eval error** | mean_absolute_difference_cp = 735.5965576171875 (n=393, vs. `bench/nnue-corpus/classical-golden-evals.csv`) |
 | **Gauntlet result (E-4, #204)** | Vex-NNUE vs Vex-Classical: 0 - 95 - 5 (100 games, TC=10+0.1); Elo diff -636.4 ± 224.0, LOS 0.0%, DrawRatio 5.0% |
-| **SPRT result (E-5, #205)** | Pending — native-Windows run not yet executed as of this entry (`tools/sprt.ps1 -NewOptions 'EvalType=NNUE','EvalFile=<net>' -OldOptions 'EvalType=Classical'`). See `nets/dfffd3da-7f8f-4fc9-92dc-b3873c97fb21-release-report.md` for the exact command and current status. |
-| **Promotion status** | **Candidate** — undertrained (2000 steps, 735.6cp mean classical-eval error) and lost the E-4 gauntlet decisively; expected outcome for this stage of Track A/B, not a defect (see `tools/nnue-gauntlet-e4.md`). Not yet eligible for a promotion decision until the SPRT strength gate (§1 gate 3) records a result. |
+| **SPRT result (E-5, #205)** | **Inconclusive** — manually stopped 2026-07-17 after 2617 games (~2d10h at `-Concurrency 2`): Score 0.502, Elo diff 1.7±9.8, LLR -1.32 vs bounds [-2.94, +2.94] (never crossed). Re-run required — see `nets/dfffd3da-7f8f-4fc9-92dc-b3873c97fb21-release-report.md` for full detail and the re-run command (higher concurrency recommended per `tools/benchmark_concurrency.ps1`). |
+| **Promotion status** | **Candidate** — undertrained (2000 steps, 735.6cp mean classical-eval error) and lost the E-4 gauntlet decisively; expected outcome for this stage of Track A/B, not a defect (see `tools/nnue-gauntlet-e4.md`). Not yet eligible for a promotion decision — the SPRT strength gate (§1 gate 3) recorded an inconclusive result, not a decision. |
 
 ---
 
