@@ -7,7 +7,6 @@ import coeusyk.game.chess.core.movegen.MovesGenerator;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
 public class SanConverter {
 
@@ -197,6 +196,15 @@ public class SanConverter {
             normalized = normalized.substring(0, normalized.length() - 1);
         }
 
-        return normalized.toUpperCase(Locale.ROOT).replace("O", "O");
+        // Case must be preserved, not folded: toSan() encodes real chess semantics in
+        // case (piece letters N/B/R/Q/K are always uppercase; a pawn move/capture has no
+        // piece letter and starts with a lowercase file letter). Folding to uppercase
+        // made e.g. "bxc5" (b-pawn captures c5) and "Bxc5" (bishop captures c5) collapse
+        // to the identical string "BXC5", so fromSan() could silently match the wrong
+        // piece whenever both a pawn and a bishop/rook/etc. could legally reach the same
+        // destination square via a capture -- discovered replaying real SPRT PGNs for
+        // issue #181, where this caused a black pawn capture to be mis-matched to a
+        // bishop capture, corrupting the replayed position from that point on.
+        return normalized;
     }
 }
