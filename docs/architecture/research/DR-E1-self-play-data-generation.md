@@ -907,6 +907,15 @@ remains, restated for this stage's actual shape:
   "one Stockfish subprocess per position" — repeated JVM startup/warmup cost paid many
   times over, for a cost that is proportionally worse for a JVM than for the native
   binary D-8 originally reasoned about.
+- **Mining already-played SPRT/gauntlet games as a Stage-3 substitute.** Considered
+  separately, not rejected outright — see
+  `2026-07-16-mining-played-games-for-training-data.md`. This is a plausible future
+  Track C-*adjacent* supplementary data source (reusing already-produced PGNs at zero
+  additional engine-time cost), but not a substitute for this report's own
+  fresh-self-play design: SPRT/gauntlet games are adversarial-but-correlated
+  (candidate vs. baseline) rather than diverse self-play with opening randomization
+  (§3.1), so position diversity is narrower. No change to this report's architectural
+  conclusions.
 
 ---
 
