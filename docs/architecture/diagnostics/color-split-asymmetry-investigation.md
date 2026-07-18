@@ -511,3 +511,32 @@ collapsed into one:
    color gap closes") — that SPRT must run on native Windows per CLAUDE.md §5 and has
    not been run from this session. **Issue #213 stays open until that SPRT shows
    whether the observed asymmetry has materially decreased.**
+
+---
+
+## 10. Supplementary Data Point (2026-07-17) — the Original SPRT's Own Larger Sample
+
+The E-5 (#205) SPRT referenced as this investigation's original trigger (§1, ~1600 games)
+kept running through this entire investigation and was manually stopped by the user on
+2026-07-17 at 2617 games (LLR -1.32, never crossed either SPRT bound — inconclusive on
+strength, recorded in `nets/dfffd3da-7f8f-4fc9-92dc-b3873c97fb21-release-report.md`).
+
+Its own White-vs-Black split at the larger sample size:
+
+| | at ~1600 games (§1) | at 2617 games (this run's final tally) |
+|---|---|---|
+| White score | 48.14% | 49.33% |
+| Black score | 51.74% | 50.67% |
+| Gap | 3.60pp | 1.34pp |
+
+**This entire run predates the `connectedPawnCount` fix (commit `ce1e23e`)** — every one
+of its 2617 games used the pre-fix evaluator. It is therefore not a validation of the fix.
+What it is: evidence that, under the *unfixed* code, the originally observed gap did not
+hold up as more games accumulated — consistent with (though not proof of) the original
+z≈1.97 result having been partly sampling variance, exactly the caution §1 itself raised
+("this single result sits right at the conventional 95% significance boundary... it is
+exactly the kind of result that would not survive... if it were one of several splits
+being casually eyeballed"). It does not change the conclusion in §9 (the `connectedPawnCount`
+bug is real, isolated, and fixed regardless of how much or little it contributed to any
+one SPRT's aggregate color split) and it does not substitute for the dedicated post-fix
+validation SPRT §9 still calls for.
