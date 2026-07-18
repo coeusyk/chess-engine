@@ -15,6 +15,7 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Tag("regression")
@@ -483,6 +484,46 @@ class SearchRegressionTest {
         assertTrue(result.scoreCp() > 0,
                 "Contempt regression (Issue #174): engine should score Q1_FEN as winning for "
                 + "Black with contempt enabled, got: " + result.scoreCp() + "cp");
+    }
+
+    // ── Piece-safety regression — Phase E SPRT NNUE-vs-Classical game, 2026-07-15 ──
+    // Real game (issue #205/E-5 SPRT run, tools/sprt.ps1 -NewOptions EvalType=NNUE vs
+    // -OldOptions EvalType=Classical, custom opening-book start position). White's queen
+    // recaptured on h6 (...Qxh6), directly attacked by Black's queen on f8 via the open
+    // f8-g7-h6 diagonal (g7 empty) and completely undefended (no white pawn/piece covers
+    // h6). The engine, playing White in NNUE mode, replied 19.Nbd2 -- a quiet developing
+    // move that ignores the hanging queen -- and lost it for free to 19...Qxh6 (eval swung
+    // from +0.60/13 to +11.44/14 in the PGN).
+    //
+    // Standalone reproduction (this session, both EvalType=NNUE with the real E-3
+    // candidate net and EvalType=Classical, cold search and with a simulated warm
+    // transposition table replaying the real game's prior moves) consistently finds and
+    // plays a queen-retreat move (h6g5/h6f8/h6f4/h6h4/h6c1/h6e3) at every depth from 1
+    // through 12 -- the blunder was never reproduced below the real game's reported
+    // depth 13, under either evaluator. This points at a depth-13-specific search
+    // anomaly (see docs/architecture/diagnostics/B1-queen-safety-blunder.md), not an
+    // NNUE evaluator weakness -- both evaluators show identical behavior at every depth
+    // this test can practically exercise.
+    //
+    // This gate is a regression floor, not a fix verification: depth 13 itself is too
+    // expensive to run in this suite, so this locks in the known-good shallow-depth
+    // behavior. If this test ever starts failing, the blunder has regressed to a
+    // cheaply-reproducible shallow depth and needs immediate attention.
+    static final String B1_FEN =
+            "1rb1kq1r/2p4p/ppn1pnpQ/3p1p2/3P4/P1P2NPP/1P2PP2/RN2KB1R w KQk - 1 10";
+
+    @Test
+    @Tag("regression")
+    void queenSafetyRegression_B1() {
+        Board board = new Board(B1_FEN);
+        SearchResult result = new Searcher().searchDepth(board, DEFAULT_DEPTH);
+        Move bestMove = result.bestMove();
+        assertNotNull(bestMove, "Engine returned no move for B1_FEN");
+        assertTrue(toUci(bestMove).startsWith("h6"),
+                "Piece-safety regression (B1, 2026-07-15 SPRT game): the queen on h6 is "
+                + "undefended and directly attacked by Black's queen on f8 -- engine must "
+                + "move it. Got: " + toUci(bestMove) + " (the real game blundered here with "
+                + "Nbd2, losing the queen to Qxh6)");
     }
 
     // ── Helper ──────────────────────────────────────────────────────
