@@ -15,7 +15,7 @@
     Time control string passed to cutechess-cli (default: 10+0.1).
 
 .EXAMPLE
-    .\tools\match.ps1 -Engine1 engine-uci\target\engine.jar -Engine2 tools\engine-uci-0.4.9.jar -Games 200
+    .\tools\match.ps1 -Engine1 engine-uci\target\engine.jar -Engine2 tools\results\some-baseline.jar -Games 200
 #>
 param(
     [Parameter(Mandatory)][string]$Engine1,

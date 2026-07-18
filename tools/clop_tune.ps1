@@ -33,7 +33,8 @@
     Default: tools/clop_params.json (relative to script location).
 
 .PARAMETER BaselineJar
-    Path to the frozen baseline JAR. Default: tools/baseline-v0.5.6-pretune.jar.
+    Path to the frozen baseline JAR. No default is shipped in the repo (old
+    baseline JARs at/before v0.5.6 were purged) -- always pass this explicitly.
     Hard error if this file does not exist.
 
 .PARAMETER CandidateJar
@@ -74,14 +75,10 @@
     FOR FINAL CONFIRMATION ONLY. Does not bypass Iterations < 100.
 
 .EXAMPLE
-    # Standard run (recommended)
-    .\clop_tune.ps1
-
-.EXAMPLE
     # Explicit settings
     .\clop_tune.ps1 `
         -Params              .\clop_params.json `
-        -BaselineJar         .\baseline-v0.5.6-pretune.jar `
+        -BaselineJar         ..\tools\results\some-frozen-baseline.jar `
         -Iterations 500      -GamesPerIteration 16 `
         -TimeControl "10+0.1"
 
@@ -92,7 +89,7 @@
 
 param(
     [string] $Params              = "",   # default set below to PSScriptRoot-relative path
-    [string] $BaselineJar         = "",   # default: tools/baseline-v0.5.6-pretune.jar
+    [string] $BaselineJar         = "",   # no default -- must be passed explicitly
     [string] $CandidateJar        = "",   # default: auto-detect from engine-uci/target/*-shaded.jar
     [int]    $Iterations          = 300,
     [int]    $GamesPerIteration   = 16,
@@ -129,9 +126,6 @@ if (-not (Test-Path $CutechessPath -ErrorAction SilentlyContinue) -and -not (Get
 if ([string]::IsNullOrEmpty($Params)) {
     $Params = Join-Path $PSScriptRoot 'clop_params.json'
 }
-if ([string]::IsNullOrEmpty($BaselineJar)) {
-    $BaselineJar = Join-Path $PSScriptRoot 'baseline-v0.5.6-pretune.jar'
-}
 if ([string]::IsNullOrEmpty($CandidateJar)) {
     $pattern = Join-Path $PSScriptRoot '..' 'engine-uci' 'target' '*-shaded.jar'
     $found = Get-Item $pattern -ErrorAction SilentlyContinue | Select-Object -Last 1
@@ -145,8 +139,8 @@ if ([string]::IsNullOrEmpty($CandidateJar)) {
 # -----------------------------------------------------------------------
 # 1b. Validate baseline JAR exists (hard error — frozen baseline is mandatory)
 # -----------------------------------------------------------------------
-if (-not (Test-Path $BaselineJar)) {
-    Write-Error "[CLOP] Baseline JAR not found: $BaselineJar`nThe baseline JAR must be a frozen build that never changes. Provide a valid --BaselineJar path."
+if ([string]::IsNullOrEmpty($BaselineJar) -or -not (Test-Path $BaselineJar)) {
+    Write-Error "[CLOP] Baseline JAR not found: '$BaselineJar'`nThe baseline JAR must be a frozen build that never changes. Provide it via --BaselineJar (no default is shipped in the repo)."
     exit 1
 }
 
@@ -157,7 +151,7 @@ $BaselineJar  = (Resolve-Path $BaselineJar).Path
 $CandidateJar = (Resolve-Path $CandidateJar).Path
 
 if ($BaselineJar -eq $CandidateJar) {
-    Write-Error "[CLOP] Baseline and candidate JARs are the same file ('$BaselineJar').`nSame-JAR self-play produces a flat win-rate surface regardless of parameter values.`nProvide a frozen baseline via --BaselineJar (default: tools/baseline-v0.5.6-pretune.jar)."
+    Write-Error "[CLOP] Baseline and candidate JARs are the same file ('$BaselineJar').`nSame-JAR self-play produces a flat win-rate surface regardless of parameter values.`nProvide a frozen baseline via --BaselineJar."
     exit 1
 }
 
