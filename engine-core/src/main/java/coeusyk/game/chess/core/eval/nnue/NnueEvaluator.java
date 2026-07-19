@@ -234,14 +234,39 @@ public final class NnueEvaluator implements EvaluatorStrategy, FeatureExtractor.
         return Math.min(value, qa);
     }
 
+    /**
+     * Issue #218 Stage 1: dispatches to {@link NnueAccumulatorVectorOps} when {@link
+     * VectorCapabilities#AVAILABLE}, else the scalar loop below. {@link
+     * NnueAccumulatorVectorOps} is only ever referenced from this branch, which is only taken
+     * when the incubator module already resolved successfully (see that class's own javadoc for
+     * why it — unlike {@link VectorCapabilities} — is not safe to load unconditionally).
+     */
     private static void addFeature(short[] acc, int feature, short[] weights) {
+        if (VectorCapabilities.AVAILABLE) {
+            NnueAccumulatorVectorOps.addFeature(acc, feature, weights);
+        } else {
+            addFeatureScalar(acc, feature, weights);
+        }
+    }
+
+    private static void subtractFeature(short[] acc, int feature, short[] weights) {
+        if (VectorCapabilities.AVAILABLE) {
+            NnueAccumulatorVectorOps.subtractFeature(acc, feature, weights);
+        } else {
+            subtractFeatureScalar(acc, feature, weights);
+        }
+    }
+
+    /** Scalar fallback — also the reference implementation {@link NnueAccumulatorVectorOps} must match exactly. */
+    static void addFeatureScalar(short[] acc, int feature, short[] weights) {
         int base = feature * acc.length;
         for (int i = 0; i < acc.length; i++) {
             acc[i] = (short) (acc[i] + weights[base + i]);
         }
     }
 
-    private static void subtractFeature(short[] acc, int feature, short[] weights) {
+    /** Scalar fallback — also the reference implementation {@link NnueAccumulatorVectorOps} must match exactly. */
+    static void subtractFeatureScalar(short[] acc, int feature, short[] weights) {
         int base = feature * acc.length;
         for (int i = 0; i < acc.length; i++) {
             acc[i] = (short) (acc[i] - weights[base + i]);
