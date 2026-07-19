@@ -49,6 +49,37 @@ public class BenchRunner {
      * <p>All FENs in this list must be legal chess positions. {@link #run(int)}
      * validates every FEN at startup and throws {@link IllegalStateException}
      * if any is illegal, preventing silent skips that distort the NPS baseline.
+     *
+     * <p>Beyond legality, a bench position must be:
+     * <ul>
+     *   <li><b>Representative</b> — a realistic middle-game, endgame, or
+     *       tactical structure, not a constructed edge case.</li>
+     *   <li><b>Deterministic</b> — same depth, same position, same result
+     *       across runs (the fresh-Searcher/fresh-TT isolation above already
+     *       guarantees this within a single run).</li>
+     *   <li><b>Stable under reasonable transposition-table configurations</b> —
+     *       node count and search cost at a fixed depth must not vary by
+     *       orders of magnitude, and must not diverge non-monotonically, as
+     *       TT size changes across the range a real match/tuning run might
+     *       use. A position that is otherwise legal and representative but
+     *       fails this criterion contaminates cross-evaluator NPS comparisons,
+     *       since different evaluators reach different nodes via different
+     *       move ordering and can therefore land on wildly different points
+     *       of an unstable position's search-cost curve.</li>
+     * </ul>
+     * This last criterion was added after issue #217 found that the prior
+     * position 15 was TT-history-dependent (stable at 1 MB and 64 MB, but
+     * failing to complete depth 13 within 15 minutes at several sizes in
+     * between) — a real, reproducible search-instability characteristic of
+     * that position, not a benchmark bug, but one that violates the "roughly
+     * comparable search trees across evaluators" assumption an NPS benchmark
+     * depends on. It was replaced following the same precedent set by commit
+     * {@code 44aea1a}, which replaced an earlier pathological position
+     * (BENCH_FENS[8] at the time, &gt;150M nodes at depth 13) for the same
+     * reason: a single position dominating suite runtime and distorting the
+     * NPS baseline. Issue #217 remains open as an independent search-behavior
+     * investigation; the benchmark accommodation here does not depend on that
+     * investigation's outcome.
      */
     private static final String[] BENCH_FENS = {
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
@@ -65,7 +96,7 @@ public class BenchRunner {
         "8/p7/1p2k1p1/2p5/2P1b3/1P3P2/P2K4/8 b - - 0 38",
         "8/8/6k1/8/5P2/4K1P1/8/8 b - - 0 65",
         "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
-        "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NpPP/RNBQK2R w KQ - 1 8",
+        "r1bq1r1k/b1p1npp1/p2p3p/1p6/3PP3/1B2NN2/PP3PPP/R2Q1RK1 w - - 1 16",
         "r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/P1NP1N2/1PP1QPPP/R4RK1 w - - 0 10",
         "r3k2r/pb3p2/5npp/n2p4/1p1PPB2/6P1/P2N1PBP/R3K2R b KQkq - 0 13",
         "rr6/2pq2pk/p2p1pnp/8/2QBPP2/1P6/P5PP/4RRK1 b - - 2 25",
