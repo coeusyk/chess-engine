@@ -94,6 +94,67 @@ plausible and not yet distinguished:
 Experiments 1–2 below are designed specifically to resolve which of these is true, or how much
 of each is in play.
 
+### 2.1 Ranked hypotheses (2026-07-19 follow-up — no root cause asserted)
+
+The two explanations above are a starting split, not an exhaustive account. A closer read of
+`Searcher.java`'s pruning/aspiration code surfaces a wider hypothesis space. Ranked by
+plausibility; no hypothesis below is asserted as *the* cause — each lists the minimum single
+experiment that would distinguish it from the others.
+
+1. **(Highest) Evaluation-scale/volatility mismatch interacting with hardcoded cp-margin
+   heuristics.** Every relevant pruning/aspiration constant is a literal, evaluator-agnostic
+   number tuned exclusively against the classical evaluator: `ASPIRATION_INITIAL_DELTA_CP = 25`
+   (`Searcher.java:34`), `NULL_MOVE_DEPTH_THRESHOLD = 4` — whose own in-code comment states it
+   was tuned via SPRT *against the classical evaluator specifically* ("C-5 SPRT: threshold=4
+   won (+90.3 Elo vs baseline, H1 accepted)", `Searcher.java:35`), `FUTILITY_MARGIN_DEPTH_1/2 =
+   150/300` (`:37-38`), `RAZOR_MARGIN_DEPTH_1/2 = 300/600` (`:39-40`), and a ±32cp correction-
+   history cap (`CORRECTION_HISTORY_MAX = 256*32`, `:63-64`, applied at `:852`). None of
+   `canApplyNullMove`/`canApplyRazoring`/`canApplyFutilityPruning` branch on which
+   `EvaluatorStrategy` is active — they consume `staticEval` identically regardless of source.
+   Given NNUE's 735.6cp mean abs error is enormous relative to a 25cp aspiration window or even
+   a 600cp razor margin, these fixed thresholds could misfire (extra re-searches, wrong prune
+   decisions) in a way that costs disproportionately more at a tight, re-search-intolerant fast
+   TC than at a slow one — a mechanism distinct from both raw NPS cost and "the eval is just
+   worse."
+   *Minimum distinguishing experiment*: surface the aspiration-window re-search count (the
+   `consecutiveFailures` mechanism at `Searcher.java:622-641` already tracks this internally —
+   exposing it as a counter is a one-line change) and compare its rate between NNUE-mode and
+   classical-mode runs over the same bench positions at the same depth.
+2. **(High) Raw NPS / search-depth starvation.** Entirely unmeasured today (issue #206 open).
+   Plausible on priors, no direct evidence either way.
+   *Minimum distinguishing experiment*: Experiment 1 (§6) itself.
+3. **(High) Real, depth-independent eval-quality gap.** Also plausible on priors — 735.6cp mean
+   abs error is large by any standard — but not yet separated from #1/#2 by any experiment.
+   *Minimum distinguishing experiment*: Experiment 2 (§6), fixed-depth gauntlet.
+4. **(Medium) NNUE accumulator incremental-update cost, uncounted by existing benchmarks.**
+   `NnueEvaluator.onMake()`/`onUnmake()` (`NnueEvaluator.java:96-107,150-153`) run two
+   `System.arraycopy` calls plus sparse feature updates on every make/unmake in the tree — a
+   real, fixed per-node cost that `NnueCorpusBenchmarkTest.evalThroughput()` structurally
+   cannot see (it calls `reset()` fresh per FEN and never exercises the incremental path a real
+   search runs thousands of times per move). Not competing with #2 — a previously-uncounted
+   component of it.
+   *Minimum distinguishing experiment*: the accumulator-cost instrumentation in §12 (Search
+   Diagnostics), run during a real search rather than the isolated throughput test.
+5. **(Lower) Broader search-parameter interaction — LMR.** `LMR_LOG_DIVISOR = 1.7`'s reduction
+   formula (`Searcher.java:66-71,1300-1330`) depends only on `depth`/`moveIndex`, with **no
+   direct dependency on eval magnitude or cp-scale** — structurally unlike the margin-based
+   heuristics in #1. Ranked lower specifically because it lacks that direct cp-scale coupling;
+   any interaction (e.g. via move-ordering quality, which does depend on eval quality) would be
+   second-order.
+   *Minimum distinguishing experiment*: compare `lmrApplications`/`futilitySkips`/
+   `nullMoveCutoffs` counts (already tracked and surfaced via the existing `[BENCH]` log line,
+   `Searcher.java:96-99`) between NNUE-mode and classical-mode at fixed depth over the same
+   positions — zero new code required, just a comparative run that has never been done.
+6. **(Lowest) Implementation/wiring bug (e.g. silent classical fallback).** Substantially
+   argued against already: `tools/nnue-gauntlet-e4.md`'s own evidence-strength note observes
+   that a clean 636-Elo blowout with realistic termination reasons and a normal 48/47
+   White/Black split is inconsistent with a silent both-sides-fell-back-to-classical bug
+   (which would produce a near-50/50 result instead). Not eliminated, but the cheapest to rule
+   out definitively.
+   *Minimum distinguishing experiment*: re-run a short gauntlet sample with `cutechess-cli
+   -debug` enabled, confirming `info string NNUE network loaded` appears in-band throughout —
+   `nnue-gauntlet-e4.md` already names this exact follow-up trigger.
+
 ## 3. Hypothesis evidence grading (critique of the first-pass review)
 
 | Conclusion | Grade | Basis |
@@ -152,64 +213,184 @@ change needed to collect this.
 ## 6. Sequenced experiment plan
 
 Ordered for information-gained-per-engineering-cost. Instrumentation and measurement come
-before any data-scaling or architecture change.
+before any data-scaling or architecture change. **Tier** distinguishes reusable Infrastructure
+(should generally become a GitHub issue once, ahead of the experiments that consume it) from
+one-off Experiments (stay documented until their supporting infrastructure exists, run ad hoc
+rather than issue-tracked).
 
-| # | Experiment | Hypothesis | Effort | Runtime | Success criteria | If successful | If unsuccessful |
-|---|---|---|---|---|---|---|---|
-| 1 | Run existing fixed-depth NPS benchmark against real net (closes #206/E-6) | NNUE search meets/fails the ≥40% NPS gate; result bounds how much of the fast-gauntlet loss is NPS-attributable | Near-zero (infra exists) | Minutes | Recorded NPS number + pass/fail | Gate passes → -636 Elo is real eval weakness, raise priority of Exp. 5/6 | Gate fails badly → re-run Exp. 2 before trusting any gauntlet result |
-| 2 | Re-run E-4 gauntlet at fixed depth instead of fixed TC | A fixed-depth gauntlet shrinks the Elo gap toward the SPRT's near-0 result if NPS was the confound | Low | ~1hr range | Elo number comparable to -636 and to the SPRT's ~0 | Gap shrinks → NPS/search-depth was the dominant confound, redirect to performance engineering | Gap stays near -636 → eval weakness is real and depth-independent, deprioritize NPS work |
-| 3 | Wire existing `deduplicate`/`phase_of`/`balance_phases` into `combine_and_split` as a reporting pass | Current 36k set has a hidden duplicate-leak or phase skew | Near-zero (code exists, unused) | Seconds | Duplicate rate, phase distribution report | Non-trivial skew found → re-run training with dedup/balance before any data-scale conclusion | Negligible → rules out this confound cheaply |
-| 4 | Persist train-loss curve + add held-out-loss-vs-step logging | Loss curve shape distinguishes data/architecture/label/optimizer-limited per §4 | Low | ~same as existing run (~20s + trivial eval overhead) | `(step, train_loss, held_out_loss)` table for the existing run, bit-identical seed | Still-decreasing + tight gap → proceed to Exp. 7 | Diverging gap → investigate reshuffle/regularization before scaling data |
-| 5 | Label-noise floor: re-label same 1,000 positions at two node budgets (25k vs 50k) | Single fixed-node labels carry non-trivial variance, bounding achievable held-out loss | Low | Minutes | Distribution of \|eval_25k − eval_50k\| in cp | Large spread → reprioritize toward higher node budget / stability check over raw volume | Small spread → strengthens case for Exp. 6/7 as the real levers |
-| 6 | Add free WDL signal (`c9`) to Stage 2, train λ-blended variant on the *same* 36k corpus | Blended target improves held-out metrics at fixed data volume | Medium (extend `SHARD_DTYPE`, thread `c9` through, implement blend in `train.py`) | Same as existing (~20s) + one-time format work | Held-out loss/correlation, blended vs. cp-only, controlled A/B | Improves → target formulation was leaving signal on the table, reprioritize above pure scaling | No change → strengthens the case that volume is the real bottleneck |
-| 7 | Data-scale ablation as a log-spaced curve (40k → 100k → 400k), not one 10-100x jump | Held-out metrics improve monotonically or plateau as a function of corpus size | Medium-high (hours of labeling compute) | Hours, scaling with size | Curve of held-out loss/correlation/eval-error at each scale point, each diagnosable via Exp. 4's logging | Still improving at largest scale → continue scaling | Plateaus early → data volume was not the dominant lever, revisit architecture/HalfKP with a real ADR |
+| # | Experiment | Tier | Hypothesis | Effort | Runtime | Success criteria | If successful | If unsuccessful |
+|---|---|---|---|---|---|---|---|---|
+| 1 | Run existing fixed-depth NPS benchmark against real net (= issue #206/E-6, no new issue needed) | Experiment (infra already exists) | NNUE search meets/fails the ≥40% NPS gate; result bounds how much of the fast-gauntlet loss is NPS-attributable | Near-zero (infra exists) | Minutes | Recorded NPS number + pass/fail | Gate passes → -636 Elo is real eval weakness, raise priority of Exp. 5/6 | Gate fails badly → re-run Exp. 2 before trusting any gauntlet result |
+| 2 | Re-run E-4 gauntlet at fixed depth instead of fixed TC | Experiment (supporting infra — fixed-depth mode in `nnue-gauntlet.ps1` — doesn't exist yet; build only if Exp. 1 doesn't cleanly resolve the anomaly) | A fixed-depth gauntlet shrinks the Elo gap toward the SPRT's near-0 result if NPS was the confound | Low | ~1hr range | Elo number comparable to -636 and to the SPRT's ~0 | Gap shrinks → NPS/search-depth was the dominant confound, redirect to performance engineering | Gap stays near -636 → eval weakness is real and depth-independent, deprioritize NPS work |
+| 3 | Wire existing `deduplicate`/`phase_of`/`balance_phases` into `combine_and_split` as a reporting pass | **Infrastructure — Issue A** | Current 36k set has a hidden duplicate-leak or phase skew | Near-zero (code exists, unused) | Seconds | Duplicate rate, phase distribution report | Non-trivial skew found → re-run training with dedup/balance before any data-scale conclusion | Negligible → rules out this confound cheaply |
+| 4 | Persist train-loss curve + add held-out-loss-vs-step logging | **Infrastructure — Issue B** | Loss curve shape distinguishes data/architecture/label/optimizer-limited per §4 | Low | ~same as existing run (~20s + trivial eval overhead) | `(step, train_loss, held_out_loss)` table for the existing run, bit-identical seed | Still-decreasing + tight gap → proceed to Exp. 7 | Diverging gap → investigate reshuffle/regularization before scaling data |
+| 5 | Label-noise floor: re-label same 1,000 positions at two node budgets (25k vs 50k) | Experiment (existing `stockfish_label.py` config knob; cheap enough to run ad hoc, not worth issue overhead) | Single fixed-node labels carry non-trivial variance, bounding achievable held-out loss | Low | Minutes | Distribution of \|eval_25k − eval_50k\| in cp | Large spread → reprioritize toward higher node budget / stability check over raw volume | Small spread → strengthens case for Exp. 6/7 as the real levers |
+| 6 | Add free WDL signal (`c9`) to Stage 2, train λ-blended variant on the *same* 36k corpus | Infrastructure-shaped, but deferred (depends on Exp. 4/Issue B landing first so the A/B is interpretable) | Blended target improves held-out metrics at fixed data volume | Medium (extend `SHARD_DTYPE`, thread `c9` through, implement blend in `train.py`) | Same as existing (~20s) + one-time format work | Held-out loss/correlation, blended vs. cp-only, controlled A/B | Improves → target formulation was leaving signal on the table, reprioritize above pure scaling | No change → strengthens the case that volume is the real bottleneck |
+| 7 | Data-scale ablation as a log-spaced curve (40k → 100k → 400k), not one 10-100x jump | Experiment, gated behind Exp. 3/4 (Issues A/B) so each scale point is diagnosable | Held-out metrics improve monotonically or plateau as a function of corpus size | Medium-high (hours of labeling compute) | Hours, scaling with size | Curve of held-out loss/correlation/eval-error at each scale point, each diagnosable via Exp. 4's logging | Still improving at largest scale → continue scaling | Plateaus early → data volume was not the dominant lever, revisit architecture/HalfKP with a real ADR |
+| 8 | Search-time instrumentation: eval latency, accumulator-update cost, PV/cut-node eval frequency | **Infrastructure — Issue C** | Isolates whether NNUE changes search *behavior* (re-search rate, pruning-trigger rates), not just raw eval accuracy — the direct enabler for §2.1 Hypotheses 1, 4, 5 | Low (three single-call-site additions, no architectural change — see §12) | Same as existing bench suite | Eval-time %, accumulator-update-time %, PV/cut-node counts, comparable NNUE vs. classical | Localizes which §2.1 hypothesis the anomaly is consistent with | Rules hypotheses out, narrowing the remaining search space |
 
-## 7. Roadmap (not sorted by expected Elo alone — front-loads uncertainty reduction)
+## 7. Roadmap — Infrastructure / Experimental / Evaluator-improvement tiers
+
+Infrastructure generally precedes the experiments that depend on it; experiments generally
+precede any change to the evaluator itself. Not sorted by expected Elo alone — front-loads
+uncertainty reduction. Dependency changes from the 2026-07-19 follow-up review are called out
+explicitly where they differ from the original sequencing.
+
+**Tier 1 — Infrastructure (build once, reusable, no evaluator change)**
+
+| Improvement | Expected Elo gain | Effort | Risk | Prerequisites | Information gained |
+|---|---|---|---|---|---|
+| Wire dedup/phase-balance reporting (Exp. 3 / Issue A) | None directly | Near-zero | None | None | Confirms/refutes a hidden data-quality confound, permanently, for every future run |
+| Persist loss curves (Exp. 4 / Issue B) | None directly | Low | None | None | Prerequisite for correctly interpreting Exp. 6/7; reuses `engine-tuner`'s own convergence-logging precedent |
+| Search-time instrumentation (Exp. 8 / Issue C) | None directly | Low | None | None | Prerequisite for distinguishing §2.1's Hypotheses 1/4/5 from each other — without it, any future search-behavior question re-derives from scratch |
+
+**Tier 2 — Experimental (one-off validation runs, use Tier 1's output to interpret)**
 
 | Improvement | Expected Elo gain | Effort | Risk | Prerequisites | Information gained |
 |---|---|---|---|---|---|
 | Run existing NPS benchmark against real net (Exp. 1 / #206) | None directly | Near-zero | None | Real `.nnue` file (exists) | Resolves the single highest-value unknown: is the fast-gauntlet loss an NPS artifact or real |
-| Fixed-depth gauntlet re-run (Exp. 2) | None directly | Low | Low | Exp. 1 | Isolates eval quality from search-depth confound |
-| Wire dedup/phase-balance reporting (Exp. 3) | None directly | Near-zero | None | None | Confirms/refutes a hidden data-quality confound |
-| Persist loss curves (Exp. 4) | None directly | Low | None | None | Prerequisite for correctly interpreting Exp. 6/7 |
+| Fixed-depth gauntlet re-run (Exp. 2) | None directly | Low | Low | Exp. 1 (build only if Exp. 1 doesn't resolve the anomaly — **dependency added this pass**, was previously unconditional) | Isolates eval quality from search-depth confound |
 | Label-noise floor (Exp. 5) | None directly | Low | None | None | Establishes a hard floor on achievable held-out loss |
-| WDL-blend from `c9` (Exp. 6) | Unknown, plausible (Stockfish/nnue-pytorch precedent) | Medium | Low-medium (touches training-target contract; re-run mirror-symmetry/regression suite per CLAUDE.md) | Exp. 4 | Answers "is target formulation the bottleneck," independent of volume |
-| Data-scale ablation (Exp. 7) | Unknown — previously asserted as "large" without support | Medium-high | Low (compute cost only) | Exp. 1–6 ideally first | The actual data needed before "scale 10-100x" is anything but a guess |
-| Re-verify quietness of relabeled `quiet-labeled.epd` positions | Unknown | Medium | Low | None | Bounds label noise from a second angle beyond Exp. 5 |
-| HalfKP / king-buckets | Plausibly large per literature; excluded from v1 by design (ADR-001) | High | Medium-high (new feature extractor, new ADR) | Exp. 1–7 largely exhausted | Only informative once cheaper levers are ruled out |
+| Data-scale ablation (Exp. 7) | Unknown — previously asserted as "large" without support | Medium-high | Low (compute cost only) | **Now explicitly gated on Issues A/B landing first** (was "Exp. 1–6 ideally first") | The actual data needed before "scale 10-100x" is anything but a guess |
+| Re-verify quietness of relabeled `quiet-labeled.epd` positions | Unknown | Medium | Low | **Gated on Exp. 5's result** (large node-budget variance justifies this; small variance doesn't — dependency added this pass) | Bounds label noise from a second angle beyond Exp. 5 |
+
+**Tier 3 — Evaluator improvements (change the net/target itself; wait for Tier 1+2 signal)**
+
+| Improvement | Expected Elo gain | Effort | Risk | Prerequisites | Information gained |
+|---|---|---|---|---|---|
+| WDL-blend from `c9` (Exp. 6) | Unknown, plausible (Stockfish/nnue-pytorch precedent) | Medium | Low-medium (touches training-target contract; re-run mirror-symmetry/regression suite per CLAUDE.md) | Exp. 4 / Issue B | Answers "is target formulation the bottleneck," independent of volume |
+| HalfKP / king-buckets | Plausibly large per literature; excluded from v1 by design (ADR-001) | High | Medium-high (new feature extractor, new ADR) | Tier 1+2 largely exhausted | Only informative once cheaper levers are ruled out |
 | Deeper/wider architecture | Unknown | Medium-high | Medium | Exp. 4 showing an architecture-limited signature | Same — premature before diagnostics point at architecture |
 
-## 8. First implementation tasks (observability before evaluator changes)
+## 8. Task triage and issue determination (2026-07-19 follow-up review)
 
-Per the operating principle for this document: instrumentation/diagnostics work
-(Experiments 1–5) is first-class engineering work in its own right — it shortens every future
-feedback loop, independent of whether it moves Elo directly — and is sequenced ahead of any
-task that changes the evaluator itself (Experiments 6–7 and beyond). Candidate GitHub issues,
-not yet filed:
+Re-triage of every proposed task (the original five §8 candidates plus the broader §7 roadmap
+items) against four categories — **Infrastructure** (reusable capability, generally an issue
+now), **Experiment** (one-off validation run, stays documented until its supporting
+infrastructure exists), **Investigation** (reading/analysis, no new capability), **Documentation**
+(deliberately deferred roadmap entry):
 
-1. **Run the NNUE performance gate (closes/advances #206, E-6)** — point
-   `NnueCorpusBenchmarkTest` (or `--bench -EvalType NNUE`) at the real net on native Windows,
-   record NPS vs. classical. Effort: XS. Depends on: nothing. Outcome: a number that resolves
-   §2's central anomaly's first half.
-2. **Fixed-depth NNUE-vs-classical gauntlet** — add a fixed-depth/fixed-node mode to
-   `tools/nnue-gauntlet.ps1`, re-run E-4. Effort: S. Depends on: #1 (interpret together).
-   Outcome: resolves §2's anomaly directly.
-3. **Wire `deduplicate`/`phase_of`/`balance_phases` into `combine_and_split` as a reporting
-   step** — no retraining required for the report itself. Effort: XS. Depends on: nothing.
-   Outcome: a data-quality report for the existing 36k corpus.
-4. **Persist train-loss curve + intermediate held-out-loss logging in `train.py`/
-   `train_candidate_net.py`** — stop discarding `losses`, call `evaluate_held_out` every N
-   steps. Effort: S. Depends on: nothing. Outcome: makes every future training run
-   diagnosable per §4's falsifiable criteria, not just a single final number.
-5. **Label-noise floor measurement** — re-label 1,000 sample positions at two node budgets,
-   report the eval_cp delta distribution. Effort: S. Depends on: nothing. Outcome: a hard
-   floor on achievable held-out loss given the current labeling policy.
+| Task | Category | Create issue now? | Reasoning |
+|---|---|---|---|
+| Run NPS gate against real net | Experiment (infra exists) | **No** | Already fully covered by existing issue **#206** — see §8.1 below, no duplicate needed |
+| Fixed-depth gauntlet re-run | Experiment (supporting infra doesn't exist yet) | **No — stays documented** | Building the fixed-depth mode before #206's result lands risks a wasted issue if #206 alone resolves the anomaly |
+| Wire dedup/phase-balance reporting into `combine_and_split` | **Infrastructure** | **Yes — Issue A** | Zero prerequisites, near-zero effort, permanent capability for every future training run |
+| Persist train-loss curve + held-out logging | **Infrastructure** | **Yes — Issue B** | Same reasoning; reuses `engine-tuner`'s own convergence-logging precedent |
+| Label-noise floor (relabel at two node budgets) | Experiment (existing config knob) | **No** | Cheap, ad hoc, minutes-long; issue-tracking overhead is disproportionate to its scope |
+| WDL-blend from `c9` | Infrastructure-shaped, but deferred | **No, not yet** | Depends on Issue B landing first so the A/B result is interpretable |
+| Data-scale ablation | Experiment | **No** | Explicitly gated behind Issues A/B — uninterpretable before that diagnostic infrastructure exists |
+| Quietness re-verification (PV-stability check) | Infrastructure-shaped, unproven value | **No** | `DR-D8` already named this optional future work; gate its justification on the label-noise-floor experiment's result rather than building speculatively |
+| HalfKP / king-buckets | Documentation | **No** | Explicit PRD/ADR-001 non-goal for v1; nothing in this pass changes that |
+| Deeper/wider architecture | Documentation | **No** | Premature before any diagnostic shows an architecture-limited signature |
+| Search-time instrumentation (eval latency, accumulator cost, PV/cut-node frequency) | **Infrastructure** *(newly surfaced this pass — see §12)* | **Yes — Issue C** | Prerequisite for distinguishing §2.1's ranked hypotheses; zero prerequisites, single-call-site additions |
 
-Each of these is measured by the "success criteria" column in §6's experiment table, not by
-an Elo delta — they are diagnostic infrastructure, and their success is "produced a number
-that changes what we do next," not "made the engine stronger" directly.
+Net effect: **3 issues recommended** (down from the original 5 candidates), all Infrastructure-
+tier; everything else stays documented pending a named prerequisite.
 
-## 9. Open questions (no evidence either way — do not treat as established)
+### 8.1 Issue #206 scope determination
+
+`gh issue view 206`'s actual acceptance criteria: run `--bench` in NNUE mode on native Windows,
+record NPS against the 316,964 baseline (301,116 floor), make a pass/fail call, and — only if
+the gate fails — profile and open a Vector-API follow-up. This is **exactly** Experiment 1's
+scope, word for word; `--bench` is the same fixed-workload measurement
+`NnueCorpusBenchmarkTest` performs at finer grain. **No new issue needed, and #206's text does
+not need editing** — it already fully covers Experiment 1 as written.
+
+Experiment 2 (fixed-depth *gauntlet*, an Elo/game-outcome diagnostic aimed at the §2 anomaly,
+requiring `cutechess-cli` and a full match) is a different measurement in kind, not degree —
+folding it into #206 would conflate a raw-throughput pass/fail gate with a game-outcome
+diagnostic. It should become its own issue only if #206's result doesn't cleanly resolve the
+anomaly on its own; for now it stays documented (§6/§7) rather than filed.
+
+### 8.2 Recommended new issues (3, not 5)
+
+**Issue A — Wire `deduplicate`/`phase_of`/`balance_phases` into `combine_and_split` as a
+reporting pass**
+- *Objective*: surface duplicate-FEN rate and opening/middlegame/endgame distribution for the
+  real 36k-position training corpus, using the already-built, already-exported
+  `trainer/trainer/dataset/transform.py` functions that `train_candidate_net.py` never calls.
+- *Acceptance criteria*: `combine_and_split` (or a thin wrapper) reports duplicate count/rate
+  and phase-bucket counts for the actual Stage1+Stage2 union before the 90/10 split; report
+  committed alongside the next training run record (matching the `train-e3-real.md` convention).
+- *Dependencies*: none.
+- *Estimated effort*: XS.
+- *Expected long-term value*: every future training run gets this report for free; directly
+  answers whether current held-out metrics are compromised by a duplicate leak or phase skew.
+
+**Issue B — Persist train-loss curve + intermediate held-out-loss logging**
+- *Objective*: stop discarding `train()`'s per-step loss list; call `evaluate_held_out` every N
+  steps instead of once, post-hoc, at the end.
+- *Acceptance criteria*: a `(step, train_loss, held_out_loss)` series persisted for a full
+  training run (re-running the bit-identical E-3 config validates it); §4's falsifiable
+  criteria become checkable from this output without further code changes.
+- *Dependencies*: none.
+- *Estimated effort*: S.
+- *Expected long-term value*: converts every future training run from "one final number" into
+  a diagnosable curve — the single highest-leverage instrumentation gap identified across both
+  review passes, directly reusing `engine-tuner`'s own convergence-logging pattern.
+
+**Issue C — Add search-time instrumentation for evaluator latency, accumulator-update cost,
+and PV/cut-node eval frequency**
+- *Objective*: add the three cheap, single-call-site additions from §12 (`Searcher.java:845`'s
+  bare `evaluate()` call; `NnueEvaluator.onMake`/`onUnmake`; the already-in-scope `isPvNode`
+  boolean) so NNUE-mode and classical-mode searches can be compared on time-in-eval, time-in-
+  accumulator-maintenance, and PV-vs-cut-node eval frequency — none of which exist today, all
+  of which are prerequisites for cleanly running §2.1's distinguishing experiments (Hypotheses
+  1, 4, 5).
+- *Acceptance criteria*: `SearchResult` (or a debug-gated extension, following the existing
+  `[BENCH]` log convention) reports eval-time %, accumulator-update-time %, and PV/cut-node
+  eval counts; validated by running the bench suite under both evaluators and confirming
+  classical-mode's accumulator-update-time reads ~0 (per `EvaluatorStrategy`'s documented
+  no-op default lifecycle hooks) while NNUE-mode does not.
+- *Dependencies*: none — all additions are localized to existing call sites.
+- *Estimated effort*: S.
+- *Expected long-term value*: a permanent, reusable capability for every future NNUE-vs-
+  classical search-behavior comparison, not a one-off measurement for this anomaly alone.
+
+Each issue is measured by its own acceptance criteria, not by an Elo delta — these are
+diagnostic infrastructure, and success is "produced a number that changes what we do next,"
+not "made the engine stronger" directly.
+
+## 9. Search Diagnostics
+
+The dataset/label/training/evaluation diagnostics above (§§1–7) do not cover whether NNUE
+changes **search behavior** — node counts, depth reached, pruning-trigger rates — as opposed
+to just evaluator accuracy. Read in full for this section: `Searcher.java` (aspiration
+window, pruning gates, LMR table), `SearchResult.java`, `TranspositionTable.java`,
+`NnueEvaluator.java`.
+
+### 9.1 Already exists — no new instrumentation needed to use these
+
+| Diagnostic | Citation |
+|---|---|
+| Nodes searched (total, leaf, quiescence) | `Searcher.java:87,455-456,473-475`; `SearchResult.java:12-14` |
+| Search depth reached (per search) | `SearchResult.java:10`; `Searcher.java:494` |
+| Effective branching factor | `Searcher.java:577-588,602` (`SearchResult.ebf()`) |
+| TT hit rate | `Searcher.java:598`; `TranspositionTable.java:287-289` (tracked twice, independently) |
+| Pruning-trigger counts (NMP cutoffs, LMR applications, futility/delta-pruning skips, beta cutoffs, first-move-cutoff %) | `Searcher.java:96-99,459-463,579-582`; `SearchResult.java:16-24` |
+| Aggregate NPS | `Searcher.java:574` (existing `[BENCH]` debug log line) |
+
+This is a materially larger existing surface than a first read would suggest — most of what a
+"search diagnostics" request wants is already counted, per search, with zero new code. It's
+gated behind `LOG.debug` (needs debug logging enabled, not new instrumentation) and has never
+been **run comparatively** between NNUE and classical mode over the same position set.
+
+### 9.2 Missing, and what a realistic addition costs
+
+| Diagnostic | Status | Minimum realistic addition |
+|---|---|---|
+| Average evaluator latency / eval time as % of search wall-clock | Absent — `evaluate(board)` is a bare, untimed call site | Wrap the one call site (`Searcher.java:845`) with a `long evalNanos` accumulator, compare against the already-tracked per-iteration `elapsedMs` (`:571-573`). One field, one call site. |
+| NNUE accumulator incremental-update cost (distinct from raw `evaluate()` cost) | Absent, and invisible to `NnueCorpusBenchmarkTest.evalThroughput()` (which never exercises the incremental `onMake`/`onUnmake` path a real search runs thousands of times per move) | Wrap `NnueEvaluator.onMake()`/`onUnmake()` (`:96-107,150-153`) with nanoTime accumulation. Reads ~0 under classical mode for free (`EvaluatorStrategy`'s lifecycle hooks default to no-ops, `docs/NNUE_PRD.md:46`), giving a clean isolated measurement without a second code path. |
+| Cut-node vs. PV-node evaluation frequency | Absent, but `isPvNode` is already in scope at the `evaluate()` call site (`alphaBeta(...)`, `:774`–`845`) | Two counters incremented via the already-available boolean. Trivial. |
+| Search depth *distribution* (shape across many positions, not one search's depth) | Partially exists — `depthReached` is already returned per search | No new `Searcher` code — aggregation only: run the bench suite under each evaluator and histogram the already-returned values. Glue code in the bench harness. |
+| CPU cache behavior | **Not realistically instrumentable from this codebase** | JVM code has no clean, portable way to read hardware cache-miss counters — that needs OS/hardware perf counters (`perf stat` wrapping the JVM externally, or async-profiler's `perf_events` integration), not code inside `Searcher.java`/`NnueEvaluator.java`. Recommend not committing to this until the cheaper JVM-level metrics above have already localized a bottleneck worth cache-profiling. |
+
+Bottom line: three cheap, single-call-site additions (eval-time wrap, accumulator-update-time
+wrap, PV/cut-node counters) plus one aggregation exercise (depth distribution, no new
+`Searcher` code) close the realistic gap. CPU cache behavior is out of reach from inside this
+codebase and should not be promised. See Issue C (§8.2) for the scoped implementation task.
+
+## 10. Open questions (no evidence either way — do not treat as established)
 
 - Whether `acquire_stage1_lichess.py` position sampling and Stage 2's Zurichess-derived
   positions overlap (both public corpora, no dedup step currently run to check).
@@ -219,11 +400,19 @@ that changes what we do next," not "made the engine stronger" directly.
 - Whether the SPRT's near-0 result and the gauntlet's -450-to-640 Elo result will converge
   once Experiments 1–2 are run, or whether both are independently real signals about
   different aspects of the net's behavior.
+- Which of §2.1's ranked hypotheses (evaluation-scale/pruning-margin mismatch, NPS cost,
+  real eval weakness, accumulator-update cost, LMR interaction, implementation bug) actually
+  explains the fast-gauntlet/slow-SPRT discrepancy — unresolved until Issue C's instrumentation
+  and Experiments 1–2 are run.
 
-## 10. Completed experiments
+## 11. Completed experiments
 
 None yet — this document defines the plan; §6 items are not yet executed as of 2026-07-19.
+This review pass (re-triage, #206 scope determination, search-diagnostics investigation,
+ranked-hypothesis expansion) is an analysis/documentation update, not an executed experiment.
 
-## 11. Future experiments
+## 12. Future experiments
 
-See §6 in full; §8 lists the first five as immediately actionable.
+See §6 in full; §8.2 lists the three recommended immediately-actionable issues (A, B, C) —
+all Infrastructure-tier. Everything else in §6/§7 stays a documented, sequenced future
+experiment pending a named prerequisite.
