@@ -1161,3 +1161,50 @@ step at this point, not two sequential ones.
 7. (Conditional) PR 4 — `evaluate()` SIMD, with the 64-bit-accumulation requirement (§16.3)
    designed in from the start, not retrofitted after an overflow is found.
 8. (Conditional) PR 5 — re-measurement, final gate determination.
+
+## 17. PR 1 completion (2026-07-19 PM)
+
+**Completed** — commit `b78edf6`. Scope matched §15.4/§16.6 exactly: build wiring + species
+detection, zero algorithm change, `NnueEvaluator`/`Searcher` untouched.
+
+**Measured facts:**
+- `engine-core/pom.xml`: `--add-modules jdk.incubator.vector` added to `maven-compiler-plugin`
+  (`compilerArgs`) and `maven-surefire-plugin` (`argLine`).
+- New package-private `VectorCapabilities` (`AVAILABLE: boolean`, `PREFERRED_SHORT_LANES: int`),
+  not referenced by any existing production class in this PR.
+- Full regression suite: engine-core 274/274 passing (4 pre-existing skips), engine-uci 36/36
+  passing (8 pre-existing skips, syzygy-tablebase-gated, unrelated to this change) — commit
+  `b78edf6`'s own build log.
+- **§16.4's compile-21/runtime-25 claim, actually validated this time** (the prior review round
+  had asserted this without testing it — corrected here, not repeated as an unverified claim):
+  built the shaded jar with WSL JDK 21.0.11, copied to native Windows, ran under Zulu 25.0.3.
+  Both JVMs (WSL 21.0.11 and native-Windows Zulu 25.0.3) agree: with `--add-modules
+  jdk.incubator.vector` passed to the launching `java`/`jshell`, `AVAILABLE=true,
+  PREFERRED_SHORT_LANES=32`; without the flag, `AVAILABLE=false, PREFERRED_SHORT_LANES=0`, no
+  crash on either JVM.
+
+**Implementation observations (new, not previously documented):**
+- The two-JVM validation above is the actual test of the "PR 1 de-risks the compile-21/
+  runtime-25 combination" claim from §16.4 — a prior pass had stated this as PR 1's effect
+  without running it on Zulu 25 specifically (WSL-only testing would have exercised 21/21, not
+  21/25). Recorded here so the claim is now evidence-backed, not asserted.
+- `PREFERRED_SHORT_LANES=32` on **both** environments (WSL and native Windows) — a data point,
+  not yet a conclusion about identical underlying hardware vector width on both machines (the
+  JVM's "preferred species" reflects a JIT/runtime policy choice, not a direct hardware probe
+  from this vantage point); relevant for PR 2's Level 1 width-256 microbenchmark, which should
+  record its own environment's lane count rather than assume the value carries over.
+- No new test category was needed beyond `VectorCapabilitiesTest` itself — the existing NNUE
+  regression suite (`NnueIncrementalVsRebuildFuzzTest`, `EvalMirrorSymmetryPropertyTest`,
+  `NnueModeSearchRegressionTest`) passing unchanged is the evidence for "zero behavioral change,"
+  stronger than a redundant node-count re-run would have been (§16.3's own reasoning: a
+  build-config change plus an unreferenced class cannot alter codegen of classes that don't
+  reference it).
+
+**Deviations from the original plan:** none in scope. One correction to prior documentation: an
+XML-comment authoring mistake (`--` sequences inside `<!-- -->`, invalid per the XML spec) was
+caught by the POM failing to parse on the first build attempt, fixed immediately — worth noting
+only because it's a real "measurement caught an error before it shipped" instance, not a
+planning deviation.
+
+**Future work (unchanged from §16.6, not started):** PR 2 (Stage 1 SIMD implementation) is next,
+gated on re-parameterizing the width-8 microbenchmark to width 256 first (§16.1, §16.6 step 2).
