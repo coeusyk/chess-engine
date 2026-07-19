@@ -1,10 +1,12 @@
 package coeusyk.game.chess.uci;
 
+import coeusyk.game.chess.core.eval.EvaluatorStrategy;
 import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.search.SearchResult;
 import coeusyk.game.chess.core.search.Searcher;
 
 import java.util.Locale;
+import java.util.function.Supplier;
 
 /**
  * Standard fixed-depth benchmark for Vex.
@@ -16,13 +18,16 @@ import java.util.Locale;
  * <p>Usage:
  * <pre>
  *   java -jar engine-uci-shaded.jar --bench [depth]
+ *   java -jar engine-uci-shaded.jar --bench [depth] --eval-type NNUE --eval-file &lt;path&gt;
  *   # or, inside a UCI session:
  *   bench [depth]
  * </pre>
  *
  * <p><b>NPS is hardware-dependent</b> and varies with CPU speed, JIT warmup,
  * and OS scheduling. It must NOT be used as a pass/fail gate. Use node counts
- * at a given depth to verify search correctness across builds.
+ * at a given depth to verify search correctness across builds. Comparing
+ * Classical-mode vs. NNUE-mode NPS on the *same* run (issue #206's performance
+ * gate) is the one case this tool's own aggregate NPS number is meant for.
  *
  * <p>State isolation: a fresh {@link Searcher} (and therefore fresh history /
  * killer tables) is created for every position, and the transposition table is
@@ -80,7 +85,18 @@ public class BenchRunner {
     };
 
     /**
-     * Run the benchmark at the given depth.
+     * Run the benchmark at the given depth using the default (Classical) evaluator.
+     *
+     * @param depth search depth; must be in [1, 127]
+     */
+    public void run(int depth) {
+        run(depth, null, "Classical");
+    }
+
+    /**
+     * Run the benchmark at the given depth with a specific evaluator (issue #206:
+     * evaluator selection in the benchmark path, so NNUE-mode NPS can be measured
+     * against the same 31-position suite/depth as the classical baseline).
      *
      * <p>A fresh {@link Searcher} is created for each position so that killer
      * moves, history heuristic, and correction-history tables are all zeroed —
@@ -88,11 +104,27 @@ public class BenchRunner {
      * The transposition table is also freshly allocated per position so
      * results are deterministic regardless of prior search history.
      *
-     * @param depth search depth; must be in [1, 127]
+     * <p>Search-time instrumentation (issue #216: eval latency, NNUE accumulator-
+     * update cost, PV/cut-node eval frequency) is always enabled here and reported
+     * in the summary — negligible cost relative to the rest of a fixed-depth bench
+     * run, and this is exactly the tool #216's instrumentation exists to feed.
+     *
+     * @param depth             search depth; must be in [1, 127]
+     * @param evaluatorFactory  supplies a fresh {@link EvaluatorStrategy} per
+     *                          position (a new instance each time, since NNUE's
+     *                          own evaluator is documented one-per-Searcher, never
+     *                          shared); {@code null} keeps Searcher's own default
+     *                          (Classical).
+     * @param evaluatorLabel    printed in the summary header (e.g. "Classical" or
+     *                          "NNUE (&lt;network-uuid&gt;)").
      */
-    public void run(int depth) {
+    public void run(int depth, Supplier<EvaluatorStrategy> evaluatorFactory, String evaluatorLabel) {
         long totalNodes = 0L;
-        long startMs    = System.currentTimeMillis();
+        long totalEvalNanos = 0L;
+        long totalAccumulatorNanos = 0L;
+        long totalPvNodeEvals = 0L;
+        long totalCutNodeEvals = 0L;
+        long startMs = System.currentTimeMillis();
 
         // Validate the entire suite before searching. An illegal FEN must be
         // removed from the source — silent runtime skips distort the NPS baseline.
@@ -104,8 +136,8 @@ public class BenchRunner {
         }
 
         System.out.printf(Locale.US,
-            "Bench   : depth %d | hash %d MB | %d positions%n",
-            depth, BENCH_HASH_MB, BENCH_FENS.length);
+            "Bench   : depth %d | hash %d MB | %d positions | evaluator %s%n",
+            depth, BENCH_HASH_MB, BENCH_FENS.length, evaluatorLabel);
 
         for (int i = 0; i < BENCH_FENS.length; i++) {
             // Fresh Searcher → killers, history, correction-history all zeroed.
@@ -113,12 +145,20 @@ public class BenchRunner {
             // that the default constructor creates, so there is no TT carry-over.
             Searcher searcher = new Searcher();
             searcher.setTranspositionTableSizeMb(BENCH_HASH_MB);
+            if (evaluatorFactory != null) {
+                searcher.setEvaluatorStrategy(evaluatorFactory.get());
+            }
+            searcher.setInstrumentationEnabled(true);
 
             Board board = new Board(BENCH_FENS[i]);
             board.setSearchMode(true);
 
             SearchResult result = searcher.searchDepth(board, depth);
             totalNodes += result.nodesVisited();
+            totalEvalNanos += result.evalNanos();
+            totalAccumulatorNanos += result.accumulatorNanos();
+            totalPvNodeEvals += result.pvNodeEvals();
+            totalCutNodeEvals += result.cutNodeEvals();
 
             System.out.printf(Locale.US,
                 "  %2d/%d  nodes=%-12d  depth=%d%n",
@@ -127,11 +167,16 @@ public class BenchRunner {
 
         long elapsedMs = Math.max(1L, System.currentTimeMillis() - startMs);
         long nps       = totalNodes * 1_000L / elapsedMs;
+        double elapsedNanos = elapsedMs * 1_000_000.0;
+        double evalPct = elapsedNanos > 0 ? 100.0 * totalEvalNanos / elapsedNanos : 0.0;
+        double accPct  = elapsedNanos > 0 ? 100.0 * totalAccumulatorNanos / elapsedNanos : 0.0;
 
         System.out.println();
         System.out.printf(Locale.US, "Nodes searched: %d%n", totalNodes);
         System.out.printf(Locale.US, "Time  : %d ms%n",      elapsedMs);
         System.out.printf(Locale.US, "NPS   : %d%n",         nps);
+        System.out.printf(Locale.US, "Eval time: %.1f%% | Accumulator-update time: %.1f%% | PV evals: %d | Cut evals: %d%n",
+            evalPct, accPct, totalPvNodeEvals, totalCutNodeEvals);
         System.out.flush();
     }
 }

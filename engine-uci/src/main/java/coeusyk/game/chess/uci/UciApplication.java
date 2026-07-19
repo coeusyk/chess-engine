@@ -133,6 +133,17 @@ public class UciApplication {
             }
         }
         UciApplication app = new UciApplication();
+        // Issue #206: evaluator selection in the benchmark path. Only meaningful
+        // combined with --bench; setting these on a normal UCI-session launch is
+        // harmless (the same fields setoption already assigns during a session).
+        for (int i = 0; i < args.length - 1; i++) {
+            if ("--eval-type".equals(args[i])) {
+                app.evalType = args[i + 1];
+            }
+            if ("--eval-file".equals(args[i])) {
+                app.evalFile = args[i + 1];
+            }
+        }
         for (int i = 0; i < args.length; i++) {
             if ("--bench".equals(args[i])) {
                 int depth = DEFAULT_BENCH_DEPTH;
@@ -853,7 +864,17 @@ public class UciApplication {
     }
 
     private void runBench(int depth) {
-        new BenchRunner().run(depth);
+        if (!"NNUE".equals(evalType)) {
+            new BenchRunner().run(depth);
+            return;
+        }
+        NnueNetwork network = resolveNnueNetworkForSearch();
+        if (network == null) {
+            // resolveNnueNetworkForSearch() already printed its own fallback info string.
+            new BenchRunner().run(depth);
+            return;
+        }
+        new BenchRunner().run(depth, () -> new NnueEvaluator(network), "NNUE (" + network.networkUuid() + ")");
     }
 
     private void printInfoLine(IterationInfo info) {
