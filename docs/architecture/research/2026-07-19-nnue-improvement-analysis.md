@@ -511,15 +511,21 @@ distinguishing experiments) point toward a search-behavior explanation specifica
 
 ## 11. Completed experiments
 
-None yet — this document defines the plan; §6 items are not yet executed as of 2026-07-19.
-This review pass (re-triage, #206 scope determination, search-diagnostics investigation,
-ranked-hypothesis expansion) is an analysis/documentation update, not an executed experiment.
+**Experiment 1 / Issue #206 — completed 2026-07-19 PM.** Native Windows, commit `afc26d8`,
+net `dfffd3da-...`, 31-position bench suite (post-#217 replacement, see §14.4): Classical
+311,669 NPS, NNUE 107,714 NPS. **Ratio 34.6% — the ≥40% gate fails.** Full decomposition,
+accumulator review, Vector API staged plan, and node-count investigation in §14 below.
+
+Prior to this: this review pass (re-triage, #206 scope determination, search-diagnostics
+investigation, ranked-hypothesis expansion) was an analysis/documentation update, not an
+executed experiment.
 
 ## 12. Future experiments
 
 See §6 in full; §8.2 lists the three recommended immediately-actionable issues (A, B, C) —
 all Infrastructure-tier. Everything else in §6/§7 stays a documented, sequenced future
-experiment pending a named prerequisite.
+experiment pending a named prerequisite. §14.7 adds two new recommended issues (D, E) from
+the 2026-07-19 PM performance investigation.
 
 ## 13. Research Debt
 
@@ -556,3 +562,272 @@ result from the actual roadmap work first.
   v1. The debt is that "40× more data" (ADR-001's own estimate) is a rough figure, not a
   validated threshold — nothing in this document establishes what data volume would actually
   justify revisiting that ADR.
+
+## 14. Post-#206/#217 performance investigation (2026-07-19 PM)
+
+Issue #206 (Experiment 1, §11) is now measured and closed with this section as its profiling
+report. This section separates **measured facts** (this run, or read directly from code),
+**supported hypotheses** (evidence-backed, not proven), and **estimates** (explicitly labeled,
+used only where no instrumentation exists) per Tasks 1–4 of the triggering investigation.
+
+### 14.1 The headline number, decomposed
+
+Measured (commit `afc26d8`, native Windows, 31-position suite):
+
+| | Classical | NNUE |
+|---|---|---|
+| Nodes | 73,089,246 | 251,406,555 |
+| Time | 234.509 s | 2334.018 s |
+| NPS | 311,669 | 107,714 |
+| ns/node | 3,208 | 9,284 |
+| Eval time % | 20.0% | 29.1% |
+| Accumulator time % | — | 36.3% |
+
+The 10x wall-clock ratio (2334.0/234.5 = 9.95x) is arithmetically **two independent factors**,
+and it matters which one a fix targets:
+
+```
+9.95x slower  =  3.44x more nodes (251.4M / 73.1M)  ×  2.89x slower per node (1 / 0.346)
+```
+
+**NPS is nodes/time — so reducing node count alone does not move the ≥40% gate.** Fewer nodes
+at proportionally less time leaves throughput roughly unchanged. Only per-node speed
+(evaluation + accumulator cost) moves NPS. This splits the roadmap (§14.7) into two levers that
+target different things:
+
+- **Lever A — per-node speed.** The only lever that can pass the #206 NPS gate.
+- **Lever B — node count.** Affects time-to-depth and real playing strength (and, per §2, is a
+  candidate explanation for the gauntlet/SPRT discrepancy) but is **invisible to the NPS gate**.
+  A recommendation to "reduce node count to pass #206" would be a category error — flagged here
+  explicitly so it isn't proposed later without this context.
+
+**Instrumentation-overhead caveat (measured effect, bounded, does not change the gate
+outcome):** issue #216's accumulator timing wraps `onMake`/`onUnmake` with `System.nanoTime()`
+— a real call, not free (historically ~20–30ns on Windows via `QueryPerformanceCounter`).
+NNUE pays 4 such calls per node (2 in `onMake`, 2 in `onUnmake`) that Classical's no-op hooks
+never execute at all (`EvaluatorStrategy`'s default lifecycle hooks, confirmed in code). At
+~25ns × 4 ≈ 100ns against NNUE's measured 9,284ns/node, this is a **~1% differential tax NNUE
+pays that Classical does not** — correcting for it moves the ratio from 34.6% to roughly 35%,
+still well below the 40% gate. Noted for completeness; not re-measured (a re-run was not
+performed, per the instruction to treat the 34.6% figure as established).
+
+### 14.2 Performance decomposition (Task 1)
+
+After eval (measured) and accumulator maintenance (measured, NNUE-only), the remainder:
+
+| | Classical | NNUE |
+|---|---|---|
+| Eval + accumulator | 20.0% (641 ns/node) | 65.4% (6,072 ns/node) |
+| **Remainder** | **80.0% (2,566 ns/node)** | **34.6% (3,212 ns/node)** |
+
+The remainder covers move generation, make/unmake, transposition-table probe/store, and core
+search-logic control flow (pruning-condition checks, LMR lookup, move-ordering sort,
+killer/history bookkeeping) — **all evaluator-agnostic code, identical for both runs.** That
+the two remainders are close in absolute per-node terms (2,566ns vs 3,212ns — NNUE's is ~25%
+higher, plausibly a mix of the instrumentation tax above, a different move mix from more
+captures/checks reached in a much larger tree, and ordinary run-to-run JIT/OS-scheduling noise)
+is itself informative: it means the shared code paths are *not* where the NNUE-specific cost
+lives, and are not what a performance PR here should target.
+
+No per-component timing exists inside this remainder (TT/move-gen/search-logic are not
+separately instrumented) — the following split is an **estimate**, grounded in code reading
+(bitboard move generation, array/bitboard make-unmake with no allocation per CLAUDE.md §3, a
+single-array-probe TT, insertion-sort move ordering) and general alpha-beta engine profiling
+priors, not a measurement:
+
+| Component | Estimated share of remainder | Basis |
+|---|---|---|
+| Move generation | ~30–35% | Bitboard-based, no allocation observed; typically one of the larger non-eval costs in engines without staged/lazy generation |
+| Make/unmake | ~15–25% | Array/bitboard mutation, zero allocation (confirmed by code read); cheap relative to move generation |
+| Transposition table | ~10–15% | Single hash-indexed array probe/store, no synchronization, no allocation observed |
+| Search-logic control flow | ~25–35% | Pruning-condition checks (`canApplyNullMove`/`canApplyRazoring`/`canApplyFutilityPruning`), LMR table lookup, move-ordering insertion sort, killer/history updates — executed at every node regardless of outcome |
+| Misc (JIT/OS scheduling, residual instrumentation) | ~5–10% | Not separately measurable from this codebase |
+
+If a future PR wants real percentages here, it needs new instrumentation (out of scope for
+this investigation, which was asked to assess, not implement).
+
+### 14.3 Accumulator investigation (Task 2)
+
+Reviewed: `NnueEvaluator.onMake`/`onUnmake`/`addFeature`/`subtractFeature`/`evaluate`
+(`NnueEvaluator.java:104-249`), `FeatureExtractor.forEachChange` (`FeatureExtractor.java:105-142`).
+
+**What's there:**
+- `onMake` does two full-width `System.arraycopy` calls (whiteAcc/blackAcc, push-forward to the
+  next stack slot) unconditionally, then applies the actual feature deltas via
+  `addFeature`/`subtractFeature` — plain scalar `for` loops over `width` (256) shorts.
+- A quiet move produces 1 remove + 1 add = 2 feature changes; each change touches both
+  perspectives, so 2 changes × 2 perspectives × 256 = 1,024 short read-modify-writes per quiet
+  move, versus 2 × 256 = 512 shorts for the arraycopy. Captures/en passant/castling touch more
+  (3–4 changes), so the delta-application cost is 1,536–2,048 elements, always ≥ the copy.
+- `ftWeights` is laid out row-major per feature (`feature*width + i`), so each feature update
+  touches a **contiguous** 256-short slice — already cache-friendly; no gather/scatter pattern
+  found.
+- No heap allocation in any of these hot-path methods (confirmed by code read and the class's
+  own documented invariant) — `debugMode`'s allocating path (`verifyAgainstRebuild`) is
+  gated behind a flag that defaults `false` and is not used in the bench runs measured here.
+
+**Candidate optimizations:**
+
+| Candidate | Effort | Expected speedup | Risk |
+|---|---|---|---|
+| SIMD-vectorize `addFeature`/`subtractFeature` (Vector API, `ShortVector`) | Medium | High — these are the actual per-node-cost drivers (1,024+ scalar ops/move) | Medium (incubator API, see §14.4) |
+| Restructure away from copy-forward (single mutable accumulator + reverse-delta on unmake, avoiding the arraycopy) | Low-Medium | **None — likely a regression.** Copy-forward costs 512 (copy) + 1,024 (deltas, quiet move) = 1,536 total across make; an in-place/reverse-delta design costs 1,024 (make) + 1,024 (unmake, to reverse) = 2,048 — the current design is already cheaper at this branching factor. **Not recommended.** | N/A — do not implement |
+| Reduce `hiddenWidth` (256→128) | Low (config change) | Would roughly halve per-move accumulator element count | High — PRD §5's own "last-resort mitigation," requires network retrain, directly trades off eval quality; explicitly out of scope until Vector API is tried first (matches PRD's stated ordering) |
+| Batch/lazy accumulator materialization (only rebuild at `evaluate()` time from a change log, à la some engines' "lazy update") | High | Unclear — trades a fixed per-node cost for a variable one proportional to tree depth since last materialization; would need its own experiment to know if it's net-positive here | High (architectural change, new correctness-verification surface) |
+
+The clear, low-risk win is the first row. The others are either a wash (copy-forward removal),
+a last resort (width reduction), or unproven without further study (lazy materialization) — not
+recommended to pursue ahead of Vector API.
+
+### 14.4 Vector API assessment (Task 3)
+
+**SIMD-friendly loops identified**, both already operating on contiguous `short[]` data:
+- `addFeature`/`subtractFeature` (`NnueEvaluator.java:237-249`): `acc[i] = acc[i] ± weights[base+i]` for `i` in `[0, 256)` — a pure elementwise short add/subtract, the textbook Vector API case.
+- `evaluate` (`NnueEvaluator.java:220-227`): `sum += clamp(us[i], qa) * outWeights[i] + clamp(them[i], qa) * outWeights[width+i]` — a clamped dot-product reduction. The `clamp` branch (`value < 0 ? 0 : min(value, qa)`) and the widening `short → long` accumulate are exactly the shapes that block C2's auto-vectorizer historically for short-typed reductions; **whether this loop is currently auto-vectorized was not verified** (would need `-XX:+PrintAssembly`/JIT-log inspection, not done here) — stated as an open question, not assumed either way. If unvectorized today, this is real, not just theoretical, headroom.
+
+**Portability / maintenance cost:** `jdk.incubator.vector` remains an incubator module through
+JDK 21 (this project's compiler target — `release 21` confirmed from the build output) and
+JDK 25 (the runtime used for all native-Windows measurements here). Incubator status means:
+requires `--add-modules jdk.incubator.vector` at both compile and run time; the API is not
+finalized and has had source-incompatible changes across JDK feature releases; and the
+engine-uci fat JAR's module-info shading (already triggering `maven-shade-plugin` warnings in
+this build) adds a second layer of packaging risk. PRD §5 already names "validated against
+scalar" as a requirement for any Vector API PR — that validation must include both a
+correctness check (bit-identical output vs. the scalar path) and a JDK-version compatibility
+check if the project ever changes its target JDK.
+
+**Staged plan** (no code written, scope/impact/portability/maintenance only):
+
+| Stage | Scope | Expected speedup | Portability | Maintenance cost |
+|---|---|---|---|---|
+| 1 | `addFeature`/`subtractFeature` only (the two hottest, simplest loops) | Rough, hedged: a 3–4x reduction in the scalar-loop portion of accumulator time is a defensible target for width-256 short-elementwise ops on `PREFERRED_SPECIES` hardware (AVX2/256-bit lanes = 16 shorts/op); translates to accumulator time dropping from 36.3% toward roughly 10–12% of NNUE wall-clock | Needs `--add-modules`; scalar fallback path required for platforms without a usable vector species | Low — two small, self-contained methods; scalar path kept as fallback/reference for the required validation |
+| 2 | `evaluate`'s dot-product loop | Similar order of magnitude, contingent on resolving the clamp/widening auto-vectorization question above; may need restructuring the clamp to a vector-friendly form (e.g. `VectorOperators.MAX`/`MIN` instead of a branch) before SIMD helps | Same as Stage 1 | Low-medium — touches the score-critical path, needs the mirror-symmetry + NNUE regression suites re-run (CLAUDE.md §4) |
+| 3 (only if 1+2 don't clear the gate) | Batch accumulator updates across sibling moves at the same ply, or explore `MemorySegment`-based weight layout for better vector alignment | Unclear, would need Stage 1/2's actual measured result to size | Same incubator caveats, larger surface | Medium-high — architectural, larger regression-test surface |
+
+**Rough combined sizing** (hedged, not a commitment): if Stage 1 alone drops accumulator time
+from 36.3% to ~12% of NNUE wall-clock, eval+accumulator falls from 65.4% to roughly 41%,
+implying total per-node time drops from 9,284ns to roughly 5,700–6,300ns — an NPS improvement
+on the order of 1.5–1.8x, which would move the ratio from 34.6% toward the ~52–62% range,
+plausibly clearing the 40% gate from Stage 1 alone. This is a rough, hedged estimate for
+prioritization only, not a guarantee — actual speedup depends on current auto-vectorization
+state (unverified, see above) and real hardware vector width.
+
+### 14.5 Node-count investigation (Task 4) — now measured, not just reasoned
+
+§2.1 Hypothesis 1 (evaluation-scale/pruning-margin mismatch) was previously graded "highest
+plausibility, no distinguishing experiment run." This investigation ran that experiment:
+existing counters (`betaCutoffs`, `firstMoveCutoffs`, `nullMoveCutoffs`, `futilitySkips`,
+`deltaPruningSkips`, `ttHitRate`) dumped for both evaluators on two positions (suite position 2
+and the new post-#217 position 15), same depth (13), same TT size (16MB), no code changes.
+
+**Measured:**
+
+| Position | Evaluator | Nodes | deltaPruningSkips | rate (skips/node) | futilitySkips | rate | firstMoveCutoff% | ttHitRate |
+|---|---|---|---|---|---|---|---|---|
+| 2 | Classical | 8,746,524 | 4,901,108 | 56.0% | 3,579,348 | 40.9% | 96.47% | 9.32% |
+| 2 | NNUE | 30,358,338 (3.47x) | 145,308 | **0.48%** | 8,590,080 | 28.3% | 94.87% | 7.38% |
+| 15 (new) | Classical | 1,073,429 | 427,321 | 39.8% | 499,070 | 46.5% | 94.75% | 12.16% |
+| 15 (new) | NNUE | 22,586,638 (21.0x) | 28,579 | **0.13%** | 3,986,918 | 17.7% | 90.15% | 5.91% |
+
+**Ranked hypotheses (updated from §2.1, most-to-least supported by this new measurement):**
+
+1. **(Confirmed mechanism, root cause of the scale mismatch itself still open) Delta pruning
+   and futility pruning trigger far less often under NNUE, relative to node-growth
+   opportunity.** Delta-pruning rate collapses ~100–300x (56.0%→0.48%, 39.8%→0.13%); futility
+   rate drops roughly by half (40.9%→28.3%, 46.5%→17.7%). Both are `staticEval + margin <=
+   alpha`-style checks against fixed, evaluator-agnostic cp constants
+   (`FUTILITY_MARGIN_DEPTH_1/2 = 150/300`, and delta pruning's own margin — both consumed
+   identically regardless of which `EvaluatorStrategy` produced `staticEval`). This is now a
+   **measured, mechanical fact**, not just a plausible reading of the code. What is *not*
+   established: whether the underlying cause is score compression (§5.1's `std(predicted) /
+   std(target)` metric, never computed for this net), a systematic scale/bias offset, or both —
+   that requires the calibration diagnostics §5.1 already specifies, not yet run.
+2. **(Secondary, smaller effect) Move-ordering quality is modestly, not dramatically, worse.**
+   First-move-cutoff% drops 96.47%→94.87% (pos 2) and 94.75%→90.15% (pos 15) — real, but far
+   smaller in magnitude than the pruning-rate collapse above. Move ordering's algorithm
+   (MVV-LVA/SEE for captures, killer/history for quiets) is identical code for both evaluators
+   and does not itself call `evaluate()` — this is a downstream symptom of TT-move and
+   history-heuristic quality (both transitively eval-quality-dependent), not an independent
+   mechanism, and not the dominant driver.
+3. **(Present, smaller magnitude) Null-move pruning also under-triggers, less severely than
+   delta pruning.** `nullMoveCutoffs` rate drops too (0.622%→0.256% pos 15) — consistent with
+   the same root cause (its gate also checks `staticEval >= beta`, `Searcher.java:1189`), but
+   the coarser beta-threshold gate is less sensitive to scale mismatch than delta pruning's
+   tighter margin.
+4. **TT hit rate is lower for NNUE** (9.32%→7.38%, 12.16%→5.91%) — assessed as a **consequence**
+   of the larger, more divergent tree (more distinct positions reached, naturally fewer repeats
+   per node), not an independent cause.
+5. **Not evidence of a bug.** A clean, monotonic-with-node-growth pattern across two unrelated
+   positions, fully explained by a single coherent mechanism (margin/scale mismatch), is
+   inconsistent with an implementation defect — consistent with §2.1 Hypothesis 6's existing
+   "argued against" status.
+
+This directly upgrades §2.1 Hypothesis 1 from "highest-plausibility, unconfirmed" to
+"mechanically confirmed root mechanism (fixed margins × NNUE score distribution), underlying
+scale/calibration cause still open." It does **not** by itself resolve §2's central anomaly
+(gauntlet vs. SPRT discrepancy) — that still needs Experiment 2 (fixed-depth gauntlet) — but it
+substantially narrows what a pruning-margin recalibration effort would need to fix.
+
+### 14.6 Benchmark methodology cross-reference
+
+For completeness in one place: the #206 measurement above used the **post-#217 benchmark**.
+Issue #217 found bench position 15 (`rnbq1k1r/pp1Pbppp/...`) was TT-history-dependent —
+non-monotonic node-count blowups and PV/score divergence driven by transposition-table size
+alone, independent of evaluator, violating the "roughly comparable search trees across
+evaluators" assumption an NPS benchmark depends on. It was replaced (commit `afc26d8`) with a
+canonical Stockfish-bench position, verified legal and TT-stable at 1/16/64MB before adoption,
+following the same precedent as commit `44aea1a`'s earlier `BENCH_FENS[8]` replacement. #217
+remains open as an independent search-instability investigation, decoupled from #206 — the
+benchmark accommodation did not wait on, and #206 did not wait on, #217's root cause.
+
+### 14.7 Updated roadmap and issue recommendations (Tasks 5–6)
+
+Building on §7's existing tiers — this adds the Lever A/B split as an explicit organizing axis,
+since §7 predates the #206 measurement.
+
+**Quick wins (Lever A, moves the NPS gate):**
+
+| Item | Impact | Effort | Dependencies | Success criteria |
+|---|---|---|---|---|
+| Vector API Stage 1 (`addFeature`/`subtractFeature`) | High — plausibly clears the 40% gate alone (§14.4 sizing) | Medium | None | Re-run `--bench` NNUE mode; NPS ratio ≥40%; bit-identical scores vs. scalar path on the existing NNUE regression/mirror-symmetry suites |
+
+**Medium effort (mixed):**
+
+| Item | Impact | Effort | Dependencies | Success criteria |
+|---|---|---|---|---|
+| Vector API Stage 2 (`evaluate` dot-product) | Medium, contingent on Stage 1 result and the auto-vectorization open question | Medium | Stage 1 landed and measured | NPS ratio measurement; bit-identical scores vs scalar |
+| NNUE-specific pruning-margin recalibration investigation (Lever B) | None on NPS; real playing-strength/time-to-depth impact; the most direct lead on §2's gauntlet/SPRT anomaly | Medium | §5.1's calibration diagnostics (signed mean error, compression ratio — no new infra, just running existing `validator.py` arrays through new aggregates) | A calibration report (bias/compression per §5.1) + a recommendation on whether margins need per-evaluator tuning, retraining for better calibration, or both |
+
+**Large architectural work (do not start without a Lever A/B result in hand first):**
+
+| Item | Impact | Effort | Dependencies | Success criteria |
+|---|---|---|---|---|
+| Vector API Stage 3 (batched updates / memory-layout rework) | Unclear | High | Stages 1–2 measured and insufficient | N/A until Stages 1–2 conclude |
+| Lazy/batched accumulator materialization | Unclear, possibly negative (§14.3) | High | Stage 1 Vector API result (may make this moot) | N/A |
+| Per-evaluator pruning-margin constants (if recalibration investigation confirms need) | Could resolve node-count blowup directly | High (touches tuned, SPRT-validated constants; needs its own Texel-style or SPRT re-tune, this time NNUE-aware) | Medium-effort recalibration investigation above | New margins Texel/SPRT-validated against NNUE specifically, node counts on the bench suite drop toward parity with Classical at the same depth |
+
+**Recommended new issues** (extending §8.2's A/B/C lettering; neither duplicates an existing
+open issue — checked against all open `phase-15`-labeled issues):
+
+- **Issue D — [#218](https://github.com/coeusyk/chess-engine/issues/218), Vector API for NNUE accumulator/evaluator hot loops.** Required by #206's own
+  acceptance criteria ("a follow-up issue is opened for Vector API work"). Scope: §14.4 Stage 1
+  (required), Stage 2 (if Stage 1 alone doesn't clear the gate). Validated-against-scalar per
+  PRD §5. Not Stage 3 (architectural, gated on Stages 1–2's result).
+- **Issue E — [#219](https://github.com/coeusyk/chess-engine/issues/219), NNUE evaluation-scale/pruning-margin calibration investigation.** Scope: run
+  §5.1's existing (unbuilt-on, not un-implemented — the arrays already exist in `validator.py`)
+  calibration diagnostics against the real net; compare against the measured pruning-rate
+  collapse in §14.5; recommend whether pruning margins need per-evaluator values, whether the
+  net needs recalibration (K-value/output-scale), or both. This is the direct continuation of
+  §2.1 Hypothesis 1 and the most promising lead on §2's central gauntlet/SPRT anomaly — Lever B,
+  does not move the NPS gate, but is the higher-value lead for actual playing strength.
+
+### 14.8 First implementation task (recommendation)
+
+**Vector API Stage 1** (Issue D/#218, `addFeature`/`subtractFeature` only). Reasoning: it is the only
+item that can pass #206's own gate (Lever A), it is mandated by #206's acceptance criteria
+regardless, it is low-risk (two small, self-contained, easily-validated methods with a required
+scalar fallback), and §14.4's hedged sizing suggests a real chance of clearing 40% from this
+step alone — cheaper to try first than committing to Stage 2 or the architecturally-larger
+Lever B work before knowing whether Stage 1 alone suffices. Issue E/#219 (Lever B) should start in
+parallel, not sequentially — it targets a different problem (real playing strength via §2's
+anomaly) that Stage 1 does not address either way.
