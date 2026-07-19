@@ -1039,3 +1039,125 @@ mechanism — measured, but the underlying scale/bias cause remains unconfirmed)
 work** (§15.2's proposed-but-unbuilt instrumentation, §15.4's conditional PRs 4-5). No wording
 in this section states a projection as if it were a measurement, or a hypothesis as if it were
 an established cause.
+
+## 16. Implementation readiness review (2026-07-19 PM, before #218 PR 1 starts)
+
+Most of this review's asks are already answered by §15 — this section cross-references rather
+than restating, and spends its effort on what's genuinely new: two implementation-correctness
+findings and the readiness verdict.
+
+### 16.1 Stage 1 acceptance criteria (four levels)
+
+- **Level 1 (microbenchmark)**: `NnueCorpusBenchmarkTest.perCategoryThroughputAndNps()` already
+  exists and measures exactly this (eval throughput, ev/s, both evaluators) — **but it defaults
+  to `TestNetworks.synthetic(8)`, not the production width of 256.** Width 8 is half a single
+  AVX2 short-lane (16 lanes) — a vectorized port measured at width 8 will understate, possibly
+  hide entirely, any real speedup. **Required**: re-parameterize this run (or the equivalent ad
+  hoc microbenchmark) to width 256 before trusting its number. Success criterion: measured
+  scalar-vs-vector speedup on `addFeature`/`subtractFeature` at width 256, compared against
+  §15.1's assumed 2–4x hedge.
+- **Level 2 (generated code)**: do not assume vectorization succeeded. Verification method:
+  `-XX:+UnlockDiagnosticVMOptions -XX:+PrintAssembly` (or `-XX:+TraceNewVectors`/JITWatch) on the
+  Stage 1 methods, confirming actual vector-width instructions (e.g. `vpaddw`/`ymm` registers on
+  AVX2) are emitted, not a silently-scalarized loop. Acceptable fallback: the scalar path
+  (already the entire current implementation) if a platform's JVM reports no usable species —
+  this must be an explicit, tested branch (§15.3), not an assumed no-op.
+- **Level 3 (benchmark)**: §15.5's plan verbatim — accumulator time %, eval time %, NPS, NPS
+  ratio, native Windows, median-of-5, compared against the same-session Classical re-measurement
+  (not the historical 311,669 figure).
+- **Level 4 (gate)**: §15.5's decision tree verbatim — median ratio ≥40% passes; below 40%
+  triggers the JIT-verification check (Level 2, in effect) before Stage 2 starts.
+
+### 16.2 Risk review — every §15.1 assumption reclassified
+
+| Assumption | Classification | Uncertainty |
+|---|---|---|
+| NNUE/Classical ns-per-node, eval%/accumulator% (§14.1) | **Measured** | None — this is the input, not a risk |
+| Gate-threshold ns/node, 9.95x decomposition | **Derived** | None — arithmetic on measured values |
+| A1: accumulator 90/10 accelerable/floor split | **Implementation-dependent** | Moderate — depends on how much of the 337ns floor (nanoTime tax + arraycopy) the actual implementation carries; not verified until Level 1/2 above run |
+| A2: eval 80/20 split, clamp/widen vectorizability | **JVM-dependent** (and implementation-dependent) | **Highest of all four** — rests on C2's current, unverified auto-vectorization behavior for this exact loop shape, stacked on an unprototyped clamp restructuring |
+| A3: 2–4x speedup on accelerable fraction | **JVM-dependent** | High — real Vector API speedups are JIT/hardware-species dependent, not portable across machines; the native-Windows measurement machine's actual vector width was never queried |
+| A4: remainder (movegen/make-unmake/TT/search-logic) unaffected | **Derived** (from code read, not an experiment) | Low — these are evaluator-agnostic code paths, confirmed by reading them |
+
+**Greatest uncertainty**: A2 (Stage 2's eval-loop assumption) and A3 (real-hardware speedup
+magnitude) — both JVM/hardware-dependent, neither measurable until Level 1/2 actually run. This
+reinforces §15.1's own framing: the Stage 1 projection is a plan to test, not a result to expect.
+
+### 16.3 Implementation review (Task 3) — determinism can be proven, not just hoped for
+
+Two findings correct in-place what was previously left as "needs validation":
+
+- **`addFeature`/`subtractFeature` are elementwise** (`acc[i] = acc[i] ± weights[base+i]`, no
+  cross-lane interaction) — a vectorized port is **bit-identical by construction**, not by luck,
+  since each output element depends on exactly one input pair regardless of lane grouping.
+- **`evaluate`'s reduction is integer summation**, hence associative — SIMD lane-grouping does
+  not change the sum's value (unlike floating-point reduction, where reassociation changes
+  rounding). This is a stronger basis for the "bit-identical vs. scalar" validation requirement
+  than an empirical hope: it's a property of the arithmetic, checkable by inspection.
+- **Stage 2 overflow trap** (new finding, not previously flagged): `evaluate`'s worst-case term
+  is `clamp(v, 127) * int16Weight` summed over 512 terms (256 width × 2 perspectives) — worst
+  case ≈ 127 × 32,767 × 512 ≈ 2.13 billion, within ~17M of `int32`'s ~2.147B ceiling. The
+  existing scalar code already defends against this deliberately (`long sum`, `NnueEvaluator.java:221`)
+  — **a Stage 2 vector reduction must accumulate in 64-bit too, not narrow to `int` lanes for
+  throughput.** This is a concrete implementation trap for whoever writes PR 4, not a
+  hypothetical.
+- **Recommended regression tests beyond the existing suite**: **none required for Stage 1.** The
+  existing `NnueIncrementalVsRebuildFuzzTest` (`assertArrayEquals` over random legal games,
+  every move type) and `NnueGoldenEvalTest` (exact int16 pinned values) already exercise exactly
+  the bit-identical-output property Stage 1 needs, given the elementwise/associative properties
+  above — this is a stronger, more precise finding than assuming new tests are needed. Stage 2
+  should additionally spot-check the overflow boundary above (a position engineered to approach
+  the 2.13B worst case) before relying on the existing suites alone.
+
+### 16.4 Benchmark reproducibility (Task 4)
+
+| Field | Value / requirement |
+|---|---|
+| Compile-target JDK | `release 21` (this project's Maven compiler target — confirmed from build output) |
+| Runtime JDK | Zulu 25.0.3 (`OpenJDK 25.0.3`, native Windows — the actual JVM every measurement in §14/§15 ran on) |
+| **Record both, do not collapse them** | The incubator-module risk (§14.4/§15.3) lives exactly in this gap — `jdk.incubator.vector` compiled against `release 21` and run on 25 is not a guaranteed-stable combination across an incubator API. PR 1's scaffolding work (species detection, `--add-modules` wiring) is precisely what de-risks this combination — it doesn't need a separate validation step; landing PR 1 *is* the validation. |
+| JVM flags | None currently documented for `--bench` (plain `java -jar`). Recommend recording the exact invocation verbatim in every benchmark report, as #206's completion comment already did. |
+| Warm-up strategy | None currently in `BenchRunner` (fresh `Searcher`/`Board` per position, no JIT warm-up loop) — consistent with treating `--bench` as a fixed-workload measurement, not a JIT-steady-state one; note this explicitly so a future reader doesn't assume warm-up happened. |
+| Number of runs | 5 (median-of-5, per §15.5 / the `44aea1a` precedent) |
+| Median calculation | Sort the 5 total-NPS values, take the middle one — matching `44aea1a`'s own stated methodology, not a mean (a mean is more sensitive to a single outlier run) |
+| Acceptable variance | ±~4% (the documented ±12,584 NPS around the historical 316,964 baseline) — not re-derived for the NNUE path specifically; if a future 5-run NNUE sample shows materially wider spread, that itself is a finding worth recording, not silently averaged over |
+| Reporting format | Match #206's closing comment format: commit hash, network UUID, JVM version (both compile and runtime per above), OS build, exact command, Classical NPS, NNUE NPS, ratio, pass/fail stated explicitly |
+
+### 16.5 Documentation review (Task 5)
+
+Re-audited §14–§15 against the six-category scheme (established fact / derived calculation /
+projection / assumption / supported hypothesis / future work). No statement found that presents
+a projection as an expected outcome or a hypothesis as an established cause — §15.1 already
+carries explicit "do not read as an expected outcome" language on its projection table, and
+§14.5 already separates its ranked hypotheses from the one "confirmed mechanism" finding within
+them. No further rewording needed beyond this session's own two new findings above, which are
+labeled inline (overflow trap: an implementation risk / future-work item for PR 4; determinism
+argument: a derived-from-arithmetic-properties finding, not a projection).
+
+### 16.6 Implementation readiness assessment (Task 6)
+
+**#218 is ready. Implementation can begin, starting with PR 1.**
+
+No blocking prerequisite remains. PR 1 (scaffolding — species detection, `--add-modules`
+wiring, build/CI changes, zero algorithm change per §15.4) is itself the validation of the last
+open unknown (compile/runtime JDK combination, §16.4) — proceeding and validating are the same
+step at this point, not two sequential ones.
+
+**Execution checklist, in order:**
+
+1. PR 1 — scaffolding: `--add-modules jdk.incubator.vector` wiring, vector-species detection,
+   build/CI changes. No algorithm change. Acceptance: existing full test suite passes unchanged.
+2. Re-parameterize `NnueCorpusBenchmarkTest` (or an equivalent ad hoc microbenchmark) to width
+   256 — required before PR 2's Level 1 measurement means anything (§16.1).
+3. PR 2 — `addFeature`/`subtractFeature` SIMD implementation. Validate: existing
+   `NnueIncrementalVsRebuildFuzzTest` + `NnueGoldenEvalTest` pass unchanged (§16.3 — sufficient,
+   no new test category needed); mirror-symmetry test passes (CLAUDE.md §4).
+4. Level 1 + Level 2 checks (§16.1): width-256 microbenchmark speedup measured; JIT/assembly
+   inspection confirms real vectorized instructions are emitted, not a silent scalar fallback.
+5. PR 3 — native-Windows measurement, median-of-5 (§16.4's reproducibility fields recorded in
+   full), Classical re-measured in the same session, gate pass/fail stated explicitly.
+6. Decision point (§15.5's tree): gate passes → stop here, recommend E-5; gate fails → verify
+   Level 2's vectorization actually landed as expected before starting PR 4 (Stage 2).
+7. (Conditional) PR 4 — `evaluate()` SIMD, with the 64-bit-accumulation requirement (§16.3)
+   designed in from the start, not retrofitted after an overflow is found.
+8. (Conditional) PR 5 — re-measurement, final gate determination.
