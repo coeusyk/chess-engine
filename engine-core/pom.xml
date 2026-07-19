@@ -41,6 +41,14 @@
                 <version>3.13.0</version>
                 <configuration>
                     <release>${maven.compiler.release}</release>
+                    <!-- Issue #218 PR 1: jdk.incubator.vector is not in the default root-module
+                         set for classpath builds targeting a release (incubator modules are
+                         excluded from ALL-DEFAULT-MODULES); this flag is required to compile
+                         VectorCapabilities and any future Vector API code against it. -->
+                    <compilerArgs>
+                        <arg>--add-modules</arg>
+                        <arg>jdk.incubator.vector</arg>
+                    </compilerArgs>
                 </configuration>
             </plugin>
             <plugin>
@@ -52,6 +60,10 @@
                     <systemPropertyVariables>
                         <benchmark.depth>${benchmark.depth}</benchmark.depth>
                     </systemPropertyVariables>
+                    <!-- Same reasoning as the compiler plugin above: the forked test JVM must
+                         also resolve jdk.incubator.vector for VectorCapabilitiesTest to observe
+                         a real (not vacuously-absent) module. -->
+                    <argLine>--add-modules jdk.incubator.vector</argLine>
                 </configuration>
             </plugin>
         </plugins>
