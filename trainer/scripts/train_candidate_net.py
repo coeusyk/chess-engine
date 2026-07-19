@@ -26,10 +26,12 @@ script's one piece of real logic; everything else is composition of existing sta
 from __future__ import annotations
 
 import argparse
+import dataclasses
+import json
 import random
 from collections import Counter
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import torch
 
@@ -134,6 +136,8 @@ def train_quantize_export(
     batch_size: int,
     learning_rate: float,
     output_dir: Path,
+    held_out_records: Optional[List[PositionRecord]] = None,
+    log_interval: int = 100,
 ) -> Tuple[ExportResult, ClippingBoundaryReport]:
     # No seed_everything() call here -- train() already owns seeding internally
     # (single-owner RNG seeding, per reproducibility/seeding.py's own docstring).
@@ -151,8 +155,16 @@ def train_quantize_export(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = output_dir / "checkpoint.pt"
-    train_result = train(config, training_records, checkpoint_path)
+    train_result = train(
+        config, training_records, checkpoint_path, held_out_records=held_out_records, log_interval=log_interval
+    )
     print(f"final training loss: {train_result['losses'][-1]:.6f}")
+
+    diagnostics_path = output_dir / "training_diagnostics.json"
+    diagnostics_path.write_text(
+        json.dumps([dataclasses.asdict(d) for d in train_result["diagnostics"]], indent=2)
+    )
+    print(f"training diagnostics ({len(train_result['diagnostics'])} entries): {diagnostics_path}")
 
     checkpoint = torch.load(checkpoint_path, weights_only=False)
     canonical = checkpoint_to_canonical(checkpoint)
@@ -187,6 +199,11 @@ def main() -> int:
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--learning-rate", type=float, default=0.01)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--log-interval", type=int, default=100,
+        help="Log a training diagnostic entry (train loss, held-out loss, LR, gradient norm) "
+             "every N steps, and always at the final step (issue #215).",
+    )
     args = parser.parse_args()
 
     training_records, held_out_records, dataset_composition = combine_and_split(
@@ -203,6 +220,8 @@ def main() -> int:
         batch_size=args.batch_size,
         learning_rate=args.learning_rate,
         output_dir=args.output_dir,
+        held_out_records=held_out_records,
+        log_interval=args.log_interval,
     )
     print(f"clipping report: {report}")
     print(f"exported {result.nnue_path} + {result.manifest_path} (uuid {result.network_uuid})")

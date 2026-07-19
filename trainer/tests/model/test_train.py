@@ -99,3 +99,42 @@ def test_load_config_reads_all_fields_from_json(tmp_path):
     )
     config = load_config(config_path)
     assert config == TINY_CONFIG
+
+
+def test_train_without_held_out_records_logs_diagnostics_with_no_held_out_loss(tmp_path):
+    result = train(TINY_CONFIG, _records(), tmp_path / "checkpoint.pt", log_interval=1)
+
+    assert len(result["diagnostics"]) == TINY_CONFIG.steps  # log_interval=1: every step
+    for diagnostic in result["diagnostics"]:
+        assert diagnostic.held_out_loss is None
+        assert diagnostic.learning_rate == TINY_CONFIG.learning_rate
+        assert diagnostic.gradient_norm >= 0.0
+
+
+def test_train_with_held_out_records_populates_held_out_loss(tmp_path):
+    result = train(TINY_CONFIG, _records(), tmp_path / "checkpoint.pt", held_out_records=_records(), log_interval=1)
+
+    assert all(d.held_out_loss is not None for d in result["diagnostics"])
+
+
+def test_train_log_interval_controls_diagnostic_count_and_always_logs_final_step(tmp_path):
+    config = TrainingConfig(**{**vars(TINY_CONFIG), "steps": 5})
+    result = train(config, _records(), tmp_path / "checkpoint.pt", log_interval=2)
+
+    # steps are 0-indexed: logged at step 1 (2nd step), 3 (4th step), and 4 (final, steps-1)
+    assert [d.step for d in result["diagnostics"]] == [1, 3, 4]
+
+
+def test_train_diagnostics_do_not_affect_reproducibility(tmp_path):
+    # Same assertion as test_train_is_reproducible_given_the_same_seed, but with
+    # held_out_records + a tight log_interval exercised -- confirms the new
+    # instrumentation (gradient-norm read, intermediate evaluate_held_out calls)
+    # doesn't perturb the training RNG stream or resulting weights.
+    train(TINY_CONFIG, _records(), tmp_path / "a.pt", held_out_records=_records(), log_interval=1)
+    train(TINY_CONFIG, _records(), tmp_path / "b.pt", held_out_records=_records(), log_interval=1)
+
+    checkpoint_a = torch.load(tmp_path / "a.pt", weights_only=False)
+    checkpoint_b = torch.load(tmp_path / "b.pt", weights_only=False)
+    for key in checkpoint_a["model_state_dict"]:
+        assert torch.equal(checkpoint_a["model_state_dict"][key], checkpoint_b["model_state_dict"][key])
+    assert checkpoint_a["final_loss"] == checkpoint_b["final_loss"]

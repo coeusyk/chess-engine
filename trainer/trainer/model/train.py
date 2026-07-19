@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Optional
 
 import torch
 
@@ -41,6 +41,20 @@ from trainer.reproducibility import capture, seed_everything
 # the same sigmoid-target code path as eval_cp labels rather than a special-cased
 # branch in the loss itself.
 MATE_EQUIVALENT_CP = 3000.0
+
+
+@dataclass(frozen=True)
+class TrainingDiagnostic:
+    """Issue #215: one logged checkpoint in the training-loss/held-out-loss series.
+    `held_out_loss` is `None` when `train()` isn't given held-out records to
+    evaluate against (this field is optional at the call site, not always populated).
+    """
+
+    step: int
+    train_loss: float
+    learning_rate: float
+    gradient_norm: float
+    held_out_loss: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -84,10 +98,38 @@ def target_cp(label: PositionLabel) -> float:
     )
 
 
-def train(config: TrainingConfig, records: Iterable[PositionRecord], checkpoint_path: Path) -> Dict[str, Any]:
+def _gradient_norm(model: NnueNet) -> float:
+    """Read-only L2 norm of the gradients `loss.backward()` just populated -- reads
+    `.grad` without modifying it, so this has zero effect on the optimizer step that
+    follows. Issue #215: a standard optimizer-pathology signal (blowup/collapse),
+    more direct than loss-curve shape alone.
+    """
+    total = 0.0
+    for p in model.parameters():
+        if p.grad is not None:
+            total += p.grad.detach().norm(2).item() ** 2
+    return total**0.5
+
+
+def train(
+    config: TrainingConfig,
+    records: Iterable[PositionRecord],
+    checkpoint_path: Path,
+    held_out_records: Optional[Iterable[PositionRecord]] = None,
+    log_interval: int = 100,
+) -> Dict[str, Any]:
     """Runs `config.steps` optimization steps over `records` (cycled deterministically,
     see module docstring) and writes a checkpoint to `checkpoint_path`. Returns the
-    per-step loss history.
+    per-step loss history, plus (issue #215) a `diagnostics` series logged every
+    `log_interval` steps (and always at the final step): train loss, learning rate,
+    gradient norm, and -- only if `held_out_records` is given -- held-out loss.
+
+    Passing `held_out_records=None` (the default) reproduces this function's
+    pre-#215 behavior exactly aside from the always-present `diagnostics` list:
+    no held-out evaluation is performed inside the loop, matching the existing
+    scope boundary that held-out validation is a separate step from training
+    (module docstring). No change to the optimization loop itself -- model
+    weights, RNG consumption, and the returned `losses` list are unaffected.
     """
     seed_everything(config.seed)
 
@@ -97,10 +139,12 @@ def train(config: TrainingConfig, records: Iterable[PositionRecord], checkpoint_
     records = list(records)
     if not records:
         raise ValueError("train() requires at least one record")
+    held_out_records = list(held_out_records) if held_out_records is not None else None
 
     losses: List[float] = []
+    diagnostics: List[TrainingDiagnostic] = []
     cursor = 0
-    for _ in range(config.steps):
+    for step in range(config.steps):
         batch_records = []
         for _ in range(config.batch_size):
             batch_records.append(records[cursor % len(records)])
@@ -115,10 +159,29 @@ def train(config: TrainingConfig, records: Iterable[PositionRecord], checkpoint_
         predicted_prob = texel_sigmoid(predicted_cp, config.k)
         loss = torch.mean((predicted_prob - targets) ** 2)
         loss.backward()
+        gradient_norm = _gradient_norm(model)
         optimizer.step()
         model.clip_ft_weights_()
 
         losses.append(loss.item())
+
+        if (step + 1) % log_interval == 0 or step == config.steps - 1:
+            held_out_loss = None
+            if held_out_records is not None:
+                # Deferred import: validator.py imports target_cp/texel_sigmoid from
+                # this module, so a module-level import here would be circular.
+                from trainer.validation.validator import evaluate_held_out
+
+                held_out_loss = evaluate_held_out(model, held_out_records, config.k).held_out_loss
+            diagnostics.append(
+                TrainingDiagnostic(
+                    step=step,
+                    train_loss=losses[-1],
+                    learning_rate=config.learning_rate,
+                    gradient_norm=gradient_norm,
+                    held_out_loss=held_out_loss,
+                )
+            )
 
     metadata = capture(seed=config.seed, config=asdict(config))
     torch.save(
@@ -132,4 +195,4 @@ def train(config: TrainingConfig, records: Iterable[PositionRecord], checkpoint_
         checkpoint_path,
     )
 
-    return {"losses": losses}
+    return {"losses": losses, "diagnostics": diagnostics}
