@@ -106,6 +106,27 @@ track complete.
 | E-5 | [#205](https://github.com/coeusyk/chess-engine/issues/205) | SPRT run(s) against the three release gates + release report | E-4 | CLAUDE.md §5, `docs/sprt-guidelines.md`, PRD §4 "Network Release Reports" |
 | E-6 | [#206](https://github.com/coeusyk/chess-engine/issues/206) | Performance gate: NNUE-mode bench + profiling; Vector API **only if the gate fails** | E-3 (can run parallel to E-4/E-5) | PRD §5 Phased Rollout row E; CLAUDE.md §2 bench command |
 
+**E-6/benchmark decoupling finding (2026-07-19):** the bench suite's position 15
+(`BenchRunner.BENCH_FENS[15]`) was found to be TT-history-dependent — stable at 1MB/64MB
+TT, but non-monotonically unstable (order-of-magnitude node-count swings, diverging
+PVs/scores) at several intermediate TT sizes, confirmed independent of E-6's own scope.
+This violates the "roughly comparable search trees across evaluators" assumption an NPS
+benchmark depends on, so it was tracked as its own issue (#217) and **decoupled from
+E-6**: the benchmark accommodation (position replacement, same precedent as commit
+`44aea1a`) does not wait on #217's root-cause investigation, and E-6 does not wait on
+#217 either. #217 remains open as an independent search-behavior investigation.
+
+With position 15 replaced, E-6's native-Windows measurement (commit `afc26d8`, JVM
+OpenJDK 25.0.3 Zulu, native Windows 10.0.26200.8894): Classical 311,669 NPS, NNUE
+107,714 NPS — **ratio 34.6%, below the ≥40% gate.** Per this row's own conditional
+trigger, Vector API work is now in scope for a follow-up PR; it was explicitly out of
+scope for E-6 itself before this measurement existed. NNUE's eval-time (29.1%) +
+accumulator-update time (36.3%) together account for ~65% of total wall time, and
+NNUE's own node count across the suite (251M) is ~3.4x Classical's (73M) at the same
+fixed depth — both worth carrying into whatever PR takes on the Vector API work, but
+neither diagnosed further here (out of scope for E-6, which is a measurement gate, not
+a performance-tuning PR).
+
 ### Track C — Self-play data generation (Stage 3, per DR-E1)
 
 **Track C complete when:** the first reproducible self-play corpus has been generated
@@ -235,10 +256,13 @@ E-4/E-5, per the Bootstrap exception), and **E-7+E-8+E-9 must all exist before E
       reuse `tools/match.ps1`/`tools/sprt.ps1` unchanged — these already exist and are
       mature (used throughout Phase 13/14's classical-eval tuning); output the exact
       `sprt.ps1` invocation and stop, per CLAUDE.md §5.
-- [ ] **E-6**: Run `--bench` in NNUE mode; compare against the existing 316,964 NPS
+- [x] **E-6**: Run `--bench` in NNUE mode; compare against the existing 316,964 NPS
       baseline — but only on native Windows (WSL2 gate waived, CLAUDE.md §3). Vector
       API work is explicitly conditional: do not start it unless E-6's own measurement
       shows the performance gate actually fails.
+      **Result (2026-07-19, commit `afc26d8`, post-#217 benchmark accommodation):**
+      Classical 311,669 NPS vs. NNUE 107,714 NPS — ratio 34.6%, **gate fails**. Vector
+      API work is now in scope for a follow-up PR (see the decoupling finding above).
 - [ ] **E-7** (grilled 2026-07-14 — field types are decided, not left to PR-start
       judgment): Add to `SHARD_DTYPE`:
       - `wdl`: `f4` (float32) + `has_wdl` (bool) — a probability-space scalar, matching
