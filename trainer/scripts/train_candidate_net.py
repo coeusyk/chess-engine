@@ -34,6 +34,7 @@ from typing import List, Tuple
 import torch
 
 from trainer.contracts import DatasetProvider, PositionRecord
+from trainer.dataset import balance_phases, deduplicate, phase_of
 from trainer.dataset.stockfish_provider import StockfishLabeledProvider
 from trainer.dataset.text_provider import TextDatasetProvider
 from trainer.export.canonical import checkpoint_to_canonical
@@ -54,6 +55,34 @@ def _load_all(provider: DatasetProvider) -> List[PositionRecord]:
     for shard in provider.shards():
         records.extend(provider.positions(shard))
     return records
+
+
+def report_dataset_quality(records: List[PositionRecord]) -> None:
+    """Issue #214 (Stage 1, reporting only): duplicate rate, phase distribution, and
+    side-to-move distribution over the pre-split Stage1+Stage2 union. Reuses
+    transform.py's existing deduplicate/phase_of/balance_phases (#193) -- never wired
+    into the real training pipeline until now. Read-only: does not filter, reorder,
+    or otherwise alter `records`, and its output is not consumed by the caller.
+    """
+    total = len(records)
+    unique_count = sum(1 for _ in deduplicate(records))
+    duplicate_count = total - unique_count
+    duplicate_pct = 100.0 * duplicate_count / total if total else 0.0
+
+    phase_counts = Counter(phase_of(r.fen) for r in records)
+    side_to_move_counts = Counter(r.fen.split(" ")[1] for r in records)
+
+    min_phase_count = min(phase_counts.values()) if phase_counts else 0
+    balanced_count = sum(1 for _ in balance_phases(min_phase_count)(records)) if min_phase_count else 0
+
+    print(f"dataset quality report: total={total}")
+    print(f"  duplicates: count={duplicate_count} rate={duplicate_pct:.2f}%")
+    print(f"  phase distribution: {dict(phase_counts)}")
+    print(f"  side-to-move distribution: {dict(side_to_move_counts)}")
+    print(
+        f"  if phase-balanced at smallest bucket ({min_phase_count}): {balanced_count} records "
+        "(informational only -- not applied to training data)"
+    )
 
 
 def combine_and_split(
@@ -77,6 +106,8 @@ def combine_and_split(
     tagged += [(r, stage2.metadata().identifier, "sf-labeled") for r in _load_all(stage2)]
     if not tagged:
         raise ValueError("combine_and_split found no records in either stage1_dir or stage2_dir")
+
+    report_dataset_quality([r for r, _, _ in tagged])
 
     random.Random(seed).shuffle(tagged)
 
