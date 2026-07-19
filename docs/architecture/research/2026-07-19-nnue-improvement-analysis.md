@@ -704,13 +704,10 @@ check if the project ever changes its target JDK.
 | 2 | `evaluate`'s dot-product loop | Similar order of magnitude, contingent on resolving the clamp/widening auto-vectorization question above; may need restructuring the clamp to a vector-friendly form (e.g. `VectorOperators.MAX`/`MIN` instead of a branch) before SIMD helps | Same as Stage 1 | Low-medium — touches the score-critical path, needs the mirror-symmetry + NNUE regression suites re-run (CLAUDE.md §4) |
 | 3 (only if 1+2 don't clear the gate) | Batch accumulator updates across sibling moves at the same ply, or explore `MemorySegment`-based weight layout for better vector alignment | Unclear, would need Stage 1/2's actual measured result to size | Same incubator caveats, larger surface | Medium-high — architectural, larger regression-test surface |
 
-**Rough combined sizing** (hedged, not a commitment): if Stage 1 alone drops accumulator time
-from 36.3% to ~12% of NNUE wall-clock, eval+accumulator falls from 65.4% to roughly 41%,
-implying total per-node time drops from 9,284ns to roughly 5,700–6,300ns — an NPS improvement
-on the order of 1.5–1.8x, which would move the ratio from 34.6% toward the ~52–62% range,
-plausibly clearing the 40% gate from Stage 1 alone. This is a rough, hedged estimate for
-prioritization only, not a guarantee — actual speedup depends on current auto-vectorization
-state (unverified, see above) and real hardware vector width.
+**Correction (2026-07-19 PM, superseding the sizing below):** an earlier version of this
+paragraph stated Stage 1 alone reaches ~52–62%. That was an arithmetic error — the 52–62%
+figure actually requires Stage 2 as well (it implicitly assumed eval time also shrinks, which
+only Stage 2 touches). The corrected, fully-derived model is in §15.1.
 
 ### 14.5 Node-count investigation (Task 4) — now measured, not just reasoned
 
@@ -826,8 +823,219 @@ open issue — checked against all open `phase-15`-labeled issues):
 **Vector API Stage 1** (Issue D/#218, `addFeature`/`subtractFeature` only). Reasoning: it is the only
 item that can pass #206's own gate (Lever A), it is mandated by #206's acceptance criteria
 regardless, it is low-risk (two small, self-contained, easily-validated methods with a required
-scalar fallback), and §14.4's hedged sizing suggests a real chance of clearing 40% from this
-step alone — cheaper to try first than committing to Stage 2 or the architecturally-larger
-Lever B work before knowing whether Stage 1 alone suffices. Issue E/#219 (Lever B) should start in
-parallel, not sequentially — it targets a different problem (real playing strength via §2's
-anomaly) that Stage 1 does not address either way.
+scalar fallback), and §15.1's corrected sizing suggests a real, though thin-margin, chance of
+clearing 40% from this step alone — cheaper to try first than committing to Stage 2 or the
+architecturally-larger Lever B work before knowing whether Stage 1 alone suffices. Issue E/#219
+(Lever B) should start in parallel, not sequentially — it targets a different problem (real
+playing strength via §2's anomaly) that Stage 1 does not address either way.
+
+## 15. Pre-implementation validation pass (2026-07-19 PM, before #218/#219 begin)
+
+Requested before any Vector API or calibration work starts: strengthen the plan with
+measurement design and a corrected performance model. No code changed in this section — all of
+§14's numbers stand except the Stage 1 sizing error corrected below.
+
+### 15.1 Refined Stage 1 performance model (Task 1)
+
+**Measured** (repeated from §14.1, no new measurement here):
+
+| Quantity | Value |
+|---|---|
+| NNUE ns/node | 9,284 |
+| NNUE eval time | 2,702 ns/node (29.1%) |
+| NNUE accumulator time | 3,370 ns/node (36.3%) |
+| NNUE remainder | 3,212 ns/node (34.6%) |
+| Classical NPS | 311,669 |
+
+**Derived** (arithmetic on the measured values above, no assumptions):
+- Gate threshold in ns/node terms: to reach exactly 40% of Classical NPS (124,668 NPS), NNUE
+  needs ≤ 8,021 ns/node.
+
+**Assumptions** (each stated explicitly; this is where §14.4's error lived — a prior draft
+applied a speedup to the *entire* eval+accumulator bucket without separating what Stage 1
+actually touches):
+- **A1 (moderate confidence)**: the 3,370 ns/node accumulator bucket splits into a
+  non-accelerable floor (~337 ns/node — the `System.nanoTime()` instrumentation tax estimated in
+  §14.1, plus `System.arraycopy`, already a JIT intrinsic Stage 1 cannot improve on) and an
+  accelerable portion (~3,033 ns/node — the scalar `addFeature`/`subtractFeature` loops, Stage
+  1's actual target). This 90/10 split is **not measured** — no per-sub-component timing exists
+  inside the accumulator bucket; it is inferred from which operations exist in the code
+  (§14.3), not derived from an experiment.
+- **A2 (weaker — Stage 2 only)**: the 2,702 ns/node eval bucket splits similarly into a ~540
+  ns/node floor (function-call overhead, output-bias add, final integer scaling — plus the
+  `clamp` branch's cost if it resists vectorization) and ~2,162 ns/node accelerable. **Weaker
+  than A1** because whether the eval loop is even auto-vectorized *today* is unverified (§14.4),
+  and the `clamp`/widening-accumulate pattern is a known historical vectorization blocker that
+  may need restructuring before any speedup applies at all — Stage 2's floor could be larger
+  than assumed here if that restructuring doesn't fully succeed.
+- **A3**: a Vector API speedup of 2–4x on the accelerable fraction (not the whole bucket) is a
+  defensible hedge for width-256 short-elementwise operations on 256-bit-lane hardware (16
+  shorts/op theoretical) — real-world JIT/Vector-API speedups typically land well below
+  theoretical peak, so 2–4x, not 16x, is used throughout.
+- **A4**: move generation/make-unmake/TT/search-logic (the 3,212 ns/node remainder) is
+  unaffected by either stage — this is a strong assumption, not weak (that code is evaluator-
+  agnostic, confirmed by reading it in §14.2), included here only for completeness.
+
+**Upper-bound estimates** (derived from measured + stated assumptions — ranges, not single
+numbers; **do not read any of these as an expected outcome**):
+
+| Speedup (S) | Stage 1 alone (accum. only) | Stage 1 + Stage 2 (both) |
+|---|---|---|
+| 2x | 7,768 ns/node → 128,733 NPS → **41.3%** | 6,687 ns/node → 149,543 NPS → **48.0%** |
+| 3x | 7,262 ns/node → 137,701 NPS → **44.2%** | 5,821 ns/node → 171,791 NPS → **55.1%** |
+| 4x | 7,009 ns/node → 142,674 NPS → **45.8%** | 5,388 ns/node → 185,598 NPS → **59.6%** |
+
+**Corrected headline**: under stated assumptions, **Stage 1 alone projects to roughly 41–46%**
+— not the previously-stated 52–62%, which actually requires Stage 2 as well. Solving the
+threshold equation directly: Stage 1 alone needs only **S ≈ 1.71x** on the accelerable fraction
+to cross exactly 40% — a modest speedup relative to the 2–4x hedge range, which is *why* a pass
+is plausible, but the projected margin above the gate (1–6 percentage points at the low end of
+the hedge) is thin enough that **this is a projection to test, not a result to expect.** If A1's
+90/10 split is optimistic (i.e., the accelerable fraction is smaller than assumed, or the floor
+larger), the low end of this range could fail the gate even with real Stage 1 work landed.
+
+**Weakest assumption, flagged explicitly**: A2 (Stage 2's floor/accelerability), because it
+rests on an unverified claim (current auto-vectorization state) stacked on an unprototyped fix
+(restructuring the clamp). Stage 1's own A1 is comparatively firmer — the accumulator's
+operations are simpler and better understood from the code read alone.
+
+### 15.2 Measurement-first plan for #219 (Task 2)
+
+Before any pruning-margin change, characterize *how* NNUE's score distribution differs from
+Classical's. Split by what already exists vs. what's genuinely new, so #219's effort estimate is
+honest:
+
+**Already exists — aggregate only, zero new code:**
+
+| Metric | Existing source |
+|---|---|
+| Futility-skip rate | `futilitySkips` / nodes (`SearchResult`, #216) — already used in §14.5 |
+| Delta-pruning-skip rate | `deltaPruningSkips` / nodes — already used in §14.5 |
+| Null-move-cutoff rate | `nullMoveCutoffs` / nodes — already used in §14.5 |
+| LMR-application rate | `lmrApplications` / nodes — tracked, not yet compared NNUE-vs-Classical in §14.5 (included here as a control: §2.1 Hypothesis 5 predicts *no* cp-scale coupling, so this rate should differ far less than the pruning rates above — worth confirming, not just assuming) |
+| First-move-cutoff % | `firstMoveCutoffs`/`betaCutoffs` — already used in §14.5 |
+| TT hit rate | already used in §14.5 |
+
+**Genuinely new — requires instrumentation, not yet built:**
+
+| Metric | Where it would hook in | Notes |
+|---|---|---|
+| Score histogram / mean / median / stddev / percentiles | New: sample `staticEval` at the `evaluate()` call site (`Searcher.java:897`) | **Must capture both raw and corrected values separately** — delta pruning gates on the *raw*, uncorrected `standPat` from `evaluate()` inside quiescence (`Searcher.java:1593`), while futility/razoring gate on the correction-history-adjusted `staticEval` (`Searcher.java:909`). A single histogram of only one would be unable to explain both of §14.5's measured pruning-rate collapses — this is not optional given what's already been measured. |
+| Fraction of scores within common pruning windows (e.g. within ±150/±300/±600cp of alpha/beta — the existing margin constants) | Derived from the histogram above, bucketed against `FUTILITY_MARGIN_DEPTH_1/2`/`RAZOR_MARGIN_DEPTH_1/2` | No new mechanism beyond the histogram; a specific bucketing of it |
+| Aspiration fail-high / fail-low rate | `searchRootWithAspiration`'s local `failLow`/`failHigh` booleans (`Searcher.java:681-682`) — computed every iteration, discarded, never counted | One-line counter addition each, confirming §2.1's own note that this is "already tracked internally, exposing it is a one-line change" |
+| Null-move / futility / delta-pruning / razor **attempt** counts (as opposed to the existing **success/skip** counts) | `canApplyNullMove`/`canApplyFutilityPruning`/`canPruneLosingCapture`/`canApplyRazoring` call sites | Needed to turn the existing raw counts into *rates against opportunity*, not just rates against total nodes — e.g. "of the times a futility check was even attempted, how often did it fire" is a cleaner signal than "futility skips per node," which conflates attempt frequency with success frequency |
+| LMR trigger distribution (reduction amount, not just application count) | `canApplyLmr` call site + `lmrReductions` table lookup (`Searcher.java:1069-1073`) | Lower priority — §2.1 Hypothesis 5 already notes `canApplyLmr` has no direct dependency on `staticEval`/depth-independent cp-scale (confirmed again by this session's code read: its condition is `depth`/`moveIndex`/quiet/killer/TT-move/check flags only) — included per the requested list, but not expected to show the same signal as the margin-gated techniques |
+
+**Explicitly not proposed here**: any change to `FUTILITY_MARGIN_DEPTH_1/2`, `RAZOR_MARGIN_DEPTH_1/2`,
+`ASPIRATION_INITIAL_DELTA_CP`, or the correction-history constants. This section is
+instrumentation design only, per the task's own constraint.
+
+**What the output would determine**: whether the measured pruning-rate collapse (§14.5) is
+explained by score *compression* (narrow `std(predicted)`, staying inside pruning windows too
+often to trigger margin-based cuts), a systematic *bias/offset* (scores shifted in one direction
+relative to alpha/beta), or something else — directly answering §219's own acceptance criteria,
+using only the instrumentation proposed above plus §5.1's already-specified training-side
+calibration metrics (signed mean error, compression ratio) run against the real net.
+
+### 15.3 Vector API scope re-confirmation (Task 3)
+
+**Highest-ROI confirmation**: `addFeature`/`subtractFeature` remain the correct Stage 1 target.
+Re-confirmed against §15.1's model — they are the entire accelerable portion of the single
+largest bucket (36.3% accumulator time) that Stage 1 can address without also solving Stage 2's
+unverified auto-vectorization/clamp-restructuring question.
+
+- **Memory access pattern**: contiguous. `ftWeights[feature*width .. feature*width+width-1]` is
+  a sequential 256-short (512-byte) slice per feature update (confirmed §14.3); `whiteAcc[sp]`/
+  `blackAcc[sp]` are likewise contiguous `short[256]` arrays. No gather/scatter needed — a
+  straight sequential vector load/store pattern, the simplest case for the Vector API.
+- **Expected vector width**: `width=256` (production net, confirmed via `nets/dfffd3da-...json`
+  `hidden_width: 256`) divides evenly by every common short-lane species (128-bit=8 lanes,
+  256-bit=16 lanes, 512-bit=32 lanes) — 256/16=16 full vector iterations at `SPECIES_256`, no
+  scalar remainder/tail loop needed at that width specifically. A different net width would not
+  have this guarantee — worth a bounds/remainder-handling check in the implementation regardless
+  of what today's specific net happens to satisfy.
+- **Alignment concerns**: none identified. The Vector API's `fromArray`/`intoArray` operate on
+  plain heap `short[]`, not requiring explicit memory alignment the way native SIMD intrinsics
+  sometimes do — the JVM does not expose (or need) manual alignment control here.
+- **Portability constraints**: repeated from §14.4 — `jdk.incubator.vector` is still incubator
+  status through both the project's compile target (`release 21`) and the runtime used for all
+  measurements here (Zulu 25); requires `--add-modules jdk.incubator.vector` at compile and run
+  time; API has had source-incompatible changes across JDK feature releases historically.
+- **Fallback behavior**: a scalar fallback path is required (not optional) for two reasons — (1)
+  incubator API stability risk, (2) hardware without a usable vector species (rare on modern
+  server/desktop targets, but the existing scalar loop is what the fallback *is*, not new code to
+  write). The validation requirement (bit-identical vs. scalar) doubles as this fallback's own
+  correctness test.
+- **Prerequisite refactoring**: **none identified as required.** `addFeature`/`subtractFeature`
+  are already minimal, self-contained, allocation-free loops over contiguous arrays — the
+  simplest possible starting shape for a Vector API port. No data-layout change, no method
+  extraction, no interface change needed before Stage 1 can start.
+
+### 15.4 #218 implementation sequencing (Task 4)
+
+**Recommendation: multiple PRs, not one** — reviewability over commit-count minimization, per
+the task's own stated preference, and because Stage 1 and Stage 2 have materially different
+risk profiles (§15.1: Stage 1 rests on the firmer A1; Stage 2 rests on the weaker, unprototyped
+A2) that shouldn't be reviewed or landed as a single unit.
+
+| PR | Scope | Acceptance criteria | Benchmark to re-run | Regression tests |
+|---|---|---|---|---|
+| 1 | Vector API scalar-fallback scaffolding: species detection, `--add-modules` wiring, build/CI changes needed to compile against `jdk.incubator.vector` — **no algorithm change**, scalar path untouched and still the only path executed | Project builds and existing test suite passes unchanged with the new module dependency wired in; no behavior change | None required (no algorithmic change) | Full existing suite (regression-neutral change) |
+| 2 | `addFeature`/`subtractFeature` SIMD implementation (Stage 1) | Vectorized output bit-identical to scalar on the existing NNUE fuzz/regression tests; `NnueEvaluator`'s own `verifyAgainstRebuild` debug check passes; mirror-symmetry test passes (CLAUDE.md §4) | Native Windows `--bench` NNUE mode, **multi-run median** (§15.5) | NNUE regression suite, mirror-symmetry test, `NnueEvaluator` fuzz/rebuild tests |
+| 3 | Native-Windows NPS measurement + gate determination for Stage 1 alone | NPS ratio recorded, pass/fail against 40% stated explicitly (§15.5's decision tree governs what happens next) | Same as PR 2 | None (measurement-only PR, doc/issue update) |
+| 4 (only if PR 3's gate fails) | `evaluate()` dot-product SIMD (Stage 2) — includes resolving the clamp/widening auto-vectorization question first (verify current state via JIT inspection before committing to a restructuring approach) | Same bit-identical-vs-scalar bar as PR 2, applied to `evaluate()` | Native Windows `--bench` NNUE mode, multi-run median | Same suite as PR 2, plus full NNUE gauntlet spot-check (score-critical path) |
+| 5 (only if PR 4 lands) | Re-measurement + final gate determination | Same as PR 3 | Same as PR 3 | None |
+
+PRs 1–3 are Stage 1's complete, independently-revertible unit — matching this project's
+established one-scope-per-PR discipline (CLAUDE.md's own commit-format convention). PR 4/5 exist
+conditionally and should not be started before PR 3's result is known.
+
+### 15.5 Benchmark plan after Stage 1 lands (Task 5)
+
+1. **Microbenchmark (if applicable)**: a JMH or ad hoc scalar-vs-vector micro-benchmark of
+   `addFeature`/`subtractFeature` in isolation, confirming the raw per-call speedup *before*
+   running the full native-Windows suite — cheaper to iterate on and catches an implementation
+   that isn't actually vectorizing (e.g., a species mismatch or unintended scalar fallback)
+   before spending a native-Windows session on it. Recommended, not currently built.
+2. **Native Windows benchmark**: `--bench 13` in both Classical and NNUE mode, same commands and
+   environment as #206's own measurement (`docs/architecture/research/2026-07-19-nnue-improvement-analysis.md`
+   §14.1) — same JVM, same OS, same net, same 31-position (post-#217) suite.
+3. **NPS comparison methodology — multi-run, not single-run**: this project's own established
+   convention (commit `44aea1a`: "middle-3-of-5 runs") should be used at the gate specifically,
+   not a single measurement. §15.1's own projection (41–46% at the low end) is close enough to
+   the 40% line that the documented ±12,584 NPS (~4%) baseline run-to-run variance could flip a
+   single run's pass/fail call. Report the median of 5 runs, not the first run.
+   Note for context, not for re-litigating #206's already-accepted 34.6%: `--bench` runs with
+   `setInstrumentationEnabled(true)` always on (§14.1's own ~1% tax) — the measured ratio at any
+   stage is very slightly conservative relative to a real, non-instrumented game; this does not
+   change which number should be compared to the 40% gate, since Classical pays a matching
+   (smaller) instrumentation cost too and both sides of the ratio use the same setting.
+4. **Pass/fail criteria**: median NPS ratio ≥ 40% of Classical's median NPS from the same
+   session (not the historical 311,669 figure verbatim — re-measure Classical too, since JIT
+   warmup/OS/hardware state can drift between sessions).
+5. **Decision tree**:
+   - **Gate passes (≥40%, median-of-5)**: Stage 2/PR 4-5 not started. Recommend proceeding
+     directly to E-5 (SPRT), per the roadmap's existing dependency ordering — Lever A's job is
+     done; #219/Lever B continues in parallel as its own, non-gating investigation.
+   - **Gate fails**: before any further optimization work (Stage 2 or otherwise), the next
+     measurement is a **JIT/vectorization verification** — confirm via `-XX:+PrintAssembly` or
+     equivalent whether Stage 1's code is actually executing the vector path at the expected
+     species width (ruling out "the code is right but not actually vectorizing at runtime"
+     before concluding the *speedup itself* was insufficient). Only after that check should
+     Stage 2 (PR 4) begin.
+
+### 15.6 Documentation categorization pass (Task 6)
+
+§14.4's original sizing paragraph mixed a measured percentage (65.4%) with an unstated-as-such
+assumption (speedup applied to the whole bucket) and presented the result as if it were a
+tighter, more confident range than the underlying assumptions supported — corrected in §15.1
+above; the original paragraph is struck through with a pointer, not deleted, so the correction
+is traceable. Every quantitative claim newly added in this section is one of exactly five
+categories, stated inline rather than left implicit: **established fact** (§14.1's measured
+table, repeated verbatim), **derived calculation** (the gate-threshold ns/node figure, the
+9.95x = 3.44x × 2.89x decomposition), **projection** (§15.1's Stage 1/Stage 1+2 ranges — never
+stated as an expected result), **supported hypothesis** (§14.5's pruning-rate-collapse
+mechanism — measured, but the underlying scale/bias cause remains unconfirmed), and **future
+work** (§15.2's proposed-but-unbuilt instrumentation, §15.4's conditional PRs 4-5). No wording
+in this section states a projection as if it were a measurement, or a hypothesis as if it were
+an established cause.
