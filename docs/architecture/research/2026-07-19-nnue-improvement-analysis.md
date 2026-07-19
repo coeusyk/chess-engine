@@ -210,6 +210,40 @@ change needed to collect this.
   | Calibration (reliability curve) | Named as deferred future work in `validator.py`'s own docstring |
   | Fixed-depth NPS/throughput | Built, unrun against real net |
 
+### 5.1 Evaluator calibration diagnostics
+
+MAE and Pearson correlation (table above) say how *loosely* predictions track targets, not
+whether they're *systematically* biased. Calibration is a distinct, additional question, and
+every metric below is computable directly from arrays `validator.py` already holds in memory
+(`predicted`, `target` per held-out record) — no plotting library or external tool needed. The
+pipeline's job is to persist the underlying numeric aggregates; rendering a scatter plot or
+reliability curve from that output is a separate, later concern for whoever wants a picture.
+
+- **Predicted-vs-target relationship without a scatter plot**: bin held-out records by
+  target-cp decile (or fixed-width bucket) and report `mean(predicted) - mean(target)` per
+  bucket. This is the numeric content a calibration curve would plot — a groupby/aggregate,
+  not a rendering step.
+- **Systematic overestimation / underestimation**: signed mean error, `mean(predicted -
+  target)`, overall and per bucket — currently absent; `validator.py` only reports MAE, which
+  discards sign by construction and cannot distinguish a biased net from a noisy-but-unbiased
+  one.
+- **Score compression / expansion**: `std(predicted) / std(target)`. Near 1 means the net's
+  output spans a comparable cp range to the target; well below 1 is compression (the net is
+  "flatter" than reality — plausible for a severely undertrained net regressing toward the
+  mean, per §1's 735.6cp error and 0.504 correlation); above 1 is expansion (overconfident).
+- **Mate-score handling**: since `target_cp()` already collapses every mate score to a flat
+  ±3000cp (§1, established fact), calibration should be reported separately for mate-labeled
+  vs. cp-labeled held-out records. Mixing them would hide whether a bias/compression effect is
+  specific to the mate-handling constant or a general property of the cp regression.
+- **Phase-specific calibration**: bucket by `phase_of()` (already exists, unused per §1) and
+  report per-phase signed-mean-error and compression ratio — the same unused function Issue A
+  wires in for the dataset side, applied here to held-out predictions instead of raw position
+  counts.
+
+None of this requires new infrastructure beyond what `evaluate_held_out`/`_pearson_correlation`
+already load into memory — every metric above is an aggregate over data the pipeline already
+has.
+
 ## 6. Sequenced experiment plan
 
 Ordered for information-gained-per-engineering-cost. Instrumentation and measurement come
@@ -309,20 +343,51 @@ reporting pass**
 - *Objective*: surface duplicate-FEN rate and opening/middlegame/endgame distribution for the
   real 36k-position training corpus, using the already-built, already-exported
   `trainer/trainer/dataset/transform.py` functions that `train_candidate_net.py` never calls.
+- *Long-term direction (two-stage, this issue is Stage 1 only)*:
+  - **Stage 1 (this issue)**: reporting only. No change to what data actually trains the net,
+    no change to the split logic. Purely surfaces numbers that don't exist today.
+  - **Stage 2 (future, separate issue, not scoped here)**: optional enforcement — actually
+    deduplicating and/or phase-balancing the corpus before training — gated on Stage 1's
+    report showing a non-trivial skew or duplicate rate. Do not build Stage 2 speculatively;
+    a clean Stage 1 report (negligible duplicates, reasonable phase spread) means Stage 2 may
+    never be justified at all.
 - *Acceptance criteria*: `combine_and_split` (or a thin wrapper) reports duplicate count/rate
   and phase-bucket counts for the actual Stage1+Stage2 union before the 90/10 split; report
   committed alongside the next training run record (matching the `train-e3-real.md` convention).
 - *Dependencies*: none.
 - *Estimated effort*: XS.
 - *Expected long-term value*: every future training run gets this report for free; directly
-  answers whether current held-out metrics are compromised by a duplicate leak or phase skew.
+  answers whether current held-out metrics are compromised by a duplicate leak or phase skew,
+  and whether Stage 2 enforcement is ever actually warranted.
 
 **Issue B — Persist train-loss curve + intermediate held-out-loss logging**
 - *Objective*: stop discarding `train()`'s per-step loss list; call `evaluate_held_out` every N
   steps instead of once, post-hoc, at the end.
-- *Acceptance criteria*: a `(step, train_loss, held_out_loss)` series persisted for a full
-  training run (re-running the bit-identical E-3 config validates it); §4's falsifiable
-  criteria become checkable from this output without further code changes.
+- *Additional training diagnostics considered for this issue*:
+  - **Learning rate — include.** Currently fixed (LR=0.01, no schedule, §1), so logging it per
+    step is a constant today — but it's a zero-cost single scalar to persist alongside loss,
+    and becomes valuable the moment a schedule is ever introduced (forward-compatible; avoids
+    re-opening this issue later for one field).
+  - **Gradient norm — include.** Directly strengthens §4's Criterion 4 (optimizer-limited:
+    "train loss oscillates/diverges") — a gradient-norm blowup or collapse is a more direct,
+    standard optimizer-pathology signal than loss-curve shape alone, and is a single
+    total-norm-over-parameters computation per step in the existing PyTorch loop. Cheap,
+    directly useful.
+  - **Weight norm — exclude from this issue's scope.** No §4 falsifiable criterion depends on
+    weight norm specifically, and quantization's existing overflow-safety clamp
+    (`clip_ft_weights_()`, §1) already bounds weight magnitude for a different reason (numeric
+    safety, not training diagnosis). Would not distinguish any of §4's four bottleneck
+    categories. Add later only if a specific future hypothesis needs it.
+  - **Activation statistics — exclude from this issue's scope.** A materially similar tool
+    already exists on the inference side: `NnueEvaluator.explainEval()`'s
+    `rangeAndClipCount()` reports per-perspective pre-activation min/max/clip-count today.
+    Building a parallel training-side version here would duplicate that idea rather than reuse
+    it. If training-time activation statistics become genuinely necessary, scope that as its
+    own follow-up rather than folding it into this issue's already-defined loss/held-out-loss
+    scope.
+- *Acceptance criteria*: a `(step, train_loss, held_out_loss, learning_rate, gradient_norm)`
+  series persisted for a full training run (re-running the bit-identical E-3 config validates
+  it); §4's falsifiable criteria become checkable from this output without further code changes.
 - *Dependencies*: none.
 - *Estimated effort*: S.
 - *Expected long-term value*: converts every future training run from "one final number" into
@@ -390,6 +455,45 @@ wrap, PV/cut-node counters) plus one aggregation exercise (depth distribution, n
 `Searcher` code) close the realistic gap. CPU cache behavior is out of reach from inside this
 codebase and should not be promised. See Issue C (§8.2) for the scoped implementation task.
 
+### 9.3 Search behavior instrumentation (beyond timing)
+
+§9.1/9.2 cover per-node *cost*. A separate question: does NNUE change what the search *does* —
+node exploration pattern, pruning-trigger rates, root-move stability — not just how expensive
+each node is. Evaluated for realistic low-effort/high-diagnostic-value against what
+`Searcher.java` already tracks; not every candidate is recommended.
+
+**Recommended (low effort, directly useful, not currently exposed):**
+
+- **Aspiration fail-high/fail-low frequency and re-search count**: the `consecutiveFailures`
+  mechanism (`Searcher.java:622-641`) already tracks this internally — exposing it as a counter
+  is a one-line change, and it's already named as §2.1 Hypothesis 1's own minimum
+  distinguishing experiment. Not new scope, just made visible.
+- **Null-move attempt-vs-success rate**: `nullMoveCutoffs` (successes) is already tracked
+  (§9.1); adding an attempt counter at the same call site (`canApplyNullMove`) turns a raw
+  count into a rate — one more field, same call site, no new mechanism.
+- **Root-move stability across iterative-deepening iterations**: the search already knows its
+  own best move per iteration (needed to report the final `bestmove`); comparing it against the
+  previous iteration's and incrementing a counter on change is a small, localized addition with
+  real behavioral signal — an NNUE-specific root-move-instability pattern would be direct
+  evidence of a search-behavior effect distinct from raw eval-quality or NPS cost.
+
+**Not recommended now (real engineering cost, speculative value given current evidence):**
+
+- **TT replacement-scheme behavior** (e.g., depth-preferred vs. always-replace overwrite
+  counts): would need new bookkeeping inside `TranspositionTable`'s store path beyond the hit
+  rate already tracked (§9.1), and isn't obviously informative for the NNUE-specific question
+  at hand. Lower priority than the three items above.
+- **Full LMR reduction-amount histogram**: a coarse min/max/mean reduction per search would be
+  cheap if ever needed, but a full per-value histogram is disproportionate effort given LMR was
+  already ranked lowest-plausibility among §2.1's hypotheses (Hypothesis 5, no direct cp-scale
+  coupling). Not worth building ahead of evidence that LMR specifically is implicated.
+
+These three recommended items are **not** folded into Issue C's scope (§8.2) — Issue C is
+deliberately limited to the three items in §9.2 (eval-time %, accumulator-update-time %,
+PV/cut-node frequency) per its own acceptance criteria. They remain documented future
+instrumentation, to be scoped as their own follow-up only if Issue C's results (or §2.1's
+distinguishing experiments) point toward a search-behavior explanation specifically.
+
 ## 10. Open questions (no evidence either way — do not treat as established)
 
 - Whether `acquire_stage1_lichess.py` position sampling and Stage 2's Zurichess-derived
@@ -416,3 +520,39 @@ ranked-hypothesis expansion) is an analysis/documentation update, not an execute
 See §6 in full; §8.2 lists the three recommended immediately-actionable issues (A, B, C) —
 all Infrastructure-tier. Everything else in §6/§7 stays a documented, sequenced future
 experiment pending a named prerequisite.
+
+## 13. Research Debt
+
+Distinct from §10 (Open Questions — narrower, resolvable by a specific named experiment
+already in §6) and from §7 (Roadmap — sequenced, actionable work items). Research debt is
+**intentionally deferred, larger-scope engineering questions** with no near-term experiment
+attached and no roadmap entry — preserved here so they aren't lost, not because they're
+scheduled. Do not convert these into issues or roadmap items without a concrete triggering
+result from the actual roadmap work first.
+
+- **STC-vs-LTC discrepancy, full resolution.** §2/§2.1 narrow this to a ranked hypothesis list
+  with minimum distinguishing experiments, but even after those experiments run, a full
+  mechanistic account (exactly how much of the gap is NPS, how much is pruning-margin
+  mismatch, how much is real eval weakness, and how they interact) may remain partially open —
+  this is the single most important piece of debt this document carries forward.
+- **Evaluator calibration, as an ongoing property.** §5.1 defines the metrics; it does not
+  establish what "well-calibrated" should mean for this specific engine/evaluator pairing, or
+  whether calibration should ever gate promotion the way the SPRT strength gate does today.
+  That's a policy question, not an instrumentation question, and is out of this document's
+  scope.
+- **λ-blend effectiveness, beyond the single fixed-volume A/B in Experiment 6.** Even a
+  positive Experiment 6 result wouldn't establish the right blend weight, whether it should
+  vary by training stage, or how it interacts with a larger corpus (Experiment 7) — those are
+  follow-on questions Experiment 6 can't answer by itself.
+- **Transition from Stockfish labels to self-play labels.** DR-E1's self-play design exists on
+  paper; nothing in this document's experiment plan addresses *when* (what data-scale,
+  eval-quality, or calibration threshold) makes self-play data generation worth its
+  engineering cost, versus continuing to scale Stockfish-labeled data.
+- **Architecture scaling (deeper/wider nets), the general question.** §7 Tier 3 gates this on
+  a specific diagnostic signature (an architecture-limited loss-curve shape). The debt is
+  broader: this repo has no established methodology yet for *how* to scale architecture
+  incrementally and re-validate at each step, only a gate for *whether* to start.
+- **Future HalfKP/HalfKA migration.** ADR-001 and the PRD's Non-Goals already settle this for
+  v1. The debt is that "40× more data" (ADR-001's own estimate) is a rough figure, not a
+  validated threshold — nothing in this document establishes what data volume would actually
+  justify revisiting that ADR.
