@@ -1208,3 +1208,113 @@ planning deviation.
 
 **Future work (unchanged from §16.6, not started):** PR 2 (Stage 1 SIMD implementation) is next,
 gated on re-parameterizing the width-8 microbenchmark to width 256 first (§16.1, §16.6 step 2).
+
+## 18. PR 2 completion (2026-07-19 PM) — Stage 1 SIMD implementation
+
+**Completed** — commit `9780dd0`. Scope matched §15.4/§16.6 exactly: `addFeature`/
+`subtractFeature` only, `evaluate()` untouched, no search change.
+
+### 18.1 Implementation (measured facts)
+
+- New `NnueAccumulatorVectorOps` (isolated incubator-type class, same lazy-resolution safety
+  pattern as PR 1's `VectorCapabilities` — see §17): vectorized `addFeature`/`subtractFeature`
+  over `ShortVector.SPECIES_PREFERRED`, scalar remainder loop for any width not evenly divisible
+  by the species length.
+- `NnueEvaluator`'s original loops renamed `addFeatureScalar`/`subtractFeatureScalar`
+  (package-private — kept as the fallback path and as the equivalence-test reference), with a
+  `VectorCapabilities.AVAILABLE`-gated dispatch preserving the original call sites unchanged.
+- `NnueCorpusBenchmarkTest` re-parameterized from `TestNetworks.synthetic(8)` to `synthetic(256)`
+  (production width) and extended with a direct scalar-vs-vector microbenchmark.
+
+### 18.2 Correctness validation (measured facts)
+
+- New `NnueAccumulatorVectorOpsEquivalenceTest`: `assertArrayEquals` between
+  `addFeatureScalar`/`subtractFeatureScalar` and `NnueAccumulatorVectorOps`'s methods, across
+  widths {8,16,31,32,33,64,128,200,256,512}, 20 random trials each, plus an explicit
+  `Short.MAX_VALUE + Short.MAX_VALUE` overflow-boundary case — all bit-identical, 3/3 passing.
+- Full regression suite: engine-core 278/278 (5 pre-existing skips), engine-uci 36/36 (8
+  pre-existing skips, syzygy-gated, unrelated), `search-regression` profile 3/3.
+- `NnueGoldenEvalTest` (exact pinned int16 eval values) passes unchanged — and because
+  `VectorCapabilities.AVAILABLE=true` in this build environment, this run **actually exercised
+  the vectorized path**, not just the scalar fallback: the golden values are bit-identical
+  through the new code, not merely through an untouched fallback.
+- `NodeCountRegressionTest` and the 37-case `SearchRegressionTest` unchanged — confirms zero
+  search-behavior change, as required.
+
+### 18.3 Runtime verification (measured facts)
+
+- `VectorCapabilities.AVAILABLE=true`, `PREFERRED_SHORT_LANES=32` in this build/test
+  environment (WSL OpenJDK 21.0.11) — consistent with PR 1's own native-Windows Zulu 25.0.3
+  reading (§17), though this is two data points, not a guarantee the same holds on every future
+  machine.
+- Dispatch correctness (Vector API selected when `AVAILABLE`, scalar otherwise) is exercised
+  structurally, not just asserted: every regression-suite run in this environment already goes
+  through the `AVAILABLE=true` branch (confirmed by the golden-eval/fuzz tests above passing
+  against the vectorized path), and `NnueAccumulatorVectorOpsEquivalenceTest` independently
+  proves the scalar fallback produces the same result if that branch is ever taken instead.
+- **Not done this round**: JIT/assembly-level inspection (`-XX:+PrintAssembly`) confirming the
+  emitted machine code for `NnueAccumulatorVectorOps` uses real vector-width instructions rather
+  than a silent scalarized loop — deferred, since §18.4's finding below makes this check
+  materially more important for the *scalar* comparator than originally scoped, and it belongs
+  with the native-Windows PR 3 work rather than this microbenchmark round.
+
+### 18.4 Performance validation — a genuine confound found, not a clean number
+
+**Measured**: `--add-modules jdk.incubator.vector`, width 256, `PREFERRED_SHORT_LANES=32`,
+20 measurement rounds after 5 warmup rounds, 200,000 ops/round:
+
+| Harness variant | Scalar ns/op | Vector ns/op | Speedup |
+|---|---|---|---|
+| First attempt (functional-interface indirection, `FeatureOp` lambda) | 12.1 (±0.2) | 9.0 (±0.0) | 1.34x |
+| Corrected (direct calls, no lambda) — 3 independent JVM runs | 91.1–92.1 (±~1) | 7.4–7.7 (±~1) | 11.87x–12.33x |
+| Standalone control, default JVM flags | 22.4 | — | (SuperWord reference point) |
+| Standalone control, `-XX:-UseSuperWord` | 76.7 | — | (SuperWord reference point) |
+
+**Derived**: the `-XX:-UseSuperWord` control directly confirms the mechanism — C2's
+SuperWord/SLP auto-vectorizer targets this exact loop shape (a counted `short[]` elementwise
+add), and **triggers inconsistently depending on calling context** (12ns/22ns/91ns are all real
+measurements of the *same scalar source code*, differing only in whether/how much C2
+auto-vectorized it in that specific harness shape).
+
+**Supported hypothesis, explicitly not resolved**: the practical Stage 1 speedup is genuinely
+**a range (roughly 1.3x–12x), not a single number**, and which end of that range the *real
+search* lands on depends on whether C2 auto-vectorizes `addFeatureScalar` inside the actual
+`Searcher`/`NnueEvaluator` call pattern — a different inlining/polymorphism/warmup context than
+either isolated microbenchmark variant above. **This cannot be resolved by microbenchmarking in
+isolation.** Explicit Vector API is reliably faster than a *genuinely non-vectorized* scalar
+baseline (confirmed structurally, not just by one lucky reading); whether the production
+scalar path is itself already partially auto-vectorized — shrinking Stage 1's real-world
+benefit — is unknown until measured in place.
+
+**CPU-bound vs. memory-bound**: the vector arm's own footprint (256 shorts × 2 arrays ≈ 1KB
+per call) is far smaller than L1 cache, and the vector-side speedup (up to ~12x against a
+confirmed-non-vectorized baseline) tracks closer to the lane-count improvement (32 lanes) than a
+bandwidth ceiling would allow — consistent with this operation being **instruction-throughput/
+loop-overhead-bound**, not memory-bandwidth-bound, at this data size. This is a **projection
+about mechanism**, not a directly measured bandwidth figure (no hardware perf-counter
+measurement was taken).
+
+**Do NOT plug either 1.34x or ~12x into §15.1's model as if it settles the Stage 1 gate
+projection** — both are real measurements of genuinely different conditions (autovectorized vs.
+non-autovectorized scalar baseline), and neither is confirmed to match what the real search's
+scalar path does. §15.1's projection stands as previously stated (41–46% under its own
+assumptions); this microbenchmark neither confirms nor refutes it — it establishes that a real,
+positive, meaningful speedup exists, which is what gates proceeding to PR 3, not a specific
+number to plug in.
+
+### 18.5 Recommendation
+
+**Proceed to PR 3** (native-Windows measurement) as the next step — not run in this round, per
+scope. The gate for proceeding ("microbenchmark demonstrates a meaningful improvement") is met
+under either interpretation above: even the conservative 1.34x reading is a real, reproducible,
+positive result, and the corrected/SuperWord-off readings show substantially more headroom is
+plausible. Frame PR 3 as **the actual arbiter of Stage 1's real-world benefit**, not a
+confirmation exercise — it is the only measurement that captures what C2 actually does to the
+scalar comparator inside the real, integrated build, which this isolated microbenchmark
+structurally cannot replicate.
+
+**Deviation from the original plan**: none in implementation scope. The microbenchmark itself
+required one in-flight correction (lambda-indirection removed after producing an implausibly
+fast, and as it turned out, misleading, scalar reading) — documented in the test's own javadoc
+so the caveat travels with the number for any future reader running it, not just in this
+document.
