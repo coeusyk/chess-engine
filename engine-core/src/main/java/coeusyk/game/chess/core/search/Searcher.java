@@ -3,6 +3,7 @@ package coeusyk.game.chess.core.search;
 import coeusyk.game.chess.core.eval.ClassicalEvaluator;
 import coeusyk.game.chess.core.eval.EvalParams;
 import coeusyk.game.chess.core.eval.EvaluatorStrategy;
+import coeusyk.game.chess.core.eval.nnue.NnueEvaluator;
 import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Move;
 import coeusyk.game.chess.core.models.Piece;
@@ -97,6 +98,14 @@ public class Searcher {
     private long lmrApplications;
     private long futilitySkips;
     private long deltaPruningSkips;
+    // Issue #216: search-time instrumentation. pvNodeEvals/cutNodeEvals are cheap
+    // increments (always on, like the counters above). evalNanos is gated behind
+    // instrumentationEnabled -- a nanoTime() pair around every evaluate() call is
+    // not free at this call frequency, so it stays zero-cost by default.
+    private long evalNanos;
+    private long pvNodeEvals;
+    private long cutNodeEvals;
+    private boolean instrumentationEnabled;
 
     private TimeManager timeManager;
     private long searchStartNanos;
@@ -323,6 +332,23 @@ public class Searcher {
      */
     public void setEvaluatorStrategy(EvaluatorStrategy strategy) {
         this.evaluator = strategy != null ? strategy : new ClassicalEvaluator();
+        if (instrumentationEnabled && evaluator instanceof NnueEvaluator ne) {
+            ne.enableAccumulatorTiming();
+        }
+    }
+
+    /**
+     * Issue #216: opt-in search-time instrumentation (eval-time, NNUE accumulator-
+     * update time, PV/cut-node eval frequency) -- off by default, zero added cost
+     * to {@link #evaluate}'s hot path unless enabled. Call after {@link
+     * #setEvaluatorStrategy} (or call this again after swapping evaluators) so a
+     * newly-set {@link NnueEvaluator} also gets accumulator timing enabled.
+     */
+    public void setInstrumentationEnabled(boolean enabled) {
+        this.instrumentationEnabled = enabled;
+        if (enabled && evaluator instanceof NnueEvaluator ne) {
+            ne.enableAccumulatorTiming();
+        }
     }
 
     public void setSyzygyProber(SyzygyProber prober) {
@@ -418,6 +444,15 @@ public class Searcher {
         long totalLmrApplications = 0;
         long totalFutilitySkips = 0;
         long totalDeltaPruningSkips = 0;
+        long totalEvalNanos = 0;
+        long totalPvNodeEvals = 0;
+        long totalCutNodeEvals = 0;
+        // Issue #216: NNUE accumulator-update cost is tracked inside NnueEvaluator
+        // itself (an instance that may persist across many searches), so this
+        // search's contribution is a before/after delta rather than a per-pvIndex
+        // reset like the counters above. 0 for any evaluator that isn't NnueEvaluator
+        // (mirrors the existing evaluator instanceof ClassicalEvaluator passthroughs).
+        long accumulatorNanosBefore = evaluator instanceof NnueEvaluator ne ? ne.accumulatorUpdateNanos() : 0L;
         long[] nodesPerDepth = new long[effectiveMaxDepth + 1];
 
         aborted = false;
@@ -461,6 +496,9 @@ public class Searcher {
                 lmrApplications = 0;
                 futilitySkips = 0;
                 deltaPruningSkips = 0;
+                evalNanos = 0;
+                pvNodeEvals = 0;
+                cutNodeEvals = 0;
                 // pvTable and pvLength are pre-allocated; no per-depth allocation needed.
                 RootResult iteration;
                 if (pvIndex == 0 && aspirationWindowsEnabled && depth >= 4 && previousBestMove != null) {
@@ -480,6 +518,9 @@ public class Searcher {
                 totalLmrApplications += lmrApplications;
                 totalFutilitySkips += futilitySkips;
                 totalDeltaPruningSkips += deltaPruningSkips;
+                totalEvalNanos += evalNanos;
+                totalPvNodeEvals += pvNodeEvals;
+                totalCutNodeEvals += cutNodeEvals;
 
                 if (iteration.bestMove == null) {
                     if (pvIndex == 0) {
@@ -576,16 +617,23 @@ public class Searcher {
                     ? 100.0 * totalFirstMoveCutoffs / totalBetaCutoffs : 0.0;
             double ebfNow = (depth >= 3 && nodesPerDepth[depth - 2] > 0)
                     ? Math.sqrt((double) nodesPerDepth[depth] / nodesPerDepth[depth - 2]) : 0.0;
-            LOG.debug(String.format("[BENCH] depth=%d nodes=%d qnodes=%d nps=%d cutoffs=%d firstMoveCutoff%%=%.1f tt_hits=%d ebf=%.2f nmp_cuts=%d lmr_apps=%d fut_skips=%d delta_prune=%d time=%dms",
+            long accumulatorNanosNow = (evaluator instanceof NnueEvaluator ne ? ne.accumulatorUpdateNanos() : 0L) - accumulatorNanosBefore;
+            double elapsedNanos = elapsedMs * 1_000_000.0;
+            double evalPct = elapsedNanos > 0 ? 100.0 * totalEvalNanos / elapsedNanos : 0.0;
+            double accPct = elapsedNanos > 0 ? 100.0 * accumulatorNanosNow / elapsedNanos : 0.0;
+            LOG.debug(String.format("[BENCH] depth=%d nodes=%d qnodes=%d nps=%d cutoffs=%d firstMoveCutoff%%=%.1f tt_hits=%d ebf=%.2f nmp_cuts=%d lmr_apps=%d fut_skips=%d delta_prune=%d eval_pct=%.1f acc_pct=%.1f pv_evals=%d cut_evals=%d time=%dms",
                     depth, totalNodes, totalQuiescenceNodes, nps,
                     totalBetaCutoffs, fmcPct, totalTtHits, ebfNow,
-                    totalNullMoveCutoffs, totalLmrApplications, totalFutilitySkips, totalDeltaPruningSkips, elapsedMs));
+                    totalNullMoveCutoffs, totalLmrApplications, totalFutilitySkips, totalDeltaPruningSkips,
+                    evalPct, accPct, totalPvNodeEvals, totalCutNodeEvals, elapsedMs));
         }
 
         double ebf = 0.0;
         if (depthReached >= 3 && nodesPerDepth[depthReached - 2] > 0) {
             ebf = Math.sqrt((double) nodesPerDepth[depthReached] / nodesPerDepth[depthReached - 2]);
         }
+
+        long accumulatorNanos = (evaluator instanceof NnueEvaluator ne ? ne.accumulatorUpdateNanos() : 0L) - accumulatorNanosBefore;
 
         return new SearchResult(
             previousBestMove,
@@ -604,7 +652,11 @@ public class Searcher {
             totalNullMoveCutoffs,
             totalLmrApplications,
             totalFutilitySkips,
-            totalDeltaPruningSkips
+            totalDeltaPruningSkips,
+            totalEvalNanos,
+            accumulatorNanos,
+            totalPvNodeEvals,
+            totalCutNodeEvals
         );
     }
 
@@ -843,6 +895,11 @@ public class Searcher {
         }
 
         int staticEval = evaluate(board);
+        if (isPvNode) {
+            pvNodeEvals++;
+        } else {
+            cutNodeEvals++;
+        }
 
         // Derive a pawn-structure key for correction history lookup.
         int colorIdx = Piece.isWhite(board.getActiveColor()) ? 0 : 1;
@@ -1695,7 +1752,13 @@ public class Searcher {
     }
 
     private int evaluate(Board board) {
-        return evaluator.evaluate(board);
+        if (!instrumentationEnabled) {
+            return evaluator.evaluate(board);
+        }
+        long start = System.nanoTime();
+        int result = evaluator.evaluate(board);
+        evalNanos += System.nanoTime() - start;
+        return result;
     }
 
     /**

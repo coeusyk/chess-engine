@@ -56,6 +56,15 @@ public final class NnueEvaluator implements EvaluatorStrategy, FeatureExtractor.
     private int sp; // next-to-read index (top of stack); mirrors Board's unmakeSP convention pre-decrement
     private int onMakeCount; // only read/written when debugMode — sampling cadence for the rebuild assertion
 
+    // Issue #216: cumulative onMake/onUnmake wall-clock cost, gated behind its own
+    // flag (separate from debugMode -- a distinct concern, timing vs. correctness
+    // assertions) so the nanoTime() calls add zero overhead unless a caller
+    // explicitly opts in via enableAccumulatorTiming(). Monotonic for this
+    // instance's lifetime; callers wanting a single search's contribution take a
+    // before/after delta (see Searcher's own use of this).
+    private boolean accumulatorTimingEnabled;
+    private long accumulatorNanos;
+
     public NnueEvaluator(NnueNetwork network) {
         this(network, false);
     }
@@ -94,6 +103,7 @@ public final class NnueEvaluator implements EvaluatorStrategy, FeatureExtractor.
 
     @Override
     public void onMake(Board board, int move, int capturedPiece) {
+        long start = accumulatorTimingEnabled ? System.nanoTime() : 0L;
         if (debugMode) {
             assertStackBounds();
         }
@@ -104,6 +114,20 @@ public final class NnueEvaluator implements EvaluatorStrategy, FeatureExtractor.
         if (debugMode && ++onMakeCount % DEBUG_ASSERTION_SAMPLE_PERIOD == 0) {
             assertIncrementalMatchesRebuild(board);
         }
+        if (accumulatorTimingEnabled) {
+            accumulatorNanos += System.nanoTime() - start;
+        }
+    }
+
+    /** Issue #216: opt-in accumulator-update timing. See {@link #accumulatorTimingEnabled}. */
+    public void enableAccumulatorTiming() {
+        this.accumulatorTimingEnabled = true;
+    }
+
+    /** Issue #216: cumulative onMake/onUnmake nanoseconds since construction (or since
+     * {@link #enableAccumulatorTiming()} was called) -- 0 if timing was never enabled. */
+    public long accumulatorUpdateNanos() {
+        return accumulatorNanos;
     }
 
     /**
@@ -149,7 +173,11 @@ public final class NnueEvaluator implements EvaluatorStrategy, FeatureExtractor.
 
     @Override
     public void onUnmake() {
+        long start = accumulatorTimingEnabled ? System.nanoTime() : 0L;
         sp--;
+        if (accumulatorTimingEnabled) {
+            accumulatorNanos += System.nanoTime() - start;
+        }
     }
 
     @Override
