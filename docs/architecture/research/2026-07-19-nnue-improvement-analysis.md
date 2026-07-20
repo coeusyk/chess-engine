@@ -4225,3 +4225,341 @@ Next action:            Per this task's instruction, no further Phase 3 experime
 Artifacts:              trainer/outputs/phase3/P3A-001/, trainer/outputs/datasets/
                         stage1-lichess-filtered/
 ```
+
+## 36. Phase 3 closure and roadmap status (2026-07-20)
+
+Phase 3 (label quality, §31-§35) is complete and approved. This section closes it formally: a
+consolidated hypothesis table, an explicit falsified/confirmed/artifact classification, and an
+updated roadmap status extending §30.2's table. No new analysis is performed here — every claim
+below cites an experiment already completed and documented above.
+
+### 36.1 Closed hypotheses
+
+| Hypothesis | Experiment | Result | Status |
+|---|---|---|---|
+| Steps/LR/schedule optimization alone recovers correlation beyond `dfffd3da`'s 0.5044, at the original 40,000-record dataset | Phase 1 grid (P1-G00…G04, §27) | P1-G04 (steps=20,000, LR=0.01, cosine, warmup=200) reached 0.5315, +0.0271 over baseline, ~14.3σ above the measured noise floor (std≈0.0019, §27.2) | **Confirmed** — promoted, current reference model |
+| The winning optimization configuration is not itself exhausted — further schedule tuning still has headroom | P1-G04's own trajectory (§27.3, §27.8) | Held-out correlation flatlines for the last ~10,000/20,000 steps while train correlation keeps climbing — textbook plateau-with-continued-train-improvement | **Falsified** — optimization is exhausted at this data scale; further schedule search has low expected marginal return (§27.9) |
+| Optimization changes alone close the mate-labeled bias gap | Every Phase 1 cell's mate bias (§27.5) | −1,651 to −1,729cp across every cell including the untouched baseline — no meaningful movement | **Falsified** — mate bias is structural (loss/target-shape), not an optimization artifact |
+| Scaling Stage 1 volume 20k→100k improves held-out correlation beyond P1-G04, at fixed compute (20,000 steps) | Experiment 2A, `P2A-001` (§28) | 0.5048 — indistinguishable from the original `dfffd3da` baseline, a regression vs. P1-G04 | **Falsified**, at fixed compute — left an open steps/passes confound |
+| Experiment 2A's regression was an optimization-exposure artifact, resolvable by scaling steps to hold passes constant | Experiment 2B, `P2B-001` (§29) | 0.5000 at 64,444 steps (matched passes) — *lower* than 2A, with a genuine early-peak-then-overfit trajectory | **Falsified** — rules out the confound; the regression is real, not a compute-matching artifact |
+| Stage 1 data volume scaling (composite, 2A+2B) | §30.1 | Neither compute regime raised correlation above the original 36,000-record corpus | **Rejected / retired** — "exhausted," not disproven-forever; reopening requires new evidence (§30.1) |
+| Stage 1 carries 75 extreme-magnitude sentinel-value labels (`eval_cp` ∈ {−9605, 9605, 20000}) that are a genuine upstream Lichess API defect | Label-quality audit, §32.4 | Traced directly to `acquire_stage1_lichess.py`'s unchecked `pv["cp"]` read; 36 records at +20000, 33 at +9605, 6 at −9605 | **Confirmed** — real source-data defect, not a parsing bug in this repo |
+| Removing the 8 sentinel-value held-out records changes the *reported held-out correlation metric* | §32.4 post-hoc exclusion | 0.5315 → 0.5931–0.5953 (+0.060 to +0.064) — over 2x Phase 1's entire optimization gain, from excluding 0.2% of the held-out set | **Confirmed** — real, large, mechanically explained (Pearson correlation's sensitivity to extreme target variance) |
+| Removing the same sentinel-value records from *training* improves the *learned model* | Experiment 3A, `P3A-001` (§35) | Model B vs. Model A on the matched benchmark v1-clean: +0.0002 correlation, −0.1 RMSE, −1.7 bias — an order of magnitude below the noise floor | **Falsified** — no detectable change to the learned function; the correlation jump is entirely a benchmark-composition artifact (§35.7's explanation A), not a model-quality effect |
+| Sentinel-value filtering should still become permanent Stage 1 ingestion hygiene, despite showing no model-quality effect | §35.9 | Costs nothing in demonstrated model quality; prevents this artifact from silently confounding every future Stage-1-derived held-out evaluation, including unrelated future phases | **Adopted as data-hygiene policy** — not a model promotion, a benchmark/ingestion-quality fix |
+
+**Classification, stated explicitly per this task's instruction:**
+- **Falsified**: further optimization tuning past P1-G04 (§27.8); optimization fixing mate bias (§27.5); Stage 1 volume scaling under fixed compute (§28) and under proportional compute (§29); sentinel filtering improving the learned model (§35.7).
+- **Confirmed**: optimization-limited performance was real and recoverable once, at P1-G04 (§27.7); the Stage 1 sentinel defect is real and upstream (§32.4); the correlation metric is sentinel-sensitive (§32.4).
+- **Benchmark artifact, not a model fix**: the entire +0.06 correlation gain from sentinel exclusion (§32.4, §35.5–§35.7) — reproduced identically for two different models, tracking the benchmark, not the model.
+
+### 36.2 Updated roadmap status
+
+Extends §30.2's table with Phase 3's outcome:
+
+| Phase | Status |
+|---|---|
+| Optimization (Phase 1) | ✓ **Confirmed, exhausted** — P1-G04 promoted as reference model (+0.0271 over noise floor, §27); further optimization-only tuning has low expected marginal return (§27.8) |
+| Stage 1 data scaling (Phase 2, Experiments 2A/2B) | ✓ **Rejected**, under both fixed-compute and proportional-compute regimes (§28, §29); retired, not reopened without new evidence (§30.1) |
+| Label quality — sentinel-value audit and filtering (Phase 3) | ✓ **Closed** — real source defect confirmed and now filtered as ingestion hygiene (§32.4, §35.9); filtering has **zero measured effect on model quality** (§35.7) — **Phase 3 is closed because it definitively ruled a lever out, not because it found one that moved the model** |
+| Extreme-magnitude / mate-labeled compression (§33 hypothesis #2) | **Open, highest-confidence remaining lever** — reconfirmed independently 5 times across every experiment run so far (§23, §27.5, §28.5, §29.6, §32.6) |
+| **Next investigation** | **Phase 4 — Loss/K reformulation, targeting the mate-specific bias and, where possible, correlation itself (§24.4, §38 below)** |
+
+## 37. Research state after Phase 3 (2026-07-20)
+
+Stated explicitly, per this task's instruction, with a citation for every claim:
+
+- **Optimization is no longer the dominant bottleneck.** Phase 1 recovered a real, noise-floor-clearing gain once (`dfffd3da` 0.5044 → P1-G04 0.5315, §27.7), but the winning configuration's own trajectory plateaus with a classic overfitting signature in its final ~10,000 steps (§27.3, §27.8) — further schedule search on this dataset has diminishing expected return. Independently, mate-labeled bias is completely unmoved by any optimization change tested (−1,651 to −1,729cp across every Phase 1 cell, §27.5) — confirming optimization cannot reach the failure mode Phase 4 targets, regardless of further optimization-only tuning.
+- **Stage 1 volume is not the dominant bottleneck.** Two controlled, single-variable experiments — fixed compute (Experiment 2A, §28: 0.5048, a regression vs. P1-G04) and proportional compute (Experiment 2B, §29: 0.5000, *lower* than 2A, with a genuine overfitting trajectory) — both failed to beat P1-G04. §30.1 concludes Stage 1 volume scaling is experimentally exhausted at this data quality/representation, not merely under-tested.
+- **Isolated Stage 1 label outliers are not the dominant bottleneck.** The 75 sentinel-value records are a real, confirmed defect (§32.4) and materially distort the *held-out correlation metric* (+0.06 to +0.064, §32.4) — but Experiment 3A's retrain-and-reevaluate (§35, `P3A-001`) showed the *learned model* is statistically indistinguishable with or without them in training (+0.0002 correlation on the matched benchmark, an order of magnitude below the measured noise floor, §35.7). This is a clean negative result on model quality, not an ambiguous one.
+
+**What the accumulated evidence does point to, stated with the same rigor:**
+- **Correlation — not scale — remains the binding constraint** (§23.4): Pearson correlation is affine-invariant, so no post-hoc rescaling can move it, and no retraining lever tested so far (optimization, volume, outlier filtering) has moved it meaningfully beyond P1-G04's 0.5315. Within the cp-labeled subset alone (the majority of real search positions), correlation is markedly lower still — 0.362 (§23.4) — meaning the ranking-quality problem is *not* an artifact of pooling mate and cp positions; it is present, and worse, in ordinary positions.
+- **The compression/mate-bias symptom is severe, monotonic in label magnitude, and has now been reconfirmed five independent times** across every experiment run in this roadmap (§23.4/§23.7's original finding; §27.5's Phase 1 reconfirmation; §28.5's Experiment 2A reconfirmation; §29.6's Experiment 2B reconfirmation; §32.6's magnitude-bucketed audit, the finest-grained confirmation yet — near-zero positions MAE 55–72cp, extreme non-mate positions MAE 2,246cp with a −1,456cp bias, mate positions MAE ~2,785cp with a ≈2,800cp-magnitude bias). This is §33's ranked hypothesis #2 and is exactly Phase 4's originally-scoped target (§24.4).
+- **A specific, evidenced mechanism exists for the compression symptom, not yet ablated**: `K=2.773456`'s texel-sigmoid loss saturates by ≈288cp (§23.7) — beyond that residual magnitude, training gradient for large-magnitude targets is near zero, plausibly suppressing the network's ability to emit large-magnitude outputs. §23.7's own explicit caveat still applies unmodified: **this mechanism, even if fully confirmed, addresses compression/bias, not correlation** — "re-deriving K... does nothing for correlation, the binding constraint" (§23.7, direct quote). Phase 4 must be read against this distinction, not around it: a successful K sweep would still leave the primary, correlation-based problem open.
+
+**Net position entering Phase 4**: every cheap-to-moderate lever outside loss/target formulation (optimization, Stage 1 volume, isolated label-outlier cleaning) has now been tried and has plateaued or been ruled out. The loss/target-formulation family (§24.4's original Phase 4 scope, plus the candidates below) is the only remaining family of levers this roadmap has not yet tested empirically — and is also the only family with a plausible mechanism (WDL-style blending, §6 Exp 6) to touch correlation itself, as opposed to only compression/bias.
+
+## 38. Phase 4 research plan (planning only — no experiments run, no code changed)
+
+Per this task's explicit instruction: this section defines candidate directions and ranks them
+using accumulated evidence from Phases 1–3. **No experiments are performed, no trainer code is
+modified, no retraining occurs as part of producing this section.** §24.4 already scoped Phase 4
+in outline (K sweep, then mate-aware loss); §26.1/§26.5 already assigned controlled-variable rows
+and Experiment IDs (`P4I` for the K sweep, `P4II` for mate-aware loss) before Phase 3 began. This
+section extends that existing scaffolding to the six required candidate directions rather than
+replacing it, and does not re-litigate decisions §24.4/§26 already made.
+
+### 38.1 The evidence-driven ranking spine
+
+Every candidate below is sorted first by one discriminator, established directly by §23.4/§23.7's
+already-completed analysis: **does the candidate have an evidenced or plausible mechanism to move
+correlation (the primary, binding metric, §26.0) — or does it only address compression/bias (a
+secondary, scale-type symptom that no amount of post-hoc or in-training rescaling can convert into
+a correlation gain)?**
+
+- **Cannot move correlation, by direct prior finding** — any pure rescaling of the loss/target
+  (K re-derivation, monotonic target transforms, label normalization/standardization, extreme-
+  value loss reweighting): §23.4 established correlation is invariant under any monotonic-
+  increasing transform, and §23.7 states this explicitly for K: "does nothing for correlation, the
+  binding constraint." These candidates are cheap, well-evidenced for their narrow effect
+  (compression/bias), and **should not be expected to solve the primary problem** even if they
+  succeed completely on their own terms.
+- **Plausible mechanism to move correlation, but no direct evidence yet — precedent only**: a
+  fundamentally different regression objective (WDL blend, §6 Exp 6; alternative loss shapes that
+  change what the network is rewarded for ranking correctly, not merely how hard it's penalized at
+  extremes). §6 itself already marks Exp 6's expected gain "Unknown, plausible (Stockfish/
+  nnue-pytorch precedent)" — this project has never run it, so its evidence tier is precedent from
+  outside this codebase, not internal measurement.
+- **Targets the mate-specific bias directly, with strong problem-evidence but no fix-evidence
+  yet**: mate-aware loss weighting, mate-distance-aware target representation. §33's hypothesis #2
+  is "very strong, independently reconfirmed five times" on the *existence and severity* of the
+  problem — but zero ablation has been run on any proposed *fix* for it. This is exactly §24.4's
+  original Phase 4(ii) scope.
+
+**The tension this ranking must not paper over**: §24.4's original Phase 4 description targets
+"the mate-specific bias" — a secondary symptom by §26.0's own metric hierarchy. §23.4 establishes
+that *correlation*, especially the low within-cp-subset correlation (0.362), is what's actually
+binding, and that mate-bias fixes do not automatically fix correlation. A "successful" Phase 4(i)
+K sweep, even one that fully halves mate bias per §26.3's existing promotion bar, would leave the
+primary problem — weak ranking of ordinary, non-mate positions — completely untouched. This
+section's ranking makes that explicit rather than treating "mate bias improved" as if it were
+"the roadmap's real problem improved."
+
+### 38.2 Candidate catalog (six required directions, mapped onto three distinct experimental levers)
+
+The six candidate names given in this task's instruction overlap substantially as actual
+experiments — presented individually below (as instructed) but explicitly cross-referenced to
+avoid inventing six independent runs where three suffice.
+
+**Lever A — Loss/target rescaling (cannot move correlation; addresses compression/bias only)**
+
+| # | Candidate | Rationale | Supporting evidence | Expected impact | Implementation complexity | Experimental cost | Scientific risk |
+|---|---|---|---|---|---|---|---|
+| 4(i) | **K sweep** *(already scoped, §24.4/§26.1/§26.5 as `P4I`)* | Directly ablates §23.7's saturation hypothesis, unablated since first proposed | §23.7 (mechanism, not yet isolated by experiment) | **Zero on correlation, by §23.7's own explicit statement** — Low-medium on compression | Low (empirical sweep, existing pipeline) | Cheap — same schedule as P1-G04, ~180s | Low-medium — re-verify calibration after (§24.6) |
+| 2 | **Target transformation** (e.g. a compressive transform of raw `eval_cp` before the sigmoid, or training directly against a transformed target scale) | If the raw cp scale (std≈880cp, extremes to ±20,000 pre-filtering) is what drives sigmoid saturation, transforming the target before the loss could widen the effectively-unsaturated band without touching `K` itself | §23.7 (saturation mechanism); §32.2 (Stage 1/Stage 2 cp distributions, extreme skew/kurtosis even post-sentinel-filtering) | **Low on correlation** (§23.4: no monotonic transform of the target changes the underlying ranking) — **Medium on compression/bias**, unablated | Low (loss-function-local change, reuses existing `train.py:87` texel_sigmoid call site) | Cheap — same schedule as P1-G04 | Low-medium — must re-verify calibration after, per §24.6's standing caution |
+| 6 | **Label normalization strategies** (standardizing/rescaling `eval_cp` per-source or globally before it enters `target_cp()`) | Stage 1 and Stage 2 have measurably different cp distributions (mean 135.9 vs. −82.3, std 1,126.9 vs. 402.0, §32.2) — normalizing per-source before combining could reduce a cross-source scale mismatch the current pipeline doesn't correct for | §32.2 (measured per-source distribution divergence); §32.5 (Stage 1's rounding/quantization enrichment, a second per-source difference) | **Low on correlation** (same affine-invariance argument, §23.4, if normalization is a monotonic per-source shift/scale) — **Low-medium on compression/bias**, entirely unablated | Low-medium (touches `combine_and_split`/dataset assembly, not just the loss) | Cheap | Medium — a normalization fit on the training set only must be applied identically to the held-out set, or introduces a *new* leakage-adjacent bug distinct from anything tested so far |
+| 4 | **Extreme-value handling** (a bounded/robust *loss* term for large-magnitude targets, distinct from §35's data-level sentinel-record filtering) | §32.6's magnitude-bucketed error is monotonic and severe (extreme non-mate MAE 2,246cp vs. near-zero MAE 55cp) — a loss-level intervention at the same extreme-magnitude boundary is the one part of this hypothesis §35 did **not** test (§35 removed 75 specific defective records; it did not reweight or bound the loss for the thousands of legitimate large-magnitude records that remain) | §32.6 (finest-grained magnitude-bucketed evidence in the roadmap); §35's explicit scope limit (data-record filtering only, not loss reweighting) | **Low on correlation** (same invariance argument, if implemented as monotonic loss reweighting) — **Medium-high on compression/bias for legitimate extreme values specifically**, distinct territory from §35's already-tested, already-rejected extreme-*record*-removal | Low-medium (a weighted-loss term, reuses existing loss infrastructure) | Cheap | Low-medium — risk of §23.5's single-transform trade-off (fixing the extreme tail at the cp-labeled majority's expense) if not designed as an *additive*, not *replacing*, term |
+
+**Lever B — Mate-specific loss/target structure (targets the reconfirmed mate-bias symptom directly; §24.4's original Phase 4(ii) scope)**
+
+| # | Candidate | Rationale | Supporting evidence | Expected impact | Implementation complexity | Experimental cost | Scientific risk |
+|---|---|---|---|---|---|---|---|
+| 1 (mate half) | **Loss reformulation — mate-aware weighting/shape** *(already scoped, §24.4/§26.1/§26.5 as `P4II`, run after and separately from `P4I`)* | A separate loss slope or weighting for mate-labeled records, checked specifically against cp-labeled regression, per §24.4(ii)'s existing design | §33 hypothesis #2 (problem severity, 5x reconfirmed); §23.5 (the specific failure mode — single-transform trade-off — this must avoid) | **Medium-high on mate bias** (this is what §26.3's existing Phase 4 promotion criterion — mate bias magnitude halved, cp bias/MAE not regressed — was written to evaluate); **low, secondary, on correlation**, since mate-labeled records are ~11.5% of the corpus (§32.1) | Medium (an additive loss term, reuses existing pipeline per §24.4) | Cheap — same schedule scale | Medium — §26.3's own promotion criterion exists specifically to catch a recurrence of §23.5's failure mode |
+| 3 | **Mate-target representation** (replace the flat `MATE_EQUIVALENT_CP=3,000` with a mate-distance-aware target, e.g. scaling by plies-to-mate) | The flat constant sits *below* Stage 1's now-filtered 9,605/20,000 sentinel values and collapses every mate distance to one target — §32.5 notes both 3,000 and the (now-removed) 20,000 sentinel saturate to the same ≈1.0 training-loss target under texel-sigmoid, meaning the current representation cannot distinguish "mate-in-2" from "mate-in-40" in the loss at all | §22.2 (−1,726.6cp mate bias, established); §32.3 (mate-depth distributions, Stage 1 reaching mate-in-64, right-skewed with a long tail — real information the flat constant discards); §32.5 (the constant/sentinel saturation-collision observation) | **Medium on mate-labeled bias directly**; **low-medium, secondary, on correlation** — plausibly moves mate-subset correlation specifically (untested) | Medium (touches `target_cp()`'s mate-handling branch, contract-adjacent but not a schema change — mate distance is already computed, just flattened) | Cheap-moderate (needs its own unit tests before training, per `feedback_review_passes_after_green_tests`) | Medium — same failure-mode risk as mate-aware weighting; must be checked as an *isolated additive* change per §24.4(ii)'s own design note |
+
+**Lever C — Alternative regression objective (the only lever with a plausible, though unproven, path to moving correlation itself — the binding constraint per §23.4)**
+
+| # | Candidate | Rationale | Supporting evidence | Expected impact | Implementation complexity | Experimental cost | Scientific risk |
+|---|---|---|---|---|---|---|---|
+| 5 | **Alternative regression objectives** (most concretely, §6's pre-existing Experiment 6: WDL-blended target using Lichess's free `c9` field, λ-blending win/draw/loss probability with the cp-sigmoid target) | Unlike Lever A/K, a WDL blend changes *what the network is rewarded for getting right* — not merely how the existing cp target is rescaled — giving it a mechanism (untested in this project) to actually move ranking quality, not just calibration | §6 (Experiment 6, pre-scoped, "Unknown, plausible (Stockfish/nnue-pytorch precedent)"); indirectly, §23.4's own finding that nothing tried so far can move correlation — motivating a genuinely different objective as the remaining untested category | **Unknown but the only candidate here with a plausible path to correlation itself**, per §6's own honest framing — not "large," "plausible" | Medium (§6's own estimate: extend `SHARD_DTYPE`, thread `c9` through the pipeline, implement blend in `train.py` — one-time format work) | Same as existing (~180s) once the one-time format work lands | Medium — touches the training-target contract; CLAUDE.md §4 requires re-running the mirror-symmetry/regression suite after any Evaluator-adjacent change |
+| 1 (shape half) | **Loss reformulation — objective shape** (e.g. Huber/robust loss in place of pure sigmoid-MSE, independent of mate-specific weighting) | A robust loss changes the effective weighting of outliers vs. inliers globally, a different mechanism than either Lever A's rescaling or Lever B's mate-specific additive term | No direct evidence in this project; general ML precedent only (weaker precedent tier than WDL blend, which has Stockfish/nnue-pytorch-specific precedent) | Unknown — weakest-evidenced candidate in the catalog | Low-medium (a loss-function swap) | Cheap | Medium — changes loss *shape* globally, the broadest-blast-radius change in this catalog; hardest to attribute a resulting correlation change to a specific mechanism |
+
+**Explicit overlap map** (so the decision matrix below does not double-count): candidate #2
+(target transformation) and #6 (label normalization) are both instances of Lever A's monotonic-
+rescaling family, evidentially indistinguishable from the already-scoped K sweep (`P4I`) in their
+effect on correlation (none, by §23.4) — they differ only in *where* in the pipeline the rescaling
+happens. Candidate #4 (extreme-value handling) is Lever A's one genuinely distinct sub-case (a
+loss-level reweighting of legitimate extreme values, not yet tested by anything in Phases 1-3,
+unlike simple rescaling). Candidate #3 (mate-target representation) and the mate half of #1 (loss
+reformulation) are the same experiment as Lever B / `P4II`, described from two angles. Candidate #5
+(alternative regression objectives) and the shape half of #1 are Lever C, with WDL blend as the
+concretely scoped, evidence-precedented instance and generic robust-loss reformulation as the
+weaker, unscoped instance.
+
+### 38.3 Decision matrix
+
+Ranked by accumulated evidence, not intuition — per this task's explicit instruction. "Evidence
+strength" grades how well-supported the *predicted effect* is (not the problem's existence);
+"Expected benefit" is graded against §26.0's metric hierarchy (correlation first, compression/bias
+second) rather than against the candidate's own narrowest success criterion.
+
+| Candidate (lever) | Evidence strength | Expected benefit | Engineering effort | Risk | Priority |
+|---|---|---|---|---|---|
+| K sweep — `P4I` (Lever A) | **High** — §23.7's saturation math is exact, mechanism-level evidence, only the retrain-ablation is missing | **Low** (correlation, primary metric — §23.4/§23.7's own explicit statement) / Medium (compression/bias) | Low | Low-medium | **1 — run first, as a cheap diagnostic and Phase 4(ii) prerequisite, not because it solves the primary problem** |
+| Mate-aware loss weighting — `P4II` (Lever B) | **High on problem existence** (§33 hyp. #2, 5x reconfirmed) / **None yet on this specific fix** (unablated) | Medium-high (mate bias, secondary metric) / Low (correlation, primary metric) | Medium | Medium (§23.5's failure mode; §26.3 already has a promotion gate for it) | **2 — the roadmap's originally-scoped Phase 4 target; run after `P4I` per §26.1's existing sequencing** |
+| Mate-target representation (Lever B) | Medium — motivated by a real, specific gap (§32.5's flat-constant/sentinel-saturation-collision finding) but no prior ablation of *this* fix | Medium-high (mate bias) / Low-medium (correlation, mate-subset only, untested) | Medium | Medium — same failure-mode risk as mate-aware weighting | 3 — a candidate implementation of `P4II`, not a separate phase; decide alongside mate-aware weighting, not before it |
+| WDL blend / alternative regression objective — Exp. 6 (Lever C) | **Precedent-only** (§6: "Unknown, plausible... Stockfish/nnue-pytorch precedent") — no internal-project evidence yet | **Unknown, but the only candidate with a plausible path to correlation itself**, the binding constraint (§23.4) | Medium (one-time format work, §6) | Medium (target-contract change, mirror-symmetry re-verification required) | **4 — highest ceiling, least evidence; schedule as Phase 4's second major experiment after the K-sweep/mate-loss pair, not deferred indefinitely** |
+| Target transformation (Lever A) | High (same affine-invariance argument as K sweep) | Low (correlation) / Medium (compression, unablated) | Low | Low-medium | 5 — redundant with `P4I`'s expected finding; only worth running if `P4I` shows an unexpected correlation effect that contradicts §23.4's theory |
+| Label normalization (Lever A) | Medium (real per-source distribution divergence measured, §32.2, but untested as a fix) | Low (correlation) / Low-medium (compression) | Low-medium | Medium (held-out leakage risk if normalization parameters aren't fit train-only) | 6 — lowest priority; the per-source divergence is documented but not yet shown to be a quality problem (§32.2 itself flags Stage 2's negative bias as "an open question, not resolved") |
+| Extreme-value loss handling (Lever A, distinct sub-case) | Medium — motivated by §32.6's finest-grained evidence yet, but genuinely untested (distinct from §35's already-rejected record-removal) | Low (correlation) / Medium-high (compression/bias for legitimate extreme values) | Low-medium | Low-medium (additive-term risk, same as mate-aware weighting) | 7 — worth a look after the Lever B pair, as a possible complement to mate-aware weighting rather than a replacement for it |
+| Generic robust-loss reformulation (Lever C, unscoped) | **Low** — no project-specific evidence, weakest precedent of the catalog | Unknown | Low-medium | Medium — broadest blast radius, hardest to attribute | 8 — not recommended as a standalone Phase 4 experiment; folds into the WDL-blend candidate if that is scheduled, not run separately |
+
+### 38.4 Remaining unknowns
+
+- **Whether within-mate-subset correlation moves under either mate-aware loss candidate** — no
+  experiment run so far has reported mate-subset correlation specifically (only overall and
+  cp-only, §23.4); Phase 4's own measurement battery should add this split, since it's the one
+  place Lever B could plausibly show a correlation effect, not just a bias effect.
+- **Whether cross-source label-scale divergence (§32.2, Stage 1 vs. Stage 2) is a genuine quality
+  problem or a benign property of two different real-world label sources** — flagged as an open
+  question in §32.2 itself, unresolved by any experiment since.
+- **Whether Stage 2's `c9` WDL field is actually populated in the existing 20,000-record corpus**
+  at a usable rate — §6's Experiment 6 scope assumes it is available but no audit-level check
+  (of the kind §32 ran for `search_depth`/`search_nodes`) has confirmed this for `c9` specifically.
+  This is a prerequisite fact to establish before scoping WDL-blend implementation effort.
+- **Whether Stage 1's Lichess records carry an analogous WDL/game-outcome signal** at all, or
+  whether a WDL blend would be Stage-2-only, changing what fraction of the corpus benefits —
+  unexamined.
+- **Whether the label-noise floor (§6 Experiment 5, pre-existing, not yet run) bounds how much
+  any Phase 4 loss/target change could realistically achieve** — if Stage 2's single fixed-node
+  search has substantial re-labeling variance (§32.5's n=2 duplicate-FEN finding is suggestive but
+  not decisive), that variance caps correlation regardless of loss formulation, and should ideally
+  be measured before or alongside Phase 4, not after.
+- **Whether plain-768 (non-king-relative) features themselves cap correlation below what Phase 4
+  could reach even with a perfect loss/target formulation** — ADR-001's revisit conditions remain
+  unmet (§24.4); Phase 4's own results are part of what would eventually inform this, not
+  something Phase 4 can resolve on its own.
+
+### 38.5 Recommendation for the first Phase 4 experiment
+
+**Run the K sweep (`P4I`) first — reconciling, not overriding, §24.4's existing "K sweep before
+mate-aware loss" sequencing.** This recommendation optimizes for **cheapest-diagnostic-first**,
+not **highest-ceiling-first** — both are defensible axes, and this section names which one it
+picked and why:
+
+1. **It is a prerequisite for correctly interpreting `P4II`** — §26.1's own controlled-variable
+   table already declares 4(ii)'s "Held constant" column as "Best `K` from 4(i) (or the original
+   K, if 4(i) shows no improvement)." Running mate-aware loss work before the K sweep would leave
+   that row's own precondition unresolved.
+2. **It closes a specific, named, still-unablated hypothesis** (§23.7's saturation mechanism) that
+   has been carried forward, explicitly caveated as "supported, not confirmed," since §25's own
+   hypothesis table — Phase 4 is the first opportunity to actually test it rather than continue
+   citing it as plausible-but-unproven.
+3. **It is cheap and low-risk** — an empirical sweep against the existing pipeline, comparable
+   wall-clock cost to any other single Phase 1-style run (§24.4's own estimate).
+4. **Its expected outcome is known in advance not to solve the primary problem, and that is stated
+   here explicitly, not discovered after the fact**: per §23.7's own words, K re-derivation "does
+   nothing for correlation, the binding constraint." A successful K sweep closes off one specific
+   compression-mechanism question; it does not substitute for Lever B (mate-aware loss, run
+   immediately after per the existing sequencing) or Lever C (WDL blend, this section's
+   highest-ceiling candidate, §38.3's priority 4) — both of which should be scheduled as Phase 4
+   continues, not treated as optional follow-ups contingent on the K sweep's result.
+
+**If instead the objective were highest-ceiling-first**, the WDL blend (Lever C, §6 Experiment 6)
+would be the recommended first experiment — it is the only candidate in this catalog with a
+plausible mechanism to move correlation itself, the metric every other candidate in Lever A is
+already known, in advance, not to move. This section does not recommend that ordering, for the
+reasons in points 1-3 above (sequencing dependency, cheap diagnostic value, low risk), but states
+it as the explicit alternative rather than leaving the choice of axis implicit.
+
+## 39. Phase 4 research questions (rewritten as testable hypotheses, 2026-07-20)
+
+Per this task's instruction: every open question below is restated with a null hypothesis,
+independent variable, dependent variables, promotion criteria, and possible failure modes — no
+question is left as a vague "investigate X." Where §26.1/§26.3 already define the controlled-
+variable and promotion-criteria machinery for a question, this section cites and reuses it rather
+than redefining it.
+
+**RQ-1 — K sweep (`P4I`, Lever A)**
+- **Null hypothesis (H0)**: no value of `K` in a reasonable empirical sweep improves held-out
+  correlation beyond P1-G04's 0.5315 (v1) / 0.5931 (v1-clean) by more than the measured noise
+  floor (std≈0.0019, §27.2).
+- **Independent variable**: `K` only (§26.1's existing 4(i) row) — data/optimization config held
+  at P1-G04's promoted values.
+- **Dependent variables**: held-out correlation (primary); compression, bias, MAE, RMSE, mate/cp
+  split (secondary, §26.2's mandatory battery).
+- **Promotion criteria**: reuses §26.3's existing Phase 4 language, adapted to K specifically —
+  correlation gain beyond noise floor (unlikely per §23.4/§23.7, but must still be checked, not
+  assumed null) **or**, more likely per §23.7's own prediction, a compression/bias improvement
+  with correlation unchanged — recorded as informative even if H0 (on correlation) is not
+  rejected, since §23.7's saturation mechanism is itself the thing being tested.
+- **Possible failure modes**: a K value that improves compression by moving predictions further
+  from calibration in a way `calibration_report`'s mate/cp split would catch (re-verify per §24.6,
+  don't assume "correlation is unchanged, therefore calibration is fine"); an unexpected
+  correlation *movement* (positive or negative) would itself falsify the affine-invariance-based
+  expectation and warrant a dedicated follow-up, not a footnote.
+
+**RQ-2 — Mate-aware loss weighting (`P4II`, Lever B)**
+- **Null hypothesis (H0)**: an additive mate-aware loss term does not halve mate-labeled bias
+  magnitude (current: −1,661 to −1,729cp depending on configuration — halved from the current
+  reference model P1-G04's −1,661.1 is ≈−830cp; §26.3's own anchor, −863cp, was computed against
+  `dfffd3da`'s −1,726.6cp before P1-G04's promotion — both are cited so the criterion isn't
+  ambiguous about which reference it's halving from) without regressing cp-labeled bias/MAE beyond
+  the noise floor — i.e., §26.3's existing Phase 4 promotion criterion is not met.
+- **Independent variable**: loss shape/weighting for mate-labeled records only (§26.1's existing
+  4(ii) row), run after and separately from RQ-1, using RQ-1's best K (or the original K if RQ-1
+  shows no improvement, per §26.1's own stated fallback).
+- **Dependent variables**: mate-labeled bias magnitude (primary for this question); cp-labeled
+  bias/MAE (regression guard); held-out correlation overall and mate-subset-specific (secondary
+  but newly tracked, per §38.4's flagged unknown — no prior experiment reported mate-subset
+  correlation alone).
+- **Promotion criteria**: exactly §26.3's existing Phase 4 language — mate bias magnitude
+  decreases by at least half **and** cp-labeled bias/MAE does not regress beyond the noise floor.
+- **Possible failure modes**: repeating §23.5's single-transform trade-off (fixing mate bias at
+  the cp-labeled majority's expense) — this is precisely why cp-bias/MAE is a hard co-requirement,
+  not an optional secondary check; an additive term that is not actually isolated (e.g. leaks
+  gradient into cp-labeled records' loss in an unintended way) would need to be caught via the
+  cp-labeled metrics before promotion, not assumed isolated from the implementation alone.
+
+**RQ-3 — Mate-target representation (Lever B alternative/complement to RQ-2)**
+- **Null hypothesis (H0)**: replacing the flat `MATE_EQUIVALENT_CP=3,000` target with a
+  mate-distance-aware target does not improve mate-labeled bias/MAE beyond what RQ-2's loss-
+  weighting approach alone achieves, and/or regresses cp-labeled bias/MAE beyond the noise floor.
+- **Independent variable**: mate target *representation* (a target-construction change in
+  `target_cp()`), distinct from RQ-2's *loss-weighting* change — run as its own single-variable
+  experiment, not bundled with RQ-2, per §26.1's controlled-variable discipline (one independent
+  variable per experiment unless a grouping is declared in advance with a stated reason, which
+  this pairing does not have).
+- **Dependent variables**: same battery as RQ-2 (mate bias/MAE, cp bias/MAE regression guard,
+  mate-subset and overall correlation), plus a direct comparison against RQ-2's result on the same
+  metrics, to determine whether target-representation or loss-weighting is the more effective of
+  the two mate-specific interventions, or whether they compose (a follow-up question, not this
+  one).
+- **Promotion criteria**: same structural form as §26.3's Phase 4 criterion (mate bias/MAE
+  improves substantially, cp-labeled metrics do not regress beyond noise floor), evaluated
+  independently of RQ-2 first, then compared.
+- **Possible failure modes**: mate distance is right-skewed with a long tail (Stage 1 to
+  mate-in-64, §32.3) — a naive linear scaling by ply-distance could itself introduce a new
+  extreme-value problem structurally similar to the one §32.4/§35 just spent an entire experiment
+  ruling in and back out for raw cp values; any distance-scaled target should be checked against
+  the same magnitude-bucketed analysis §32.6 already established as this project's diagnostic of
+  choice for exactly this failure mode.
+
+**RQ-4 — WDL blend / alternative regression objective (Exp. 6, Lever C)**
+- **Null hypothesis (H0)**: a λ-blended WDL+cp-sigmoid target, at fixed data volume and
+  optimization settings, does not improve held-out correlation beyond the best result from RQ-1/
+  RQ-2/RQ-3 (whichever is promoted first) by more than the noise floor.
+- **Independent variable**: target/loss formulation (cp-sigmoid-only vs. WDL-blended), λ swept
+  or fixed per §6's own original design — a prerequisite check (§38.4) must first confirm Stage 2's
+  `c9` field is populated at a usable rate before this experiment is scoped further. **Held
+  constant**: the best data/optimization configuration from Phases 1-3 (P1-G04's schedule on the
+  40,000-record corpus, or RQ-1/RQ-2/RQ-3's promoted result if any clears its own bar first),
+  architecture, feature representation (§26.1's 4(i)/4(ii) row pattern, extended).
+- **Dependent variables**: held-out correlation overall and cp-only (primary — this is the one
+  candidate in the catalog with a plausible path to moving the cp-only 0.362 figure specifically,
+  §23.4); full §26.2 battery (secondary).
+- **Promotion criteria**: correlation improves beyond the current best promoted result by more
+  than the noise floor, **and** the project's mirror-symmetry/regression suite passes unchanged
+  (CLAUDE.md §4's standing requirement for any Evaluator-adjacent change, applicable here because
+  this changes the training *target* contract, not just a hyperparameter).
+- **Possible failure modes**: `c9` may be sparsely populated or entirely absent in the existing
+  Stage 2 corpus (untested, §38.4), which would block this experiment at fixed data volume without
+  new data acquisition; λ chosen post-hoc rather than declared in advance would violate this
+  project's "declared, not tuned post-hoc" convention (established explicitly in §33.1's own
+  Experiment 3A design); a blend that improves correlation but shifts the network's raw output
+  scale would still need §24.6's standing re-calibration check, not an assumption that a
+  correlation gain implies calibration is automatically fine.
+
+**RQ-5 — Label-noise floor (Exp. 5, pre-existing, prerequisite context for interpreting RQ-1–RQ-4)**
+- **Null hypothesis (H0)**: re-labeling the same 1,000 Stage 2 positions at two node budgets
+  (25k vs. 50k) produces a small spread (|eval_25k − eval_50k| distribution tightly clustered
+  near 0), indicating single-fixed-node labels are not a material noise source relative to the
+  effects Phase 4 is trying to isolate.
+- **Independent variable**: Stockfish node budget only (25k vs. 50k), fixed position sample.
+- **Dependent variables**: distribution of `|eval_25k − eval_50k|` in cp (primary); whether the
+  spread differs by position phase or magnitude bucket (secondary, reusing §32.6's bucketing
+  scheme).
+- **Promotion criteria**: per §6's original design — large spread reprioritizes toward stability/
+  higher node budget over any Phase 4 loss change (a Phase 3-adjacent finding that would bound
+  what Phase 4 could achieve); small spread strengthens the case that Phase 4's loss/target levers
+  (not label re-collection) are the right next investment, without itself promoting anything.
+- **Possible failure modes**: the existing n=2 duplicate-FEN finding (§32.5, both records differing
+  in label) is suggestive of non-trivial variance but is not statistically decisive at that sample
+  size — this experiment is exactly the properly-powered (n=1,000) version of that observation;
+  a result that contradicts the n=2 finding's direction would need explicit reconciliation, not a
+  silent overwrite of the earlier, smaller-sample note.
+
+**Explicitly out of scope, per this task's instruction**: no trainer code was changed, no loss
+function was modified, no labels were changed, no retraining occurred, no dataset or checkpoint
+was modified in the process of writing §36-§39. This is planning only.
