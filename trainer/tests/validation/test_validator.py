@@ -8,6 +8,7 @@ from trainer.model.network import NnueNet
 from trainer.model.train import TrainingConfig, train
 from trainer.validation.validator import (
     ClassicalEvalRecord,
+    calibration_report,
     eval_scale_check,
     evaluate_held_out,
     load_classical_eval_corpus,
@@ -97,6 +98,47 @@ def test_eval_scale_check_rejects_empty_records(tmp_path: Path):
     model = _trained_model(tmp_path)
     with pytest.raises(ValueError, match="at least one record"):
         eval_scale_check(model, [])
+
+
+def test_calibration_report_returns_finite_buckets_split_by_mate_and_phase(tmp_path: Path):
+    model = _trained_model(tmp_path)
+    records = _records()
+
+    report = calibration_report(model, records)
+
+    assert report.overall.position_count == len(records)
+    assert report.mate_labeled.position_count + report.cp_labeled.position_count == len(records)
+    assert sum(bucket.position_count for bucket in report.by_phase.values()) == len(records)
+    for bucket in [report.overall, report.mate_labeled, report.cp_labeled, *report.by_phase.values()]:
+        assert bucket.signed_mean_error == pytest.approx(bucket.signed_mean_error)  # finite, no NaN
+        # A single-record bucket has a genuinely undefined (0/0) compression ratio --
+        # not a bug, so only assert finiteness where there's more than one record to
+        # compute a standard deviation from.
+        if bucket.position_count > 1:
+            assert bucket.compression_ratio == pytest.approx(bucket.compression_ratio)
+
+
+def test_calibration_report_signed_mean_error_matches_manual_computation(tmp_path: Path):
+    model = _trained_model(tmp_path)
+    records = _records()
+    fens = [r.fen for r in records]
+
+    from trainer.model.batching import encode_fens
+    from trainer.model.train import target_cp
+
+    batch = encode_fens(fens)
+    with torch.no_grad():
+        predicted = model(batch.us_indices, batch.us_offsets, batch.them_indices, batch.them_offsets)
+    expected_signed_mean_error = (predicted - torch.tensor([target_cp(r.label) for r in records])).mean().item()
+
+    report = calibration_report(model, records)
+    assert report.overall.signed_mean_error == pytest.approx(expected_signed_mean_error, abs=1e-4)
+
+
+def test_calibration_report_rejects_empty_records(tmp_path: Path):
+    model = _trained_model(tmp_path)
+    with pytest.raises(ValueError, match="at least one record"):
+        calibration_report(model, [])
 
 
 def test_eval_scale_check_runs_against_the_real_classical_corpus(tmp_path: Path):

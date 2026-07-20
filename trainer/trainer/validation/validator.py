@@ -7,20 +7,16 @@ an eval-scale check against classical evaluation for a trained checkpoint.
 #201) into `bench/nnue-corpus/classical-golden-evals.csv`; `load_classical_eval_corpus`
 below reads that file.
 
-Future work (documentation only -- not implemented, do not build ahead of a
-real corpus to test against): once real trained checkpoints exist,
-`eval_scale_check()` should grow beyond a single `mean_absolute_difference_cp`
-scalar. Candidates: calibration metrics (e.g. a binned reliability curve of
-predicted vs. classical eval, not just mean absolute difference, since a net
-can have a low mean error while being systematically miscalibrated at the
-tails); prediction distribution diagnostics (variance, skew, outlier rate
-against classical eval, to catch a net that is well-centered on average but
-wildly noisy per-position); and trend analysis across training runs (tracking
-eval-scale drift checkpoint to checkpoint, so a regression is caught at the
-run that introduced it instead of only at final validation). None of this is
-buildable against the current hand-built fixture in a way that would be
-meaningful -- it needs real trained checkpoints this module's scope boundary
-above already defers.
+Real trained checkpoints now exist (issue #219): `calibration_report()` below computes signed
+mean error and score-compression ratio (`std(predicted)/std(target)`) against held-out
+`target_cp` labels, split by mate/cp label and by phase -- the calibration-metrics candidate
+this paragraph used to defer. It is a separate diagnostic from `eval_scale_check()`, which
+compares against a classical-eval corpus rather than held-out labels; that one's remaining
+candidates are still deferred future work, not yet needed: a binned reliability curve of
+predicted vs. classical eval (mean error alone can hide tail miscalibration); prediction
+distribution diagnostics (variance/skew/outlier rate against classical eval, to catch a net
+that's well-centered on average but noisy per-position); and cross-checkpoint eval-scale drift
+tracking.
 """
 
 from __future__ import annotations
@@ -33,6 +29,7 @@ from typing import Iterable, List
 import torch
 
 from trainer.contracts import PositionRecord
+from trainer.dataset import phase_of
 from trainer.model.batching import encode_batch, encode_fens
 from trainer.model.network import NnueNet
 from trainer.model.train import target_cp, texel_sigmoid
@@ -111,6 +108,76 @@ def eval_scale_check(model: NnueNet, records: Iterable[ClassicalEvalRecord]) -> 
     return EvalScaleCheck(
         mean_absolute_difference_cp=mean_absolute_difference_cp,
         position_count=len(records),
+    )
+
+
+@dataclass(frozen=True)
+class CalibrationBucket:
+    """Signed mean error and score-compression ratio (research doc §5.1) for one
+    slice of held-out records. `compression_ratio` near 1 means the net's output
+    spans a comparable cp range to the target; below 1 is compression, above 1 is
+    expansion. Both are `nan` for an empty bucket (nothing to divide by)."""
+
+    signed_mean_error: float
+    compression_ratio: float
+    position_count: int
+
+
+@dataclass(frozen=True)
+class CalibrationReport:
+    """Issue #219: `evaluate_held_out`'s MAE/correlation say how loosely predictions
+    track targets, not whether they're systematically biased. This is the additional,
+    distinct calibration question — every bucket here is an aggregate over the same
+    `predicted_cp`/`target_cp` arrays `evaluate_held_out` already computes, split per
+    §5.1's mate-vs-cp and phase axes so a bias/compression effect specific to one
+    slice isn't hidden by averaging across all of them."""
+
+    overall: CalibrationBucket
+    mate_labeled: CalibrationBucket
+    cp_labeled: CalibrationBucket
+    by_phase: dict[str, CalibrationBucket]
+
+
+def calibration_report(model: NnueNet, records: Iterable[PositionRecord]) -> CalibrationReport:
+    """Computes §5.1's calibration diagnostics against `records` (typically a
+    held-out set). Does not touch `evaluate_held_out`'s own loss/correlation
+    computation — this is an additional view over the same underlying predictions.
+    """
+    records = list(records)
+    if not records:
+        raise ValueError("calibration_report requires at least one record")
+
+    batch = encode_batch(records)
+    target_cps = torch.tensor([target_cp(r.label) for r in records], dtype=torch.float32)
+    with torch.no_grad():
+        predicted_cp = model(batch.us_indices, batch.us_offsets, batch.them_indices, batch.them_offsets)
+
+    is_mate = torch.tensor([r.label.eval_mate is not None for r in records], dtype=torch.bool)
+    phases = [phase_of(r.fen) for r in records]
+
+    def bucket(mask: torch.Tensor) -> CalibrationBucket:
+        count = int(mask.sum().item())
+        if count == 0:
+            return CalibrationBucket(signed_mean_error=float("nan"), compression_ratio=float("nan"), position_count=0)
+        pred, targ = predicted_cp[mask], target_cps[mask]
+        target_std = targ.std(unbiased=False).item()
+        compression_ratio = pred.std(unbiased=False).item() / target_std if target_std != 0 else float("nan")
+        return CalibrationBucket(
+            signed_mean_error=(pred - targ).mean().item(),
+            compression_ratio=compression_ratio,
+            position_count=count,
+        )
+
+    all_mask = torch.ones(len(records), dtype=torch.bool)
+    by_phase = {
+        phase: bucket(torch.tensor([p == phase for p in phases], dtype=torch.bool)) for phase in sorted(set(phases))
+    }
+
+    return CalibrationReport(
+        overall=bucket(all_mask),
+        mate_labeled=bucket(is_mate),
+        cp_labeled=bucket(~is_mate),
+        by_phase=by_phase,
     )
 
 

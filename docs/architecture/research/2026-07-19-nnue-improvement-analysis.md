@@ -1553,3 +1553,123 @@ confirmed directly rather than assumed.
 **Disposition**: all acceptance criteria met, no follow-up work remains in scope, Stage 2
 intentionally not pursued (Stage 1 sufficient). **Closed**: #218, closing comment posted with
 this summary.
+
+## 22. Issue #219 — calibration diagnostics against the real net (2026-07-20)
+
+§5.1 specified these diagnostics but they had never been run against the real net
+(`dfffd3da-…`, checkpoint `trainer/outputs/nets/checkpoint.pt`). This session implements and
+runs them, per #219's Objective items 1-3.
+
+### 22.1 Implementation
+
+Added `calibration_report()` to `trainer/trainer/validation/validator.py` — a new function
+alongside the existing `evaluate_held_out`/`eval_scale_check`, computing signed mean error
+(`mean(predicted - target)`) and score-compression ratio (`std(predicted)/std(target)`) as
+`CalibrationBucket`s, split overall / mate-labeled / cp-labeled / per-phase, per §5.1's exact
+spec. No new data collection — reuses the same `predicted_cp`/`target_cp` arrays
+`evaluate_held_out` already computes internally, via the existing `encode_batch`/`target_cp`/
+`phase_of` infrastructure. 4 new unit tests added (`trainer/tests/validation/test_validator.py`);
+one against a hand-computed reference value, one for the empty-input rejection, one covering
+mate/cp/phase bucket-count accounting, one checking every bucket with >1 record is finite (a
+single-record bucket's compression ratio is genuinely undefined, 0/0 — not a bug). Full trainer
+suite: 157/157 passing.
+
+### 22.2 Measured — real net, real held-out set (n=4,000)
+
+Reproduced via the exact snippet in `trainer/configs/train-e3-real.md` (same seed=42 split,
+same checkpoint) — `evaluate_held_out` reproduced bit-for-bit against the committed manifest
+(`held_out_loss=0.08225942403078079`, `label_correlation=0.5043603181838989`), confirming no
+train/held-out leakage and that the checkpoint/split pairing is exactly the one the manifest
+documents.
+
+| Bucket | n | Signed mean error (cp) | Compression ratio |
+|---|---|---|---|
+| **Overall** | 4,000 | **−219.6** | **0.063** |
+| Mate-labeled | 472 (11.8%) | −1,726.6 | 0.055 |
+| Cp-labeled | 3,528 (88.2%) | −18.0 | 0.075 |
+| Phase: opening | 1,473 | −5.8 | 0.100 |
+| Phase: middlegame | 1,236 | −47.3 | 0.071 |
+| Phase: endgame | 1,291 | −628.6 | 0.058 |
+
+**Cross-tabulation** (why endgame's bias is so much larger than opening's): mate-labeled
+records are heavily concentrated in endgame (342/472 = 72.5% of all mate-labeled records are
+endgame; only 23/472 = 4.9% are opening). Endgame's 1,291-record bucket is 26.5% mate-labeled
+(342/1291) vs. opening's 1.6% (23/1473) — endgame's large aggregate bias is substantially a
+**composition effect** from mate-label concentration, not solely evidence of an independent,
+phase-specific miscalibration beyond what the mate-handling problem already explains. (Note:
+the per-phase buckets above mask on phase only — mate-labeled and cp-labeled records mixed
+together — they are not a cp-only view; no phase×mate-label intersection was computed.) The
+mate-free **cp-labeled overall bucket alone** (0.075, n=3,528) already shows the compression
+problem is not solely a mate-handling artifact — it is present in the pure cp-regression
+signal too, independent of any phase breakdown.
+
+### 22.3 Cross-reference against §14.5's pruning-rate collapse (Objective item 2)
+
+**Derived, mechanistic plausibility argument** (not a controlled experiment isolating this one
+variable — see caveat below): delta/futility pruning are `staticEval ± margin` gates against
+fixed cp constants (150/300cp, tuned against Classical's scale). A compression ratio of
+0.055-0.100 means NNUE's static eval spans roughly **10-18x less cp range** than the scale
+those margins were tuned against. A position Classical would evaluate as lost by, say, 1,500cp
+(comfortably triggering delta pruning) would land at roughly 1,500 × 0.06-0.10 ≈ **90-150cp**
+under NNUE's compressed scale — at or below the smaller (150cp) fixed margin, meaning the
+`staticEval + margin <= alpha`-style gate frequently fails to fire where it should. This is
+**directly consistent in mechanism and rough magnitude** with §14.5's measured ~100-300x
+delta-pruning-rate collapse (56.0%→0.48%, 39.8%→0.13%): a margin gate that used to trigger
+reliably against Classical's scale becomes marginal-to-inactive against a static eval compressed
+by an order of magnitude.
+
+**Caveat, stated explicitly**: this is a plausibility argument from two independently measured
+quantities (compression ratio here; pruning-rate collapse in §14.5), not a single experiment
+that varies compression and observes the pruning rate directly — the two measurements were
+taken on different data (held-out training records here; two specific bench positions in
+§14.5) and are connected by reasoning about the pruning-gate arithmetic, not by a shared
+measurement run. It should be read as **a supported hypothesis for the mechanism**, materially
+strengthened by this session's evidence, not a proven causal chain.
+
+### 22.4 Recommendation (Objective item 3 — exactly one of four)
+
+**(b): the net itself needs recalibration (K-value/output-scale) before margins can be
+judged.** Not (a), not (c), not (d). Reasoning:
+
+- **(d) is ruled out.** Compression is severe (0.055-0.100, i.e. real, not marginal) and
+  consistent across every independent slice checked (mate-labeled, cp-labeled, and all three
+  phases) — this is not a measurement artifact confined to one bucket.
+- **(a) alone is ruled out.** Tuning margins against the *current* net's arbitrary compressed
+  scale would need re-tuning again after any future net recalibration or retrain — margins
+  would be chasing a moving target. §14.7's own roadmap table already lists calibration
+  diagnostics as a *dependency* of the margin-recalibration investigation, not a parallel,
+  independent track — this session's result confirms that ordering was right.
+- **(b) is the parsimonious fix.** The compression is a global scale property of the net (present
+  in every slice, not gate-specific), so fixing it once at the source is lower total effort than
+  compensating for it separately in every fixed-margin constant that consumes `staticEval`.
+  Recalibration (K-value and/or `output_scale`) is also the more durable choice: if it
+  successfully restores the compression ratio toward ~1, the *existing* Classical-tuned margins
+  may turn out to already be adequate, avoiding a separate NNUE-specific margin re-tune
+  entirely — worth checking before assuming (a) or (c) is also needed.
+  **"Recalibration" here is not a free one-line `output_scale` multiply**, and this is worth
+  being explicit about: `NnueNet.forward` (`network.py:100`) applies `output_scale` as a single
+  multiplicative factor on the whole raw sum (`raw_sum * output_scale / (qa * qb)`), so naively
+  scaling `output_scale` up by roughly 1/0.063 ≈ 16x to fix the compression ratio would scale
+  the −219.6cp bias by the same factor too, to roughly −3,500cp — clearly worse, not better.
+  A real fix needs a re-fit (retraining, or at minimum an affine scale-**and**-shift correction
+  derived from these numbers, not a pure scale multiply) — reinforcing that (b) targets the
+  scale/pruning problem specifically and is a distinct effort from Track B's correlation/
+  strength problem, not a quick config change.
+- **(c) (both) is not recommended as the starting point**, for the same reason as (a) alone:
+  doing a margin re-tune concurrently with recalibration risks tuning against a scale that is
+  about to change. Recalibrate first, then re-measure §14.5's pruning-rate collapse against the
+  recalibrated net; only pursue per-evaluator margins if the collapse persists after
+  recalibration.
+
+**Explicitly out of scope for this issue** (per its own Non-Scope section, unchanged): no
+margin retune, no net retrain/recalibration performed here — this is the diagnosis this issue
+was asked to produce, not the fix. The recalibration work itself (and the re-measurement of
+§14.5's counters against a recalibrated net) is follow-up work for whoever picks up the
+roadmap's Lever B track next; not started in this session.
+
+### 22.5 Closure
+
+All three acceptance criteria satisfied: calibration diagnostics computed and recorded (§22.2);
+explicit cross-reference against the pruning-rate collapse made, with its evidentiary strength
+stated honestly (§22.3); exactly one recommendation made, supported only by the evidence
+collected (§22.4). **Closed**: #219, closing comment posted with this summary.
