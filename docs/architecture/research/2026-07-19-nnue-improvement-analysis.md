@@ -1673,3 +1673,142 @@ All three acceptance criteria satisfied: calibration diagnostics computed and re
 explicit cross-reference against the pruning-rate collapse made, with its evidentiary strength
 stated honestly (§22.3); exactly one recommendation made, supported only by the evidence
 collected (§22.4). **Closed**: #219, closing comment posted with this summary.
+
+## 23. #219(b) follow-up — can affine post-hoc calibration correct compression/bias without retraining? (2026-07-20)
+
+§22.4 recommended "(b): net recalibration needed" but stopped short of testing whether that
+recalibration could be as cheap as a post-hoc `score' = a*score + b` transform, or whether it
+requires retraining. This investigation answers that directly, analytically, before touching
+the network. **No retraining performed** (out of scope, per instruction).
+
+### 23.1 Implementation
+
+Added `fit_affine_calibration()` and an `affine` parameter on `calibration_report()` to
+`trainer/trainer/validation/validator.py` — closed-form ordinary least squares
+(`scale = cov(predicted, target) / var(predicted)`, `shift = mean(target) - scale * mean
+(predicted)`), and extended `CalibrationBucket` with `mae`/`rmse` alongside the existing
+signed-mean-error/compression-ratio fields (§22's `CalibrationBucket` gets two new fields, no
+existing field removed or renamed). 3 new unit tests, including a direct check of OLS's own
+guarantee (zero mean residual on the fitting set). Full trainer suite: 160/160 passing.
+
+### 23.2 Method — honest out-of-sample evaluation, not just in-sample
+
+The held-out set (n=4,000) was split again (`random.Random(219)`, independent of the training
+seed) into a 2,000-record calibration-fit half and a 2,000-record calibration-eval half, so the
+reported diagnostics are out-of-sample **relative to the affine fit itself**, not merely
+relative to the original NNUE training. A separate affine fit on the full 4,000 records was
+also computed as an in-sample cross-check.
+
+**Fit stability check**: `scale=8.117, shift=147.0` (fit on the 2,000-record half) vs.
+`scale=8.003, shift=124.8` (fit on the full 4,000) — close agreement confirms the 2-parameter
+fit is not sensitive to which half of the data it saw, as expected at this sample size.
+
+### 23.3 Measured — original vs. affine-calibrated (calibration-eval half, n=2,000, out-of-sample)
+
+| Bucket | Original bias | Calibrated bias | Original compression | Calibrated compression | Original MAE | Calibrated MAE | Original RMSE | Calibrated RMSE |
+|---|---|---|---|---|---|---|---|---|
+| Overall (n=2,000) | −193.78 | **+47.57** | 0.062 | **0.504** | 567.91 | 582.42 | 1280.75 | **1138.04** |
+| Mate-labeled (n=234) | −1,600.36 | −798.96 | 0.051 | 0.410 | 2,899.22 | 2,112.16 | 2,901.62 | 2,328.70 |
+| Cp-labeled (n=1,766) | **−7.40** | **+159.74** | 0.075 | 0.611 | **259.00** | **379.72** | 861.44 | 864.98 |
+
+(In-sample cross-check on the full 4,000 — same qualitative pattern, overall bias exactly
+0.00 as OLS guarantees on its own fitting set: original compression 0.063 → calibrated 0.504;
+original overall MAE 569.59 → calibrated 562.83; cp-labeled bias −18.01 → +128.89.)
+
+### 23.4 The binding constraint is correlation, not scale — and no affine transform can cross it
+
+**Measured, the decisive fact**: Pearson correlation is mathematically invariant under any
+affine transform with positive scale (`corr(a·X + b, Y) = corr(X, Y)` for `a > 0`) — a property
+of the correlation coefficient itself, not an empirical claim. The calibrated overall
+compression ratio (0.504) lands almost exactly on the pre-calibration label correlation
+(0.5044, `evaluate_held_out`, §22.2) — **confirming directly, not just in theory, that
+compression is capped at the predictor's correlation with the target, and an affine transform
+can approach that cap but never exceed it.**
+
+**Measured — the ceiling is lower than the global figure suggests once mate/cp are separated**:
+correlation computed *within* the cp-labeled subset alone is **0.362**, lower than the global
+0.504. The higher global figure is a pooling effect — mate vs. cp-labeled records are two
+widely separated clusters (target ≈ ±3,000 vs. target std ≈ 880), and a predictor that merely
+gets the *cluster* right scores a moderate correlation even with weak within-cluster ranking.
+This directly answers the obvious follow-up question ("what if mate and cp were calibrated
+separately?") **before it needs a second experiment**: a piecewise affine fit restricted to
+cp-labeled records would have an even lower compression ceiling (~0.36), not a higher one — the
+correlation problem is not a byproduct of mixing mate and cp records, it is present, and
+somewhat worse, within the ordinary (non-mate) positions that dominate real search.
+
+**Conclusion**: the net's fundamental problem is not scale, it is **signal quality** — its
+relative ranking of positions (especially ordinary, non-mate ones) is weak. Bias is a scale/
+offset property, fully correctable by an affine shift (confirmed: in-sample overall bias
+→ 0.00 exactly, out-of-sample → within noise of 0). Compression is a scale property too, but
+only correctable up to the correlation ceiling. **Correlation itself is not a scale property —
+it is invariant under literally any monotonic-increasing transform, affine or otherwise — so no
+post-hoc transform, however cleverly chosen, can improve it.** This is the reason affine
+calibration cannot suffice, stated as precisely as the mathematics allows, not as an empirical
+guess.
+
+### 23.5 The single-transform trade-off — a concrete cost, not just an insufficiency
+
+Beyond hitting the correlation ceiling, the global affine fit actively **worsens** the
+cp-labeled majority while fixing the mate-labeled tail: cp-labeled bias moves from −7.40
+(already small) to **+159.74** (worse in magnitude), and cp-labeled MAE moves from 259.00 to
+**379.72** (worse). Mate-labeled bias improves substantially (−1,600 → −799) but remains huge.
+This is not a bug in the fit — OLS minimizes *squared* error, so a single global transform is
+pulled toward correcting the mate subset's enormous residuals (which dominate the sum of
+squares) at the direct expense of the cp-labeled majority (~88% of held-out records, and the
+subset that dominates ordinary, non-mate search positions). A single `(a, b)` cannot serve both
+regimes well — reinforcing, from a second independent angle, that this is not a "recalibrate
+and ship" fix.
+
+### 23.6 Decision (Task 6): affine calibration is not sufficient; retraining is required
+
+Not sufficient, for two independent, both load-bearing reasons:
+1. **Correlation ceiling** (§23.4) — compression cannot be pushed past ~0.50 globally (~0.36
+   within ordinary cp-labeled positions specifically) by any post-hoc transform, affine or
+   otherwise. This alone rules out "calibration is enough."
+2. **Single-transform trade-off** (§23.5) — even accepting the correlation ceiling, a single
+   global affine actively degrades the bias/MAE of the ~88% majority (ordinary positions) to
+   partially fix the mate-labeled tail. There is no affine choice that improves both
+   simultaneously.
+
+**This refines #219(b)'s own recommendation**, not just confirms it needed follow-up: #219
+framed the problem as scale/bias and recommended "net recalibration (K-value/output-scale)."
+This investigation shows the scale/bias component *is* analytically fixable (bias → 0,
+compression 0.06 → 0.50) — **and the net is still not usable**, because the dominant residual
+failure is correlation, which no rescaling of any kind — post-hoc affine, or a retrained
+`output_scale`/K alone — can touch. The corrected framing: **retrain for evaluation quality
+(correlation); scale/bias is downstream of that and comparatively minor.**
+
+### 23.7 Task 7 — what in the training pipeline would address the remaining error
+
+**Primary, load-bearing target: correlation (label_correlation=0.504, cp-only=0.362).** This is
+a signal-quality problem — nothing observed in this investigation identifies *why* correlation
+is this low (architecture capacity, training duration, data quality/label noise, and loss
+weighting are all plausible, undistinguished contributors) — that diagnosis is future work this
+investigation does not claim to have done. What is established here is *that* correlation, not
+scale, is the binding constraint, and that any retraining effort's success should be measured
+primarily by whether correlation improves, not by whether compression/bias improve (those are
+easier to move and can improve without the net becoming more useful, as §23.3-23.5 just
+demonstrated).
+
+**Secondary, hypothesized contributor to the compression symptom specifically (not to
+correlation) — stated with an explicit caveat, not ablated in this session:** `texel_sigmoid`'s
+loss (`train.py:87`, `sigma(s) = 1/(1+10^(-K·s/400))`, `K=2.773456`) saturates fast — at this
+K, 90% saturation is reached by ≈138cp and 99% by ≈288cp of predicted-vs-target error. Beyond
+that magnitude, the training loss gradient is near zero, so the loss provides little pressure
+to emit large-magnitude outputs — a plausible mechanism contributing to compression, given
+target_cp's mate-equivalent constant (±3,000cp) and even ordinary cp-labeled targets (std≈880cp)
+are frequently well beyond this saturation point. **Important caveat, to avoid overclaiming**:
+WDL-sigmoid training inherently compresses the cp scale relative to a hand-tuned evaluator for
+*any* reasonable `K` — this is not simply "the wrong constant was used." `K=2.773456` was
+calibrated against Classical's score distribution specifically (`trainer/configs/
+train-e3-real.md`'s own K-provenance note), which is a property of the *training labels'*
+cp-to-WDL mapping, not the net's own natural output scale — so re-deriving K is not a clean,
+side-effect-free fix: lowering K widens the unsaturated band (reducing compression) but also
+changes what WDL calibration the loss is targeting, and **does nothing for correlation**, the
+binding constraint identified above. Any future retraining investigation should treat this as
+one hypothesis to test (e.g., an ablation training run with a different K, or a loss less prone
+to early saturation), not as an already-diagnosed root cause.
+
+**Explicitly out of scope, per this session's instruction**: no retraining was started, no `K`
+or `output_scale` was changed, no pruning margins were touched. This section documents what a
+future retraining effort should prioritize and why, not a completed fix.

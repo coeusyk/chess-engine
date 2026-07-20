@@ -11,6 +11,7 @@ from trainer.validation.validator import (
     calibration_report,
     eval_scale_check,
     evaluate_held_out,
+    fit_affine_calibration,
     load_classical_eval_corpus,
 )
 
@@ -139,6 +140,37 @@ def test_calibration_report_rejects_empty_records(tmp_path: Path):
     model = _trained_model(tmp_path)
     with pytest.raises(ValueError, match="at least one record"):
         calibration_report(model, [])
+
+
+def test_fit_affine_calibration_zeroes_bias_on_the_fitting_set(tmp_path: Path):
+    # OLS's normal equations guarantee zero mean residual on the set it was fit
+    # against -- a mathematical property, not an empirical claim, checked directly.
+    model = _trained_model(tmp_path)
+    records = _records()
+
+    affine = fit_affine_calibration(model, records)
+    calibrated = calibration_report(model, records, affine=affine)
+
+    assert calibrated.overall.signed_mean_error == pytest.approx(0.0, abs=1e-3)
+
+
+def test_fit_affine_calibration_rejects_empty_records(tmp_path: Path):
+    model = _trained_model(tmp_path)
+    with pytest.raises(ValueError, match="at least one record"):
+        fit_affine_calibration(model, [])
+
+
+def test_calibration_report_without_affine_is_unaffected_by_the_new_parameter(tmp_path: Path):
+    # Passing affine=None (the default) must reproduce the pre-existing behavior
+    # exactly -- guards against the new parameter accidentally changing the
+    # no-affine code path.
+    model = _trained_model(tmp_path)
+    records = _records()
+
+    explicit_none = calibration_report(model, records, affine=None)
+    default = calibration_report(model, records)
+
+    assert explicit_none.overall == default.overall
 
 
 def test_eval_scale_check_runs_against_the_real_classical_corpus(tmp_path: Path):

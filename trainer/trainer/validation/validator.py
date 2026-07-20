@@ -24,7 +24,7 @@ from __future__ import annotations
 import csv
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable, List, Optional
 
 import torch
 
@@ -112,14 +112,55 @@ def eval_scale_check(model: NnueNet, records: Iterable[ClassicalEvalRecord]) -> 
 
 
 @dataclass(frozen=True)
+class AffineFit:
+    """Least-squares fit of `target ≈ scale * predicted + shift` (issue #219 follow-up:
+    can post-hoc affine recalibration correct the measured compression/bias without
+    retraining?). Closed-form ordinary least squares, single predictor -- `scale` is
+    `cov(predicted, target) / var(predicted)`, `shift` is the mean residual after
+    centering. Passed into `calibration_report`'s `affine` parameter to evaluate the
+    transformed output instead of the raw one."""
+
+    scale: float
+    shift: float
+
+
+def fit_affine_calibration(model: NnueNet, records: Iterable[PositionRecord]) -> AffineFit:
+    """Ordinary least squares fit of `target_cp ≈ scale * predicted_cp + shift` over
+    `records`. Note this only zeroes signed mean error and pushes the compression ratio
+    up to (not past) the predictor's correlation with the target -- a mathematical
+    property of OLS, not a bug -- see the research doc for why that ceiling matters.
+    """
+    records = list(records)
+    if not records:
+        raise ValueError("fit_affine_calibration requires at least one record")
+
+    batch = encode_batch(records)
+    target_cps = torch.tensor([target_cp(r.label) for r in records], dtype=torch.float32)
+    with torch.no_grad():
+        predicted_cp = model(batch.us_indices, batch.us_offsets, batch.them_indices, batch.them_offsets)
+
+    pred_mean, target_mean = predicted_cp.mean(), target_cps.mean()
+    pred_centered, target_centered = predicted_cp - pred_mean, target_cps - target_mean
+    variance = (pred_centered**2).mean()
+    if variance.item() == 0:
+        raise ValueError("fit_affine_calibration requires predicted_cp to have nonzero variance")
+    scale = (pred_centered * target_centered).mean() / variance
+    shift = target_mean - scale * pred_mean
+    return AffineFit(scale=scale.item(), shift=shift.item())
+
+
+@dataclass(frozen=True)
 class CalibrationBucket:
     """Signed mean error and score-compression ratio (research doc §5.1) for one
     slice of held-out records. `compression_ratio` near 1 means the net's output
     spans a comparable cp range to the target; below 1 is compression, above 1 is
-    expansion. Both are `nan` for an empty bucket (nothing to divide by)."""
+    expansion. `mae`/`rmse` are the usual error magnitudes, sign-discarding (unlike
+    `signed_mean_error`). All four are `nan` for an empty bucket (nothing to divide by)."""
 
     signed_mean_error: float
     compression_ratio: float
+    mae: float
+    rmse: float
     position_count: int
 
 
@@ -138,10 +179,17 @@ class CalibrationReport:
     by_phase: dict[str, CalibrationBucket]
 
 
-def calibration_report(model: NnueNet, records: Iterable[PositionRecord]) -> CalibrationReport:
+def calibration_report(
+    model: NnueNet, records: Iterable[PositionRecord], affine: Optional[AffineFit] = None
+) -> CalibrationReport:
     """Computes §5.1's calibration diagnostics against `records` (typically a
     held-out set). Does not touch `evaluate_held_out`'s own loss/correlation
     computation — this is an additional view over the same underlying predictions.
+
+    `affine`, if given, is applied (`scale * predicted + shift`) before computing
+    every bucket below — pass a `fit_affine_calibration` result to see what a
+    post-hoc affine recalibration would do to these diagnostics, without touching
+    the model or `output_scale` itself.
     """
     records = list(records)
     if not records:
@@ -151,6 +199,8 @@ def calibration_report(model: NnueNet, records: Iterable[PositionRecord]) -> Cal
     target_cps = torch.tensor([target_cp(r.label) for r in records], dtype=torch.float32)
     with torch.no_grad():
         predicted_cp = model(batch.us_indices, batch.us_offsets, batch.them_indices, batch.them_offsets)
+    if affine is not None:
+        predicted_cp = affine.scale * predicted_cp + affine.shift
 
     is_mate = torch.tensor([r.label.eval_mate is not None for r in records], dtype=torch.bool)
     phases = [phase_of(r.fen) for r in records]
@@ -158,13 +208,22 @@ def calibration_report(model: NnueNet, records: Iterable[PositionRecord]) -> Cal
     def bucket(mask: torch.Tensor) -> CalibrationBucket:
         count = int(mask.sum().item())
         if count == 0:
-            return CalibrationBucket(signed_mean_error=float("nan"), compression_ratio=float("nan"), position_count=0)
+            return CalibrationBucket(
+                signed_mean_error=float("nan"),
+                compression_ratio=float("nan"),
+                mae=float("nan"),
+                rmse=float("nan"),
+                position_count=0,
+            )
         pred, targ = predicted_cp[mask], target_cps[mask]
+        residual = pred - targ
         target_std = targ.std(unbiased=False).item()
         compression_ratio = pred.std(unbiased=False).item() / target_std if target_std != 0 else float("nan")
         return CalibrationBucket(
-            signed_mean_error=(pred - targ).mean().item(),
+            signed_mean_error=residual.mean().item(),
             compression_ratio=compression_ratio,
+            mae=residual.abs().mean().item(),
+            rmse=torch.sqrt((residual**2).mean()).item(),
             position_count=count,
         )
 
