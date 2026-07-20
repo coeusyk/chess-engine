@@ -2242,22 +2242,61 @@ Both are cases where an uncontrolled variable (session/environment state; JIT/ha
 produced a large enough effect to flip or inflate a causal conclusion about something else
 entirely. Retraining experiments have the same exposure — e.g. two different random seeds alone
 can move correlation by an amount that could be mistaken for a data-volume or optimization
-effect if seed weren't held fixed (or explicitly varied and reported, see §26.6).
+effect if seed weren't held fixed (or explicitly varied and reported, see §26.7).
+
+**Seed inventory** — every deterministic-randomness source in the pipeline as it exists today,
+each its own controlled variable, held fixed unless a row below explicitly names it as that
+row's independent variable (no phase in this roadmap ever does):
+
+- **Split seed** — the `seed` argument to `combine_and_split()` (`scripts/train_candidate_net.py`),
+  driving `random.Random(seed).shuffle(tagged)` before the 90/10 train/held-out split. This
+  determines *which specific positions* land in the held-out set. `42` for the real (`dfffd3da`)
+  run.
+- **Model-init/training seed** — `TrainingConfig.seed`, consumed by `train()`'s
+  `seed_everything(config.seed)` (`random`, `numpy.random`, `torch.manual_seed` CPU+CUDA). This
+  determines the network's initial weights (PyTorch's default parameter init draws from the
+  seeded global RNG) and any other RNG consumption inside `train()`. Also `42` for the real run —
+  **numerically identical to the split seed today only because one CLI `--seed` value was passed
+  to both call sites; they are two logically distinct seeds**, tracked as two separate entries in
+  this inventory, not one. A future experiment must not assume "seed=42" fixes both just because
+  today's single CLI flag happens to.
+- **Batch-ordering/shuffle seed** — does not exist yet. Today's `train()` loop cycles through
+  `records` in a fixed, unshuffled order every pass (`cursor % len(records)`, §24.1). Phase 1
+  explicitly adds per-epoch reshuffling (§24.4); whichever seed governs that reshuffle (a
+  dedicated seed, or reuse of the model-init/training seed above) must be decided and explicitly
+  documented as part of Phase 1's own implementation — not decided in this planning task — and
+  then held fixed the same way across every subsequent phase, exactly like the other two entries
+  above.
+- **`DataLoader` worker seed** (`trainer/reproducibility/seeding.py`'s `worker_init_fn`) —
+  infrastructure exists but is unused (`train()` still loads records into a plain Python list,
+  §24.1); not applicable until a future phase adopts a `DataLoader`, at which point it joins this
+  inventory as a fourth controlled seed.
+
+Unless a row below says otherwise, every phase holds the split seed (42) and the model-init/
+training seed (42, or whichever value Phase 1 promotes) fixed, **in addition to** whatever else
+its own "Held constant" column lists — the per-row seed notes below flag only the cases where
+this needs explicit emphasis, not a substitute for the rule stated once, here.
 
 **Per-phase declaration** (extending §24.4's own phase definitions with an explicit
 independent/held-constant split for each):
 
 | Phase | Independent variable(s) | Held constant |
 |---|---|---|
-| 0 — Baseline | *(none — a fixed reference point, not an experiment)* | Architecture/config identical to `dfffd3da` (`hidden_width=256`, `qa=127`, `qb=64`, `output_scale=400`); zero training steps by construction |
-| 1 — Optimization | Steps × LR/schedule, as **one declared 2-D grid**, not two separate single-variable experiments — grouped because a steps-only null result at a poorly tuned fixed LR is uninterpretable (§24.4's own justification) | Dataset (Stage 1: 20,000 / Stage 2: 20,000, seed 42 split), labels, architecture (`hidden_width=256`), feature representation (plain-768), loss function shape and `K=2.773456`, `qa`/`qb`/`output_scale`, quantization/export pipeline, evaluation pipeline (`validator.py`) |
-| 2A — Data volume (Stage 1, 20k→100k) | Stage 1 position count only | Stage 2 position count (20,000) and node budget (25,000, unchanged), Phase 1's promoted optimization settings, architecture, loss/K, feature representation, export/eval pipeline. **Note**: total training steps is *derived*, not independently varied — it is scaled to hold the number of *passes* over the (larger) dataset constant, per §24.4; this is bookkeeping to keep "amount of optimization per position" constant, not a second free variable |
-| 2B — Data volume (Stage 1, 100k→1M) | Stage 1 position count only, continuing from 2A | Same as 2A, relative to 2A's result rather than Phase 1's |
-| 2, Stage 2 scaling | Stage 2 position count only | Stage 1's best count from 2A/2B, node budget (25,000, unchanged — quality is Phase 3's variable, not this one), Phase 1's optimization settings |
-| 3 — Label quality | Stockfish node budget only, on a matched-size position subset | Position count (held equal to the 25,000-node comparison arm), Stage 1 data, optimization settings, architecture, loss/K |
-| 4(i) — K sweep | `K` only | Best data/optimization config from Phases 1-3, architecture, feature representation, loss *shape* (still texel-sigmoid) |
-| 4(ii) — Mate-aware loss | Loss shape/weighting for mate-labeled records only, run **after and separately from** 4(i), never simultaneously with it | Best `K` from 4(i) (or the original K, if 4(i) shows no improvement), everything else as in 4(i) |
-| 5 — Capacity/regularization (gated) | `hidden_width` **or** a regularization term — one at a time, never both — only if scheduled at all (§24.4's Phase 5 gate) | Everything from the best configuration found in Phases 1-4 |
+| 0 — Baseline | *(none — a fixed reference point, not an experiment)* | Architecture/config identical to `dfffd3da` (`hidden_width=256`, `qa=127`, `qb=64`, `output_scale=400`); zero training steps by construction. **Seed note**: uses a dedicated seed (`0`) for reproducibility of the random-init forward pass, deliberately distinct from the training seed (42) — not itself compared to trained checkpoints on a seed-matched basis, since Phase 0 is a structural (zero-steps) reference point, not a trained configuration |
+| 1 — Optimization | Steps × LR/schedule, as **one declared 2-D grid**, not two separate single-variable experiments — grouped because a steps-only null result at a poorly tuned fixed LR is uninterpretable (§24.4's own justification) | Dataset (Stage 1: 20,000 / Stage 2: 20,000), labels, architecture (`hidden_width=256`), feature representation (plain-768), loss function shape and `K=2.773456`, `qa`/`qb`/`output_scale`, quantization/export pipeline, evaluation pipeline (`validator.py`), split seed (42), model-init/training seed (42). **Seed note**: this phase is where per-epoch reshuffling is introduced (seed inventory above) — its seed must be fixed across every grid cell in this same phase, the same as steps/LR are the *only* declared independent variables |
+| 2A — Data volume (Stage 1, 20k→100k) | Stage 1 position count only | Stage 2 position count (20,000) and node budget (25,000, unchanged), Phase 1's promoted optimization settings, architecture, loss/K, feature representation, export/eval pipeline, split seed (42, unchanged — the held-out evaluation set must stay identical across every data-volume experiment), model-init/training seed (42, or Phase 1's promoted value), shuffle seed (whatever Phase 1 fixed it to). **Note**: total training steps is *derived*, not independently varied — it is scaled to hold the number of *passes* over the (larger) dataset constant, per §24.4; this is bookkeeping to keep "amount of optimization per position" constant, not a second free variable |
+| 2B — Data volume (Stage 1, 100k→1M) | Stage 1 position count only, continuing from 2A | Same as 2A (including all seeds), relative to 2A's result rather than Phase 1's |
+| 2, Stage 2 scaling | Stage 2 position count only | Stage 1's best count from 2A/2B, node budget (25,000, unchanged — quality is Phase 3's variable, not this one), Phase 1's optimization settings, split/training/shuffle seeds unchanged from 2A/2B |
+| 3 — Label quality | Stockfish node budget only, on a matched-size position subset | Position count (held equal to the 25,000-node comparison arm), Stage 1 data, optimization settings, architecture, loss/K, split/training/shuffle seeds unchanged |
+| 4(i) — K sweep | `K` only | Best data/optimization config from Phases 1-3, architecture, feature representation, loss *shape* (still texel-sigmoid), split/training/shuffle seeds unchanged |
+| 4(ii) — Mate-aware loss | Loss shape/weighting for mate-labeled records only, run **after and separately from** 4(i), never simultaneously with it | Best `K` from 4(i) (or the original K, if 4(i) shows no improvement), everything else as in 4(i), including all seeds |
+| 5 — Capacity/regularization (gated) | `hidden_width` **or** a regularization term — one at a time, never both — only if scheduled at all (§24.4's Phase 5 gate) | Everything from the best configuration found in Phases 1-4, including all seeds |
+
+**Repeated-seed variance experiments are the one deliberate exception to "seeds are always held
+constant"**: §26.3 below relies on eventually varying the model-init/training seed *only*,
+holding every other variable in whichever phase is being re-run fixed, specifically to measure
+how much correlation moves from seed alone — this is itself a declared, single-variable
+experiment (independent variable: training seed), not a violation of this section's rule.
 
 ### 26.2 Mandatory measurements
 
@@ -2301,15 +2340,39 @@ Every threshold below is stated as a concrete, checkable condition — not "look
 "appears promising." Where a threshold is illustrative rather than fixed by prior project policy,
 it is stated as such, tied to an already-measured quantity rather than an arbitrary round number.
 
-- **Phase 1 (Optimization)** — promote the best grid cell as the new baseline configuration only
-  if **all** of:
+**On the ~0.06 figure used below — provisional, not a statistical standard.** Every "noise
+floor" reference in this section uses the single observed train/held-out correlation gap
+(0.564 vs. 0.504, §24.0) as a stand-in for "how much correlation could plausibly move without a
+real effect." This is a **placeholder, not a permanent statistical threshold**: it comes from one
+comparison on one trained checkpoint, not from repeated-seed variance, so it says nothing
+rigorous about how much correlation moves from ordinary run-to-run noise (seed, data order,
+optimizer stochasticity — §26.7) versus a genuine effect of the variable under test. Treating
+0.06 as if it were a validated confidence bound would overstate what a single number can support.
+Consequently:
+- **During Phase 1 specifically, configurations should primarily be ranked relative to one
+  another** (which grid cell has the highest selected-checkpoint held-out correlation, by how
+  much, and with what trajectory shape per §24.4), not evaluated one-by-one against the 0.06 bar
+  as if it were a pass/fail line. The 0.06 figure is a coarse, defensible-for-now filter for
+  "is this plausibly more than noise," not a precision instrument.
+- **The permanent promotion threshold should be established only after a repeated-seed variance
+  experiment** (§26.1's declared exception: re-run one configuration at several different
+  model-init/training seeds, everything else held fixed, and measure how much correlation moves
+  from seed alone) **actually quantifies natural variance.** Until that experiment runs, every
+  threshold below that cites "the noise floor" is explicitly provisional and should be revisited,
+  not treated as settled policy.
+- This does not change the roadmap's ordering or its promotion *philosophy* (rank candidates,
+  require evidence of a real effect before promoting, don't promote on a single offline metric
+  alone) — only the confidence with which any specific number in this section should be read.
+
+- **Phase 1 (Optimization)** — rank every grid cell's selected checkpoint by held-out correlation
+  first (relative ranking, per the paragraph above), then promote the best-ranked cell as the new
+  baseline configuration only if **all** of:
   1. Its selected checkpoint's held-out correlation exceeds 0.504 by at least the currently
-     observed train/held-out gap (~0.06 absolute, §24.0) — used as a concrete noise floor because
-     it is the only measured indication so far of how much correlation can move between two
-     samples of the same underlying data without a real effect. (A more rigorous version of this
-     bar — replacing the single train/held-out gap with variance across repeated seeds at the
-     same configuration — is preferred once that variance has actually been measured; until then,
-     this is the defensible default, not a permanent standard.)
+     observed train/held-out gap (~0.06 absolute, §24.0) — a provisional filter, not a validated
+     statistical cutoff (see above). It is the only measured indication so far of how much
+     correlation can move between two samples of the same underlying data without a real effect,
+     used because *something* concrete is better than an undefined "looks better," not because
+     0.06 itself is known to be the right number.
   2. The checkpoint is selected via §24.4's curve-interpretation rules (peak held-out
      correlation before decline, not the final step by default).
   3. Held-out loss at the selected checkpoint is not worse than baseline (0.0823) — a
@@ -2317,7 +2380,7 @@ it is stated as such, tied to an already-measured quantity rather than an arbitr
      explained before promoting, not promoted on correlation alone.
   If no grid cell clears this bar, Phase 1 is **not promoted** — this is a valid, informative
   result ("optimization exhausted at this data scale"), not a failure to fix before moving on;
-  proceed to Phase 2 per §26.7's decision flow.
+  proceed to Phase 2 per §26.8's decision flow.
 - **Phase 2A/2B (Stage 1 volume)** — promote (i.e., adopt the larger dataset and, for 2A,
   proceed to 2B) only if held-out correlation improves beyond the prior stage's promoted
   baseline by at least the same noise floor as Phase 1, measured under identical optimization
@@ -2331,7 +2394,7 @@ it is stated as such, tied to an already-measured quantity rather than an arbitr
   matched-subset comparison shows a correlation improvement attributable to label quality
   specifically (same position count, different node budget only) that exceeds the noise floor.
   Flagged explicitly: this comparison runs on a smaller, matched subset than the full training
-  set, so its noise floor may need to be wider, not narrower, than Phase 1/2's — see §26.6.
+  set, so its noise floor may need to be wider, not narrower, than Phase 1/2's — see §26.7.
 - **Phase 4 (Loss/K)** — promote only if mate-labeled bias magnitude decreases by at least half
   from its current value (−1,726.6cp → at least as good as ≈−863cp) **and** cp-labeled bias/MAE
   does not regress beyond the noise floor — directly operationalizing §23.5's finding that a
@@ -2348,7 +2411,7 @@ it is stated as such, tied to an already-measured quantity rather than an arbitr
   large, unambiguous loss against Classical of the kind `dfffd3da` showed — a candidate this
   roadmap should actually consider for SPRT is expected to be at or above Classical, or close
   enough that the gauntlet's own interval includes parity, not decisively behind it. A gauntlet
-  result that fails this bar routes back to "investigate cause" (§26.7), not forward to SPRT.
+  result that fails this bar routes back to "investigate cause" (§26.8), not forward to SPRT.
 - **SPRT (final gate)** — exactly the PRD's existing, un-modified gate 3: H0 = 0 Elo, H1 = +10
   Elo, α = β = 0.05, at the project's established SPRT time control (`docs/NNUE_PRD.md` §1).
   This protocol does not introduce a new strength bar — it reuses the one the project already
@@ -2380,18 +2443,67 @@ the protocol working as designed. A run that "just didn't get to finish" without
 of these conditions is the actual failure mode to avoid (an incomplete, uninterpretable result),
 not an early stop that did trigger one.
 
-### 26.5 Learning log template
+### 26.5 Checkpoint preservation policy
+
+**Experiment ID scheme** (defined here because checkpoint naming depends on it; reused verbatim
+by §26.6's learning log and everywhere else listed below): every experiment run gets a unique
+identifier of the form `<PhaseCode>[-<Tag>]-<NNN>`:
+- `PhaseCode` — one of `P0`, `P1`, `P2A`, `P2B`, `P2S2` (Phase 2's Stage 2 scaling), `P3`, `P4I`
+  (K sweep), `P4II` (mate-aware loss), `P5`.
+- `Tag` — an optional short descriptor when a phase has more than one concurrent line of
+  investigation (e.g. a label-quality subset comparison run inside Phase 3 might be
+  `P3-LQ-001`).
+- `NNN` — a zero-padded three-digit sequence number, incrementing per new run within that
+  `PhaseCode`/`Tag` pair, **never reused** even if a run is abandoned or superseded.
+
+Examples matching this scheme: `P1-G03` (Phase 1, grid cell 3), `P2A-002` (Phase 2A, second run),
+`P3-LQ-001` (Phase 3, label-quality comparison, first run).
+
+**Policy**:
+- **Checkpoints must never be overwritten during an experiment.** Each run's `checkpoint.pt`
+  (and its accompanying `training_diagnostics.json`, canonical/quantized export, and manifest)
+  is written to a location that includes its Experiment ID (directory or filename), never to a
+  shared path a later run could clobber — `train_quantize_export`'s current default of a single
+  `output_dir/checkpoint.pt` (§24.1) must be parameterized by Experiment ID once Phase 1's
+  implementation begins; this protocol does not implement that change, it establishes the
+  requirement the implementation must satisfy.
+- **Every checkpoint receives this unique identifier**, and that identifier — not a description
+  like "the LR=0.003 run" — is what every reference to the checkpoint uses from then on.
+- **All intermediate checkpoints remain available**, not just the final promoted one per phase —
+  including checkpoints from grid cells or configurations that were *not* promoted.
+
+**Why**: future investigations may need to compare calibration, correlation, or other
+diagnostics from an earlier checkpoint — including a non-promoted one — without re-running
+expensive training to reconstruct it (a full Phase 2B run, for instance, is a real, if modest,
+time cost; a $50k-relabeling-scale Phase 3 run is not free either, §24.6). Storage of a
+`checkpoint.pt` (a few MB at this net's scale, §17/train-e3-real.md) is inexpensive compared to
+the cost of regenerating it. This mirrors the project's own existing convention for released
+nets (`nets/HISTORY.md`'s append-only ledger, `nets/<uuid>.json` manifests never overwritten) —
+this policy extends the same never-overwrite discipline to *every* experimental checkpoint, not
+only ones that reach release.
+
+**Traceability**: the same Experiment ID must appear in — checkpoints, training logs,
+calibration reports, evaluation reports, gauntlet runs, and SPRT runs (§26.6's learning log
+template records it explicitly) — so any artifact found later can be traced back to the exact
+run that produced it without ambiguity.
+
+### 26.6 Learning log template
 
 Every completed experiment (each grid cell in Phase 1; each of 2A/2B; Phase 3's comparison;
 each of 4(i)/4(ii); anything in Phase 5 if it runs) fills in this template, so results are
-comparable across the whole roadmap without re-deriving context each time:
+comparable across the whole roadmap without re-deriving context each time. Every entry begins
+with its **Experiment ID** (§26.5's scheme) — the same identifier used for this run's
+checkpoint, training log, calibration report, evaluation report, and, if the run reaches that
+far, its gauntlet and SPRT results, so any of those artifacts can be traced back to this exact
+log entry and vice versa:
 
 ```
-## Experiment: <phase/cell identifier, e.g. "Phase 1, steps=10000 LR=0.003">
+## Experiment ID: <e.g. "P1-G03">
 
 Hypothesis:        <what this experiment expects to show, one or two sentences>
 Independent variable(s): <exactly what changed, per §26.1's table>
-Held constant:      <cross-reference to §26.1's row, plus anything cell-specific>
+Held constant:      <cross-reference to §26.1's row, plus anything cell-specific, including
+                     which seeds (split/training/shuffle, per §26.1's seed inventory) were fixed>
 Expected outcome:   <a falsifiable prediction, stated before running>
 Observed outcome:   <what actually happened, stated after running>
 
@@ -2402,10 +2514,18 @@ Metrics:
   Engine     — NPS (if applicable) / gauntlet result (if applicable) / SPRT result (if applicable)
 
 Decision:           <promoted / not promoted / stopped early — cite §26.3/§26.4's specific criterion met>
-Next action:        <what this result implies for the next phase/cell, per §26.7>
+Next action:        <what this result implies for the next phase/cell, per §26.8>
+
+Artifact locations (same Experiment ID throughout):
+  Checkpoint:        <path, per §26.5's never-overwrite policy>
+  Training log:       <path>
+  Calibration report:  <path or inline>
+  Evaluation report:   <path or inline>
+  Gauntlet run:       <ID/path, if applicable>
+  SPRT run:          <ID/path, if applicable>
 ```
 
-### 26.6 Threats to validity
+### 26.7 Threats to validity
 
 | Threat | Description | Mitigation in this protocol |
 |---|---|---|
@@ -2417,7 +2537,7 @@ Next action:        <what this result implies for the next phase/cell, per §26.
 | **Stochastic optimization** | Adam's per-step updates and the fixed-order (or, post-Phase-1, reshuffled) data cycling both introduce run-to-run variation independent of the variable under test | Same mitigation as random-init variance above — the noise floor exists specifically to avoid attributing this kind of variation to the independent variable; multi-seed replication is the long-run fix |
 | **Measurement noise** | `calibration_report`/`evaluate_held_out` are themselves computed over a fixed, finite held-out set (n=4,000, or a smaller matched subset for Phase 3) — any finite-sample statistic has its own sampling error | Same noise-floor mechanism; Phase 3's smaller matched-subset comparisons are explicitly flagged (§26.3) as needing a wider floor than the full-held-out-set comparisons in Phases 1-2 |
 
-### 26.7 Decision flow
+### 26.8 Decision flow
 
 ```mermaid
 flowchart TD
@@ -2487,7 +2607,7 @@ Phase 0 (baseline, reference only)
 The purpose of fixing this flow now is to prevent ad hoc branching once real numbers exist —
 every arrow above is a predefined rule from §26.3/§26.4, not a judgment call made in the moment.
 
-### 26.8 Success definition
+### 26.9 Success definition
 
 **The objective of the retraining roadmap is not to maximize any single offline metric.** Held-
 out correlation, RMSE, compression, and bias (§26.2's Training/Calibration categories) are
