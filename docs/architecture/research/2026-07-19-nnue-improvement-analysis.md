@@ -2214,6 +2214,7 @@ what the cited evidence actually shows.
 | Optimization changes (steps/schedule) alone can close the mate-labeled bias gap that motivates Phase 4 | §27.5: mate-labeled bias stays −1,651 to −1,729cp across every Phase 1 cell, including the two promoted ones — no meaningful movement despite real correlation/compression gains elsewhere | **Rejected** — confirms, via optimization rather than calibration this time, that mate bias is a structural (loss/target-shape) problem Phase 1 cannot touch, exactly as §23.7 hypothesized |
 | Increasing Stage 1 data 20k→100k improves held-out correlation beyond P1-G04, at a fixed 20,000-step compute budget | §28.2 (Experiment 2A, `P2A-001`): held-out correlation 0.5048, indistinguishable from `dfffd3da`'s original 0.5044 and a regression vs. P1-G04's 0.5315 (~14x the measured noise floor) | **Rejected, at fixed compute** — but confounded with training-step count: 20,000 steps is ~142 passes over 36k records but only ~44 over 116k, so this does not establish that more Stage 1 data cannot help under proportionally more compute (§28.3, open question) |
 | Experiment 2A's regression was primarily an optimization-exposure artifact, resolvable by scaling steps to restore P1-G04's effective pass count | §29 (Experiment 2B, `P2B-001`): steps derived to hold passes constant (20000→64444) yielded held-out correlation 0.5000 — *lower* than P2A-001's 0.5048, still far below P1-G04's 0.5315, with the run's own trajectory showing classic overfitting (early peak at ~20% through, then sustained decline) rather than recovery | **Rejected** — the steps/passes confound flagged in §28.3 is ruled out as the explanation; Stage 1 volume increases (20k→100k) show no benefit under either fixed or proportional compute (§29.4) |
+| Removing Stage 1's 75 confirmed sentinel-value label outliers (§32.4) from training improves the learned model, not just the reported metric | §35 (Experiment 3A, `P3A-001`): retrained P1-G04's exact schedule on a training set with 67 sentinel records removed, evaluated both models on both the original (v1) and sentinel-filtered (v1-clean) held-out sets — Model B vs. Model A differs by +0.0002 correlation on v1-clean (noise-floor-sized), while both models jump ~+0.06 correlation identically when the *benchmark* changes | **Rejected as a model-quality fix, confirmed as a metric artifact** — the +0.06 correlation gain (§32.4) is entirely a property of which held-out records the metric is computed over, not of which model produced the predictions (§35.7); filtering is still recommended as data-generation hygiene (§35.9), just not as something that changes model quality |
 
 ## 26. Experimental Protocol (2026-07-20)
 
@@ -3696,8 +3697,23 @@ in `label-audit.json`.
 | IQR outliers (k=3) | 2,793 (17.39%) | 5 (0.03%) | 628 (1.77%) |
 
 Stage 1's `max(\|cp\|)=20,000` is not a single anomaly — **36 distinct records carry exactly
-`eval_cp=20000`**, and a further 33 carry exactly `eval_cp=9605` (all confirmed positive-sign;
-6 records fall below −5,000, none at a matching round sentinel). Both values are implausible as
+`eval_cp=20000`**, and a further 33 carry exactly `eval_cp=9605`.
+
+**Correction to this section, made during Experiment 3A's preparation (2026-07-20)**: the
+original pass through this section stated "6 records fall below −5,000, none at a matching round
+sentinel." That was wrong — a precise recheck (`Counter` over the full negative tail, not just
+the minimum value) found **all 6 of those records are exactly `eval_cp=-9605`**, the exact
+negative mirror of the already-identified `+9605` sentinel. The original check only inspected
+the single minimum value (`-9605`) without checking its *frequency*, so it silently missed that
+this one value repeats six times. Total confirmed sentinel-value records: **75**, not 69 —
+36 at `+20000`, 33 at `+9605`, 6 at `-9605` (no `-20000` occurrences exist; confirmed by full
+negative-tail enumeration, not merely the minimum). This correction does not change §32.4's
+correlation-impact numbers below, which already included `-9605` in their exclusion mask when
+originally computed — only this paragraph's prose count was stale. Preserved here rather than
+silently fixed, per this project's standing practice of keeping the investigation's error record
+visible, not just its final state.
+
+Both values are implausible as
 genuine centipawn evaluations (no chess engine's normal cp output lands on a suspiciously round
 20,000, repeated identically 36 times across unrelated positions) and were traced directly to
 Lichess's own cloud-eval JSON (`acquire_stage1_lichess.py`'s `_to_record()` reads `pv["cp"]`
@@ -3714,12 +3730,14 @@ upstream, and this repository currently has no sanity check that would catch it.
 computation, per this task's own allowance — inference only against the already-trained,
 already-promoted P1-G04 checkpoint, no retraining): the held-out set (4,000 records) contains
 only **8 records**
-at these two sentinel values (0.2% of the set). Held-out Pearson correlation:
+at these sentinel values (±9605, +20000 — 0.2% of the set; this mask already included `-9605`
+when originally computed, so the numbers below are unaffected by the count correction above).
+Held-out Pearson correlation:
 
 | | Correlation | n |
 |---|---|---|
 | Full held-out set (as reported everywhere else in this roadmap) | 0.5315 | 4,000 |
-| Excluding the 8 sentinel-value (9605/20000) records | **0.5931** | 3,992 |
+| Excluding the 8 sentinel-value (±9605/+20000) records | **0.5931** | 3,992 |
 | Excluding all 12 non-mate records with \|target_cp\| > 5,000 | **0.5953** | 3,988 |
 
 **Removing 0.2-0.3% of the held-out set raises the reported held-out correlation by
@@ -3834,7 +3852,7 @@ cost, not by which is most novel.
 
 | # | Hypothesis | Evidence | Confidence | Expected impact | Cost | Recommended experiment |
 |---|---|---|---|---|---|---|
-| 1 | **Stage 1's 69 extreme-magnitude label outliers (sentinel-like `eval_cp` ∈ {9605, 20000}, source-side Lichess cloud-eval defect, §32.4) suppress the held-out correlation metric and plausibly distort training** | Directly measured: excluding 8 held-out records (0.2%) raises measured correlation +0.060 to +0.064 — over 2x Phase 1's entire optimization gain. Traced to a real, upstream Lichess API behavior, not a bug in this repo's parsing | **High** | Potentially large on the *reported metric*; unknown but plausibly positive on *learned model quality* if the same records also distort training gradients (untested — see caveat below) | Low — filter/clip at ingestion, no architecture/loss change | **§33.1, Experiment 3A (recommended)** |
+| 1 | **Stage 1's 75 extreme-magnitude label outliers (sentinel-like `eval_cp` ∈ {−9605, 9605, 20000}, source-side Lichess cloud-eval defect, §32.4) suppress the held-out correlation metric and plausibly distort training** | Directly measured: excluding 8 held-out records (0.2%) raises measured correlation +0.060 to +0.064 — over 2x Phase 1's entire optimization gain. Traced to a real, upstream Lichess API behavior, not a bug in this repo's parsing | **High** | Potentially large on the *reported metric*; unknown but plausibly positive on *learned model quality* if the same records also distort training gradients (untested — see caveat below) | Low — filter/clip at ingestion, no architecture/loss change | **§33.1, Experiment 3A (recommended)** |
 | 2 | Extreme-magnitude and mate-labeled evaluations are severely compressed/miscalibrated (§32.6's monotonic magnitude-bucketed error, reconfirming §23/§27.5/§28.5/§29.6) | Very strong, independently reconfirmed five times across four different experiments now, at a finer magnitude resolution than before | High (already established, not new this phase) | Likely the dominant remaining lever for the mate-bias problem specifically, distinct from #1 | Medium-high — requires a loss/target-formulation change (WDL blend or mate-distance-aware target), not a data-cleaning fix | Phase 4's existing scope (§6 Exp 6, WDL blend) — not a Phase 3A candidate, but this audit strengthens the case for prioritizing Phase 4 after 3A |
 | 3 | Stage 2's single fixed-node-budget search (no re-search, MultiPV unpinned, §1) produces non-trivial label noise/variance | The corpus's only 2 duplicate FENs (both Stage 2) carry *different* labels on their two occurrences — 100% inconsistency rate, but n=2, not statistically decisive on its own | Medium — plausible mechanism, weak direct sample size from this corpus alone | Unknown, bounded by the experiment's own success criteria | Low — existing `stockfish_label.py` config knob, minutes to run | §6's pre-existing **Experiment 5** (label-noise floor: re-label 1,000 positions at 25k vs. 50k nodes) — already scoped, reprioritize rather than re-design |
 | 4 | Stage 1 cp values carry systematic quantization/rounding not present in Stage 2 (§32.5) | Measured: divisible-by-50 enriched 7.6x over a uniform baseline in Stage 1, near-baseline in Stage 2 | Medium — real and measured, impact on training quality untested | Low-medium — near-zero-region predictions are already the model's best-performing bucket (§32.6), so rounding here is unlikely to be a dominant lever | Low to test, but no clear fix without a source change | Lower priority; could be folded into 3A's data-cleaning pass as a secondary check, not a standalone experiment |
@@ -3927,3 +3945,283 @@ well-decomposed (`DatasetProvider` → `Transform` → `combine_and_split` → t
 quality issues within that pipeline (a source-data defect, a metric-sensitivity property, a
 schema gap), not structural or architectural problems with the pipeline itself. Nothing found
 in this phase motivates a pipeline redesign.
+
+## 35. Experiment 3A: Stage 1 sentinel-value filtering (2026-07-20)
+
+Approved with one refinement: determine whether filtering Stage 1's confirmed sentinel-value
+labels (§32.4, corrected count) improves the *learned model*, not merely the *reported metric*
+— §32.4's post-hoc exclusion already proved the latter; this experiment tests the former, which
+requires retraining. Script: `trainer/scripts/phase3_experiment_3a.py`. Experiment ID: `P3A-001`.
+
+### 35.1 Graphify discovery (pre-implementation)
+
+Per this task's instruction, `graphify update` ran before any implementation: 4,228→4,238 nodes
+(the prior state, post-Phase-3-audit), 8,251→8,276 edges. A BFS trace from
+`phase3_experiment_3a.py` confirmed its only dependencies are `combine_and_split()`,
+`train()`/`TrainingConfig`, `evaluate_held_out()`/`calibration_report()`, and `NnueNet` —
+the same primitives every prior experiment script in this roadmap reuses unmodified. No edge to
+`exporter.py`, `quantizer.py`, `engine-core`, or `engine-tuner` exists from the new script,
+confirming the filtering implementation is isolated to the Stage 1 dataset-generation path, with
+no unintended dependency into architecture, export, quantization, or inference code — matching
+this task's explicit constraint list.
+
+### 35.2 Filtered Stage 1 dataset
+
+**Exact filtering criterion (no additional rules introduced)**: exclude Stage 1 records whose
+`eval_cp` is exactly one of the three confirmed sentinel values from §32.4's corrected count —
+`{-9605, 9605, 20000}`.
+
+| | Value |
+|---|---|
+| Original Stage 1 count | 20,000 |
+| Removed | 75 (36 at `+20000`, 33 at `+9605`, 6 at `-9605`) |
+| Removed, percentage | 0.375% |
+| Kept | 19,925 |
+
+**Justification**: these are the exact records §32.4 traced to a confirmed Lichess cloud-eval
+API defect (implausibly round, exactly-repeating `cp` values, no matching `mate` field, not a
+parsing bug in this repository's own `acquire_stage1_lichess.py`). No other Stage 1 record, no
+Stage 2 record, and no broader magnitude threshold is touched — the filter is exactly the named
+defect and nothing more, per this task's "no additional filtering rules" constraint. A standalone
+filtered artifact was written to `outputs/datasets/stage1-lichess-filtered/` (gitignored,
+regenerate via the script) as the literal deliverable; it is not itself used for the training
+split below (§35.3 explains why).
+
+### 35.3 Leakage-safe split methodology
+
+Filtering Stage 1 *before* calling `combine_and_split` would re-shuffle a differently-sized pool
+(19,925 instead of 20,000) and produce a *different* held-out set membership than P1-G04's —
+the same category of confound Experiment 2A's held-out-set-preservation methodology (§28) was
+designed to avoid. Worse here: it would risk actual leakage, since some of a re-split model's
+training records could then coincide with P1-G04's original held-out set, invalidating a
+same-benchmark comparison between the two models entirely.
+
+Instead: `combine_and_split(seed=42)` was called once, reproducing P1-G04's *exact* original
+36,000/4,000 split (byte-identical to every prior experiment in this roadmap). The sentinel
+filter was then applied to the **already-split training list only**:
+
+| | Count |
+|---|---|
+| P1-G04 original training set | 36,000 |
+| Sentinel records removed from training | 67 |
+| Model B's filtered training set | 35,933 |
+| P1-G04 original held-out set (Benchmark v1) | 4,000 |
+| Sentinel records removed from held-out (for Benchmark v1-clean) | 8 |
+| Benchmark v1-clean | 3,992 |
+
+This guarantees Benchmark v1 stays byte-identical to P1-G04's original held-out set (valid for
+evaluating both models with zero new leakage risk — Model B's training set is a strict subset of
+P1-G04's, so nothing new could have entered it) while the only difference between the two
+models' training data is exactly the 67 removed records — a strict, single-variable filter.
+
+### 35.4 Training
+
+P1-G04's frozen schedule (§27.11) held exactly constant: steps=20,000, LR=0.01, cosine schedule,
+warmup=200, seed=42, batch_size=256. The only independent variable is the 67-record training-set
+filter. Wall-clock: 151.0s (comparable to P1-G04's 183.7s and Experiment 3A's slightly smaller
+training set).
+
+**Training curves** (full trajectory in `outputs/phase3/P3A-001/training_diagnostics.json`):
+
+| Step | Train loss | Held-out loss | Train corr. | Held-out corr. |
+|---|---|---|---|---|
+| 999 | 0.0980 | 0.1034 | 0.5645 | 0.4603 |
+| 2,999 | 0.0396 | 0.0767 | 0.6450 | 0.5105 |
+| 4,999 | 0.0245 | 0.0735 | 0.6759 | 0.5229 |
+| 8,999 | 0.0063 | 0.0759 | 0.6943 | 0.5266 |
+| 12,999 | 0.0038 | 0.0785 | 0.6989 | 0.5257 |
+| **16,999 (selected)** | 0.0027 | 0.0797 | 0.7036 | **0.5290** |
+| 19,999 (final) | 0.0033 | 0.0797 | 0.7035 | 0.5287 |
+
+Shape matches P1-G04's own trajectory closely (§27.3): rises then plateaus in a tight band from
+roughly step 9,000 onward, no decline (unlike P2B-001's overfitting pattern, §29.3) — the
+67-record training-set reduction (0.19% of the training set) did not change the qualitative
+training dynamics at all, only shifted the selected peak from step 15,999 (P1-G04) to step
+16,999 (Model B), both well within the same plateau band.
+
+### 35.5 2×2 evaluation matrix
+
+Both models evaluated on both benchmarks, held-out-eval computation identical for both (no
+retraining involved in producing this table):
+
+| Model | Benchmark | n | Correlation | RMSE | Bias | Compression |
+|---|---|---|---|---|---|---|
+| P1-G04 (Model A) | v1 (original) | 4,000 | 0.5315 | 1,239.9 | −213.5 | 0.1255 |
+| P1-G04 (Model A) | v1-clean | 3,992 | **0.5931** | 1,030.2 | −189.4 | 0.1481 |
+| Filtered Retrain (Model B) | v1 (original) | 4,000 | 0.5290 | 1,240.4 | −215.2 | 0.1259 |
+| Filtered Retrain (Model B) | v1-clean | 3,992 | **0.5933** | 1,030.1 | −191.1 | 0.1487 |
+
+**Reading the matrix along its two axes separately is the whole point of this design:**
+
+- **Across benchmarks (v1 → v1-clean), holding the model fixed**: both models jump by
+  essentially the same amount — Model A: +0.0616 correlation, −209.7 RMSE; Model B: +0.0644
+  correlation, −210.3 RMSE. This is the metric-sensitivity effect §32.4 already found, now
+  confirmed to apply identically regardless of which model produced the predictions.
+- **Across models (A → B), holding the benchmark fixed**: on v1-clean (the fair,
+  apples-to-apples comparison — both models scored on data neither trained on with sentinel
+  values already removed from the benchmark itself), the difference is **+0.0002 correlation,
+  −0.1 RMSE, −1.7 bias** — an order of magnitude below the measured seed-to-seed noise floor
+  (std≈0.0019, n=3, §27.2). On v1 (original), Model B is actually marginally *lower*
+  (−0.0025 correlation) than Model A, also within noise. **Removing the model's own influence
+  from training data it never saw the sentinel values in produces no detectable change in how
+  either model performs on either benchmark.**
+
+### 35.6 Calibration analysis
+
+Mate/cp split (`calibration_report`, same convention as §27.5/§28.5/§29.6/§32.6):
+
+| | Model A on v1 | Model A on v1-clean | Model B on v1 | Model B on v1-clean |
+|---|---|---|---|---|
+| Mate bias (cp) | −1,661.1 | −1,661.1 | −1,663.6 | −1,663.6 |
+| Mate compression | 0.0996 | 0.0996 | 0.0998 | 0.0998 |
+| Cp bias (cp) | −19.8 | +7.9 | −21.4 | +6.4 |
+| Cp compression | 0.1599 | **0.3016** | 0.1607 | **0.3033** |
+
+**Mate calibration is completely unaffected by the benchmark choice** (identical to four
+decimal places between v1/v1-clean, for both models) — expected, since every sentinel-value
+record is cp-labeled, not mate-labeled; the mate bucket (n=472) is untouched by the filter
+either way. **Cp-labeled compression nearly doubles** (0.16→0.30) purely from removing 8 records
+out of 3,528 cp-labeled held-out records — the compression-ratio metric (`std(predicted) /
+std(target)`) is exactly as outlier-sensitive as Pearson correlation, for the same reason
+(`target`'s variance is dominated by a handful of ±9,605/20,000cp values). Both models again
+move together, near-identically, across every cell.
+
+### 35.7 Analysis: which explanation fits?
+
+Per this task's four possibilities:
+
+- **A. Filtering improves only the evaluation metric.** ✅ **Best fit.** Every metric in §35.5
+  and §35.6 that changes does so almost identically for Model A *and* Model B when the benchmark
+  changes (v1→v1-clean), and barely changes at all for either benchmark when the *model* changes
+  (A→B). The effect tracks the benchmark, not the model.
+- **B. Filtering improves the learned function.** ❌ Not supported. Model B vs. Model A on the
+  same benchmark differs by amounts (+0.0002 to −0.0025 correlation) an order of magnitude below
+  the established noise floor — statistically indistinguishable from re-running P1-G04 with a
+  different training seed (§27.2's own measured std≈0.0019).
+- **C. Filtering improves both.** ❌ Not supported — requires B, which the evidence rejects.
+- **D. No meaningful improvement.** ❌ Incomplete as a full answer — the *metric* improvement
+  (+0.06 correlation, compression nearly doubling) is real, large, and reproduced under
+  retraining, not just under the original post-hoc exclusion. "No improvement" would
+  mischaracterize a genuine, substantial, reproducible finding as null.
+
+**Conclusion: A.** Training-set filtering of these 67 records changes essentially nothing about
+what the model learns (§35.4's trajectory is qualitatively identical to P1-G04's; §35.5's
+model-vs-model deltas are noise-floor-sized). The correlation/compression jump this roadmap has
+now measured twice (§32.4's post-hoc exclusion, this section's retrain-and-reevaluate) is
+entirely a property of *which held-out records the metric is computed over*, not of which model
+produced the predictions being scored. This is consistent with §32.4's own mechanism
+explanation (Pearson correlation and `std(predicted)/std(target)` are both sensitive to a
+handful of extreme-target-variance points, independent of prediction quality on the rest of the
+data) — the retrain confirms the mechanism, it does not add a second, independent effect.
+
+### 35.8 Benchmark versioning
+
+Per this task's explicit instruction, the historical benchmark is **not** replaced:
+
+| Benchmark | Definition | Role |
+|---|---|---|
+| **v1** | P1-G04's original 4,000-record held-out set (unchanged since `dfffd3da`, §1) | **Historical benchmark — all comparisons in §27/§28/§29 and every prior roadmap entry continue to use v1 unless explicitly noted otherwise.** |
+| **v1-clean** | The same 4,000 records with the 8 confirmed sentinel-value records removed (3,992 records) | New, introduced this section — for evaluating whether a model's *ranking quality* on non-defective labels differs, not a replacement for v1 |
+
+**Stated clearly, per this task's instruction**: every held-out correlation number reported
+before this section (`dfffd3da`'s 0.5044, P1-G04's 0.5315, P2A-001's 0.5048, P2B-001's 0.5000)
+was measured against **Benchmark v1** and remains valid, comparable, and unchanged. Nothing in
+this section retroactively revises those numbers. Any future reference to a "0.59-ish"
+correlation number must specify **v1-clean** explicitly — it is not comparable to any v1 number
+without that qualification, precisely because §35.7 established the difference is a benchmark
+property, not a model property.
+
+### 35.9 Recommendation: should label cleaning become permanent pipeline policy?
+
+**Recommended: yes, for the specific, narrow, confirmed defect — not as a general policy.**
+Filtering these 75 confirmed sentinel-value records (or an equivalent bounds check in
+`acquire_stage1_lichess.py`'s `_to_record()`, catching this exact Lichess API pattern before it
+enters any future Stage 1 pull) costs nothing in demonstrated model quality (§35.7) and removes
+a data artifact that would otherwise distort every future correlation/compression measurement
+against Stage-1-derived held-out data, including in experiments that have nothing to do with
+label quality (§32.4's finding would have silently confounded a future Phase 4/5 experiment's
+own held-out evaluation if left unaddressed). This is a low-cost, well-evidenced, narrowly
+scoped change, unlike a general "filter anything unusual" policy, which this experiment does not
+justify and which would risk discarding genuine, informative extreme evaluations.
+
+**What this recommendation is not**: it is not a recommendation to broaden the filter, to
+similarly filter Stage 2, or to treat the extreme-magnitude/mate-compression problem (§33's
+hypothesis #2, the much larger effect on RMSE/bias) as solved — that remains Phase 4's scope,
+unaffected by this experiment's null result on the learned function.
+
+**Per this task's explicit instruction: no further Phase 3 experiments begin automatically.
+Waiting for review.**
+
+### 35.10 Graphify validation (post-implementation)
+
+```
+$ graphify update
+Re-extracting code files (no LLM needed)...
+  AST extraction: 34/34 uncached files (100%)
+[graphify] backed up curated graph -> graphify-out/2026-07-20/
+[graphify watch] Rebuilt: 4238 nodes, 8276 edges, 552 communities
+```
+
+**Verification checklist**:
+- **Only Stage 1 generation changed**: confirmed — this experiment added exactly one new
+  script (`phase3_experiment_3a.py`) and one gitignored dataset artifact
+  (`outputs/datasets/stage1-lichess-filtered/`). No file under `trainer/trainer/model`,
+  `trainer/trainer/dataset` (the shared providers/transforms themselves, as opposed to a new
+  script that calls them), `trainer/trainer/export`, `trainer/trainer/quantization`, or
+  `engine-core`/`engine-tuner`/`engine-uci` was modified.
+- **No pipeline regressions**: re-queried the refreshed graph
+  (`graphify query "phase3_experiment_3a.py Stage 1 filtering dependencies"`) — confirms the
+  new script's only edges are to `combine_and_split()`, `train()`/`TrainingConfig`,
+  `evaluate_held_out()`/`calibration_report()`, and `NnueNet`, identical in kind to every prior
+  experiment script's dependency footprint (§31's discovery trace). No edge into `exporter.py`,
+  `quantizer.py`, or any Java engine code.
+- **Documentation remains synchronized**: this section (§35) and §32.4's correction (§32.4)
+  are the only research-doc changes; both are reflected in the graph as document nodes with
+  correct source locations, re-verified via the query above rather than assumed.
+
+**Architectural observations**: none beyond what §31/§34 already stated — the Stage 1 filtering
+implemented here required zero changes to `DatasetProvider`, `Transform`, or any contract type,
+confirming the pipeline's existing decomposition already supports this kind of data-quality
+intervention without modification, exactly as designed.
+
+### 35.11 Learning log entry
+
+```
+## Experiment ID: P3A-001
+Hypothesis:            Retraining P1-G04's frozen schedule on a Stage 1 training set with the
+                        75 confirmed sentinel-value records (eval_cp in {-9605, 9605, 20000})
+                        filtered improves held-out correlation, beyond what post-hoc evaluation
+                        exclusion alone already showed (SS32.4: +0.06-0.064 on the metric).
+Independent variable:   Stage 1 training-set sentinel-value filtering (67 records removed from
+                        the 36,000-record training split; held-out set unchanged, SS35.3).
+Controlled variables:    P1-G04's frozen schedule (steps=20000, lr=0.01, cosine, warmup=200,
+                         seed=42, batch_size=256), architecture, feature representation, loss,
+                         K, export/quantization, split seed=42, Stage 2 (untouched).
+Expected outcome:       Held-out correlation on the cleaned benchmark (v1-clean) exceeds
+                        P1-G04's correlation on the same cleaned benchmark by more than the
+                        noise floor (std~=0.0019) if the sentinel records also distorted
+                        training, not just evaluation.
+Observed outcome:       Model B vs. Model A on v1-clean: +0.0002 correlation, -0.1 RMSE, -1.7
+                        bias -- an order of magnitude below the noise floor. Model B vs. Model A
+                        on v1 (original): -0.0025 correlation, also within noise. Both models'
+                        training trajectories are qualitatively identical (SS35.4). The
+                        metric-level jump (+0.06 correlation, cp-compression nearly doubling,
+                        SS35.5/SS35.6) reproduces identically for both models when the benchmark
+                        changes. Expectation not confirmed -- filtering these 67 training
+                        records produced no detectable change in the learned function.
+Metrics:                See SS35.5/SS35.6.
+Decision:               Not promoted as a model change -- Model B is statistically
+                        indistinguishable from P1-G04 (Model A remains the reference model,
+                        SS26.10 unchanged). Filtering IS recommended as a permanent Stage 1
+                        data-generation policy (SS35.9) -- a data-hygiene fix, not a model
+                        promotion.
+Reason rejected:        No held-out correlation or calibration improvement survives past the
+                        benchmark-composition effect once the same benchmark is held fixed
+                        across both models (SS35.7's explanation A). This is a clean negative
+                        result on "does this fix the learned function," not an ambiguous one.
+Next action:            Per this task's instruction, no further Phase 3 experiments begin
+                        automatically. SS33's hypothesis #2 (extreme-magnitude/mate compression,
+                        Phase 4 territory) remains the most promising unexplored lever.
+Artifacts:              trainer/outputs/phase3/P3A-001/, trainer/outputs/datasets/
+                        stage1-lichess-filtered/
+```
