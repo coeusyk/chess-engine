@@ -2681,6 +2681,30 @@ every candidate configuration, only for the ones that clear the cheap screens fi
 retraining was performed, no hyperparameters were changed to produce this section. This is the
 experimental contract §24's roadmap will be run against — Phase 1 has not started.
 
+### 26.10 Rolling baseline policy
+
+**Every future experiment compares against the latest promoted network, not the original
+historical baseline.** As each phase promotes a new candidate, that candidate becomes the
+reference point every subsequent phase's "did this help" question is asked against — comparing
+a new phase against a stale, superseded baseline would credit or blame it for gains an earlier
+phase already captured (exactly the attribution error §26.1's controlled-variable discussion
+warns about generally, applied here to the choice of comparison point itself).
+
+**Recorded baselines** (append-only — a new row is added when a phase promotes a candidate; no
+row is ever deleted or overwritten, per §26.5's own never-overwrite spirit):
+
+| Baseline | Source | Held-out correlation | Role |
+|---|---|---|---|
+| Original production baseline | `dfffd3da` (E-3, #203) | 0.5044 | **Historical context only** — the net #219/#206's SPRT precedent and every pre-roadmap measurement refer to; no longer the active comparison point for new experiments |
+| Phase 1 promoted baseline | `P1-G04` (§27.11) | 0.5315 | **Current reference model** — every experiment from Experiment 2A onward compares against this, not against `dfffd3da` |
+
+**How to apply**: a phase's promotion criteria (§26.3) and its "did this help" framing always
+read as "beyond the current reference model's result," not "beyond 0.504." `dfffd3da`'s number
+stays in every report for historical/narrative continuity (e.g. "up from the original production
+net's 0.504") but is not itself the pass/fail comparison point once a later baseline has been
+promoted. Whoever runs the next phase should update this table's final row (and only add to it,
+never edit prior rows) the moment that phase promotes a new candidate.
+
 ## 27. Phase 1 completion report (2026-07-20)
 
 Phase 1 (§24.4/§26): determine whether `dfffd3da`'s 0.504 held-out correlation is
@@ -3004,3 +3028,36 @@ Next action:            Adopted as Phase 1's recommended new baseline configurat
                         Experiment 2A (§27.9) -- not started in this report.
 Artifacts:              trainer/outputs/phase1/P1-G04/
 ```
+
+### 27.11 Promoted optimization schedule (frozen default for all subsequent phases)
+
+| Field | Value |
+|---|---|
+| Experiment ID | `P1-G04` |
+| Total training steps | 20,000 |
+| Initial (peak) learning rate | 0.01 |
+| Learning-rate schedule | `cosine` (linear warmup, then cosine decay to 0) |
+| Warmup configuration | 200 steps, linear ramp from ~0 to the peak rate |
+| Shuffle policy | Per-epoch reshuffle, driven by `seed_everything(config.seed)`'s seeded `random` module — not a separate dedicated shuffle seed (§26.1's seed-inventory choice, confirmed unchanged for this schedule) |
+| Training/init seed | 42 |
+| Promotion decision | **Promoted** (§27.7) — clears all three §26.3 criteria using the directly-measured noise floor (§27.2); the single best result in Phase 1's grid |
+
+**This becomes the default optimization schedule for every subsequent roadmap phase** (2A, 2B,
+Stage 2 scaling, Phase 3, Phase 4, Phase 5 if it runs) **unless a later experiment explicitly
+supersedes it** — i.e. a future phase that finds a *better* schedule (through its own declared,
+single-variable experiment, not an incidental side effect of some other change) updates this
+table and this table alone; no phase silently reverts to `dfffd3da`'s original flat
+`steps=2,000, LR=0.01` or invents a new schedule ad hoc. Everything in this table is optimization
+schedule only — it does not include dataset size, architecture, or loss, each of which is its
+own separately-controlled variable per §26.1's table and may legitimately change across phases
+while this schedule stays fixed.
+
+**Resolves an open tension with §24.4's original phrasing**: §24.4 (written before Phase 1 ran)
+suggested scaling total steps to hold the number of *passes* over a larger dataset constant when
+Stage 1 volume increases. Experiment 2A (§28) instead holds this table's step count exactly
+fixed at 20,000 and varies only Stage 1 volume, per this task's explicit instruction ("held
+constant: promoted optimization schedule... unchanged unless a protocol-defined reason requires
+otherwise") — the simpler, more strictly single-variable design takes precedence over the
+earlier passes-scaling idea, which would have varied two things (steps and data volume)
+simultaneously. If a future phase has reason to revisit passes-scaling, it should be run as its
+own declared experiment, not silently folded into a data-volume phase.
