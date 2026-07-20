@@ -230,3 +230,25 @@ def test_train_populates_held_out_calibration_diagnostics(tmp_path):
     assert all(d.held_out_correlation is not None for d in result["diagnostics"])
     assert all(d.held_out_rmse is not None for d in result["diagnostics"])
     assert all(d.held_out_bias is not None for d in result["diagnostics"])
+
+
+def test_train_writes_a_checkpoint_per_diagnostic_point_when_checkpoint_dir_given(tmp_path):
+    checkpoint_dir = tmp_path / "checkpoints"
+    config = TrainingConfig(**{**vars(TINY_CONFIG), "steps": 5})
+    result = train(config, _records(), tmp_path / "final.pt", log_interval=2, checkpoint_dir=checkpoint_dir)
+
+    expected_steps = [d.step for d in result["diagnostics"]]
+    written = sorted(checkpoint_dir.glob("step-*.pt"))
+    assert len(written) == len(expected_steps)
+    assert written == [checkpoint_dir / f"step-{step:06d}.pt" for step in expected_steps]
+    # Final logged checkpoint's weights match the run's own final checkpoint_path save.
+    final_step_checkpoint = torch.load(written[-1], weights_only=False)
+    final_path_checkpoint = torch.load(tmp_path / "final.pt", weights_only=False)
+    for key in final_step_checkpoint["model_state_dict"]:
+        assert torch.equal(final_step_checkpoint["model_state_dict"][key], final_path_checkpoint["model_state_dict"][key])
+
+
+def test_train_without_checkpoint_dir_writes_no_intermediate_checkpoints(tmp_path):
+    train(TINY_CONFIG, _records(), tmp_path / "final.pt", log_interval=1)
+    # No stray directories/files beyond the one explicit checkpoint_path.
+    assert list(tmp_path.iterdir()) == [tmp_path / "final.pt"]

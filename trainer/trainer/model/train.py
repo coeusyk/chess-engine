@@ -161,6 +161,7 @@ def train(
     held_out_records: Optional[Iterable[PositionRecord]] = None,
     log_interval: int = 100,
     train_diagnostic_sample: Optional[List[PositionRecord]] = None,
+    checkpoint_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Runs `config.steps` optimization steps over `records` and writes a checkpoint to
     `checkpoint_path`. Returns the per-step loss history, plus (issue #215) a
@@ -183,6 +184,12 @@ def train(
     diagnostics; the reshuffling above is unconditional (applies regardless of these
     two parameters) since it is a Phase-1-wide pipeline change, not a per-call option
     (research doc §26.1: bundled into every Phase 1 grid cell, not swept).
+
+    If `checkpoint_dir` is given, a checkpoint is additionally written at every logged
+    diagnostic point (not just the final step) to `checkpoint_dir/step-{step:06d}.pt`,
+    named by step so ordering is visible from the filename alone -- research doc
+    §26.5's checkpoint-preservation policy ("every checkpoint... never overwritten");
+    the always-written `checkpoint_path` final-step checkpoint is unaffected either way.
     """
     seed_everything(config.seed)
 
@@ -264,6 +271,13 @@ def train(
                     held_out_bias=held_out_bias,
                 )
             )
+
+            if checkpoint_dir is not None:
+                checkpoint_dir.mkdir(parents=True, exist_ok=True)
+                torch.save(
+                    {"model_state_dict": model.state_dict(), "config": asdict(config), "step": step},
+                    checkpoint_dir / f"step-{step:06d}.pt",
+                )
 
     metadata = capture(seed=config.seed, config=asdict(config))
     torch.save(
