@@ -54,8 +54,8 @@ Write-Host "PGN : $PgnOut"
 Write-Host ""
 
 & $Cutechess `
-    -engine "name=Vex-new" "cmd=$Java" "arg=-jar" "arg=$($E1.Path)" proto=uci `
-    -engine "name=Vex-old" "cmd=$Java" "arg=-jar" "arg=$($E2.Path)" proto=uci `
+    -engine "name=Vex-new" "cmd=$Java" "arg=--add-modules" "arg=jdk.incubator.vector" "arg=-jar" "arg=$($E1.Path)" proto=uci `
+    -engine "name=Vex-old" "cmd=$Java" "arg=--add-modules" "arg=jdk.incubator.vector" "arg=-jar" "arg=$($E2.Path)" proto=uci `
     -each tc=$TC `
     -games $Games `
     -repeat `

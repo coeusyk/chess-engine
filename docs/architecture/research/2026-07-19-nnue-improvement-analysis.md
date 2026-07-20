@@ -1318,3 +1318,154 @@ required one in-flight correction (lambda-indirection removed after producing an
 fast, and as it turned out, misleading, scalar reading) — documented in the test's own javadoc
 so the caveat travels with the number for any future reader running it, not just in this
 document.
+
+## 19. PR 3 — native-Windows integrated-engine measurement and model validation (2026-07-20)
+
+Per §15.5's plan: the microbenchmark (§18.4) exposed a JIT confound and was explicitly ruled
+out as the arbiter of Stage 1's real-world benefit. This section reports the native-Windows,
+integrated-engine measurement that resolves it — same commit (`652645b`, PR 1 + PR 2), same net
+(`dfffd3da-…nnue`), same 31-position post-#217 suite, same `--bench 13`, median-of-5 per §15.5
+Task 3.
+
+### 19.1 Native-Windows benchmark results (Task 1)
+
+**Measured** (Zulu 25.0.3, `C:\vex-bench-206\`, median of 5 runs each):
+
+| Run set | Flags | Individual NPS (5 runs) | Median NPS | Nodes (all runs) |
+|---|---|---|---|---|
+| Classical | (none) | 330,126 / 336,525 / 338,805 / 335,570 / 340,955 | **336,525** | 73,089,246 (identical) |
+| NNUE, vector path | `--add-modules jdk.incubator.vector` | 150,418 / 152,379 / 157,268 / 159,715 / 159,715 | **157,268** | 251,406,555 (identical) |
+
+**Derived**: NNUE-vector / Classical, same session = 157,268 / 336,525 = **46.7%** — clears the
+≥40% gate.
+
+**Single-run checks** (not median-of-5, one run each — used for path/JIT verification, Tasks 4–5,
+not for the gate decision itself):
+
+| Run | Flags | NPS | Eval % | Accumulator % | Nodes |
+|---|---|---|---|---|---|
+| NNUE, scalar fallback | (no `--add-modules`, `VectorCapabilities.AVAILABLE=false`) | 111,863 | 29.1% | 36.3% | 251,406,555 (identical) |
+| NNUE, scalar fallback + no SuperWord | (no `--add-modules`, `-XX:-UseSuperWord`) | 108,159 | 28.3% | 38.5% | 251,406,555 (identical) |
+
+### 19.2 Before/after comparison table (Task 2)
+
+Pre-PR2 figures are §14.1's original #206 measurement (commit `afc26d8`); post-PR2 figures are
+§19.1's median-of-5 (commit `652645b`). Both same benchmark suite, same net, same machine.
+
+| Quantity | Pre-PR2 (#206) | Post-PR2 (PR 3) | Delta |
+|---|---|---|---|
+| Classical NPS | 311,669 | 336,525 | +24,856 (+8.0%) — session variance, Classical code unchanged |
+| NNUE NPS | 107,714 | 157,268 | +49,554 (**+46.0%**) |
+| Ratio (NNUE/Classical, same session) | 34.6% | **46.7%** | **+12.1 points** |
+| Classical elapsed | 234.509 s | 217.19 s | −17.32 s (−7.4%, session variance) |
+| NNUE elapsed | 2,334.018 s | 1,598.59 s | −735.43 s (**−31.5%**) |
+| NNUE ns/node (total) | 9,284 | 6,359 | −2,925 (−31.5%) |
+| NNUE eval % / ns-node | 29.1% / 2,702 | ~41.2% / ~2,620 | ns/node flat (−3.0%, noise); % share rose only because the denominator (total ns/node) shrank |
+| NNUE accumulator % / ns-node | 36.3% / 3,370 | ~10.5% / ~674 | **−2,696 ns/node (−80.0%, ≈5.0x)** |
+| NNUE remainder % / ns-node | 34.6% / 3,212 | ~48.3% / ~3,065 | ns/node flat (−4.6%, noise) |
+| Classical nodes | 73,089,246 | 73,089,246 | 0 (identical) |
+| NNUE nodes | 251,406,555 | 251,406,555 | 0 (identical) |
+
+**Note on the eval/accumulator % split for the vector median run**: read from the same
+per-run instrumentation used for the scalar-fallback rows above (which reproduce §14.1's
+pre-PR2 percentages almost exactly — 29.1%/36.3% vs 29.1%/36.3% — confirming the instrumentation
+itself is unchanged and comparable across sessions); the vector-run figures are rounded to one
+decimal and should be read as approximate, not to three-significant-figure precision.
+
+**Causal attribution**: node counts are bit-identical across every measurement occasion —
+#206's original run, all 5 vector runs, both scalar-fallback runs — confirming Task 4's
+zero-behavioral-change requirement directly (not inferred). Of the three ns/node buckets, only
+the accumulator moved outside noise (−80%); eval and remainder both stayed flat within the
+~3–5% band already established as this benchmark's run-to-run variance (§15.5). The entire NPS
+gain traces to exactly the code Stage 1 touched and nowhere else — the improvement is not an
+artifact of session drift.
+
+### 19.3 §15.1 model validation (Task 3)
+
+| Assumption | §15.1 statement | Measured outcome | Verdict |
+|---|---|---|---|
+| A1 (accumulator 90/10 accelerable/floor split, ~3,033 / ~337 ns/node) | Not measured, inferred from code read | Post-accumulator ≈ 674 ns/node. If the ~337 ns/node floor (instrumentation + `arraycopy`, neither touched by Stage 1) held fixed, the accelerable portion dropped 3,033 → ~337 ns/node, i.e. **implied speedup on the accelerable fraction ≈ 9.0x** | **Partially held** — the floor/accelerable split shape was directionally right, but A3's speedup magnitude on that fraction was badly underestimated (see below) |
+| A2 (eval floor/accelerability, Stage 2 only) | Weakest assumption, explicitly flagged | Not tested — Stage 1 doesn't touch `evaluate()`; eval ns/node stayed flat (2,702→~2,620, within noise), consistent with A2 simply not having been exercised | **Untested, as scoped** — correctly out of PR 3's scope; still open for a future Stage 2 decision |
+| A3 (2–4x speedup hedge on the accelerable fraction) | "Real-world JIT/Vector-API speedups typically land well below theoretical peak, so 2–4x, not 16x" | Implied real speedup ≈9.0x (derived above) | **Disproven as too conservative** — actual speedup on the accelerable fraction was more than double the top of the hedged range |
+| A4 (remainder unaffected — move-gen/make-unmake/TT/search-logic) | Strong assumption, evaluator-agnostic code | Remainder ns/node flat (3,212→~3,065, within noise) | **Held** |
+
+**Projected vs. actual**: §15.1's Stage-1-alone table topped out at S=4x → 45.8%. The measured
+46.7% sits just above that top row — consistent with an effective speedup well past 4x on the
+accelerable fraction, as A1/A3's re-derivation above shows directly (≈9.0x, not 2–4x). The
+**shape** of §15.1's model (accumulator-only levers project into the low-to-mid 40s%) was
+correct; its **speedup magnitude hedge** was conservative by roughly 2x.
+
+### 19.4 Execution-path validation (Task 4)
+
+**Measured**: node counts are bit-identical (251,406,555 for NNUE, 73,089,246 for Classical)
+across every run in §19.1 — all 5 vector runs, both scalar-fallback runs, and #206's original
+pre-PR2 measurement. No PV divergence or score difference was observed in any run's output.
+
+**Conclusion**: both execution paths (Vector API enabled vs. scalar fallback) produce
+identical search trees and identical evaluation output in the integrated engine, confirming
+Stage 1 introduced zero behavioral change — the same conclusion the unit-level equivalence
+tests (§18.2, `NnueAccumulatorVectorOpsEquivalenceTest`) established at the method level, now
+independently confirmed at the whole-search level.
+
+### 19.5 JIT verification (Task 5)
+
+**Observation** (measured, no interpretation): in the integrated engine, disabling SuperWord on
+the scalar-fallback path changes NPS by only ~3% (111,863 → 108,159). In §18.4's isolated
+microbenchmark, the identical flag change moved scalar timing by ~3.4x (22.4ns/op →
+76.7ns/op).
+
+**Interpretation** (separated from the observation above): the small in-engine SuperWord
+delta indicates C2 is **not** meaningfully auto-vectorizing `addFeatureScalar`/
+`subtractFeatureScalar` inside the real `Searcher`/`NnueEvaluator` call pattern — unlike some
+isolated microbenchmark harness shapes, where inlining budget and call-site monomorphism let
+SuperWord fire. This resolves §18.4's open question in favor of the **corrected/SuperWord-off
+microbenchmark reading (~9–12x)**, not the lambda-confounded reading (~1.34x), as the more
+representative estimate of what Stage 1 actually replaced in production. It is independently
+corroborated by §19.3's arithmetic: an implied ≈9.0x accelerable-fraction speedup is only
+possible if the scalar baseline it replaced was close to fully non-vectorized — a ~1.3x-baseline
+world would have produced a post-Stage-1 accumulator figure far above what was actually
+measured. Two independent measurements (microbenchmark SuperWord control, integrated-engine
+accumulator-share collapse) triangulate on the same conclusion.
+
+**Not done**: `-XX:+PrintAssembly`/`hsdis` disassembly inspection of either path was not
+performed in PR 2 or PR 3. The SuperWord-flag differential above is treated as sufficient
+evidence for this decision (it directly answers the load-bearing question — "is the scalar path
+already vectorized" — without requiring instruction-level inspection), not as a substitute for
+disassembly if a future investigation needs the actual emitted instruction sequence (e.g. to
+confirm species width or a specific intrinsic). The explicit Vector API path is not similarly
+verified by disassembly either; its correctness rests on JEP 338's documented behavior (lowers
+via `VectorSupport` intrinsics independent of the SuperWord pass) plus the bit-identical
+equivalence tests (§18.2), not a disassembly read in this session — labeled here as
+documented-behavior, not measured-this-session.
+
+### 19.6 Decision (Task 6)
+
+**Decision A: Stage 1 cleared the gate.** 46.7% ≥ 40%, measured via median-of-5 on both sides
+with a same-session Classical baseline, with node-count identity confirming zero behavioral
+change. Per §15.5's own decision tree ("Gate passes (≥40%, median-of-5): Stage 2/PR 4-5 not
+started. Recommend proceeding directly to E-5"), Stage 2 is **not** justified by this result.
+
+**Blocking precondition found and fixed during this PR**: `tools/sprt.ps1` and `tools/match.ps1`
+(the actual E-5 SPRT/match launchers) constructed their `cutechess-cli` engine commands as
+`cmd=$Java arg=-jar arg=<path>` — **no `--add-modules jdk.incubator.vector`**. Under that
+invocation, `VectorCapabilities.AVAILABLE` resolves `false` and the engine silently runs the
+scalar-fallback path, which measures 111,863/336,525 = **33.2%, failing the gate** in the same
+session that the vector path passes it. This was not a hypothetical — it is exactly how E-5
+would have launched the engine before this fix. Fixed in this PR (both scripts now pass
+`--add-modules jdk.incubator.vector` to both engines under test; `tools/launch_vex.ps1`, which
+CLAUDE.md's Cutechess docstring names as an alternative launcher, received the same fix for
+consistency). **E-5 must not start without this fix in place** — it now is, but any future
+change to these scripts should preserve the flag.
+
+**Scope note, not a strength claim**: clearing the NPS gate removes E-6 as a blocker on E-5; it
+says nothing about playing strength. §14.1's Lever A/B split still applies — Stage 1 is
+Lever A (throughput) only. The ~3.44x node-count excess and the pruning-margin/calibration
+question (§14.5, #219, Lever B) are untouched by this work and remain open; E-5's SPRT
+*outcome* depends on eval strength, not on this gate.
+
+### 19.7 Summary and stop condition
+
+Per this task's instruction: **stop after PR 3.** No Stage 2 work, no `evaluate()` changes, no
+search changes were made. The only code changes beyond PR 1/PR 2 are the three-script
+`--add-modules` launcher fix in §19.6, none of which touch `evaluate()`, search behavior, or
+evaluator semantics.

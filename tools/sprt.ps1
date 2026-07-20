@@ -151,9 +151,9 @@ $maxGames = if ($MaxGames -gt 0) { $MaxGames } elseif ($MinGames -gt 0) { [math]
 $newOptionArgs = @($NewOptions | ForEach-Object { "option.$_" })
 $oldOptionArgs = @($OldOptions | ForEach-Object { "option.$_" })
 
-$ccArgs = @("-engine", "name=NEW", "cmd=$Java", "arg=-jar", "arg=$($NewResolved.Path)", "proto=uci", "option.Threads=$EngineThreads")
+$ccArgs = @("-engine", "name=NEW", "cmd=$Java", "arg=--add-modules", "arg=jdk.incubator.vector", "arg=-jar", "arg=$($NewResolved.Path)", "proto=uci", "option.Threads=$EngineThreads")
 $ccArgs += $newOptionArgs
-$ccArgs += @("-engine", "name=OLD", "cmd=$Java", "arg=-jar", "arg=$($OldResolved.Path)", "proto=uci", "option.Threads=$EngineThreads")
+$ccArgs += @("-engine", "name=OLD", "cmd=$Java", "arg=--add-modules", "arg=jdk.incubator.vector", "arg=-jar", "arg=$($OldResolved.Path)", "proto=uci", "option.Threads=$EngineThreads")
 $ccArgs += $oldOptionArgs
 $ccArgs += @(
     "-each", "tc=$TC",
