@@ -26,6 +26,8 @@ against data that doesn't exist yet.
 from __future__ import annotations
 
 import json
+import math
+import random
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -48,6 +50,13 @@ class TrainingDiagnostic:
     """Issue #215: one logged checkpoint in the training-loss/held-out-loss series.
     `held_out_loss` is `None` when `train()` isn't given held-out records to
     evaluate against (this field is optional at the call site, not always populated).
+
+    Issue #219/Phase 1 (research doc §26.2's mandatory-measurements trajectory):
+    `train_correlation`/`train_rmse`/`train_bias` are `None` unless `train()` is given
+    `train_diagnostic_sample`; `held_out_correlation`/`held_out_rmse`/`held_out_bias`
+    are `None` under the same condition as `held_out_loss` above. `learning_rate` is
+    the *effective* rate at this step (post-schedule, §26.1's Phase 1 grid), not
+    necessarily `TrainingConfig.learning_rate` verbatim.
     """
 
     step: int
@@ -55,6 +64,12 @@ class TrainingDiagnostic:
     learning_rate: float
     gradient_norm: float
     held_out_loss: Optional[float] = None
+    train_correlation: Optional[float] = None
+    held_out_correlation: Optional[float] = None
+    train_rmse: Optional[float] = None
+    held_out_rmse: Optional[float] = None
+    train_bias: Optional[float] = None
+    held_out_bias: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -68,6 +83,11 @@ class TrainingConfig:
     seed: int
     steps: int
     batch_size: int
+    # Phase 1 (research doc §24.4/§26.1): optimization-schedule knobs only -- default
+    # values reproduce every pre-existing config/checkpoint's behavior exactly (a flat
+    # `learning_rate` for the whole run), so no prior caller or test needs updating.
+    lr_schedule: str = "constant"
+    warmup_steps: int = 0
 
 
 def load_config(path: Path) -> TrainingConfig:
@@ -98,6 +118,29 @@ def target_cp(label: PositionLabel) -> float:
     )
 
 
+def _learning_rate_at_step(config: TrainingConfig, step: int) -> float:
+    """Phase 1's optimization-schedule knob (research doc §24.4/§26.1) -- optimizer
+    *type* is untouched (still plain Adam, per the phase's own scope); only the rate
+    Adam is given at each step varies. `"constant"` (the default) returns
+    `config.learning_rate` unconditionally, exactly reproducing every pre-Phase-1
+    config's behavior. `"cosine"` linearly warms up over `warmup_steps` (if any), then
+    cosine-decays from `learning_rate` to 0 over the remaining steps -- chosen over a
+    step/exponential decay because it needs no extra knob beyond `warmup_steps`
+    (already required for warmup) and is the standard choice this project's own
+    reasoning (§24.4 Phase 1: LR=0.01 held flat for 20,000 steps is exactly the
+    condition that tends to oscillate near a minimum) argues for testing.
+    """
+    if config.lr_schedule == "constant":
+        return config.learning_rate
+    if config.lr_schedule == "cosine":
+        if step < config.warmup_steps:
+            return config.learning_rate * (step + 1) / max(1, config.warmup_steps)
+        decay_steps = max(1, config.steps - config.warmup_steps)
+        progress = min(1.0, (step - config.warmup_steps) / decay_steps)
+        return config.learning_rate * 0.5 * (1.0 + math.cos(math.pi * progress))
+    raise ValueError(f"unknown lr_schedule {config.lr_schedule!r} (expected 'constant' or 'cosine')")
+
+
 def _gradient_norm(model: NnueNet) -> float:
     """Read-only L2 norm of the gradients `loss.backward()` just populated -- reads
     `.grad` without modifying it, so this has zero effect on the optimizer step that
@@ -117,19 +160,29 @@ def train(
     checkpoint_path: Path,
     held_out_records: Optional[Iterable[PositionRecord]] = None,
     log_interval: int = 100,
+    train_diagnostic_sample: Optional[List[PositionRecord]] = None,
 ) -> Dict[str, Any]:
-    """Runs `config.steps` optimization steps over `records` (cycled deterministically,
-    see module docstring) and writes a checkpoint to `checkpoint_path`. Returns the
-    per-step loss history, plus (issue #215) a `diagnostics` series logged every
-    `log_interval` steps (and always at the final step): train loss, learning rate,
-    gradient norm, and -- only if `held_out_records` is given -- held-out loss.
+    """Runs `config.steps` optimization steps over `records` and writes a checkpoint to
+    `checkpoint_path`. Returns the per-step loss history, plus (issue #215) a
+    `diagnostics` series logged every `log_interval` steps (and always at the final
+    step): train loss, effective learning rate, gradient norm, and -- only if
+    `held_out_records` is given -- held-out loss/correlation/RMSE/bias; likewise
+    train-set correlation/RMSE/bias are populated only if `train_diagnostic_sample` is
+    given (research doc §26.2's mandatory Phase 1 trajectory).
 
-    Passing `held_out_records=None` (the default) reproduces this function's
-    pre-#215 behavior exactly aside from the always-present `diagnostics` list:
-    no held-out evaluation is performed inside the loop, matching the existing
-    scope boundary that held-out validation is a separate step from training
-    (module docstring). No change to the optimization loop itself -- model
-    weights, RNG consumption, and the returned `losses` list are unaffected.
+    Positions are cycled once per pass in a fixed order, **reshuffled at the start of
+    every subsequent pass** (Phase 1, research doc §24.4/§26.1) -- driven by the same
+    `seed_everything(config.seed)`-seeded `random` module already used for model
+    initialization, not a separate dedicated shuffle seed (§26.1's seed inventory
+    records this choice). A batch may span an epoch boundary (part before the
+    reshuffle, part after) when `batch_size` doesn't evenly divide `len(records)` --
+    ordinary, expected behavior for shuffled sampling, not a bug.
+
+    Passing `held_out_records=None` and `train_diagnostic_sample=None` (both default)
+    reproduces this function's pre-Phase-1 behavior for `held_out_loss`/other
+    diagnostics; the reshuffling above is unconditional (applies regardless of these
+    two parameters) since it is a Phase-1-wide pipeline change, not a per-call option
+    (research doc §26.1: bundled into every Phase 1 grid cell, not swept).
     """
     seed_everything(config.seed)
 
@@ -143,16 +196,25 @@ def train(
 
     losses: List[float] = []
     diagnostics: List[TrainingDiagnostic] = []
-    cursor = 0
+    epoch_order = list(range(len(records)))
+    random.shuffle(epoch_order)
+    position_in_epoch = 0
     for step in range(config.steps):
         batch_records = []
         for _ in range(config.batch_size):
-            batch_records.append(records[cursor % len(records)])
-            cursor += 1
+            if position_in_epoch >= len(epoch_order):
+                random.shuffle(epoch_order)
+                position_in_epoch = 0
+            batch_records.append(records[epoch_order[position_in_epoch]])
+            position_in_epoch += 1
 
         batch = encode_batch(batch_records)
         target_cps = torch.tensor([target_cp(r.label) for r in batch_records], dtype=torch.float32)
         targets = texel_sigmoid(target_cps, config.k)
+
+        current_lr = _learning_rate_at_step(config, step)
+        for param_group in optimizer.param_groups:
+            param_group["lr"] = current_lr
 
         optimizer.zero_grad()
         predicted_cp = model(batch.us_indices, batch.us_offsets, batch.them_indices, batch.them_offsets)
@@ -166,20 +228,40 @@ def train(
         losses.append(loss.item())
 
         if (step + 1) % log_interval == 0 or step == config.steps - 1:
-            held_out_loss = None
-            if held_out_records is not None:
-                # Deferred import: validator.py imports target_cp/texel_sigmoid from
-                # this module, so a module-level import here would be circular.
-                from trainer.validation.validator import evaluate_held_out
+            # Deferred import: validator.py imports target_cp/texel_sigmoid from this
+            # module, so a module-level import here would be circular.
+            from trainer.validation.validator import calibration_report, evaluate_held_out
 
-                held_out_loss = evaluate_held_out(model, held_out_records, config.k).held_out_loss
+            held_out_loss = held_out_correlation = held_out_rmse = held_out_bias = None
+            if held_out_records is not None:
+                held_out_eval = evaluate_held_out(model, held_out_records, config.k)
+                held_out_loss = held_out_eval.held_out_loss
+                held_out_correlation = held_out_eval.label_correlation
+                held_out_cal = calibration_report(model, held_out_records).overall
+                held_out_rmse = held_out_cal.rmse
+                held_out_bias = held_out_cal.signed_mean_error
+
+            train_correlation = train_rmse = train_bias = None
+            if train_diagnostic_sample is not None:
+                train_eval = evaluate_held_out(model, train_diagnostic_sample, config.k)
+                train_correlation = train_eval.label_correlation
+                train_cal = calibration_report(model, train_diagnostic_sample).overall
+                train_rmse = train_cal.rmse
+                train_bias = train_cal.signed_mean_error
+
             diagnostics.append(
                 TrainingDiagnostic(
                     step=step,
                     train_loss=losses[-1],
-                    learning_rate=config.learning_rate,
+                    learning_rate=current_lr,
                     gradient_norm=gradient_norm,
                     held_out_loss=held_out_loss,
+                    train_correlation=train_correlation,
+                    held_out_correlation=held_out_correlation,
+                    train_rmse=train_rmse,
+                    held_out_rmse=held_out_rmse,
+                    train_bias=train_bias,
+                    held_out_bias=held_out_bias,
                 )
             )
 
