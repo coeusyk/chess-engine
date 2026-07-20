@@ -3468,3 +3468,462 @@ Next action:            Per §29.7: do not scale Stage 1 further (no 2C/1M exper
                         review -- neither started in this report, per this task's instruction.
 Artifacts:              trainer/outputs/phase1/P2B-001/
 ```
+
+## 30. Stage 1 retirement and roadmap confidence (2026-07-20)
+
+### 30.1 Stage 1 data scaling: experimentally exhausted
+
+Two controlled, single-variable experiments tested whether increasing Stage 1 volume
+(20,000 → 100,000 Lichess positions, 36,000 → 116,000 total training records) improves
+held-out correlation beyond the promoted P1-G04 reference (0.5315):
+
+- **Experiment 2A** (§28, fixed compute — steps held at P1-G04's 20,000): held-out correlation
+  0.5048 — flat against the historical `dfffd3da` baseline (0.5044), a regression against
+  P1-G04. Left one open question: whether the fixed step count under-trained the 3.2x larger
+  set (~44 effective passes vs. P1-G04's ~142).
+- **Experiment 2B** (§29, proportional compute — steps derived to match P1-G04's ~142.22
+  effective passes, 20,000 → 64,444): held-out correlation 0.5000 — *lower* than 2A's
+  fixed-compute result, with the trajectory showing genuine overfitting (early peak at ~20%
+  through the run, then sustained decline) rather than a recovery. This directly answers 2A's
+  open question: **the regression was not primarily an optimization-exposure artifact**
+  (§29.4).
+
+**Conclusion**: neither compute regime raised held-out correlation above what the original
+36,000-record corpus already achieved. Stage 1 volume scaling (in this quality/representation)
+is exhausted, not merely paused.
+
+**Remaining uncertainty, stated plainly rather than glossed over**: three data points
+(P1-G04, P2A-001, P2B-001) is a small sample for a general claim. The unplanned observation
+that all three runs' held-out-correlation peaks cluster in the same ~11,000-16,000 absolute-step
+range regardless of dataset size or total step budget (§29.3) is suggestive, not proven — it
+was not the target of a dedicated experiment. Phase 3's own findings below (§32) surface a more
+specific, higher-confidence explanation for *why* more Stage 1 volume didn't help: a small
+number of extreme-magnitude label outliers in the Stage 1 source, not a generic "volume doesn't
+matter" property of the data.
+
+**Reopening Stage 1 requires new evidence, not repetition.** Neither re-running 2A/2B nor
+scaling further (a hypothetical "2C" at 1M positions) is warranted without a specific, falsifiable
+reason distinct from what's already been tested — e.g. a demonstrated fix to the label-quality
+issues Phase 3 identifies (§32-§33), after which a *fresh* data-volume experiment would be
+testing a different corpus, not repeating this one.
+
+### 30.2 Roadmap confidence
+
+| Phase | Status |
+|---|---|
+| Optimization (Phase 1) | ✓ **Confirmed** — P1-G04 promoted, +0.0271 held-out correlation over the noise floor (§27) |
+| Stage 1 data scaling (Phase 2, Experiments 2A/2B) | ✓ **Rejected**, under both fixed-compute and proportional-compute regimes (§28, §29) |
+| Stage 2 data scaling | Deferred (§24.4) — not attempted; Stage 1's rejection does not by itself imply Stage 2 would behave the same way (different label source, different quality profile per §32) |
+| **Next investigation** | **Phase 3 — Label Quality** (§31-§34 below) |
+
+## 31. Graphify discovery phase (Phase 3, mandatory)
+
+Per this task's instruction, the repository knowledge graph was refreshed (`graphify update`,
+code-only, no LLM cost) before reading any label-pipeline implementation file: 4,195 nodes,
+8,175 edges, 550 communities, built from commit `5ce6336c`. `GRAPH_REPORT.md`/`graph.json`/
+`graph.html` reviewed; the full-repo graph is dominated by `engine-core`/`engine-tuner` Java
+communities (chess engine internals), with the NNUE trainer's Python pipeline as a much smaller
+slice.
+
+A targeted BFS trace ("Stockfish evaluation, position generation, FEN processing, dataset
+generation, label conversion, mate-score conversion, centipawn normalization, dataset splitting,
+validator, trainer inputs") surfaced every component this phase needs: `train()`,
+`TrainingConfig` (`train.py`), `PositionRecord`/`PositionLabel`/`PositionMetadata`
+(`contracts/dataset.py`), `StockfishLabelConfig`/`label_positions()` (`stockfish_label.py`),
+`read_shard`/`write_shard` (`mmap_shard.py`), `TextDatasetProvider`/`StockfishLabeledProvider`,
+`combine_and_split` (`train_candidate_net.py`), `evaluate_held_out`/`calibration_report`
+(`validator.py`), and `Deep Research Report — D-8: Stage 2 Stockfish Labeling Driver`
+(`docs/architecture/research/DR-D8-stockfish-labeling-driver.md`).
+
+**Discovery outcome: no undocumented implementation paths found.** Every component the graph
+surfaced is already named and cross-referenced in this document's §1 ("Established facts") or
+in `DR-D8` directly — §1 already states, ahead of this phase, that Stage 2 has no
+confidence/variance metric per position (line item on `nodes=25000`/`MultiPV` unpinned), that
+mate scores flatten to a fixed `MATE_EQUIVALENT_CP=3000` regardless of distance, that
+`deduplicate`/`phase_of`/`balance_phases` exist but are unused by the real training pipeline,
+and that Stage 1 has zero quiet/tactical filtering. This phase's job (§32-§33) is to put numbers
+on those already-identified gaps, not discover new ones — consistent with the instruction that
+"reflected in the research document" already covers this ground; nothing required backfilling
+before proceeding.
+
+**One structural confirmation the graph made explicit** (traced via `contracts/dataset.py`, not
+previously stated this plainly): `PositionMetadata` has exactly four fields —
+`ply`/`game_id`/`search_depth`/`search_nodes` — no `multipv` field and no
+`termination_reason` field exist anywhere in the schema. Their absence from Stage 1/Stage 2 data
+is therefore not a gap in what was *recorded*; it is structurally impossible to record today
+without a contract change. §32.4 relies on this distinction directly.
+
+No hidden coupling, duplicated logic, or dead code beyond what §1 already documents (the unused
+`deduplicate`/`phase_of`/`balance_phases` transforms) was found in this trace. No architecture,
+feature-representation, optimizer, schedule, export, or quantization code was read for
+implementation purposes beyond what this discovery pass and the audit script (§32) needed.
+
+## 32. Phase 3: label-quality audit (2026-07-20)
+
+Analytical only, per this task's constraint — no training occurred except one narrowly scoped
+validation computation (§32.7), which re-evaluates the already-trained, already-promoted P1-G04
+checkpoint on existing held-out predictions; it does not train, retrain, or modify any model.
+Audited corpus: the exact 40,000-record union (Stage 1 20,000 Lichess + Stage 2 20,000
+Stockfish-labeled) every promoted/rejected checkpoint in this roadmap (`dfffd3da`, P1-G04,
+P2A-001, P2B-001) has trained against, split with `combine_and_split(seed=42)` into the same
+36,000/4,000 train/held-out partition every prior experiment used. Script:
+`trainer/scripts/phase3_label_audit.py`, full machine-readable output:
+`trainer/outputs/phase3/label-audit.json` (gitignored, regenerate via the script).
+
+### 32.1 Dataset composition
+
+| | Stage 1 (Lichess) | Stage 2 (Stockfish) | Combined |
+|---|---|---|---|
+| Total positions | 20,000 | 20,000 | 40,000 |
+| Exact-duplicate FENs | 0 (0.000%) | 2 (0.010%) | 2 (0.005%) |
+| Cross-stage FEN overlap | — | — | 0 |
+| Phase distribution | — | — | opening 14,835 / middlegame 12,212 / endgame 12,953 |
+| Side-to-move | — | — | white 20,664 / black 19,336 |
+
+**Train/held-out split verification**: `combine_and_split(seed=42)` produces 36,000
+training / 4,000 held-out records; the held-out FEN set and training FEN set have **zero
+overlap** — confirmed by direct set intersection, not inferred from the shuffle's construction.
+This directly answers the highest-priority question for this audit: **no train/held-out
+leakage exists** in any experiment in this roadmap. This is a clean, positive result, not a
+gap — reported as such rather than searched for a problem that isn't there.
+
+Duplication is negligible (2 records total, both within Stage 2, both discussed in §32.5) and
+was already measured, combined-only, as a side effect of every `combine_and_split` call
+(`report_dataset_quality`, #214); this section adds the per-source split those log lines don't
+show. `deduplicate`/`phase_of`/`balance_phases` remain unused by the real training pipeline
+(§1), confirmed still true — this phase does not change that, only measures around it.
+
+### 32.2 Centipawn distribution
+
+| | Stage 1 (Lichess) | Stage 2 (Stockfish) | Combined |
+|---|---|---|---|
+| n (cp-labeled) | 16,060 | 19,331 | 35,391 |
+| Mean | 135.9 | −82.3 | 16.7 |
+| Median | 18.0 | −20.0 | 1.0 |
+| Std | 1,126.9 | 402.0 | 822.4 |
+| Skew | 13.630 | −0.583 | 16.200 |
+| Excess kurtosis | 228.185 | 10.226 | 376.639 |
+| Min | −9,605 | −7,358 | −9,605 |
+| Max | 20,000 | 1,413 | 20,000 |
+
+Stage 1's skew/kurtosis are extreme — driven almost entirely by the outlier cluster identified
+in §32.4, not by the bulk of the distribution (visible in the histogram below, which is
+dominated by a normal-looking peak near 0). Stage 2 is far better-behaved: mildly left-skewed
+(consistent with Stage 2 sourcing from `quiet-labeled.epd`'s Zurichess-derived positions, not
+uniformly sampled), no extreme kurtosis.
+
+```
+Stage 1 (Lichess), clipped to [-1000, 1000] for readability:
+  [   -1000,     -900)     58
+  [    -900,     -800)     22
+  [    -800,     -700)     45
+  [    -700,     -600)    107
+  [    -600,     -500)    146
+  [    -500,     -400)    238 #
+  [    -400,     -300)    204
+  [    -300,     -200)    260 #
+  [    -200,     -100)    441 ##
+  [    -100,        0)   2705 #############
+  [       0,      100)   8318 ########################################
+  [     100,      200)    956 ####
+  [     200,      300)    540 ##
+  [     300,      400)    470 ##
+  [     400,      500)    339 #
+  [     500,      600)    298 #
+  [     600,      700)    327 #
+  [     700,      800)    178
+  [     800,      900)    103
+  [     900,     1000)    305 #
+
+Stage 2 (Stockfish), clipped to [-1000, 1000]:
+  [   -1000,     -900)    150 #
+  [    -900,     -800)    218 ##
+  [    -800,     -700)    657 ########
+  [    -700,     -600)    963 ############
+  [    -600,     -500)   1198 ###############
+  [    -500,     -400)   1663 ####################
+  [    -400,     -300)   1245 ###############
+  [    -300,     -200)   1069 #############
+  [    -200,     -100)   1049 #############
+  [    -100,        0)   2574 ################################
+  [       0,      100)   3190 ########################################
+  [     100,      200)   1086 #############
+  [     200,      300)    854 ##########
+  [     300,      400)    832 ##########
+  [     400,      500)   1011 ############
+  [     500,      600)    692 ########
+  [     600,      700)    443 #####
+  [     700,      800)    274 ###
+  [     800,      900)     85 #
+  [     900,     1000)     78
+```
+
+Stage 1 is sharply peaked near 0 (its own cloud-eval sampling appears biased toward
+near-balanced positions — 8,318/16,060 = 51.8% of its cp-labeled records fall in
+[0,100)cp alone); Stage 2's cp values spread more evenly across a wider negative range,
+consistent with `quiet-labeled.epd`'s own game-derived (not artificially rebalanced) position
+mix and its own systematic negative bias (mean −82.3cp — plausibly a side-to-move or
+Stockfish-perspective convention artifact, not yet explained; flagged as an open question, not
+resolved here).
+
+### 32.3 Mate distribution
+
+| | Stage 1 (Lichess) | Stage 2 (Stockfish) | Combined |
+|---|---|---|---|
+| Mate labels | 3,940 (19.70%) | 669 (3.35%) | 4,609 (11.52%) |
+| Positive (mover mates) | 3,327 | 368 | 3,695 |
+| Negative (mover mated) | 613 | 269 | 882 |
+
+Stage 1 carries almost 6x Stage 2's mate-label rate, and its positive/negative split is far more
+lopsided (84.4% positive vs. Stage 2's 55.0%) — Stage 1's Lichess-cloud-eval source evidently
+over-represents "found forced mate for the side to move" positions relative to Stage 2's
+Stockfish-at-fixed-node-budget labeling, which more often reports a large-but-not-mate cp score
+instead at the same node budget (a shallower search finds fewer forced mates, converts more of
+them to "just" a large winning cp score — consistent with the two sources' different mate rates
+being a search-budget effect, not a position-selection difference). Mate-depth distributions
+(plies) for both sources are right-skewed with a long tail (Stage 1 reaching mate-in-64, Stage 2
+capped at mate-in-12 — plausibly because Stage 2's 25,000-node budget cannot find or confirm
+longer forced mates the way a stronger/deeper cloud-eval analysis can) — full per-depth counts
+in `label-audit.json`.
+
+### 32.4 Extreme evaluations — the headline finding
+
+| | Stage 1 (Lichess) | Stage 2 (Stockfish) | Combined |
+|---|---|---|---|
+| p99(\|cp\|) | 1,496 | 928 | 1,028 |
+| max(\|cp\|) | 20,000 | 7,358 | 20,000 |
+| Count at max(\|cp\|) | 36 | 1 | 36 |
+| IQR outliers (k=3) | 2,793 (17.39%) | 5 (0.03%) | 628 (1.77%) |
+
+Stage 1's `max(\|cp\|)=20,000` is not a single anomaly — **36 distinct records carry exactly
+`eval_cp=20000`**, and a further 33 carry exactly `eval_cp=9605` (all confirmed positive-sign;
+6 records fall below −5,000, none at a matching round sentinel). Both values are implausible as
+genuine centipawn evaluations (no chess engine's normal cp output lands on a suspiciously round
+20,000, repeated identically 36 times across unrelated positions) and were traced directly to
+Lichess's own cloud-eval JSON (`acquire_stage1_lichess.py`'s `_to_record()` reads `pv["cp"]`
+verbatim, with no bounds check, no cross-validation against a null `mate` field, and no
+clamping — confirmed by reading the acquisition script, not inferred). The FENs at `cp=20000`
+are overwhelmingly large-material-advantage or forced-technical-win endgames (e.g. KBN vs. K),
+consistent with a known category of Lichess cloud-eval behavior: an analyzing engine's internal
+near-mate score occasionally surfaces as a very large plain `cp` value rather than a `mate`
+field. **This is a genuine Stage 1 source-data defect, not a parsing bug in this repository's
+own code** — `_to_record()` correctly reports what Lichess's API returned; the defect is
+upstream, and this repository currently has no sanity check that would catch it.
+
+**Quantified impact on the held-out correlation metric** (a narrowly scoped validation
+computation, per this task's own allowance — inference only against the already-trained,
+already-promoted P1-G04 checkpoint, no retraining): the held-out set (4,000 records) contains
+only **8 records**
+at these two sentinel values (0.2% of the set). Held-out Pearson correlation:
+
+| | Correlation | n |
+|---|---|---|
+| Full held-out set (as reported everywhere else in this roadmap) | 0.5315 | 4,000 |
+| Excluding the 8 sentinel-value (9605/20000) records | **0.5931** | 3,992 |
+| Excluding all 12 non-mate records with \|target_cp\| > 5,000 | **0.5953** | 3,988 |
+
+**Removing 0.2-0.3% of the held-out set raises the reported held-out correlation by
++0.060 to +0.064 — more than double Phase 1's entire optimization gain (+0.0271,
+`dfffd3da`→P1-G04, §27).** This is a mechanical consequence of Pearson correlation's known
+sensitivity to extreme values inflating the target's variance term: the model (correctly) never
+predicts anywhere near ±20,000cp for any position, so these 8-12 records contribute an
+enormous, label-artifact-driven residual that the correlation statistic weights heavily,
+independent of how well the model ranks the other 99.7-99.8% of positions. **This is the
+single most information-dense finding of this audit** — see §33's ranked hypotheses.
+
+### 32.5 Noise investigation
+
+- **Repeated FENs with different labels**: the corpus's only 2 duplicate FENs (both within
+  Stage 2, §32.1) **both carry different labels on their two occurrences** — i.e. re-running
+  Stockfish on the same position at the same nominal node budget did not reproduce the same
+  eval. Direct, if small-n (n=2), evidence that Stage 2's single fixed-node search is not even
+  self-consistent — supporting the label-noise-floor hypothesis §6's Experiment 5 was already
+  designed to test (re-label 1,000 positions at two node budgets, measure the spread).
+- **Shallow-search artifacts / search effort variance**: Stage 2's `search_nodes` is populated
+  for 19,967/20,000 records (99.8%) and is **tightly clustered around the 25,000 budget**
+  (median 25,015; p5-p95 range 25,000-25,034) for the large majority — search effort is
+  materially consistent for most of the corpus, correcting an over-broad initial read of the
+  raw distinct-value range (490-25,176). A small tail deviates meaningfully: 0.75% of records
+  (150/19,967) searched fewer than 10,000 nodes, 0.25% (50/19,967) fewer than 5,000 — plausibly
+  near-immediate terminations (forced mate found instantly, single legal move, or similar) —
+  a small, quantifiable, non-uniform-effort tail rather than a pervasive problem.
+- **Search depth reached**: populated for all 20,000 Stage 2 records (structurally absent from
+  Stage 1, §31's confirmed schema point — Stage 1 has no search_depth field populated at all,
+  0/20,000). Depth ranges 0-245, mean 17.22, median 14 — the wide upper tail (Stockfish's
+  reported `depth` includes check/capture extensions, which can exceed nominal ply count in
+  forcing lines) is expected UCI behavior, not an anomaly. 32 records report `search_depth=0`
+  (immediate resolution, e.g. an already-mate/stalemate position or a position with one legal
+  reply).
+- **Mate-score discontinuities**: `target_cp()`'s flat `MATE_EQUIVALENT_CP=3000` (§1, established
+  fact) sits *below* Stage 1's 20,000/9,605 cp-labeled outliers — meaning some records labeled
+  as ordinary cp evaluations already exceed, in raw magnitude, the flattened value assigned to
+  genuine forced mates. Because `texel_sigmoid(cp, K=2.773456)` saturates by ≈288cp (§23.7,
+  established), both 3,000 and 20,000 saturate to the same ≈1.0 training-loss target — this
+  discontinuity is very likely harmless for the texel-sigmoid loss itself, but directly harmful
+  for the raw-cp Pearson correlation metric, per §32.4.
+- **Clipping artifacts**: no evidence of a hard clip boundary in either source (no repeated
+  cluster at a single bound other than the two Stage 1 sentinel values already discussed, which
+  are a source-data artifact, not a pipeline clip).
+- **Evaluation quantization**: Stage 1 cp values are divisible by round numbers far above a
+  uniform-random baseline (divisible by 50: 15.2% vs. 2.0% baseline, a 7.6x enrichment;
+  divisible by 25: 17.4% vs. 4.0%, 4.4x). Stage 2 tracks its uniform baseline closely (divisible
+  by 50: 3.8% vs. 2.0% baseline, divisible by 10: 11.7% vs. 10.0%) — consistent with Stage 2
+  reporting raw, unrounded Stockfish centipawn output and Stage 1's cloud-eval source applying
+  some rounding/quantization not present in Stage 2. A previously undocumented, source-specific
+  data-quality difference.
+- **Duplicate leakage / train-val contamination**: none found (§32.1) — the held-out set used
+  by every promoted/rejected checkpoint in this roadmap is clean.
+
+### 32.6 Correlation by label region — is a specific region harder to learn?
+
+Bucketed error using the promoted P1-G04 checkpoint's predictions on the 4,000-record held-out
+set (the same P1-G04-inference validation computation used in §32.4; extends §5.1/§27/§28/§29's existing mate/cp/phase
+calibration split with the magnitude and search-depth buckets this phase's checklist asks for):
+
+| Bucket | n | MAE (cp) | RMSE (cp) | Bias (cp) |
+|---|---|---|---|---|
+| Near-zero (\|target\| ≤ 25cp, non-mate) | 873 | 55.2 | 76.4 | +9.5 |
+| Moderate (25-200cp, non-mate) | 1,141 | 72.4 | 96.6 | −3.8 |
+| Large (200-800cp, non-mate) | 1,412 | 331.3 | 365.3 | +53.0 |
+| Extreme (>800cp, non-mate) | 102 | 2,245.8 | 4,715.3 | −1,456.3 |
+| Mate (all) | 472 | 2,784.8 | 2,791.1 | −1,661.1 |
+| Mate favoring mover | 379 | 2,768.5 | 2,774.2 | −2,768.5 |
+| Mate against mover | 93 | 2,851.6 | 2,858.8 | +2,851.6 |
+| Stage 2, shallow depth-reached (≤ median 14) | 1,210 | 185.8 | 249.1 | +41.4 |
+| Stage 2, deep depth-reached (> median 14) | 784 | 551.7 | 880.6 | +16.0 |
+
+Error grows monotonically and sharply with label magnitude — near-zero/moderate positions are
+predicted well (MAE 55-72cp), large positions much worse (MAE 331cp), extreme non-mate
+positions dramatically worse (MAE 2,246cp, with a severe −1,456cp bias — the net systematically
+under-calls extreme wins), and mate positions worst of all with a large, direction-symmetric
+compression toward zero (bias flips sign but stays ≈2,800cp in magnitude either direction) —
+the same compression effect §23/§27.5/§28.5/§29.6 have already established, now quantified per
+magnitude bucket for the first time rather than only per mate/cp split.
+
+**Stage 2 depth-reached bucket is a genuine new observation, reported with its caveat**: MAE is
+3x higher for deep-depth-reached positions (551.7) than shallow-depth-reached ones (185.8). The
+most likely explanation is a confound with the magnitude effect just described, not an
+independent signal: for a fixed node budget, reaching greater search depth correlates with
+narrower branching factor (forced sequences, sparse endgames) — the same category of position
+that tends to produce more decisive, extreme evaluations. This bucket is plausibly re-detecting
+the extreme-magnitude effect through a different axis, not a new, independent cause — flagged as
+such rather than overclaimed.
+
+### 32.7 Search information availability (checklist item, explicit)
+
+| Field | Stage 1 | Stage 2 |
+|---|---|---|
+| Search depth | Absent (0/20,000 populated) | Present (20,000/20,000; range 0-245, mean 17.2, median 14) |
+| Search nodes | Absent (0/20,000 populated) | Present (19,967/20,000; tightly clustered near the 25,000 budget, small early-termination tail) |
+| MultiPV | **Structurally unavailable** — no field in `PositionMetadata` (§31) | Same — structurally unavailable |
+| Search termination reason | **Structurally unavailable** — no field in `PositionMetadata` (§31) | Same — structurally unavailable |
+
+Stage 1's absence of search metadata is expected and consistent with its source (a public
+cloud-eval dump, not a search this repository ran) — not a defect, just a hard limit on what
+can ever be known about Stage 1 label provenance without switching sources. Stage 2's
+`search_depth`/`search_nodes` population confirms `mmap_shard.py`'s D-8-era extension (§1) is
+working as designed. MultiPV and termination-reason are absent from the *schema*, not merely
+this dataset — extending `PositionMetadata` would be required before either could ever be
+recorded, for any future stage.
+
+## 33. Ranked hypotheses and Experiment 3A recommendation
+
+No fixes are implemented in this section — hypotheses and a recommendation only, per this
+task's explicit instruction. Ranked by evidence strength × expected impact ÷ implementation
+cost, not by which is most novel.
+
+| # | Hypothesis | Evidence | Confidence | Expected impact | Cost | Recommended experiment |
+|---|---|---|---|---|---|---|
+| 1 | **Stage 1's 69 extreme-magnitude label outliers (sentinel-like `eval_cp` ∈ {9605, 20000}, source-side Lichess cloud-eval defect, §32.4) suppress the held-out correlation metric and plausibly distort training** | Directly measured: excluding 8 held-out records (0.2%) raises measured correlation +0.060 to +0.064 — over 2x Phase 1's entire optimization gain. Traced to a real, upstream Lichess API behavior, not a bug in this repo's parsing | **High** | Potentially large on the *reported metric*; unknown but plausibly positive on *learned model quality* if the same records also distort training gradients (untested — see caveat below) | Low — filter/clip at ingestion, no architecture/loss change | **§33.1, Experiment 3A (recommended)** |
+| 2 | Extreme-magnitude and mate-labeled evaluations are severely compressed/miscalibrated (§32.6's monotonic magnitude-bucketed error, reconfirming §23/§27.5/§28.5/§29.6) | Very strong, independently reconfirmed five times across four different experiments now, at a finer magnitude resolution than before | High (already established, not new this phase) | Likely the dominant remaining lever for the mate-bias problem specifically, distinct from #1 | Medium-high — requires a loss/target-formulation change (WDL blend or mate-distance-aware target), not a data-cleaning fix | Phase 4's existing scope (§6 Exp 6, WDL blend) — not a Phase 3A candidate, but this audit strengthens the case for prioritizing Phase 4 after 3A |
+| 3 | Stage 2's single fixed-node-budget search (no re-search, MultiPV unpinned, §1) produces non-trivial label noise/variance | The corpus's only 2 duplicate FENs (both Stage 2) carry *different* labels on their two occurrences — 100% inconsistency rate, but n=2, not statistically decisive on its own | Medium — plausible mechanism, weak direct sample size from this corpus alone | Unknown, bounded by the experiment's own success criteria | Low — existing `stockfish_label.py` config knob, minutes to run | §6's pre-existing **Experiment 5** (label-noise floor: re-label 1,000 positions at 25k vs. 50k nodes) — already scoped, reprioritize rather than re-design |
+| 4 | Stage 1 cp values carry systematic quantization/rounding not present in Stage 2 (§32.5) | Measured: divisible-by-50 enriched 7.6x over a uniform baseline in Stage 1, near-baseline in Stage 2 | Medium — real and measured, impact on training quality untested | Low-medium — near-zero-region predictions are already the model's best-performing bucket (§32.6), so rounding here is unlikely to be a dominant lever | Low to test, but no clear fix without a source change | Lower priority; could be folded into 3A's data-cleaning pass as a secondary check, not a standalone experiment |
+| 5 | Stage 1's near-equality-heavy sampling (52.5% of cp-labeled records within ±50cp, §32.2) limits usable training signal | Measured directly | Low confidence this is a *quality* problem — near-zero is the model's best-predicted bucket (§32.6), so this looks like a sampling-distribution property of real online games, not noise | Low | — | Not recommended as a standalone experiment; informational |
+| 6 | Missing MultiPV/termination-reason metadata (structurally absent from `PositionMetadata`, §31/§32.7) limits diagnosability of label quality | Confirmed absent from the schema; no evidence yet that this specifically caps correlation (no way to test until the schema is extended) | Low confidence of *impact* (high confidence of *absence*) | Unknown — not yet testable | Medium-high — contract + shard-format extension | Not actionable as a cheap Phase 3A pick; revisit only if #1/#3 are exhausted and the label-noise question is still open |
+
+**A live, non-default outcome remains explicitly on the table**: if Experiment 3A (below) finds
+the outlier fix does not move held-out correlation once the model is actually retrained on
+cleaned data — not just re-evaluated post-hoc — that would be a real, reportable negative
+result pointing the roadmap back toward Phase 4 (loss/target formulation) or Phase 5
+(capacity/regularization, ADR-001's plain-768 ceiling) rather than further label work. Nothing
+in this ranking presupposes hypothesis #1 will pan out under retraining.
+
+### 33.1 Recommended Experiment 3A (not started — analysis and recommendation only)
+
+**Objective**: determine whether removing Stage 1's extreme-magnitude label outliers changes
+held-out correlation *under retraining*, not merely under post-hoc evaluation exclusion (which
+§32.4 already measured and which only proves the correlation *metric* is outlier-sensitive — it
+does not yet show that training without these labels produces a better model).
+
+**Independent variable**: Stage 1 outlier filtering — remove or clip records with
+`eval_cp` beyond a defined sanity bound (e.g. the two confirmed sentinel values 9605/20000
+specifically, or a broader principled bound such as `|eval_cp| > 3000` non-mate, chosen and
+declared before running, not tuned post-hoc) — applied to **both** the training set and the
+held-out set (held-out must be cleaned too, or the comparison is apples-to-oranges against
+P1-G04's un-cleaned held-out correlation).
+
+**Controlled variables**: P1-G04's frozen optimization schedule (§27.11, unchanged per this
+task's constraint), architecture, feature representation, loss function, export, quantization,
+Stage 2 (untouched — the defect is Stage-1-specific), split seed=42 for whatever records remain
+after filtering.
+
+**Success criteria**: held-out correlation, measured on the *cleaned* held-out set, for the
+retrained-on-cleaned-data model exceeds P1-G04's correlation measured the same way (i.e.
+against the reference numbers this audit already computed: 0.5931-0.5953, §32.4) by more than
+the measured noise floor (std≈0.0019, §27.2) — not against the uncleaned 0.5315, which would
+conflate the metric-cleaning effect (already known) with any real training-quality effect
+(not yet known).
+
+**Estimated cost**: Low — same schedule, ~36,000 records (minus ~62-69 filtered, negligible
+volume change), comparable wall-clock to P1-G04 (~180s).
+
+**This report recommends Experiment 3A as the single highest-information next experiment, and
+does not run it. Per this task's explicit instruction: waiting for review before proceeding.**
+
+## 34. Graphify validation pass (2026-07-20)
+
+Per this task's instruction, Graphify was refreshed after the analysis above to confirm no
+architectural drift was introduced and documentation references still resolve.
+
+```
+$ graphify update
+Re-extracting code files in /home/coeusyk/projects/chess-engine (no LLM needed)...
+  AST extraction: 32/32 uncached files (100%) [16 workers]
+[graphify] backed up curated graph (5 files) -> graphify-out/2026-07-20/
+[graphify watch] Rebuilt: 4228 nodes, 8251 edges, 552 communities
+```
+
+**Verification checklist**:
+- **No architectural changes introduced**: confirmed — this phase added exactly one new file
+  (`trainer/scripts/phase3_label_audit.py`, an analysis script under `scripts/`, structurally
+  identical in kind to the existing `phase1_optimization_sweep.py`/`phase1_experiment_2a.py`/
+  `phase1_experiment_2b.py` scripts already in the graph) and one research-doc update. No file
+  under `trainer/trainer/model`, `trainer/trainer/dataset`, `trainer/trainer/export`,
+  `trainer/trainer/quantization`, or `engine-core`/`engine-tuner`/`engine-uci` was modified.
+  Node/edge count grew (4,195→4,228 nodes, 8,175→8,251 edges) by exactly the amount a single
+  ~370-line analysis script with no cross-module architectural change would add.
+- **Documentation references remain correct**: re-queried the refreshed graph directly
+  (`graphify query "phase3_label_audit.py"`) rather than assuming it — confirms
+  `phase3_label_audit.py` correctly resolves edges to `combine_and_split()`/
+  `report_dataset_quality()`/`_load_all()` (`train_candidate_net.py`), `TextDatasetProvider`/
+  `StockfishLabeledProvider`, `PositionRecord` (`contracts/dataset.py`), `deduplicate()`
+  (`transform.py`), `encode_batch()` (`batching.py`), and `target_cp()` (`train.py`) — every
+  dependency this phase's script actually uses, correctly reflected, nothing orphaned or
+  misattributed. `DR-D8-stockfish-labeling-driver.md`, `mmap_shard.py`, `stockfish_label.py`,
+  and `validator.py`'s `evaluate_held_out`/`calibration_report` all still resolve to the same
+  locations this document already cited before this phase.
+- **Label-generation pipeline documentation matches implementation**: confirmed. §31's schema
+  claim (`PositionMetadata` has exactly four fields, no `multipv`/`termination_reason`) was
+  read directly from `trainer/contracts/dataset.py`, cross-checked against the graph's node
+  list for that file, and matches.
+- **Newly discovered relationships reflected in the research document**: the two-sentence
+  finding this phase's own discovery pass produced beyond what §1 already stated — the exact
+  `PositionMetadata` field enumeration (§31) — is now recorded there. No other new relationship
+  requiring documentation was found (§31.1's discovery outcome already stated this).
+
+**Architectural observations, summarized**: the trainer's label pipeline is small and already
+well-decomposed (`DatasetProvider` → `Transform` → `combine_and_split` → training), matching
+`docs/architecture/NNUE_TRAINER_ARCHITECTURE.md`'s own design — this phase's findings are data-
+quality issues within that pipeline (a source-data defect, a metric-sensitivity property, a
+schema gap), not structural or architectural problems with the pipeline itself. Nothing found
+in this phase motivates a pipeline redesign.
