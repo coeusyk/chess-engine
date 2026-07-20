@@ -3269,6 +3269,53 @@ directory match was re-verified before this run).
 Experiment ID: `P2B-001`. Wall-clock: 486.1s (vs. P1-G04's 183.7s and P2A-001's 156.3s — roughly
 2.6-3.1x, in the range expected for ~3.2x the steps).
 
+### 29.1a Architecture validation (Graphify): does `config.steps` couple into anything besides the schedule?
+
+Requested as an isolation check on Experiment 2B's single-variable design; run against the
+already-completed 2B result rather than strictly before it, since the request arrived
+interleaved with 2B's execution (noted here for the record, not glossed over). A scoped
+knowledge graph was built (`graphify`, AST-only, code corpus — no LLM extraction needed) over
+`train.py`, `validator.py`, `train_candidate_net.py` (`combine_and_split`), `exporter.py`,
+`quantizer.py`, and all three Phase 1/2A/2B driver scripts: 118 nodes, 212 edges, health check
+clean (no dangling/missing/collapsed edges).
+
+**Every read of `config.steps` inside `train()`** (confirmed by direct source inspection, cross-
+checked against the graph's call edges):
+1. `_learning_rate_at_step`'s `decay_steps = max(1, config.steps - config.warmup_steps)` —
+   the cosine schedule's decay span. **Intended** — this *is* the schedule coupling the task
+   asked to preserve (shape unchanged, span tracks total steps by construction of a cosine
+   schedule).
+2. `for step in range(config.steps)` — the training loop's iteration count. **Intended** — this
+   is the independent variable itself, not a side effect of it.
+
+**One derived, step-dependent quantity outside `train()` itself**: every calling script
+(`phase1_optimization_sweep.py`, `phase1_experiment_2a.py`, `phase1_experiment_2b.py`) computes
+`log_interval = max(1, steps // 20)` and passes it into `train()`, which uses it to gate both
+diagnostic logging (`evaluate_held_out`/`calibration_report` calls) and checkpoint writes
+(`train.py:237,275-279`). This *is* a real coupling from `steps` into checkpointing/evaluation
+*sampling density* — a longer run gets its ~20 diagnostic/checkpoint points spaced further
+apart in absolute step terms. **Classified as benign, not invalidating**: it changes how finely
+the trajectory is sampled, not what evaluation/calibration compute (same held-out set, same
+metrics, at every point that is sampled), and does not bias checkpoint selection, which still
+picks the point of peak held-out correlation among whatever points were logged — the same
+convention used for P1-G04 and P2A-001, so the three runs remain comparable.
+
+**Export/quantization/dataset-loading: zero coupling, confirmed structurally.** The graph shows
+no edge, direct or indirect, from `train()`/`TrainingConfig`/`config.steps` into `exporter.py`
+or `quantizer.py`. Querying callers of `train()` in the graph returns exactly:
+`phase1_experiment_2a_main`, `phase1_experiment_2b_main`, `phase1_optimization_sweep_run_cell`,
+and (separately) `train_candidate_net_train_quantize_export` — the production end-to-end
+pipeline, which *does* call `exporter.export()`/`quantizer.quantize()` after training, but is a
+different caller entirely, never invoked by any Phase 1/2A/2B script. `combine_and_split`
+(dataset loading/splitting) is called exactly once, before `steps` is even computed, and has no
+edge to or from `TrainingConfig`/`train()`.
+
+**Conclusion: no hidden coupling was found that invalidates Experiment 2B's single-variable
+design.** `config.steps` affects only the optimization schedule (as intended) and, via a
+documented and benign path, the trajectory's sampling density — not evaluation, calibration,
+export, quantization, or dataset composition. §29.4's disentanglement (data effectiveness vs.
+optimization budget vs. interaction) stands on this basis.
+
 ### 29.2 Result
 
 **Held-out correlation: 0.5000**, at the selected checkpoint (step 12,887/64,443) — *lower*
