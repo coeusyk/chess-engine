@@ -2213,6 +2213,7 @@ what the cited evidence actually shows.
 | A cosine LR decay mitigates the emerging-overfitting pattern a flat, high LR shows over a long run | §27.3: P1-G04 (cosine) vs. P1-G01 (flat, same steps/peak-LR) — held-out loss's late-run relative rise is 8% (G04) vs. 17% (G01), and held-out correlation plateaus rather than mildly declining | **Confirmed** — both predicted effects observed in a single head-to-head comparison; not yet seed-replicated (§27.6's caveat) |
 | Optimization changes (steps/schedule) alone can close the mate-labeled bias gap that motivates Phase 4 | §27.5: mate-labeled bias stays −1,651 to −1,729cp across every Phase 1 cell, including the two promoted ones — no meaningful movement despite real correlation/compression gains elsewhere | **Rejected** — confirms, via optimization rather than calibration this time, that mate bias is a structural (loss/target-shape) problem Phase 1 cannot touch, exactly as §23.7 hypothesized |
 | Increasing Stage 1 data 20k→100k improves held-out correlation beyond P1-G04, at a fixed 20,000-step compute budget | §28.2 (Experiment 2A, `P2A-001`): held-out correlation 0.5048, indistinguishable from `dfffd3da`'s original 0.5044 and a regression vs. P1-G04's 0.5315 (~14x the measured noise floor) | **Rejected, at fixed compute** — but confounded with training-step count: 20,000 steps is ~142 passes over 36k records but only ~44 over 116k, so this does not establish that more Stage 1 data cannot help under proportionally more compute (§28.3, open question) |
+| Experiment 2A's regression was primarily an optimization-exposure artifact, resolvable by scaling steps to restore P1-G04's effective pass count | §29 (Experiment 2B, `P2B-001`): steps derived to hold passes constant (20000→64444) yielded held-out correlation 0.5000 — *lower* than P2A-001's 0.5048, still far below P1-G04's 0.5315, with the run's own trajectory showing classic overfitting (early peak at ~20% through, then sustained decline) rather than recovery | **Rejected** — the steps/passes confound flagged in §28.3 is ruled out as the explanation; Stage 1 volume increases (20k→100k) show no benefit under either fixed or proportional compute (§29.4) |
 
 ## 26. Experimental Protocol (2026-07-20)
 
@@ -3236,4 +3237,187 @@ Next action:            Deferred to review per this task's explicit instruction 
                         declared experiment, or treat data-volume-at-fixed-compute as answered
                         and move to Phase 3/4.
 Artifacts:              trainer/outputs/phase1/P2A-001/
+```
+
+## 29. Experiment 2B completion report (2026-07-20) — Stage 1, passes-matched to P1-G04
+
+### 29.1 Step-count derivation
+
+Per this task's instruction, the training-duration variable is *derived*, not hard-coded.
+P1-G04 trained `steps_1=20,000` steps at `batch_size=256` over `n_1=36,000` training records:
+
+```
+passes_1 = steps_1 * batch_size / n_1 = 20000 * 256 / 36000 = 142.2222 passes
+```
+
+Experiment 2B's training set is `n_2b=116,000` records (identical composition to Experiment
+2A: the original 36,000 + the same 80,000 new, non-overlapping Stage-1-only positions). Holding
+passes constant instead of steps:
+
+```
+steps_2b = passes_1 * n_2b / batch_size = steps_1 * n_2b / n_1
+         = 20000 * 116000 / 36000 = 64444.44 -> 64444 (rounded)
+```
+
+`64444 * 256 / 116000 = 142.2212` effective passes — within 0.001 of P1-G04's 142.2222.
+LR (0.01), schedule shape (cosine), warmup (200 steps, unchanged in absolute terms per this
+task's constraint), seed (42), and every other Phase 1-frozen field are otherwise identical to
+P1-G04 and to Experiment 2A. Held-out set: the same 4,000 records as every experiment in this
+roadmap (§28's byte-for-byte preservation methodology, reused unchanged — the same source
+directory match was re-verified before this run).
+
+Experiment ID: `P2B-001`. Wall-clock: 486.1s (vs. P1-G04's 183.7s and P2A-001's 156.3s — roughly
+2.6-3.1x, in the range expected for ~3.2x the steps).
+
+### 29.2 Result
+
+**Held-out correlation: 0.5000**, at the selected checkpoint (step 12,887/64,443) — *lower*
+than both P2A-001's fixed-compute result (0.5048) and the original `dfffd3da` baseline
+(0.5044), and still well below the P1-G04 reference (0.5315, −0.0315). Held-out loss: 0.0989,
+comparable to P2A-001's (0.0996) and still worse than both `dfffd3da` (0.0823) and P1-G04
+(0.0797). **Giving the larger dataset proportionally more optimization exposure did not close
+the gap — it produced an equal-or-lower peak.**
+
+### 29.3 Trajectory — this is now unambiguous overfitting, not a plateau
+
+| Step | Train corr. | Held-out corr. | Held-out loss |
+|---|---|---|---|
+| 3,221 | 0.5465 | 0.4761 | 0.1151 |
+| 9,665 | 0.5892 | 0.4989 | 0.0996 |
+| **12,887 (selected)** | 0.5939 | **0.5000** | **0.0989** |
+| 19,331 | 0.6161 | 0.4967 | 0.1024 |
+| 38,663 | 0.6355 | 0.4942 | 0.1096 |
+| 64,443 (final) | 0.6394 | 0.4955 | 0.1112 |
+
+Unlike P1-G04 (held-out correlation plateaus tightly, no decline) and unlike P2A-001 (held-out
+correlation and loss both plateau flat, no decline), **P2B-001 shows a genuine early peak
+followed by sustained decline**: held-out correlation rises to 0.5000 by step ~12,887 (~20% of
+the run), then *declines* to a 0.489-0.496 floor for the remaining ~51,000 steps, while train
+correlation keeps climbing the entire time (0.547→0.639) and train loss keeps falling toward
+near-zero (0.057→0.0037). Held-out loss bottoms at the same point (0.0989) and then *rises*
+12.4% relative and stays elevated. This is the textbook train-up/held-out-down overfitting
+signature (§26.2's four-case guide, case 2) — the extra optimization exposure did not sit idle;
+it was spent overfitting the 116,000-record training set past the point that generalizes.
+
+**A striking, unplanned cross-experiment observation**: P1-G04 peaked at absolute step 15,999
+(of 20,000, ~80% through its run); P2A-001 peaked at absolute step 10,999 (of 20,000, ~55%
+through); P2B-001 peaked at absolute step 12,887 (of 64,444, only ~20% through). All three
+peaks cluster in the same **~11,000-16,000 absolute-step** neighborhood regardless of total
+training-set size (36k vs. 116k) or total step budget (20k vs. 64k). This is not proof of a
+general law from n=3, but it is directly visible in the data and worth recording: whatever is
+capping held-out correlation in this regime appears tied to absolute optimizer steps taken, not
+to passes over the data or to dataset size — the opposite of what "more data needs more passes"
+would predict (that hypothesis predicts a *later* peak for the larger dataset; the peak instead
+came at a comparable, even slightly lower, absolute step).
+
+### 29.4 Analysis — disentangling the three effects, as this task requires
+
+**1. Data effectiveness (does more Stage 1 data raise the achievable held-out correlation
+ceiling?).** No, not observed in either compute regime tested. The best held-out correlation
+either dataset-scaling run achieved — 0.5048 (2A, fixed compute) or 0.5000 (2B, proportional
+compute) — is essentially flat against the *original* `dfffd3da` result (0.5044), obtained from
+just the original 36,000 records. Tripling the training data, under two different and
+individually reasonable compute allocations, did not raise the ceiling above what the smaller
+dataset already achieved.
+
+**2. Optimization budget (does more compute alone explain the gap to P1-G04?).** No. P2B-001
+received ~3.2x P2A-001's steps (and ~3.2x P1-G04's steps, matched in passes) and its peak
+held-out correlation (0.5000) was not better than P2A-001's (0.5048) — if anything, marginally
+worse. The additional budget's only clearly visible effect was to let the model overfit further
+past its early peak (§29.3), not to find a better generalizing optimum. This directly answers
+this task's required question:
+
+**Experiment 2A's regression was *not* primarily explained by reduced optimization exposure.**
+Restoring P1-G04's effective pass count did not recover P1-G04's correlation — it produced a
+comparable-or-slightly-lower peak that then degraded with continued training. The steps/passes
+confound flagged in §28.3 as unresolved is now resolved: it does not account for the gap.
+
+**3. Interaction between data volume and optimization budget.** No evidence of a positive
+interaction (more data + more budget together outperforming either alone) was observed; if
+anything the interaction observed is mildly negative — the larger budget on the larger dataset
+overfit sooner, in absolute-step terms, than P1-G04 did on the smaller dataset (§29.3's peak-
+step comparison). The data most consistent with all three results (P1-G04, P2A-001, P2B-001) is
+that **held-out correlation in this regime is capped well below P1-G04's 0.5315 by something
+Stage 1 volume does not move** — most plausibly data quality/distribution or the label/loss
+formulation already flagged as Phase 3/4 candidates (§24, §25), not sheer position count.
+
+### 29.5 Metrics comparison
+
+| | `dfffd3da` (historical) | P1-G04 (current reference) | P2A-001 (fixed compute) | P2B-001 (passes-matched) |
+|---|---|---|---|---|
+| Held-out correlation | 0.5044 | **0.5315** | 0.5048 | 0.5000 |
+| Held-out loss | 0.0823 | **0.0797** | 0.0996 | 0.0989 |
+| RMSE | 1279.88 | 1239.86 | 1274.30 | 1269.29 |
+| Overall bias (cp) | −219.63 | −213.47 | −209.51 | −208.34 |
+| Overall compression | 0.0630 | **0.1255** | 0.0696 | 0.0789 |
+
+### 29.6 Calibration comparison (mate/cp split)
+
+| | `dfffd3da` | P1-G04 | P2A-001 | P2B-001 |
+|---|---|---|---|---|
+| Mate bias (cp) | −1,726.6 | −1,661.1 | −1,703.4 | −1,697.0 |
+| Mate compression | 0.0551 | 0.0996 | 0.0551 | 0.0615 |
+| Cp bias (cp) | −18.0 | −19.8 | −9.6 | −9.2 |
+| Cp compression | 0.0753 | 0.1599 | 0.0861 | 0.0995 |
+
+Mate-labeled bias again barely moves across all four models (−1,661 to −1,727cp) regardless of
+data volume or optimization budget — the fifth independent confirmation (§23, §27.5, §28.5,
+now §29.6) that this is a structural loss/target-shape problem, unrelated to both optimization
+schedule and Stage 1 volume. Compression tracks correlation's own ranking across all four
+models, consistent with §23.4's correlation-caps-compression relationship holding here too.
+
+### 29.7 Recommendation
+
+**Conclude that Stage 1 data scaling provides little additional signal, even after proportional
+optimization.** Neither the fixed-compute test (2A) nor the proportional-compute test (2B)
+raised held-out correlation above the original 36,000-record baseline, and 2B's own trajectory
+shows the extra data/compute combination overfitting rather than generalizing better. This is a
+real, negative, single-variable-isolated result — not a confounded one — since the passes
+confound that made 2A's result ambiguous has now been directly tested and ruled out as the
+explanation (§29.4).
+
+**Do not continue Stage 1 scaling to 1M positions.** The mechanism most consistent with all
+data gathered so far (P1-G04, P2A-001, P2B-001, plus §23/§25's calibration findings) is that
+correlation is capped by something Stage 1 volume does not address — data quality/label
+distribution or the loss/target formulation. Per §24's roadmap ordering, the next candidates are
+**Phase 3 (label quality)** or **Phase 4 (loss/K reformulation)**, not further Stage 1 volume
+or Stage 2 scaling.
+
+**Stopping here for review, as instructed — Phase 3 and Phase 4 have not been started.**
+
+### 29.8 Learning log entry
+
+```
+## Experiment ID: P2B-001
+Hypothesis:            Restoring P1-G04's effective pass count (142.22) over the larger
+                        116,000-record Stage 1 training set, by scaling total steps
+                        proportionally (20000 -> 64444, derived not hard-coded), recovers
+                        held-out correlation to at or above P1-G04's 0.5315, resolving
+                        Experiment 2A's steps/passes confound in data's favor.
+Independent variable:   Training step count, derived from Stage 1 dataset size to hold
+                        effective passes constant at P1-G04's value (142.22).
+Controlled variables:    Same as Experiment 2A (§28's table) plus: LR=0.01, cosine schedule
+                        shape, warmup=200 steps (absolute, unchanged), seed=42, held-out set
+                        (identical 4,000 records), architecture/features/labels/loss/K/
+                        export/quantization/evaluation pipeline all unchanged.
+Expected outcome:       Held-out correlation at or above P1-G04's 0.5315 if Experiment 2A's
+                        regression was primarily an optimization-exposure artifact.
+Observed outcome:       0.5000 at step 12887/64443 -- lower than both P2A-001 (0.5048) and
+                        the original dfffd3da baseline (0.5044), well below P1-G04 (0.5315).
+                        Trajectory shows a genuine early peak (~20% through the run) followed
+                        by sustained held-out correlation decline and held-out loss rise while
+                        train correlation/loss keep improving -- classic overfitting, not a
+                        plateau. Expectation not confirmed; confound ruled out, not resolved
+                        in data's favor (§29.4).
+Metrics:                See §29.5/§29.6.
+Decision:               Not promoted -- correlation below both the current reference (P1-G04)
+                        and the historical baseline (dfffd3da); fails §26.3's criteria.
+Reason rejected:        Held-out correlation (0.5000) did not recover P1-G04's level even with
+                        matched effective passes, and the run's own trajectory overfits past
+                        an early peak -- direct evidence that reduced optimization exposure was
+                        not the primary explanation for Experiment 2A's regression (§29.4).
+Next action:            Per §29.7: do not scale Stage 1 further (no 2C/1M experiment). Roadmap
+                        moves to Phase 3 (label quality) or Phase 4 (loss/K reformulation) for
+                        review -- neither started in this report, per this task's instruction.
+Artifacts:              trainer/outputs/phase1/P2B-001/
 ```
