@@ -1812,3 +1812,267 @@ to early saturation), not as an already-diagnosed root cause.
 **Explicitly out of scope, per this session's instruction**: no retraining was started, no `K`
 or `output_scale` was changed, no pruning margins were touched. This section documents what a
 future retraining effort should prioritize and why, not a completed fix.
+
+## 24. Retraining roadmap (2026-07-20) — no code written, no retraining started
+
+§23 established that retraining is necessary (the binding constraint is correlation, not scale).
+This section reviews the full training pipeline end to end, classifies every component that
+could plausibly move correlation/compression/bias, ranks candidate interventions, and produces
+a phased experimental roadmap. **No code was written and no retraining was performed** — one
+additional read-only diagnostic (§24.0, train-set calibration) was run against the existing
+checkpoint to resolve an underfitting-vs-overfitting question the roadmap's ordering depends on;
+this is the same category of measurement as every other diagnostic in this document, not a
+training run.
+
+### 24.0 Prerequisite diagnostic — underfitting confirmed directly, not assumed
+
+The ranking below (steps/optimization before data volume before regularization) depends on
+whether the net is under- or over-fit. The train/held-out **loss** gap alone (0.0667 vs 0.0823,
+§22/train-e3-real.md) doesn't settle this — loss and correlation can diverge. Computed directly:
+
+| | Train (n=36,000) | Held-out (n=4,000) |
+|---|---|---|
+| Label correlation | **0.564** | 0.504 |
+| Sigmoid MSE (loss) | 0.0667 | 0.0823 |
+| Overall bias (cp) | −207.65 | −219.63 |
+| Overall compression | 0.069 | 0.063 |
+
+**Measured**: train correlation (0.564) is only marginally higher than held-out (0.504) — an
+11% relative gap, not the large train/held-out split a classically overfit model would show.
+Crucially, train correlation *itself* is mediocre — the model has not even mastered the 36,000
+positions it was shown repeatedly (up to ~14 times each, see §24.1). If label noise or data
+scarcity were already the binding ceiling, train correlation would sit much closer to that
+ceiling while held-out lagged; instead both are similarly mediocre. **This is the signature of
+underfitting, not overfitting — confirmed directly, not assumed.**
+
+**Baseline sanity check**: a "predict-the-mean" model (no signal at all) scores sigmoid-MSE
+0.145 on the held-out targets; the trained model reaches 0.0823 (a 43% reduction) — the net has
+learned a real, substantial signal, not nothing. It is merely far short of what the architecture
+and data should support, consistent with "undertrained," exactly as `nets/HISTORY.md` already
+flagged this net at creation time ("undertrained (2000 steps...); expected outcome for this
+stage of Track A/B, not a defect").
+
+This directly justifies ranking optimization/duration and data volume ahead of regularization
+and architecture-capacity changes below (§24.2) — regularizing or shrinking an already-underfit
+model would very plausibly make correlation worse, not better.
+
+### 24.1 End-to-end pipeline review
+
+Traced every stage from data acquisition to the exported `.nnue`, noting what's fixed, what's
+configurable, and what's actually exercised by the one real training run to date (`dfffd3da`,
+E-3/#203):
+
+| Stage | File(s) | What it does | What the real E-3 run actually used |
+|---|---|---|---|
+| Stage 1 acquisition | `scripts/acquire_stage1_lichess.py` | Streams `database.lichess.org`'s eval dump (~394.7M positions available), picks the highest-depth `evals` entry per position, writes normalized CSV. `target_count` is a plain CLI arg — **acquiring more is a config change, not new engineering.** | `target_count=20,000` (0.005% of the available dump) |
+| Stage 2 labeling | `scripts/stockfish_label.py` | Runs Stockfish UCI per position from `quiet-labeled.epd`-derived FENs, single-threaded, node-budgeted. Compute-bound: ~66 pos/sec at `nodes=25,000` on this session's hardware (Stockfish 18). | 20,000 positions, `nodes=25,000` (chosen for a ~5-minute session-scoped run, `trainer/configs/stockfish-label-e2-real.md` explicitly: "not claimed as the production-scale optimum") |
+| `Transform` stage | `trainer/dataset/transform.py` | `deduplicate`/`filter_by_ply_range`/`balance_phases` all exist and are tested. | **None applied** — `combine_and_split` shuffles+splits the raw tagged union directly; `report_dataset_quality`'s duplicate/phase numbers are printed informationally only, never used to filter |
+| `combine_and_split` | `scripts/train_candidate_net.py` | Shuffles the Stage1+Stage2 union with `random.Random(seed)`, splits 90/10 | seed=42, 40,000 → 36,000 train / 4,000 held-out |
+| Feature encoding | `trainer/encoding/feature_encoder.py`, `docs/architecture/feature-spec/v1.json` | Plain 768-feature dual-perspective, **not king-relative** (ADR-001, deliberate) | Fixed, shared with Java `FeatureExtractor` |
+| Batching | `trainer/model/batching.py` | FEN → `EmbeddingBag` (indices, offsets), two perspectives | No sampling logic here — batches are whatever `train()` hands it |
+| Network | `trainer/model/network.py` | `(768→256)×2→1`, clipped-ReLU (`clamp(acc, 0, qa)`), FT weights hard-clamped post-step to `±1020` (overflow safety) | `hidden_width=256` fixed by config |
+| Loss | `trainer/model/train.py` | `mean((sigmoid(pred, K) - sigmoid(target, K))^2)`, `K=2.773456` sourced from a **Classical-evaluator-specific** `KFinder` run, not re-derived for NNUE | Single fixed K for the whole run |
+| Optimizer/schedule | `trainer/model/train.py` | Adam, **fixed `lr=0.01`, no schedule, no warmup/decay** | 2000 steps, batch 256 |
+| Sampling | `trainer/model/train.py`'s `train()` loop | `records[cursor % len(records)]` — cycles through the **same fixed order every pass**, no per-epoch reshuffle (a `DataLoader`+`worker_init_fn` exists in `trainer/reproducibility/` but is unused — module's own docstring: "the natural next step then, not built preemptively here") | 2000 steps × 256 batch = 512,000 samples-seen over 36,000 unique records ≈ **14 passes**, same order every time |
+| Regularization | — | None: no weight decay (`torch.optim.Adam` default), no dropout. The FT weight clamp is an overflow-safety projection, not a generalization regularizer. | — |
+| Quantization | `trainer/quantization/quantizer.py` | Round-to-nearest + int16 clip, pure function, no additional scale multiply | **Ruled out as a correlation-affecting stage**: `clipping_report` on this net shows 0 clipped values across `ft_weights`/`ft_biases`/`output_weights` (train-e3-real.md) |
+| Export | `trainer/export/canonical.py`/`exporter.py` | Clean pass-through of `qa`/`qb`/`output_scale`/quantized tensors into the manifest + `.nnue` | **Ruled out** — no transformation logic that could affect correlation |
+| Validation | `trainer/validation/validator.py` | `evaluate_held_out`, `eval_scale_check`, `calibration_report`, `fit_affine_calibration` (§22/§23, this session) | Measurement only, never influences training |
+
+**One additional diagnostic run against the existing checkpoint** (read-only, no retraining):
+FT/output weight magnitudes are nowhere near their clip bounds — `ft.weight` max ≈ 8.4 vs. a
+clip bound of 1020 (0.00% of weights within 5% of the boundary), `output_layer.weight` max ≈
+11.5, `output_layer.bias` ≈ −2.3. **The weight clamp is not, and was never close to being, a
+binding constraint on this net** — ruled out as a contributor to compression with direct
+evidence, not just reasoning from the bound's arithmetic.
+
+### 24.2 Ranked intervention matrix
+
+Each component, whether changing it could theoretically move correlation / compression / bias,
+and a rank by (expected improvement × isolatability) ÷ (effort × risk) — training itself is
+cheap on this net's scale (2000 steps ≈ 20 seconds, `train-e3-real.md`), so **effort here is
+almost entirely about engineering/data-acquisition time, not compute time**, except where noted.
+
+| # | Component | Could improve | Effort | Experimental cost | Risk | Isolatable? | Rank |
+|---|---|---|---|---|---|---|---|
+| 1 | Optimization: steps × LR/schedule | Correlation (primary) | Low (config only) | Minutes (training is ~20s/2000 steps; a small grid is still cheap) | Low | High, if read via the logged loss curve, not the final number alone | **1** |
+| 2 | Training data volume (Stage 1, cheap) | Correlation (primary), compression/bias (secondary, more signal) | Low (CLI `target_count`, streaming acquisition) | Near-free (network I/O, no compute) | Low | High | **2** |
+| 3 | Training data volume (Stage 2, compute-bound) | Same as above | Low (existing driver, larger position count) | Moderate (~66 pos/sec single-threaded at 25K nodes; e.g. ~4.2h for 1M positions) | Low | High | **3** |
+| 4 | Per-epoch reshuffling (currently absent) | Correlation (minor, standard best practice) | Very low (~3 lines) | Negligible | Very low | High | 4 (bundle into #1's re-run, not its own phase) |
+| 5 | Label quality (Stockfish node budget) | Correlation (bounds the ceiling — see §24.3), compression | Low (existing driver, higher `nodes`) | Moderate, trades throughput for quality | Low | High, if position count is held fixed | 5 |
+| 6 | Mate-aware loss weighting/shape | Bias (primary, targets the −1,726cp mate bias directly), correlation (secondary, mate subset only) | Low-medium (a loss-shape change, additive) | Cheap (reuses existing pipeline) | Low-medium (must not regress the cp-labeled majority — the exact failure mode §23.5 found for affine) | Yes, if implemented as an isolated additive term | 6 |
+| 7 | K / sigmoid re-derivation | Compression (primary, §23.7's saturation hypothesis), bias (secondary), correlation (secondary/indirect at best) | Low (empirical sweep, or a KFinder-equivalent run against NNUE's own output) | Cheap | Low-medium (changes what cp scale the loss targets — re-verify calibration after, don't assume "correlation went up" means "scale is still fine") | High | 7 |
+| 8 | Network capacity (`hidden_width`) | Correlation, but **not indicated as the current bottleneck** (§24.0: underfitting, not undercapacity, at the current data/step scale) | Low (config number) | Cheap | Low | High | 8 — hold until 1-3 plateau |
+| 9 | Regularization (weight decay, etc.) | **Likely to hurt, not help, right now** (§24.0: model is underfit) | Low | Cheap | **Medium — actively not recommended yet** | High | 9 — do not pursue until overfitting is observed (train/held-out gap widening after data scale-up) |
+| 10 | Feature representation (HalfKP/HalfKA) | Correlation (largest theoretical ceiling — ADR-001's own "strongest known ceiling") | **Very high** (new `FeatureExtractor.java` + `FeatureEncoder.py`, format version bump, king-refresh path, full regression re-verification) | High (~40× input space, ADR-001's own estimate of required data) | High (explicitly named risks in ADR-001: king-move accumulator invalidation, bug-prone) | No — a wholesale pipeline change | **Gated, not ranked** — ADR-001's revisit conditions are not met (v1 hasn't passed all three release gates; no self-play data at 5-10× volume; no demonstrated plateau across ≥2 retrained nets at plain-768) |
+
+### 24.3 The label-noise ceiling — a bound on every phase below, stated up front
+
+Stage 2 labels come from Stockfish at `nodes=25,000` (a shallow budget, chosen for session-scoped
+throughput, `stockfish-label-e2-real.md`'s own words: "not claimed as the production-scale
+optimum") and Stage 1 labels are heterogeneous-depth Lichess community evals. **Correlation
+against a noisy target is mathematically capped below correlation against the true value** — no
+amount of additional volume or training crosses this ceiling; only better-quality labels do.
+
+**Why this doesn't reorder Phases 1-2 below it, based on current evidence**: if label noise were
+already the binding constraint, the model's *train-set* correlation should already sit close to
+that ceiling (it has direct, repeated access to those exact labels) while held-out lagged behind
+due to generalization. §24.0 measured the opposite: train correlation (0.564) is only barely
+above held-out (0.504), both mediocre — meaning the model has not yet extracted the signal
+available even from data it already has, which argues the noise ceiling is not yet what's
+binding. **This should be re-checked, not assumed, after Phases 1-2** (§24.4): if train
+correlation approaches a plateau well below "good" even with more steps and more data, that
+plateau is direct evidence of the label-noise ceiling asserting itself, and Phase 3 (label
+quality) should be promoted ahead of further volume scaling at that point.
+
+### 24.4 Phased experimental roadmap
+
+Each phase modifies one thing wherever practical (steps×LR is a deliberate small-grid exception,
+justified below). Elo (gauntlet, then SPRT) is **not** run per-phase — it is the roadmap's exit
+gate, applied once a candidate net clears a pre-registered held-out bar, not a per-experiment
+cost (a full SPRT is a multi-day commitment, per `dfffd3da`'s own inconclusive 2,617-game run).
+
+**Phase 1 — Optimization (steps × LR/schedule), same 40,000-position dataset**
+- **Hypothesis**: 2000 steps (512,000 samples-seen, ≈14 passes over 36,000 unique positions,
+  fixed LR=0.01, no schedule) under-trains the model; more steps and/or a better-tuned
+  LR/schedule materially improve held-out correlation, consistent with §24.0's underfitting
+  finding.
+- **Why steps and LR are grouped, not separated**: a null result from steps-alone at a poorly
+  tuned fixed LR is uninterpretable — it could mean "duration wasn't the constraint" or "the
+  fixed LR prevented convergence regardless of duration." Training is cheap enough (~20s/2000
+  steps) that a small grid (e.g. steps ∈ {2,000 (baseline), 10,000, 30,000} × LR ∈ {0.01
+  (baseline), 0.003, 0.001}, optionally with a simple decay schedule at the largest step count)
+  costs minutes, not hours.
+- **Implementation**: re-run `train_quantize_export` with each grid cell, identical dataset/
+  seed/K/architecture/qa/qb/output_scale otherwise. Add per-epoch reshuffling (item #4 above) to
+  this same re-run rather than as a separate phase — bundled because it's a ~3-line change with
+  no plausible interaction risk worth isolating separately.
+- **Acceptance criteria**: at least one grid cell improves held-out label correlation
+  materially over baseline (0.504) without the train/held-out loss gap widening alarmingly
+  (which would indicate overfitting has begun, not been fixed) — read via the already-logged
+  `TrainingDiagnostic` series (train loss, held-out loss, gradient norm every `log_interval`
+  steps), not the final number alone, so a "still declining," "plateaued," or "bouncing/
+  diverging" curve shape is distinguished before drawing conclusions.
+- **Measurements**: `evaluate_held_out` (correlation, loss) + `calibration_report` (bias,
+  compression, MAE, RMSE, overall/mate/cp split) for every grid cell, plus the full diagnostic
+  curve. No gauntlet/SPRT yet.
+
+**Phase 2 — Data volume, Stage 1 first (cheap), then Stage 2 (compute-bound)**
+- **Hypothesis**: even at Phase 1's best optimization settings, 36,000 unique training
+  positions caps correlation; substantially more unique positions (e.g. 500,000-2,000,000 —
+  still far below the PRD's 50-100M target, but 15-50× more than today) improves it further.
+- **Implementation**: re-acquire Stage 1 at a much larger `target_count` first (near-free,
+  isolates "more data" using the existing, already-abundant Lichess source before spending
+  Stage 2 compute); then scale Stage 2 (Stockfish labeling) similarly, budgeting for its
+  ~66 pos/sec throughput. Use Phase 1's best steps/LR setting, scaled proportionally to the
+  larger dataset (i.e. keep a comparable number of *passes*, not the same absolute step count,
+  or the comparison conflates "more data" with "fewer effective epochs").
+- **Acceptance criteria**: correlation improves further beyond Phase 1's best result. Explicitly
+  check whether the improvement is already showing diminishing returns at this scale (informs
+  how much of Phase E's later self-play/data effort is actually needed before further gains).
+- **Measurements**: same battery as Phase 1, plus an explicit before/after comparison against
+  Phase 1's best result to attribute gains to volume specifically (not re-conflate with
+  optimization).
+
+**Phase 3 — Label quality (Stockfish node budget), a matched-subset ablation**
+- **Hypothesis**: label noise (Stage 2's 25,000-node budget; Stage 1's heterogeneous eval
+  depth) imposes a correlation ceiling independent of volume/training duration (§24.3).
+- **Implementation**: re-label a fixed-size Stage 2 subset (e.g. the same 20,000 FENs already
+  used, or a fresh matched-size sample) at a substantially higher node budget (e.g. 100,000-
+  250,000 nodes) and compare correlation against an equal-size 25,000-node-labeled subset,
+  holding position count, architecture, and optimization settings fixed — an apples-to-apples
+  label-quality ablation, not conflated with volume.
+- **Acceptance criteria**: does higher-node-budget labeling raise correlation for otherwise-
+  identical positions? Per §24.3, promote this phase ahead of further Phase 2 volume scaling if
+  Phase 1-2's train correlation plateaus below a reasonable bar despite more steps/data.
+- **Measurements**: same battery, on the matched subsets.
+
+**Phase 4 — Loss/K reformulation, targeting the mate-specific bias**
+- **Hypothesis**: (a) `K=2.773456`'s sigmoid saturates by ≈288cp (§23.7), suppressing gradient
+  for large-magnitude targets and contributing to compression; (b) the flat
+  `MATE_EQUIVALENT_CP=3,000` target combined with (a) specifically explains the disproportionate
+  −1,726.6cp mate-labeled bias (§22.2).
+- **Implementation**: (i) an empirical K sweep (holding Phase 1-3's best data/steps config
+  fixed) against held-out correlation/compression/bias; (ii) a more surgical follow-up — a
+  mate-aware loss weighting or a separate slope for mate-labeled records — checked specifically
+  against whether it improves mate-subset bias *without* regressing the cp-labeled majority
+  (the exact failure mode §23.5 found for a single global affine transform).
+- **Acceptance criteria**: mate-labeled bias magnitude decreases substantially with no
+  corresponding regression in cp-labeled bias/MAE.
+- **Measurements**: same battery, split by mate/cp subset explicitly (`calibration_report`
+  already returns this split) — re-run the full `calibration_report`/`fit_affine_calibration`
+  pair after any loss change, not just correlation, since a loss change could shift compression/
+  bias independent of correlation and must be re-verified, not assumed fixed.
+
+**Phase 5 — Architecture capacity / regularization, gated on 1-4's outcome**
+- Not pursued now. §24.0 shows the current net is underfit, not overfit or undercapacitated at
+  the current data/step scale — increasing `hidden_width` or adding regularization now would
+  plausibly make correlation worse, not better. Revisit only if Phases 1-4 plateau *and* a
+  widening train/held-out gap (the actual overfitting signature) appears at that point.
+
+**Exit gate (all phases)**: once a candidate net clears a pre-registered held-out bar
+substantially better than `dfffd3da`'s 0.504 correlation / 0.063 compression / −220cp bias, run
+a cheap gauntlet first (E-4-style, ~100 games) before committing to a full SPRT — mirroring the
+project's own existing two-step strength-measurement pattern, not skipping straight to a
+multi-day SPRT on a net that hasn't cleared even the offline diagnostics.
+
+**Feature representation (HalfKP/HalfKA)**: explicitly not part of this roadmap. ADR-001's
+revisit conditions are unmet; this roadmap's own Phase 1-4 results are exactly the evidence that
+would eventually satisfy condition (c) ("a plateau in measured relative strength... demonstrated
+across ≥2 retrained nets at plain-768") — HalfKP should be reconsidered only after that evidence
+exists, not before.
+
+### 24.5 Recommended first experiment
+
+**Phase 1 (optimization: steps × LR/schedule, same dataset)** — for four reasons, each grounded
+in evidence gathered across this session and the broader project history, not preference:
+
+1. **§24.0's direct measurement** shows underfitting, not overfitting or a noise ceiling —
+   optimization is the textbook first lever for that regime, and doing anything else first
+   (more data, more regularization, a different architecture) risks spending more expensive
+   effort before ruling out the cheapest possible explanation.
+2. **It is the cheapest possible test**: training itself costs ~20 seconds per 2,000 steps on
+   this net's scale; a full steps×LR grid costs minutes, not hours, with zero new data
+   engineering.
+3. **It directly tests the project's own already-recorded expectation**: `nets/HISTORY.md`
+   flagged this exact net as "undertrained (2000 steps...)" at creation time — this experiment
+   is the first time that suspicion is actually measured rather than merely noted.
+4. **Either outcome is informative and cheap to obtain**: if optimization alone substantially
+   closes the correlation gap, every later phase starts from a better baseline. If it does not
+   — if the logged loss/correlation curve shows a genuine plateau rather than an artifact of a
+   bad LR — that is itself strong, cheap evidence that data volume (Phase 2) is where the
+   binding constraint actually lives, sharpening where the next, more expensive phase should
+   focus.
+
+### 24.6 Risks and open questions
+
+- **Overfitting risk during Phase 1**: watch the logged train/held-out loss gap at every grid
+  cell, not just the final correlation number — more steps on a still-fixed 36,000-position
+  dataset could eventually tip into overfitting even though the current net is underfit.
+- **Stage 2 relabeling cost**: compute-bound at ~66 pos/sec single-threaded; measure a small
+  calibration sample's throughput at any new node budget before committing to a full run,
+  mirroring `stockfish-label-e2-real.md`'s own existing practice, to avoid an open-ended
+  multi-hour commitment.
+- **Loss/K changes need re-verification, not assumption**: any Phase 4 change could shift the
+  net's cp scale independent of correlation — re-run `calibration_report`/
+  `fit_affine_calibration` after every such change, don't infer calibration is fine just
+  because correlation improved.
+- **Open, not measured in this review**: whether Stage 1's Lichess records' `search_depth`
+  metadata (an optional field the contract supports, `PositionMetadata.search_depth`) is
+  actually populated and could be used to filter or confidence-weight shallow-depth labels — a
+  cheap follow-up check before Phase 3, not investigated here.
+- **Open**: whether mate-labeled positions are inherently too rare (≈11.8% of held-out, similar
+  proportion expected in training) for ordinary volume scaling to meaningfully improve their
+  calibration — may need deliberate oversampling or a dedicated mate-focused data source,
+  unexamined here.
+- **Open, deferred by design**: whether plain-768 has a strength ceiling below what's needed for
+  competitive play regardless of data/training improvements — unanswerable until Phases 1-4 are
+  actually run and a plateau is, or isn't, observed (ADR-001's own revisit condition (c)).
+- **Downstream, not addressed by this roadmap**: once a materially better-correlated net exists,
+  §14.5/§22/§23's specific pruning-margin/compression numbers are only valid for `dfffd3da` —
+  the calibration/pruning-rate cross-reference should be re-measured against any new candidate
+  net, not assumed to carry over.
+
+**Explicitly out of scope, per this task's instruction**: no code was written, no retraining was
+started, no `K`/`output_scale`/pruning margins were changed. This section is a plan, not an
+implementation.
