@@ -2207,8 +2207,11 @@ what the cited evidence actually shows.
 | The FT-layer weight hard-clamp (`±1020`, overflow safety) constrains model capacity or contributes to compression | §24.1: measured `ft.weight` max ≈ 8.4, `output_layer.weight` max ≈ 11.5 — both ~2 orders of magnitude below their bounds; 0.00% of weights within 5% of the clip boundary | **Rejected** — clamp is not, and was never close to, a binding constraint |
 | `K=2.773456`'s texel-sigmoid loss saturation (≈288cp) contributes to the compression symptom | §23.7: saturation math is exact (99% saturated by ≈288cp at this K); mechanism is plausible and consistent with the measured compression, but not ablated (no retrain with a different K has been run) | **Supported** — plausible, evidenced mechanism, not yet isolated by experiment |
 | The current network (`dfffd3da`) is overfitting the training set | §24.0: train correlation (0.564) only marginally exceeds held-out (0.504) — the small, non-widening gap is inconsistent with classic overfitting, whose signature would be a much larger split | **Rejected** |
-| Current NNUE evaluation quality is optimization-limited (steps/LR) rather than generalization-limited | §24.0: the train≈held-out, both-mediocre pattern is consistent with optimization-limited performance, and rules out overfitting specifically — but cannot on its own distinguish optimization from insufficient capacity, label noise, or conflicting targets | **Supported**, pending Phase 1 (§24.4) as the direct test |
+| Current NNUE evaluation quality is (partially) optimization-limited rather than purely data/generalization-limited | §27 (Phase 1): P1-G04 (steps=20,000, cosine LR schedule) reached 0.5315 held-out correlation vs. `dfffd3da`'s 0.5044 — a +0.0271 gain, ~14x the directly-measured seed-noise std (0.0019, §27.2), with architecture/data/loss unchanged | **Confirmed, partially** — optimization alone recovered a real gain, but the same configuration also shows a genuine, within-run plateau (§27.8), so optimization is not the *sole* remaining lever; data volume is next per §27.9 |
 | Plain-768 (non-king-relative) features are the binding ceiling on correlation right now | Not evaluated — ADR-001's revisit conditions (release gates passed, 5-10x self-play data, a demonstrated plateau across ≥2 retrained plain-768 nets) are unmet; this roadmap's own Phase 1-4 results are the evidence that would eventually settle this | **Pending** — deliberately not tested ahead of its gate, per ADR-001 |
+| §26.3's provisional 0.06 (train/held-out gap) promotion threshold approximates real seed-to-seed correlation variance | §27.2: directly measured via 3 training-seed replicates of the same configuration — std ≈ 0.0019, range 0.0036, roughly 30x smaller than the 0.06 placeholder | **Rejected** — the placeholder was far too conservative; superseded by the measured value for all §27.7 promotion decisions (n=3, one configuration — not yet a fully general constant, §27.2's own caveat) |
+| A cosine LR decay mitigates the emerging-overfitting pattern a flat, high LR shows over a long run | §27.3: P1-G04 (cosine) vs. P1-G01 (flat, same steps/peak-LR) — held-out loss's late-run relative rise is 8% (G04) vs. 17% (G01), and held-out correlation plateaus rather than mildly declining | **Confirmed** — both predicted effects observed in a single head-to-head comparison; not yet seed-replicated (§27.6's caveat) |
+| Optimization changes (steps/schedule) alone can close the mate-labeled bias gap that motivates Phase 4 | §27.5: mate-labeled bias stays −1,651 to −1,729cp across every Phase 1 cell, including the two promoted ones — no meaningful movement despite real correlation/compression gains elsewhere | **Rejected** — confirms, via optimization rather than calibration this time, that mate bias is a structural (loss/target-shape) problem Phase 1 cannot touch, exactly as §23.7 hypothesized |
 
 ## 26. Experimental Protocol (2026-07-20)
 
@@ -2394,7 +2397,11 @@ Consequently:
   model-init/training seeds, everything else held fixed, and measure how much correlation moves
   from seed alone) **actually quantifies natural variance.** Until that experiment runs, every
   threshold below that cites "the noise floor" is explicitly provisional and should be revisited,
-  not treated as settled policy.
+  not treated as settled policy. **Update (§27.2, Phase 1's own P1-G00/-S43/-S44 cells)**: this
+  experiment has now run — measured std ≈ 0.0019 (n=3, one configuration), roughly 30x tighter
+  than the 0.06 figure below. §27.7's promotion decisions use the measured value, not 0.06 — the
+  text immediately below is left as originally written, for an honest record of what was known
+  before that measurement existed, not silently updated to look more precise in hindsight.
 - This does not change the roadmap's ordering or its promotion *philosophy* (rank candidates,
   require evidence of a real effect before promoting, don't promote on a single offline metric
   alone) — only the confidence with which any specific number in this section should be read.
@@ -2673,3 +2680,327 @@ every candidate configuration, only for the ones that clear the cheap screens fi
 **Explicitly confirmed, per this task's instruction**: no trainer code was modified, no
 retraining was performed, no hyperparameters were changed to produce this section. This is the
 experimental contract §24's roadmap will be run against — Phase 1 has not started.
+
+## 27. Phase 1 completion report (2026-07-20)
+
+Phase 1 (§24.4/§26): determine whether `dfffd3da`'s 0.504 held-out correlation is
+optimization-limited, using only steps/LR/schedule changes, per §26.1's controlled-variable
+table (architecture, dataset, split, features, labels, loss, `K`, export/quantization all
+unchanged — confirmed in §27.1's config table below). Infrastructure added to `trainer/model/
+train.py` (extended `TrainingDiagnostic`, per-epoch reshuffle, optional cosine LR schedule,
+per-checkpoint preservation) — commits `caf41f8`/`a4f05a3`, 170/170 tests passing before any
+run. Grid executed via `trainer/scripts/phase1_optimization_sweep.py`, ~10.9 minutes total
+wall-clock for all 7 cells.
+
+### 27.1 Grid executed
+
+| Experiment ID | Seed | Steps | LR | Schedule | Wall-clock |
+|---|---|---|---|---|---|
+| P1-G00 | 42 | 2,000 | 0.01 | constant | 26.9s |
+| P1-G00-S43 | 43 | 2,000 | 0.01 | constant | 25.5s |
+| P1-G00-S44 | 44 | 2,000 | 0.01 | constant | 25.0s |
+| P1-G01 | 42 | 20,000 | 0.01 | constant | 182.0s |
+| P1-G02 | 42 | 2,000 | 0.001 | constant | 25.3s |
+| P1-G03 | 42 | 20,000 | 0.001 | constant | 183.1s |
+| P1-G04 | 42 | 20,000 | 0.01 | cosine (warmup=200) | 183.7s |
+
+All seven share: `hidden_width=256`, `qa=127`, `qb=64`, `output_scale=400`, `K=2.773456`,
+`batch_size=256`, Stage 1 (20,000) + Stage 2 (20,000) dataset, split seed 42 (identical
+`combine_and_split` call to `dfffd3da`'s own training run) — architecture, features, labels,
+loss, and export/quantization untouched, matching §26.1's declared Phase 1 row exactly. Every
+checkpoint (one per logged diagnostic point, ~20 per cell) was preserved under
+`trainer/outputs/phase1/<experiment_id>/checkpoints/`, per §26.5 — none overwritten.
+
+### 27.2 Repeated-seed variance — the placeholder noise floor, now actually measured
+
+P1-G00/-S43/-S44 (§26.3's declared exception: training seed varied only, seeds 42/43/44,
+everything else identical to P1-G00) is the repeated-seed variance experiment §26.3 called for
+before treating any threshold as permanent. **Measured**: held-out correlation = 0.5029 / 0.5065
+/ 0.5039 (mean 0.5044, sample std ≈ **0.0019**, range 0.0036). Held-out loss = 0.0829 / 0.0830 /
+0.0830 (essentially identical across seeds).
+
+**This directly supersedes §26.3's provisional 0.06 placeholder for practical use** — the real
+measured natural variance at this configuration is roughly **30x smaller** than the placeholder
+that stood in for it. Two consequences, both stated explicitly since they change how the rest of
+this report reads a "did this clear the bar" question:
+- Using the old 0.06 placeholder, none of this grid's deltas (largest: +0.027, P1-G04) would
+  have cleared the promotion bar — the placeholder would have wrongly concluded "no real effect
+  detected" for changes that are, in fact, 10-15x the actual measured noise.
+- Using the real measured std (0.0019), a delta needs to exceed roughly 0.004-0.006 (2-3
+  standard deviations) to be called a real effect with reasonable confidence — a bar every
+  promotion decision below actually uses.
+- **Caveat, stated with the same honesty §26.3 already required of the placeholder**: n=3 is a
+  small sample for a definitive population variance, and this variance was measured only at one
+  configuration (2,000 steps, LR=0.01, constant) — it is not yet confirmed to generalize to
+  every other point in the grid (e.g. the 20,000-step cells were each run at a single seed, not
+  replicated). Treat 0.0019 as a much better estimate than 0.06, not as a final, universally
+  applicable constant — a future phase with spare budget should still widen this replication.
+- **Bonus finding**: the mean of the three seed replicates (0.5044) lands almost exactly on
+  `dfffd3da`'s own measured value (0.5044, §22.2) — the reshuffle addition (§26.1, applied
+  uniformly to every Phase 1 cell) appears correlation-neutral at this step count, though its
+  effect was never isolated as its own single-variable experiment (§26.1 always said it wouldn't
+  be) and this is a coincidental confirmation, not a controlled measurement of reshuffle's own
+  effect.
+
+### 27.3 Learning curves and interpretation
+
+Full per-step trajectories in `trainer/outputs/phase1/<id>/training_diagnostics.json`. Classified
+against §24.4's four cases, using the *actual* logged curve shape, not just the endpoint:
+
+- **P1-G00/-S43/-S44 (2,000 steps, LR=0.01)**: held-out correlation rises smoothly and
+  monotonically for the entire run (e.g. G00: 0.195→0.323→0.399→...→0.503 across the logged
+  points), train correlation tracks just above it throughout, held-out loss falls monotonically
+  the whole time. **"Both train and validation still improving" — continue training.** This is
+  directly confirmed by P1-G01 (same LR, 10x steps): stopping at 2,000 steps left real gains on
+  the table.
+- **P1-G01 (20,000 steps, LR=0.01 constant)**: held-out correlation climbs to a peak at step
+  14,999 (0.5262), then **wobbles/mildly declines** (15,999→0.5261, 16,999→0.5252, 17,999→
+  0.5256, 18,999→0.5259, 19,999→0.5246) while train correlation keeps climbing the entire run
+  (0.613 at step 6,999 → 0.633 at step 18,999) and train loss falls toward zero (0.0009 by the
+  end). **Held-out loss itself troughs at step 5,999 (0.0715) and then rises for the rest of the
+  run, reaching 0.0835 by step 19,999** — a clearer overfitting signal than correlation alone,
+  which stays in a plateau/mild-decline band rather than collapsing. **"Train improving while
+  validation plateaus" — emerging overfitting**, confirmed directly from the logged trajectory,
+  not inferred. Note for future phases: held-out *loss* trending up while held-out *correlation*
+  stays flat is itself a valid, earlier overfitting signal — don't wait for correlation to
+  visibly decline before treating a run as past its useful point.
+- **P1-G02 (2,000 steps, LR=0.001 constant)**: starts at *negative* correlation (train −0.175,
+  held-out −0.197 at step 99) and is still climbing steadily at the final step (train 0.357,
+  held-out 0.340) — nowhere near converged. Train loss is noisy without a strong downward trend
+  for most of the run (bounces in a 0.12-0.16 band). **"Both still improving"**, not oscillation
+  in the unstable/diverging sense — this LR is simply too slow to make meaningful progress in
+  this step budget, not unstable.
+- **P1-G03 (20,000 steps, LR=0.001 constant)**: held-out correlation rises **monotonically for
+  the entire run**, never plateauing, reaching 0.4979 only at the final logged step. **"Both
+  still improving"** — this run was stopped before reaching its ceiling at this LR; its true
+  plateau (if any) at `LR=0.001` is unknown from this data, only that 20,000 steps was not
+  enough to reach it.
+- **P1-G04 (20,000 steps, LR=0.01 cosine, warmup=200)**: held-out correlation rises fast early
+  (mirroring G01, same starting LR), then **plateaus tightly from step ~10,999 onward** (0.5302,
+  0.5300, 0.5312, 0.5312, 0.5309, 0.5315, 0.5311, 0.5313, 0.5310, 0.5311 across the last 10
+  logged points — a genuine flatline, not a slow decline). Held-out loss stays in a **much
+  tighter band than G01's** (0.0741→0.0800, an 8% relative rise, vs. G01's 0.0715→0.0835, a 17%
+  relative rise) even as train loss and train correlation continue the same near-memorization
+  trend as G01 (train correlation 0.623 by the end). **"Both plateau together" — optimization
+  exhausted for this configuration**, and the plateau is visibly gentler than G01's — direct,
+  within-run evidence that decaying the LR toward the end of a long run does what it was
+  hypothesized to do (§24.4: "LR=0.01 held flat for 20,000 steps is exactly the condition that
+  tends to oscillate/degrade near a minimum").
+- **No cell showed the fourth case (unstable/oscillating, LR-too-high)** — worth stating
+  explicitly since it was one of four possible readings and did not occur; LR=0.01 was not too
+  high for this network/data scale at any step count tested.
+
+### 27.4 Final metrics table (selected checkpoint per cell, held-out set, n=4,000)
+
+Selected checkpoint = the peak-held-out-correlation point on each cell's own trajectory
+(§24.4's rule), not necessarily the final step — see §27.1 for which step was selected.
+
+| Experiment ID | Selected step | Correlation | Loss | RMSE | Bias (cp) | Compression |
+|---|---|---|---|---|---|---|
+| P1-G00 | 1,899/1,999 | 0.5029 | 0.0829 | 1280.55 | −216.71 | 0.0612 |
+| P1-G00-S43 | 1,899/1,999 | 0.5065 | 0.0830 | 1280.54 | −220.39 | 0.0618 |
+| P1-G00-S44 | 1,999/1,999 | 0.5039 | 0.0830 | 1280.15 | −221.71 | 0.0632 |
+| P1-G01 | 14,999/19,999 | **0.5262** | 0.0806 | 1231.64 | −215.68 | **0.1433** |
+| P1-G02 | 1,999/1,999 | 0.3403 | 0.1322 | 1311.69 | −223.69 | 0.0180 |
+| P1-G03 | 19,999/19,999 | 0.4979 | 0.0846 | 1282.40 | −218.61 | 0.0593 |
+| P1-G04 | 15,999/19,999 | **0.5315** | **0.0797** | **1239.86** | −213.47 | **0.1255** |
+| *(reference)* `dfffd3da` | — | 0.5044 | 0.0823 | 1279.88 | −219.63 | 0.0630 |
+| *(reference)* Phase 0 baseline | — | 0.0663 | 0.1460 | 1320.98 | −233.21 | 0.0000 |
+
+**A finding beyond Phase 1's own stated objective**: compression roughly **doubles to
+triples** for G01/G04 (0.143 / 0.126) relative to every other cell (0.06-0.06, matching
+`dfffd3da`'s own 0.063) — purely from more steps and a schedule, with `K`/loss/architecture
+completely unchanged. This connects directly to §23.4's finding that compression is capped by
+correlation: since correlation also improved for these two cells, some of the compression gain
+is exactly what that ceiling predicts, but the improvement (2-2.3x) is larger than correlation's
+own gain (1.04-1.05x) would alone explain by the strict OLS-ceiling argument — consistent with
+(not proof of) §23.7's separate, still-unablated hypothesis that more optimization simply lets
+the network's raw output magnitude grow further against the sigmoid's saturating loss. Recorded
+as a **supported, not confirmed, observation** — no K ablation was run in Phase 1 to isolate this.
+
+### 27.5 Calibration comparison — mate/cp split (§26.2's mandatory measurement)
+
+| Experiment ID | Overall bias | Mate bias | Mate compression | Cp bias | Cp compression |
+|---|---|---|---|---|---|
+| P1-G00 (mean of 3 seeds) | −219.6 | −1,727.3 | 0.0536 | −17.9 | 0.0746 |
+| P1-G01 | −215.7 | −1,651.0 | 0.1105 | −23.7 | 0.1856 |
+| P1-G04 | −213.5 | −1,661.1 | 0.0996 | −19.8 | 0.1599 |
+| `dfffd3da` (reference) | −219.6 | −1,726.6 | 0.0551 | −18.0 | 0.0753 |
+
+**Overall and mate-labeled bias barely move** (−1,651 to −1,729cp across every cell, including
+the untouched baseline) — confirming, with a second independent line of evidence, §23's finding
+that the mate-labeled bias is a *structural* problem (target/loss shape, §23.7's mate-handling
+hypothesis), not something optimization duration or schedule touches. Compression improves for
+both cp-labeled and mate-labeled buckets in the optimized cells (G01/G04), consistent with
+§27.4's observation, but the improvement is proportionally similar in both — **optimization
+helps the network's overall scale, it does not close the mate-vs-cp calibration gap** that
+motivated Phase 4. This is exactly the outcome the roadmap's phase separation predicted:
+Phase 1 (optimization) and Phase 4 (loss/mate reformulation) target different failure modes, and
+this data confirms they don't substitute for each other.
+
+### 27.6 Relative ranking
+
+By held-out correlation (primary metric, §26.0): **P1-G04 (0.5315) > P1-G01 (0.5262) >
+P1-G00-S43 (0.5065) > P1-G00-S44 (0.5039) ≈ P1-G00 (0.5029) ≈ `dfffd3da` (0.5044) > P1-G03
+(0.4979) >> P1-G02 (0.3403)**. G01 and G04 are the only cells clearing the measured noise floor
+(§27.2) above the baseline cluster; G03 is statistically indistinguishable from baseline noise
+(−0.0065, within ~3.5 std, and independently known to be not-yet-converged, §27.3); G02 is an
+unambiguous large negative outlier, not a promotion candidate. G04 leads G01 by +0.0053 — larger
+than the measured single-seed noise floor, but this specific A/B was not itself seed-replicated
+(§27.2's caveat applies), so it is reported as the better *single* result, directionally
+consistent with the schedule hypothesis, not an independently-confirmed win over G01.
+
+### 27.7 Promotion decision, applying §26.3 formally
+
+| Cell | Correlation clears noise floor? | Selected via curve rule? | Held-out loss ≤ baseline? | Promoted? |
+|---|---|---|---|---|
+| P1-G01 | Yes (+0.0218, ~11.5σ) | Yes | Yes (0.0806 < 0.0830) | **Yes** |
+| P1-G04 | Yes (+0.0271, ~14.3σ) | Yes | Yes (0.0797 < 0.0830) | **Yes — best result** |
+| P1-G03 | No (−0.0065, ~3.5σ, ambiguous) | Yes | No (0.0846 > 0.0830) | No |
+| P1-G02 | No (large negative) | Yes | No (far worse) | No |
+
+Both P1-G01 and P1-G04 independently clear all three of §26.3's Phase 1 promotion criteria,
+using the noise floor actually measured in this run (§27.2) rather than the provisional
+placeholder. **P1-G04's configuration (steps=20,000, LR=0.01, cosine schedule, warmup=200) is
+promoted as the new Phase 1 baseline.**
+
+### 27.8 Is optimization exhausted?
+
+**Yes, for this dataset, at the configurations tested** — and this is shown *within a single
+run's own trajectory*, not just by comparing across cells. P1-G04's held-out correlation
+flatlines for the last ~10,000 of its 20,000 steps (§27.3) even as the LR continues decaying
+toward zero and train correlation continues climbing — textbook "both plateau together" (held-
+out) paired with continued train-side improvement, the exact overfitting signature §24.4's guide
+describes, occurring at the *best* optimization configuration tested. Further optimization-only
+tuning (a different schedule shape, more warmup, a different peak LR) faces genuinely diminishing
+expected returns: the mechanism already identified (§24.0/§27.3) — the model overfitting a fixed
+36,000-position dataset — is not something schedule tuning can keep resolving; it is a data-size
+ceiling, and G04 already tested the specific hypothesis (§24.4) that a decayed schedule would
+mitigate exactly this failure mode, which it did, partially, without eliminating it.
+
+### 27.9 Recommendation
+
+**Proceed to Stage 1 data scaling (Experiment 2A, 20k→100k), adopting P1-G04's optimization
+configuration (steps=20,000, LR=0.01, cosine, warmup=200) as the new baseline**, not "continue
+optimization" and not "revise the optimization strategy." Reasoning, each point tied to
+measured evidence above:
+- Phase 1's own question — is current performance optimization-limited? — is answered **yes,
+  partially**: P1-G04 recovered a real, noise-floor-clearing +0.0271 correlation gain (0.504→
+  0.532, ~5.4% relative) purely from steps/schedule, with architecture/data/loss untouched.
+  Phase 1 was not a null result; the roadmap should carry this gain forward, not discard it.
+- But the *same* winning configuration shows a genuine, within-run plateau (§27.8) — further
+  optimization-only search now has a lower expected marginal return than the untried lever
+  (data volume) that plateau itself implicates as the next binding constraint, exactly per
+  §24.3's reasoning (a model that has stopped improving on its own training data's held-out
+  split, while still fitting the training data harder, is data-limited at that data size, not
+  merely under-optimized).
+- This matches the Experimental Protocol's own gate for this decision (§26.3/§24.4's decision
+  flow, §26.8): "both plateau → optimization exhausted → proceed to the next phase in roadmap
+  order" — Stage 1 data scaling, unchanged ordering, per this task's explicit instruction not to
+  reorder the roadmap.
+
+**Not started in this report**: Experiment 2A itself (Stage 1 acquisition at `target_count=
+100,000`, retraining at the new baseline configuration). This report's scope is Phase 1's
+completion and recommendation; beginning 2A is a distinct next step for explicit confirmation.
+
+### 27.10 Learning log entries
+
+```
+## Experiment ID: P1-G00
+Hypothesis:          Reproducing dfffd3da's hyperparameters (steps=2000, LR=0.01) under the
+                      new reshuffle-enabled pipeline reproduces its held-out correlation.
+Independent variable: (none within this cell -- part of the seed-replication trio, §26.3)
+Controlled variables:  Dataset/split seed 42, architecture, K=2.773456, seed=42 (training/init)
+Expected outcome:     Held-out correlation close to dfffd3da's 0.5044.
+Observed outcome:     0.5029 at selected step 1899/1999 -- matches within measured seed noise.
+Metrics:              See §27.1/§27.4/§27.5.
+Decision:             Not promoted (baseline reference point, not a candidate for improvement).
+Reason rejected:      N/A -- reference cell, not evaluated for promotion.
+Next action:          Used as the noise-floor reference for P1-G01/G02/G03/G04.
+Artifacts:            trainer/outputs/phase1/P1-G00/
+
+## Experiment ID: P1-G00-S43 / P1-G00-S44
+Hypothesis:           Same config as P1-G00, different training seed -- measures natural
+                       correlation variance from seed alone.
+Independent variable:  Training/init seed only (43, 44).
+Controlled variables:   Everything else identical to P1-G00.
+Expected outcome:      Correlation close to P1-G00's, within some unknown natural variance.
+Observed outcome:      0.5065 / 0.5039 -- std across all three ≈ 0.0019 (§27.2).
+Decision:              Not promoted (reference), but load-bearing: this IS the repeated-seed
+                       variance experiment §26.3 required before any permanent threshold.
+Next action:           §26.3's 0.06 placeholder is superseded by this measured 0.0019 for
+                       every promotion decision in §27.7.
+Artifacts:             trainer/outputs/phase1/P1-G00-S43/, P1-G00-S44/
+
+## Experiment ID: P1-G01
+Hypothesis:           More steps alone (10x, same LR=0.01) improves held-out correlation.
+Independent variable:  Steps (2000 -> 20000).
+Controlled variables:   LR=0.01, schedule=constant, seed=42, dataset/split/architecture/loss.
+Expected outcome:      Correlation improves if optimization-limited; unchanged if not.
+Observed outcome:      0.5262 at step 14999 (peak) -- +0.0218 over baseline mean, ~11.5x the
+                       measured seed std. Confirmed: more steps alone helps. Held-out loss
+                       troughs at step 5999 then rises -- emerging overfitting past that point.
+Metrics:               See §27.1/§27.3/§27.4/§27.5.
+Decision:              Promoted (clears all three §26.3 criteria, §27.7).
+Next action:           Superseded by P1-G04's better result; not the final recommendation, but
+                       confirms the steps hypothesis independent of the schedule question.
+Artifacts:             trainer/outputs/phase1/P1-G01/
+
+## Experiment ID: P1-G02
+Hypothesis:           A more standard, lower Adam LR (0.001) improves convergence at the
+                       original step count (2000).
+Independent variable:  LR (0.01 -> 0.001), steps unchanged (2000).
+Controlled variables:   Steps=2000, schedule=constant, seed=42, dataset/split/architecture/loss.
+Expected outcome:      Correlation similar to or better than baseline, if 0.01 was too high.
+Observed outcome:      0.3403 -- far WORSE than baseline (-0.164, unambiguous). Still climbing
+                       steadily at the final step, starting from negative correlation early on.
+Metrics:               See §27.1/§27.3/§27.4/§27.5.
+Decision:              Not promoted -- fails all three §26.3 criteria.
+Reason rejected:       LR=0.001 is far too slow to converge within 2000 steps at this data
+                       scale/batch size -- this is a real, informative negative result (not an
+                       LR that's simply worse in the limit, see P1-G03), not noise or a bug.
+Next action:           Confirms that if a lower LR is used, it needs many more steps -- exactly
+                       what P1-G03 tests next.
+Artifacts:             trainer/outputs/phase1/P1-G02/
+
+## Experiment ID: P1-G03
+Hypothesis:           LR=0.001 needs more steps than 2000 to be competitive; 20000 steps should
+                       let it catch up to or exceed the LR=0.01 baseline.
+Independent variable:  Steps (2000 -> 20000), holding LR=0.001 fixed (continuing from P1-G02).
+Controlled variables:   LR=0.001, schedule=constant, seed=42, dataset/split/architecture/loss.
+Expected outcome:      Correlation approaches or exceeds baseline (0.504) given enough steps.
+Observed outcome:      0.4979 at the final step (19999) -- still rising monotonically the whole
+                       run, never plateaued. Close to but slightly below baseline; loss (0.0846)
+                       slightly worse than baseline (0.0830).
+Metrics:               See §27.1/§27.3/§27.4/§27.5.
+Decision:              Not promoted -- fails §26.3's noise-floor and loss criteria (narrowly).
+Reason rejected:       Within ~3.5x the measured seed std of baseline -- not clearly
+                       distinguishable from noise, AND the run was stopped before converging
+                       (still rising at the final step), so this is an inconclusive result at
+                       this step budget, not evidence that LR=0.001 is a worse ceiling than
+                       LR=0.01 -- only that it needs more than 20000 steps to show its own
+                       ceiling, which this experiment did not determine.
+Next action:           Not pursued further in Phase 1 (P1-G04 already found a better
+                       configuration via a different lever -- schedule, not raw LR reduction);
+                       left as an open question for future work if ever revisited.
+Artifacts:             trainer/outputs/phase1/P1-G03/
+
+## Experiment ID: P1-G04
+Hypothesis:            A cosine LR decay (peak 0.01, 200-step warmup, decaying to 0 over 20000
+                        steps) mitigates the emerging-overfitting pattern a flat LR=0.01 shows
+                        at this step count (predicted from P1-G01's own expected trajectory
+                        shape before this cell was run, per §24.4/advisor review).
+Independent variable:   LR schedule (constant -> cosine), steps=20000 (same as P1-G01).
+Controlled variables:    Peak LR=0.01, seed=42, dataset/split/architecture/loss.
+Expected outcome:       Correlation at or above P1-G01's; held-out loss trajectory more stable
+                        (smaller late-run rise) than P1-G01's.
+Observed outcome:       0.5315 at step 15999 -- the best result in the grid (+0.0053 over
+                        P1-G01, +0.0271 over baseline). Held-out correlation plateaus tightly
+                        for the last ~10000 steps; held-out loss rise (8% relative) is much
+                        gentler than P1-G01's (17% relative). Both predictions confirmed.
+Metrics:                See §27.1/§27.3/§27.4/§27.5.
+Decision:               Promoted -- best result, clears all three §26.3 criteria (§27.7).
+Next action:            Adopted as Phase 1's recommended new baseline configuration for
+                        Experiment 2A (§27.9) -- not started in this report.
+Artifacts:              trainer/outputs/phase1/P1-G04/
+```
