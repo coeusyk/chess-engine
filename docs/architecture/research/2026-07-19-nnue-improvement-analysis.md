@@ -2218,6 +2218,41 @@ results are judged against criteria set in advance rather than interpreted after
 section is documentation only: no trainer code was modified, no retraining was performed, no
 hyperparameters were changed to produce it.
 
+### 26.0 Metric hierarchy
+
+Every metric this protocol collects (§26.2) has a different job. Conflating them — treating a
+calibration number as if it were itself something to maximize — is exactly the failure mode
+§23's affine-calibration investigation warned about: a metric can improve while the thing that
+actually matters does not. This hierarchy is stated once, explicitly, so no later section reads
+as if any offline number is the goal in itself.
+
+- **Primary optimization objective — held-out Pearson correlation.** The one metric Phase 1 (and
+  every later phase) is actually trying to move. Chosen as primary specifically because it is
+  affine-invariant (§23.4) — the one quality dimension calibration provably *could not* fix
+  post-hoc, so it is the one dimension a training-side change can meaningfully claim credit for
+  moving, as opposed to a scale/bias artifact a cheaper transform could have fixed anyway.
+- **Secondary diagnostic metrics — RMSE, evaluation bias, compression ratio, calibration
+  diagnostics (mate/cp split), loss.** These describe *how* a configuration is performing and
+  *why* — they rank and characterize candidates, catch failure modes correlation alone would
+  miss (§23.5's cp-labeled-majority regression, invisible to a single correlation number), and
+  feed the promotion criteria (§26.3) and early-termination checks (§26.4). None of them is
+  itself an optimization target: a configuration that improves RMSE or compression while
+  correlation stays flat has not made progress by this protocol's own definition, and a
+  configuration should never be chosen *because* one of these numbers moved if correlation
+  did not.
+- **Promotion validation — engine gauntlet, then SPRT.** The only measurements that actually
+  validate playing-strength improvement (§26.3's gauntlet-then-SPRT gate, reusing the PRD's
+  existing gate 3). Offline metrics exist to make this expensive step worth taking selectively,
+  not to substitute for it.
+
+**Stated plainly**: offline metrics (correlation included) exist to **rank and prioritize**
+candidates efficiently, so this project does not have to run a multi-day SPRT against every
+configuration to find out which ones are worth it. **Playing strength (Elo), validated through
+gauntlets and ultimately SPRT, remains the project's actual final objective** — this hierarchy
+does not change that (§26.9's success definition states it in full); it exists to make clear that
+even *within* the offline-metric tier, not all metrics play the same role, and none of them,
+correlation included, is a substitute for the SPRT result that actually decides anything.
+
 ### 26.1 Controlled-variable policy
 
 **Rule**: every experiment changes exactly one independent variable and holds everything else
@@ -2495,17 +2530,26 @@ comparable across the whole roadmap without re-deriving context each time. Every
 with its **Experiment ID** (§26.5's scheme) — the same identifier used for this run's
 checkpoint, training log, calibration report, evaluation report, and, if the run reaches that
 far, its gauntlet and SPRT results, so any of those artifacts can be traced back to this exact
-log entry and vice versa:
+log entry and vice versa.
+
+**Rejected hypotheses are retained, never discarded.** A "not promoted" entry is not a failed
+log — it is exactly the kind of result §25's "Hypotheses tested" table already exists to
+preserve. An experiment whose hypothesis was rejected has still told this project something
+true about the network (e.g. "more steps alone did not move correlation beyond the noise floor
+at LR=0.01" is real, reusable information, not a null result to delete). The **Reason rejected**
+field below exists specifically so that information survives — future phases should be able to
+read *why* a configuration was rejected without re-running it, the same way §24-§25 already
+reused every earlier session's findings rather than re-deriving them.
 
 ```
 ## Experiment ID: <e.g. "P1-G03">
 
-Hypothesis:        <what this experiment expects to show, one or two sentences>
-Independent variable(s): <exactly what changed, per §26.1's table>
-Held constant:      <cross-reference to §26.1's row, plus anything cell-specific, including
-                     which seeds (split/training/shuffle, per §26.1's seed inventory) were fixed>
-Expected outcome:   <a falsifiable prediction, stated before running>
-Observed outcome:   <what actually happened, stated after running>
+Hypothesis:          <what this experiment expects to show, one or two sentences>
+Independent variable: <exactly what changed, per §26.1's table>
+Controlled variables:  <cross-reference to §26.1's row, plus anything cell-specific, including
+                        which seeds (split/training/shuffle, per §26.1's seed inventory) were fixed>
+Expected outcome:     <a falsifiable prediction, stated before running>
+Observed outcome:     <what actually happened, stated after running>
 
 Metrics:
   Training   — train loss / held-out loss / train correlation / held-out correlation / RMSE / bias
@@ -2513,8 +2557,11 @@ Metrics:
   Runtime    — wall-clock time / throughput (if applicable)
   Engine     — NPS (if applicable) / gauntlet result (if applicable) / SPRT result (if applicable)
 
-Decision:           <promoted / not promoted / stopped early — cite §26.3/§26.4's specific criterion met>
-Next action:        <what this result implies for the next phase/cell, per §26.8>
+Decision:            <promoted / not promoted / stopped early — cite §26.3/§26.4's specific criterion met>
+Reason rejected:      <if not promoted — the specific criterion that failed and by how much;
+                       "did not clear the noise floor" is a complete, valid answer, not a gap
+                       to fill in later. Omit this field only when Decision is "promoted".>
+Next action:          <what this result implies for the next phase/cell, per §26.8>
 
 Artifact locations (same Experiment ID throughout):
   Checkpoint:        <path, per §26.5's never-overwrite policy>
