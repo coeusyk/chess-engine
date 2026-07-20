@@ -1520,3 +1520,36 @@ worth further investigation ahead of E-5. The deferred no-TT-vs-TT experiment do
 issue remains available as a future curiosity-driven investigation, not a blocker for anything.
 
 **Closed**: #217, closing comment posted with this summary.
+
+## 21. Issue #218 closure (2026-07-20)
+
+All acceptance criteria are now satisfied:
+
+- Stage 1 implemented with scalar fallback — PR 2, §18.1.
+- Vectorized output bit-identical to scalar — unit-level (§18.2,
+  `NnueAccumulatorVectorOpsEquivalenceTest`) and whole-search-level (§19.4, identical node
+  counts/PVs across vector and scalar-fallback runs).
+- `--bench` re-run in NNUE mode on native Windows, NPS recorded — §19.1 (median-of-5,
+  157,268 NPS).
+- Pass/fail against the ≥40% gate recorded — **46.7%, pass** — §19.1/§19.6.
+- Stage 1 alone clears the gate → Stage 2 not implemented, per §19.6's Decision A.
+
+**One invariant not yet directly checked before this closure**: the issue's own "Architecture
+Invariants That Must Remain True" section requires no object allocation in hot paths
+(CLAUDE.md §3), and no prior PR in this sequence measured this for the new vector path
+specifically (only reasoned informally that Vector API objects are typically escape-analyzed
+away). Checked now, directly:
+
+**Measured** (same-package probe class, `--add-modules jdk.incubator.vector`, WSL —
+allocation-count is a JIT-behavior/code-shape property, not an NPS-magnitude one, so unlike the
+NPS gate itself this check is valid off native Windows): after a 500,000-iteration warmup,
+`ThreadMXBean.getThreadAllocatedBytes` measured across 2,000,000
+`addFeature`+`subtractFeature` call pairs on `NnueAccumulatorVectorOps` reports **0 bytes
+allocated**. C2's escape analysis eliminates the `ShortVector` intermediate objects entirely
+once the loop is JIT-compiled, consistent with the Vector API's documented design intent
+(JEP 338). The "no allocation in hot paths" invariant holds for Stage 1's vector path,
+confirmed directly rather than assumed.
+
+**Disposition**: all acceptance criteria met, no follow-up work remains in scope, Stage 2
+intentionally not pursued (Stage 1 sufficient). **Closed**: #218, closing comment posted with
+this summary.
