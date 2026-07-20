@@ -1469,3 +1469,54 @@ Per this task's instruction: **stop after PR 3.** No Stage 2 work, no `evaluate(
 search changes were made. The only code changes beyond PR 1/PR 2 are the three-script
 `--add-modules` launcher fix in §19.6, none of which touch `evaluate()`, search behavior, or
 evaluator semantics.
+
+## 20. Issue #217 closure (2026-07-20) — practical impact fully characterized as null
+
+#217 (iterative-deepening/TT-size search instability on the former bench position 15) was
+already decoupled from #206 (§14.6): the benchmark's dependency was resolved by removing the
+position, independent of root cause. This closure asks the remaining question the issue itself
+never answered: **could the same pathology cause a real problem in an actual (SPRT) game?**
+
+**New investigation, this session** — read `Searcher.iterativeDeepening`'s time-management
+wiring and `BenchRunner`'s call path, to determine whether time is checked only *between* ID
+iterations (in which case a single pathological iteration, like the depth-13 blowup measured
+at 15+ minutes, could run unchecked past a real time control) or *within* an iteration.
+
+**Measured facts (code read, this session):**
+- `BenchRunner.java:187` calls `searcher.searchDepth(board, depth)`, which is
+  `iterativeDeepening(board, depth, () -> false)` (`Searcher.java:366-367`) — bench runs with an
+  **always-false abort predicate, i.e. no time bound at all**, by design (bench measures
+  fixed-depth node counts, not wall-clock behavior). This is *why* the pathology can run
+  uninterrupted for 15+ minutes in bench.
+- Real UCI games do not go through this path. `searchWithTimeManager` (`Searcher.java:378-395`)
+  supplies `timeManager::shouldStopHard` as the hard-stop predicate, which is checked at the top
+  of **every** `alphaBeta` node (`Searcher.java:837-840`, `if (shouldStopHard.getAsBoolean())
+  { aborted = true; return alpha; }`) and every `quiescence` node — on every node visited, with
+  no node-count throttle/modulo gating found anywhere in the search loop.
+  `TimeManager.shouldStopHard()` (`TimeManager.java:137-138`) is a direct `elapsedMs() >=
+  hardLimitMs` comparison.
+- Once `aborted` is set, every enclosing recursive frame checks it immediately after each
+  recursive call and unwinds without further work — overrun past the deadline is bounded by
+  roughly one node's cost, not by depth or subtree size.
+
+**Conclusion**: the node-count blowup this issue documents **cannot cause a time forfeit or
+even a meaningfully late move in a real, time-controlled game** (SPRT or otherwise) — a genuine
+per-node hard deadline is already enforced independent of this issue, and would interrupt an
+87M-node-scale blowup within microseconds/single-digit-ms of the configured limit, same as any
+other search that runs long. The pathology is a **bench-harness artifact**: it is only
+observable because `--bench`/`searchDepth` intentionally searches with no time bound at all, to
+get clean fixed-depth node counts. It does not indicate a time-management defect (none was
+found; the hard-stop mechanism is unconditional and unthrottled) and does not indicate a
+correctness defect (already established in the issue itself — every completed run returns a
+well-formed PV with `depthReached() == 13`, no early termination).
+
+**Disposition**: combined with the issue's own existing mitigation (position removed from the
+bench suite, §14.6), this closes the practical-impact question definitively: **no**, neither
+the benchmark nor real games are at risk. Root cause (why TT carryover across ID iterations
+produces non-monotonic node counts at some sizes) remains scientifically open, exactly as the
+issue itself already scoped ("Root cause — intentionally left open; not claimed here") — this
+closure does not claim to have found it, only to have shown it has no practical consequence
+worth further investigation ahead of E-5. The deferred no-TT-vs-TT experiment documented in the
+issue remains available as a future curiosity-driven investigation, not a blocker for anything.
+
+**Closed**: #217, closing comment posted with this summary.
