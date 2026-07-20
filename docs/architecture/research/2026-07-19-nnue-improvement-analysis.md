@@ -2212,6 +2212,7 @@ what the cited evidence actually shows.
 | §26.3's provisional 0.06 (train/held-out gap) promotion threshold approximates real seed-to-seed correlation variance | §27.2: directly measured via 3 training-seed replicates of the same configuration — std ≈ 0.0019, range 0.0036, roughly 30x smaller than the 0.06 placeholder | **Rejected** — the placeholder was far too conservative; superseded by the measured value for all §27.7 promotion decisions (n=3, one configuration — not yet a fully general constant, §27.2's own caveat) |
 | A cosine LR decay mitigates the emerging-overfitting pattern a flat, high LR shows over a long run | §27.3: P1-G04 (cosine) vs. P1-G01 (flat, same steps/peak-LR) — held-out loss's late-run relative rise is 8% (G04) vs. 17% (G01), and held-out correlation plateaus rather than mildly declining | **Confirmed** — both predicted effects observed in a single head-to-head comparison; not yet seed-replicated (§27.6's caveat) |
 | Optimization changes (steps/schedule) alone can close the mate-labeled bias gap that motivates Phase 4 | §27.5: mate-labeled bias stays −1,651 to −1,729cp across every Phase 1 cell, including the two promoted ones — no meaningful movement despite real correlation/compression gains elsewhere | **Rejected** — confirms, via optimization rather than calibration this time, that mate bias is a structural (loss/target-shape) problem Phase 1 cannot touch, exactly as §23.7 hypothesized |
+| Increasing Stage 1 data 20k→100k improves held-out correlation beyond P1-G04, at a fixed 20,000-step compute budget | §28.2 (Experiment 2A, `P2A-001`): held-out correlation 0.5048, indistinguishable from `dfffd3da`'s original 0.5044 and a regression vs. P1-G04's 0.5315 (~14x the measured noise floor) | **Rejected, at fixed compute** — but confounded with training-step count: 20,000 steps is ~142 passes over 36k records but only ~44 over 116k, so this does not establish that more Stage 1 data cannot help under proportionally more compute (§28.3, open question) |
 
 ## 26. Experimental Protocol (2026-07-20)
 
@@ -3195,3 +3196,44 @@ obviously the "fix," they test different questions):
 
 Both are legitimate next steps; this report does not pick one. **Stopping here for review, as
 instructed — Experiment 2B has not been started.**
+
+### 28.7 Learning log entry
+
+```
+## Experiment ID: P2A-001
+Hypothesis:            Increasing Stage 1 training data 20k -> 100k (116k total training
+                        records vs. 36k), with everything else held fixed at P1-G04's
+                        promoted schedule, improves held-out correlation beyond 0.5315.
+Independent variable:   Stage 1 dataset size only (20,000 -> 100,000 positions).
+Controlled variables:    P1-G04's frozen schedule (steps=20000, lr=0.01, cosine, warmup=200,
+                         seed=42), architecture, feature representation, labels, loss, K,
+                         export/quantization, split seed=42, held-out set (exact same 4,000
+                         records reused byte-for-byte from Phase 1), Stage 2 count (20,000,
+                         unchanged).
+Expected outcome:       Held-out correlation at or above P1-G04's 0.5315, per §24's data-
+                        volume hypothesis.
+Observed outcome:       0.5048 at step 10999/19999 -- indistinguishable from the original
+                        dfffd3da baseline (0.5044) and a regression vs. P1-G04 (-0.0267, ~14x
+                        the measured noise floor). Held-out loss/correlation plateau tightly
+                        for the final ~9000 steps while train correlation keeps climbing
+                        (widening train/held-out gap); trajectory briefly led P1-G04's at
+                        step 999 before falling behind by step 1999 and staying behind (§28.3).
+                        Expectation not confirmed.
+Metrics:                See §28.4/§28.5.
+Decision:               Not promoted -- fails §26.3's criteria against the current reference
+                        model (P1-G04): correlation below reference by more than the noise
+                        floor, held-out loss worse, not better.
+Reason rejected:        Held-out correlation regressed relative to the current reference
+                        (P1-G04, 0.5315 -> 0.5048, -0.0267, ~14x the measured seed-noise std of
+                        0.0019) and did not clear dfffd3da's original baseline either. A
+                        genuine confound is flagged, not resolved: 20,000 steps fixed is ~142
+                        passes over 36k records but only ~44 over 116k, so this result cannot
+                        be read as clean evidence that more Stage 1 data does not help --
+                        only that it did not help at this fixed compute budget (§28.3).
+Next action:            Deferred to review per this task's explicit instruction ("do not
+                        begin Experiment 2B automatically"). Two options recorded, neither
+                        prescribed (§28.6): a passes-matched re-run (~64000 steps) as its own
+                        declared experiment, or treat data-volume-at-fixed-compute as answered
+                        and move to Phase 3/4.
+Artifacts:              trainer/outputs/phase1/P2A-001/
+```
