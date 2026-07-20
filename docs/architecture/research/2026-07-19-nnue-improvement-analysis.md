@@ -2209,3 +2209,300 @@ what the cited evidence actually shows.
 | The current network (`dfffd3da`) is overfitting the training set | §24.0: train correlation (0.564) only marginally exceeds held-out (0.504) — the small, non-widening gap is inconsistent with classic overfitting, whose signature would be a much larger split | **Rejected** |
 | Current NNUE evaluation quality is optimization-limited (steps/LR) rather than generalization-limited | §24.0: the train≈held-out, both-mediocre pattern is consistent with optimization-limited performance, and rules out overfitting specifically — but cannot on its own distinguish optimization from insufficient capacity, label noise, or conflicting targets | **Supported**, pending Phase 1 (§24.4) as the direct test |
 | Plain-768 (non-king-relative) features are the binding ceiling on correlation right now | Not evaluated — ADR-001's revisit conditions (release gates passed, 5-10x self-play data, a demonstrated plateau across ≥2 retrained plain-768 nets) are unmet; this roadmap's own Phase 1-4 results are the evidence that would eventually settle this | **Pending** — deliberately not tested ahead of its gate, per ADR-001 |
+
+## 26. Experimental Protocol (2026-07-20)
+
+The roadmap in §24 identifies *what* to try. This section defines *how every future retraining
+experiment is conducted and evaluated* — a fixed contract, written before Phase 1 starts, so
+results are judged against criteria set in advance rather than interpreted after the fact. This
+section is documentation only: no trainer code was modified, no retraining was performed, no
+hyperparameters were changed to produce it.
+
+### 26.1 Controlled-variable policy
+
+**Rule**: every experiment changes exactly one independent variable and holds everything else
+listed below fixed. Where the roadmap already groups two knobs into one experiment (Phase 1's
+steps×LR grid, §24.4), that grouping is itself declared in advance, with the reason stated — it
+is never an accident of "we happened to change two things."
+
+**Why this project treats this as a hard rule, not a preference** — two concrete precedents from
+this document, not a hypothetical:
+
+- **§19.2**: Classical NPS drifted from 311,669 (pre-PR2, #206) to 336,525 (post-PR2, PR 3) —
+  an 8% swing — with **zero code change** to the Classical path between those two measurements.
+  Comparing NNUE's post-PR2 result against the *stale* pre-PR2 Classical figure would have
+  overstated Stage 1's real gain by attributing session-to-session drift to the code change.
+  §15.5's same-session-baseline requirement exists precisely to prevent this.
+- **§18.4/§19.5**: the identical scalar source code measured 22.4ns/op with SuperWord
+  auto-vectorization enabled and 76.7ns/op with it disabled — a ~3.4x swing from one JIT flag,
+  in an isolated microbenchmark. A reader who didn't control for (or even know about) that
+  variable could have drawn opposite conclusions about Stage 1's benefit from the same code.
+
+Both are cases where an uncontrolled variable (session/environment state; JIT/harness context)
+produced a large enough effect to flip or inflate a causal conclusion about something else
+entirely. Retraining experiments have the same exposure — e.g. two different random seeds alone
+can move correlation by an amount that could be mistaken for a data-volume or optimization
+effect if seed weren't held fixed (or explicitly varied and reported, see §26.6).
+
+**Per-phase declaration** (extending §24.4's own phase definitions with an explicit
+independent/held-constant split for each):
+
+| Phase | Independent variable(s) | Held constant |
+|---|---|---|
+| 0 — Baseline | *(none — a fixed reference point, not an experiment)* | Architecture/config identical to `dfffd3da` (`hidden_width=256`, `qa=127`, `qb=64`, `output_scale=400`); zero training steps by construction |
+| 1 — Optimization | Steps × LR/schedule, as **one declared 2-D grid**, not two separate single-variable experiments — grouped because a steps-only null result at a poorly tuned fixed LR is uninterpretable (§24.4's own justification) | Dataset (Stage 1: 20,000 / Stage 2: 20,000, seed 42 split), labels, architecture (`hidden_width=256`), feature representation (plain-768), loss function shape and `K=2.773456`, `qa`/`qb`/`output_scale`, quantization/export pipeline, evaluation pipeline (`validator.py`) |
+| 2A — Data volume (Stage 1, 20k→100k) | Stage 1 position count only | Stage 2 position count (20,000) and node budget (25,000, unchanged), Phase 1's promoted optimization settings, architecture, loss/K, feature representation, export/eval pipeline. **Note**: total training steps is *derived*, not independently varied — it is scaled to hold the number of *passes* over the (larger) dataset constant, per §24.4; this is bookkeeping to keep "amount of optimization per position" constant, not a second free variable |
+| 2B — Data volume (Stage 1, 100k→1M) | Stage 1 position count only, continuing from 2A | Same as 2A, relative to 2A's result rather than Phase 1's |
+| 2, Stage 2 scaling | Stage 2 position count only | Stage 1's best count from 2A/2B, node budget (25,000, unchanged — quality is Phase 3's variable, not this one), Phase 1's optimization settings |
+| 3 — Label quality | Stockfish node budget only, on a matched-size position subset | Position count (held equal to the 25,000-node comparison arm), Stage 1 data, optimization settings, architecture, loss/K |
+| 4(i) — K sweep | `K` only | Best data/optimization config from Phases 1-3, architecture, feature representation, loss *shape* (still texel-sigmoid) |
+| 4(ii) — Mate-aware loss | Loss shape/weighting for mate-labeled records only, run **after and separately from** 4(i), never simultaneously with it | Best `K` from 4(i) (or the original K, if 4(i) shows no improvement), everything else as in 4(i) |
+| 5 — Capacity/regularization (gated) | `hidden_width` **or** a regularization term — one at a time, never both — only if scheduled at all (§24.4's Phase 5 gate) | Everything from the best configuration found in Phases 1-4 |
+
+### 26.2 Mandatory measurements
+
+Every experiment reports the same battery, organized into four categories. No experiment report
+is considered complete without all applicable fields — "applicable" is noted where a category
+doesn't apply to a given phase (e.g. Phase 1 has no NPS effect).
+
+**Training** (per grid cell / configuration, at the selected checkpoint — see §26.1's curve
+guide in §24.4 for how "selected" is determined):
+- training loss, validation (held-out) loss
+- training correlation, validation (held-out) correlation
+- RMSE (train and held-out)
+- bias (train and held-out, overall)
+
+**Calibration** (held-out set, via `calibration_report` — already built, §22-§23):
+- compression ratio (overall)
+- cp-only metrics: bias, compression, MAE, RMSE (the `cp_labeled` bucket)
+- mate metrics: bias, compression, MAE, RMSE (the `mate_labeled` bucket)
+
+**Runtime**:
+- training wall-clock time (cheap to log; also an anomaly signal — Phase 1's baseline is
+  ~20s/2,000 steps, §24.1; a configuration that takes far longer or shorter than its step count
+  predicts is worth a second look before trusting its other numbers)
+- evaluation throughput (positions/sec) where applicable — chiefly Phase 3's Stockfish relabeling
+  (already has an established measure-before-committing practice, `stockfish-label-e2-real.md`)
+  and any future large-`evaluate_held_out`/`calibration_report` run at much larger held-out sizes
+
+**Engine** (only where the experiment plausibly affects it):
+- NPS — not affected by any of Phases 1-5 as scoped (all are training/data/loss changes, none
+  touch `evaluate()`, search, or the accumulator hot path); if a future phase ever does touch
+  engine-side code, the existing native-Windows, same-session, median-of-5 methodology (§15.5)
+  applies unchanged, not a new one
+- gauntlet Elo — required once a phase produces a *candidate* worth engine-testing (§26.3's exit
+  gate), not per training configuration
+- SPRT — only for a candidate that has already passed gauntlet, per the PRD's own gate 3 (H0=0,
+  H1=+10, α=β=0.05, `docs/NNUE_PRD.md` §1) — never run as a per-experiment screening step
+
+### 26.3 Promotion criteria
+
+Every threshold below is stated as a concrete, checkable condition — not "looks better" or
+"appears promising." Where a threshold is illustrative rather than fixed by prior project policy,
+it is stated as such, tied to an already-measured quantity rather than an arbitrary round number.
+
+- **Phase 1 (Optimization)** — promote the best grid cell as the new baseline configuration only
+  if **all** of:
+  1. Its selected checkpoint's held-out correlation exceeds 0.504 by at least the currently
+     observed train/held-out gap (~0.06 absolute, §24.0) — used as a concrete noise floor because
+     it is the only measured indication so far of how much correlation can move between two
+     samples of the same underlying data without a real effect. (A more rigorous version of this
+     bar — replacing the single train/held-out gap with variance across repeated seeds at the
+     same configuration — is preferred once that variance has actually been measured; until then,
+     this is the defensible default, not a permanent standard.)
+  2. The checkpoint is selected via §24.4's curve-interpretation rules (peak held-out
+     correlation before decline, not the final step by default).
+  3. Held-out loss at the selected checkpoint is not worse than baseline (0.0823) — a
+     correlation gain paired with a worse calibrated loss is not a clean win and must be
+     explained before promoting, not promoted on correlation alone.
+  If no grid cell clears this bar, Phase 1 is **not promoted** — this is a valid, informative
+  result ("optimization exhausted at this data scale"), not a failure to fix before moving on;
+  proceed to Phase 2 per §26.7's decision flow.
+- **Phase 2A/2B (Stage 1 volume)** — promote (i.e., adopt the larger dataset and, for 2A,
+  proceed to 2B) only if held-out correlation improves beyond the prior stage's promoted
+  baseline by at least the same noise floor as Phase 1, measured under identical optimization
+  settings to the prior stage (isolating volume, not re-conflating with optimization). If 2A
+  does not clear the bar, do **not** run 2B — proceed to Phase 3 instead.
+- **Phase 2, Stage 2 scaling** — promote only if it produces a measurable improvement *beyond*
+  what Stage 1 scaling alone already achieved (2A's or 2B's promoted result), using the same
+  noise floor — not "did correlation improve since the very first baseline," which would credit
+  Stage 2 for gains Stage 1 already produced.
+- **Phase 3 (Label quality)** — promote (adopt the higher node budget going forward) only if the
+  matched-subset comparison shows a correlation improvement attributable to label quality
+  specifically (same position count, different node budget only) that exceeds the noise floor.
+  Flagged explicitly: this comparison runs on a smaller, matched subset than the full training
+  set, so its noise floor may need to be wider, not narrower, than Phase 1/2's — see §26.6.
+- **Phase 4 (Loss/K)** — promote only if mate-labeled bias magnitude decreases by at least half
+  from its current value (−1,726.6cp → at least as good as ≈−863cp) **and** cp-labeled bias/MAE
+  does not regress beyond the noise floor — directly operationalizing §23.5's finding that a
+  naive single-transform fix can improve the mate tail while quietly damaging the cp-labeled
+  majority; this criterion exists specifically so that failure mode cannot recur unnoticed here.
+- **Phase 5 (Capacity/regularization)** — not scheduled under current evidence (§24.4); no
+  promotion criteria are defined until it is actually scheduled, to avoid pre-committing to
+  thresholds for an experiment whose design may change based on Phases 1-4's outcomes.
+- **Gauntlet gate (before any SPRT)** — a candidate that clears the offline promotion criteria
+  above proceeds to an E-4-style gauntlet (~100 games) as a cheap regression filter, not a
+  strength proof (a ~100-game gauntlet has much lower resolving power than SPRT — `dfffd3da`'s
+  own gauntlet result, −636.4 ± 224.0 Elo, was only usable *because* the gap was enormous and
+  unambiguous). **Pass condition**: the gauntlet result's confidence interval must not indicate a
+  large, unambiguous loss against Classical of the kind `dfffd3da` showed — a candidate this
+  roadmap should actually consider for SPRT is expected to be at or above Classical, or close
+  enough that the gauntlet's own interval includes parity, not decisively behind it. A gauntlet
+  result that fails this bar routes back to "investigate cause" (§26.7), not forward to SPRT.
+- **SPRT (final gate)** — exactly the PRD's existing, un-modified gate 3: H0 = 0 Elo, H1 = +10
+  Elo, α = β = 0.05, at the project's established SPRT time control (`docs/NNUE_PRD.md` §1).
+  This protocol does not introduce a new strength bar — it reuses the one the project already
+  committed to.
+
+### 26.4 Early termination criteria
+
+An experiment stops before its planned step count completes when any of the following is
+observed, checked against the logged trajectory (§24.4's `TrainingDiagnostic` extension):
+
+- **Obvious divergence**: loss increases sustained over multiple consecutive log intervals (not
+  a single noisy uptick), or `gradient_norm` grows without bound.
+- **Unstable optimization**: loss or correlation oscillates without a discernible trend across
+  consecutive log points — the "learning rate too high" case from §24.4's curve guide. Stop and
+  record the cell as unstable at this LR, don't extend it hoping it settles.
+- **Validation collapse**: held-out loss/correlation gets *worse* than Phase 0's untrained
+  baseline (§24.4) at any point after early training — a sign something is broken (e.g. a data
+  or label wiring bug), not merely "this configuration isn't working."
+- **Plateau after predefined patience**: held-out correlation does not improve by more than the
+  noise floor (§26.3) for a predefined number of consecutive log intervals (e.g. 5, at whatever
+  `log_interval` the run uses) — stop rather than burning further (cheap, but not free) compute
+  chasing a flat curve.
+- **Implementation bug discovered mid-run**: any correctness issue found in the experiment's own
+  setup (wrong dataset path, mismatched seed, stale checkpoint, etc.) — stop immediately, fix,
+  and restart; a run known to be measuring the wrong thing is not salvageable by finishing it.
+
+**Stopping early under any of these predefined conditions is not a failed experiment** — it is
+the protocol working as designed. A run that "just didn't get to finish" without triggering one
+of these conditions is the actual failure mode to avoid (an incomplete, uninterpretable result),
+not an early stop that did trigger one.
+
+### 26.5 Learning log template
+
+Every completed experiment (each grid cell in Phase 1; each of 2A/2B; Phase 3's comparison;
+each of 4(i)/4(ii); anything in Phase 5 if it runs) fills in this template, so results are
+comparable across the whole roadmap without re-deriving context each time:
+
+```
+## Experiment: <phase/cell identifier, e.g. "Phase 1, steps=10000 LR=0.003">
+
+Hypothesis:        <what this experiment expects to show, one or two sentences>
+Independent variable(s): <exactly what changed, per §26.1's table>
+Held constant:      <cross-reference to §26.1's row, plus anything cell-specific>
+Expected outcome:   <a falsifiable prediction, stated before running>
+Observed outcome:   <what actually happened, stated after running>
+
+Metrics:
+  Training   — train loss / held-out loss / train correlation / held-out correlation / RMSE / bias
+  Calibration — compression ratio / cp-labeled bias,compression,MAE,RMSE / mate-labeled bias,compression,MAE,RMSE
+  Runtime    — wall-clock time / throughput (if applicable)
+  Engine     — NPS (if applicable) / gauntlet result (if applicable) / SPRT result (if applicable)
+
+Decision:           <promoted / not promoted / stopped early — cite §26.3/§26.4's specific criterion met>
+Next action:        <what this result implies for the next phase/cell, per §26.7>
+```
+
+### 26.6 Threats to validity
+
+| Threat | Description | Mitigation in this protocol |
+|---|---|---|
+| **Dataset representativeness** | Stage 1 (Lichess) positions are drawn from whatever games users submitted for analysis — not a controlled sample of positions this engine's own search would actually reach | Not fully mitigable within this roadmap's scope (would require self-play data, Phase E/ADR-001's own longer-term plan); noted as a standing caveat on every phase's external validity, not just an internal one |
+| **Shallow Stockfish labels** | Stage 2 labels come from `nodes=25,000` (§14.1/§24.1's own finding — chosen for session-scoped throughput, not label quality) | Directly targeted by Phase 3's matched-subset node-budget ablation; until Phase 3 runs, treat all Stage-2-derived correlation numbers as bounded above by this label quality (§24.3's noise-ceiling discussion) |
+| **Mate/non-mate imbalance** | Mate-labeled records are ≈11.8% of held-out (§22.2) with a flat, discontinuous target (±3,000cp) very different in character from cp-labeled records | `calibration_report`'s mate/cp split (already built) is a *mandatory* measurement (§26.2) precisely so this imbalance can't hide inside an "overall" number the way §23.5's affine result initially could have |
+| **Random initialization variance** | A single seed's result (train or Phase 0's baseline) could be unusually lucky or unlucky; §26.3's noise floor currently rests on one train/held-out comparison, not repeated-seed variance | Documented as a known gap in §26.3 itself; the roadmap should graduate to multi-seed replication for any result close to a promotion threshold, and this protocol's noise floor should be revisited once that data exists |
+| **Hardware differences** | Training wall-clock and Stage 2 relabeling throughput are both hardware-dependent (§24.1's ~20s/2,000-steps and ~66 pos/sec figures are this session's machine, not a portable constant) | Runtime measurements (§26.2) are reported for anomaly detection and session-local planning, not cross-machine comparison; only correlation/RMSE/bias/compression (data-dependent, not hardware-dependent) are compared across sessions |
+| **Stochastic optimization** | Adam's per-step updates and the fixed-order (or, post-Phase-1, reshuffled) data cycling both introduce run-to-run variation independent of the variable under test | Same mitigation as random-init variance above — the noise floor exists specifically to avoid attributing this kind of variation to the independent variable; multi-seed replication is the long-run fix |
+| **Measurement noise** | `calibration_report`/`evaluate_held_out` are themselves computed over a fixed, finite held-out set (n=4,000, or a smaller matched subset for Phase 3) — any finite-sample statistic has its own sampling error | Same noise-floor mechanism; Phase 3's smaller matched-subset comparisons are explicitly flagged (§26.3) as needing a wider floor than the full-held-out-set comparisons in Phases 1-2 |
+
+### 26.7 Decision flow
+
+```mermaid
+flowchart TD
+    P0["Phase 0: untrained baseline\n(reference only, already measured)"] --> P1["Phase 1: Optimization\n(steps x LR grid)"]
+    P1 --> Q1{"Held-out correlation\nclears §26.3's promotion bar?"}
+    Q1 -->|No| P1x["Conclude 'optimization exhausted\nat this data scale' (not a failure)\n-- proceed to Phase 2 anyway"]
+    Q1 -->|Yes| P1p["Promote: adopt best\nsteps/LR as new baseline"]
+    P1x --> P2A
+    P1p --> P2A["Experiment 2A: Stage 1\n20k -> 100k positions"]
+    P2A --> Q2A{"Correlation still\nimproving beyond noise floor?"}
+    Q2A -->|No| P3["Phase 3: Label quality\n(node-budget ablation)"]
+    Q2A -->|Yes| P2B["Experiment 2B: Stage 1\n100k -> 1M positions"]
+    P2B --> Q2B{"Still improving?"}
+    Q2B -->|No| P2S2["Phase 2: scale Stage 2\n(compute-bound)"]
+    Q2B -->|Yes| P2S2
+    P2S2 --> Q2S2{"Stage 2 scaling adds\nmeasurable gain beyond Stage 1?"}
+    Q2S2 -->|No| P3
+    Q2S2 -->|Yes| P3
+    P3 --> Q3{"Higher node budget\nimproves correlation?"}
+    Q3 -->|No| P4["Phase 4: Loss/K\nreformulation"]
+    Q3 -->|Yes| P4
+    P4 --> Q4{"Mate bias improves\nwithout cp-subset regression?"}
+    Q4 -->|No| P5{"Phases 1-4 all plateaued\nAND overfitting signature appears?"}
+    Q4 -->|Yes| CAND["Candidate net selected"]
+    P5 -->|Yes| P5run["Phase 5: capacity/regularization\n(only now in scope)"]
+    P5 -->|No| CAND
+    P5run --> CAND
+    CAND --> GAUNT{"Gauntlet (~100 games):\nno large unambiguous loss?"}
+    GAUNT -->|No| INVEST["Investigate cause\n(not a promotion)"]
+    GAUNT -->|Yes| SPRT["Run SPRT\n(PRD gate 3: H0=0, H1=+10, a=b=0.05)"]
+    INVEST -.-> P1
+```
+
+Text form, for a non-mermaid reader:
+
+```
+Phase 0 (baseline, reference only)
+  -> Phase 1 (optimization)
+       correlation clears promotion bar?
+         no  -> "optimization exhausted", proceed anyway (not a stop)
+         yes -> promote as new baseline
+       -> Experiment 2A (Stage 1, 20k->100k)
+            still improving beyond noise floor?
+              no  -> skip 2B, go to Phase 3
+              yes -> Experiment 2B (Stage 1, 100k->1M)
+                       still improving?
+                         no  -> Phase 2 Stage 2 scaling
+                         yes -> Phase 2 Stage 2 scaling
+       -> Phase 2 Stage 2 scaling
+            measurable gain beyond Stage 1 alone?
+              no/yes either way -> Phase 3 (label quality)
+       -> Phase 3 (label-quality ablation)
+            higher node budget helps?
+              no/yes either way -> Phase 4 (loss/K)
+       -> Phase 4 (loss/K reformulation)
+            mate bias improves without cp regression?
+              yes -> candidate net selected
+              no  -> Phases 1-4 all plateaued AND overfitting appears?
+                       yes -> Phase 5 (capacity/regularization) -> candidate net selected
+                       no  -> candidate net selected anyway (best available)
+       -> Candidate net
+            gauntlet: no large unambiguous loss?
+              no  -> investigate cause, back to relevant phase (not a promotion)
+              yes -> run SPRT (PRD gate 3)
+```
+
+The purpose of fixing this flow now is to prevent ad hoc branching once real numbers exist —
+every arrow above is a predefined rule from §26.3/§26.4, not a judgment call made in the moment.
+
+### 26.8 Success definition
+
+**The objective of the retraining roadmap is not to maximize any single offline metric.** Held-
+out correlation, RMSE, compression, and bias (§26.2's Training/Calibration categories) are
+diagnostic and comparative tools — they make it cheap to tell which candidate configurations are
+worth the expensive step of engine testing, exactly as §26.3's promotion criteria use them. None
+of them is the actual goal.
+
+**The objective is to increase playing strength (Elo)**, measured the only way this project
+accepts as valid: a passing SPRT result against the PRD's own gate 3 (§26.3), following a
+gauntlet that first rules out an obvious regression. A configuration that wins on every offline
+metric in §26.2 but does not translate into a positive SPRT result has not succeeded by this
+roadmap's own definition — and, symmetrically, offline metrics exist so that this project does
+not have to find that out the expensive way (a multi-day SPRT, `dfffd3da`'s own precedent) for
+every candidate configuration, only for the ones that clear the cheap screens first.
+
+**Explicitly confirmed, per this task's instruction**: no trainer code was modified, no
+retraining was performed, no hyperparameters were changed to produce this section. This is the
+experimental contract §24's roadmap will be run against — Phase 1 has not started.
