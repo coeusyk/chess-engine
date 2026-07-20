@@ -3061,3 +3061,137 @@ otherwise") — the simpler, more strictly single-variable design takes preceden
 earlier passes-scaling idea, which would have varied two things (steps and data volume)
 simultaneously. If a future phase has reason to revisit passes-scaling, it should be run as its
 own declared experiment, not silently folded into a data-volume phase.
+
+## 28. Experiment 2A completion report (2026-07-20) — Stage 1, 20k → 100k
+
+### 28.1 What was run
+
+Independent variable: Stage 1 position count (20,000 → 100,000). Held constant, per §26.1's
+Experiment 2A row and this task's explicit instruction: P1-G04's frozen schedule (§27.11 —
+steps=20,000, LR=0.01, cosine, warmup=200, seed=42, unchanged), architecture, feature
+representation, labels, loss, `K`, export/quantization, evaluation pipeline, Stage 2 (unchanged
+at 20,000), split seed (42).
+
+**Held-out-set preservation** (the one real methodological subtlety, resolved before training):
+re-running `combine_and_split` over a larger Stage 1 pool would produce a *different* held-out
+set (still 10%, but a different, larger sample), confounding "more data" with "a different
+evaluation set." Instead: a fresh Stage 1 pull was made at `target_count=100,000`
+(`outputs/datasets/stage1-lichess-100k/`), and its first 20,000 lines were verified
+**byte-for-byte identical** to the original 20,000-position file before proceeding (confirmed
+via a separate reproducibility check: re-running the acquisition driver at `target_count=20,000`
+independently reproduced the existing file's SHA-256 exactly, `a9d338b2...`, confirming the
+source and the driver are both deterministic). The **exact original 4,000-record held-out set**
+and **exact original 36,000-record training set** from Phase 1 were reused unchanged; the 80,000
+new (verified non-overlapping) Stage-1-only positions were added to the training set only.
+Training set: 116,000 records (36,000 original + 80,000 new). Held-out: 4,000, identical to
+every other experiment in this roadmap.
+
+Experiment ID: `P2A-001`. Wall-clock: 156.3s (vs. P1-G04's 183.7s — both runs are 20,000 steps
+at the same batch size, so per-step cost should be pool-size-independent; the difference is
+plausibly ordinary machine-load variance between separate runs, not a real effect of the larger
+pool, and is not investigated further here).
+
+### 28.2 Result — plain reading first
+
+**Held-out correlation: 0.5048** at the selected checkpoint (step 10,999/19,999) — indistinguishable
+from `dfffd3da`'s original 0.5044 (delta +0.0004, well inside the measured noise floor,
+§27.2), and **−0.0267 below the P1-G04 reference** (§26.10) — roughly 14x the measured seed-noise
+std (0.0019), clearly outside noise, in the negative direction. Held-out loss: 0.0996, worse
+than both `dfffd3da` (0.0823) and P1-G04 (0.0797).
+
+**Not promoted.** Fails §26.3's Phase 1-style criteria against the current reference model
+(P1-G04): correlation does not exceed the reference by the noise floor (it's below it), and
+held-out loss is worse, not better. **§26.10's rolling-baseline table is not updated — P1-G04
+remains the reference model.** This is a valid, informative, honestly-reported result on its own
+terms, not an inconclusive non-result to be explained away.
+
+### 28.3 What the trajectory shows, and what it does and does not establish
+
+| Step | 2A held-out corr. | P1-G04 held-out corr. (same step, from §27.3) |
+|---|---|---|
+| 999 | 0.4660 | 0.4549 |
+| 1,999 | 0.4645 | 0.5042 |
+| 10,999 (2A's selected step) | 0.5048 | 0.5302 |
+| 19,999 | 0.5020 | 0.5311 |
+
+**2A was briefly *ahead* of P1-G04 at step 999, then fell behind by step 1,999 and stayed
+behind for the rest of the run** — not a clean, monotonic "more data helps" or "more data
+hurts" story either way; a genuine reversal early in training. 2A's held-out loss falls from
+0.134 (step 999) to ~0.099 and then **stays flat** (0.0996→0.0988→0.0987 across the back half)
+— unlike P1-G01's pattern (§27.3, loss troughs then *rises*), 2A's loss settles at a lower
+plateau and stays there. Held-out correlation shows the same shape: rises then plateaus in a
+tight 0.499-0.505 band for the last ~9,000 steps, while train correlation keeps climbing (0.528
+→0.591) and train loss keeps falling (0.093→0.022) — a widening train/held-out gap, but arriving
+at a *lower* held-out plateau than P1-G04's.
+
+**One real, unresolved methodological limitation, stated as an open question, not a
+conclusion**: P1-G04's schedule (20,000 steps, fixed per this task's instruction) represents
+~142 passes over the original 36,000-record training set, but only **~44 passes** over the new
+116,000-record set (20,000 × 256 ÷ 116,000). This experiment therefore cannot distinguish
+between two live hypotheses:
+1. **More Stage 1 data of this quality, at this compute budget, does not improve held-out
+   correlation here** — the plain reading of §28.2's result.
+2. **More Stage 1 data would help, but 20,000 steps is not enough optimization for a 116,000-
+   record pool** — i.e. this run is itself under-optimized relative to what the larger dataset
+   could support, and a fair test of "does data volume help" requires proportionally more
+   compute, not the same step budget.
+
+**This experiment does not distinguish these two hypotheses, and this report does not claim to
+know which is true.** There is no confound-free way to vary data volume in isolation: holding
+steps fixed (as done here, per this task's explicit instruction) risks under-fitting the larger
+set; holding *passes* fixed instead (§24.4's original, superseded idea) would require roughly
+3.2x more total steps — a real additional compute cost, and a test of a different question
+("data + proportional compute") than the one just run ("data at fixed compute"). Neither is
+more "correct" than the other; they answer different questions. The step-999-vs-step-1,999
+reversal above (§28.3's table) is itself evidence against confidently picking either hypothesis
+from this data alone.
+
+Not filed under §26.4's "implementation bug discovered mid-run" — the run executed correctly and
+measured exactly what it was designed to measure; this is a design-interpretation limitation of
+the experiment as scoped, not a defect in its execution.
+
+### 28.4 Metrics comparison
+
+| | `dfffd3da` (historical) | P1-G04 (current reference) | P2A-001 |
+|---|---|---|---|
+| Held-out correlation | 0.5044 | **0.5315** | 0.5048 |
+| Held-out loss | 0.0823 | **0.0797** | 0.0996 |
+| RMSE | 1279.88 | 1239.86 | 1274.30 |
+| Overall bias (cp) | −219.63 | −213.47 | −209.51 |
+| Overall compression | 0.0630 | **0.1255** | 0.0696 |
+
+### 28.5 Calibration comparison (mate/cp split)
+
+| | `dfffd3da` | P1-G04 | P2A-001 |
+|---|---|---|---|
+| Mate bias (cp) | −1,726.6 | −1,661.1 | −1,703.4 |
+| Mate compression | 0.0551 | 0.0996 | 0.0551 |
+| Cp bias (cp) | −18.0 | −19.8 | −9.6 |
+| Cp compression | 0.0753 | 0.1599 | 0.0861 |
+
+Mate-labeled bias again barely moves (−1,703 to −1,727cp across all three) — consistent with
+every prior finding (§23, §27.5) that this is a structural loss/target problem, unaffected by
+either optimization schedule or (now) Stage 1 data volume alone. Compression sits between
+`dfffd3da`'s and P1-G04's for both buckets, roughly tracking correlation's own position between
+the two — consistent with, not independent evidence beyond, §23.4's correlation-caps-compression
+finding.
+
+### 28.6 Recommendation — decision deferred to review, per this task's explicit instruction
+
+**Do not proceed to Experiment 2B.** Not because saturation was cleanly observed (§28.3 explains
+why this run cannot make that claim), but because P2A-001 was not promoted and this task's own
+instruction is to stop and wait for review regardless.
+
+**Two options for how to proceed, both consistent with the roadmap's unchanged ordering,
+presented for review rather than one prescribed as correct** (§28.3's reasoning: neither is
+obviously the "fix," they test different questions):
+1. **Re-run Stage 1 at 100k with steps scaled to restore ~142 passes** (~64,000 steps,
+   everything else identical) — tests "does more Stage 1 data help, given proportionally more
+   compute." Real additional cost: roughly 3.2x P1-G04's wall-clock (~10 minutes at this scale).
+2. **Accept 0.5048 as the answer to the question actually asked** ("does more Stage 1 data help
+   at a fixed 20,000-step compute budget") — answer: no, not here — and move to a different
+   lever (Phase 3 label quality, or Phase 4 loss/K reformulation) rather than spending more
+   compute on Stage 1 volume specifically.
+
+Both are legitimate next steps; this report does not pick one. **Stopping here for review, as
+instructed — Experiment 2B has not been started.**
