@@ -4563,3 +4563,719 @@ than redefining it.
 **Explicitly out of scope, per this task's instruction**: no trainer code was changed, no loss
 function was modified, no labels were changed, no retraining occurred, no dataset or checkpoint
 was modified in the process of writing §36-§39. This is planning only.
+
+## 40. Graphify discovery (Phase 4A, mandatory, 2026-07-20)
+
+Per this task's instruction, refreshed before reading any trainer implementation file:
+`graphify . --update --code-only` (no LLM key configured in this session — code-only AST
+extraction, matching every prior Graphify pass in this document, e.g. §31/§34/§35.1/§35.10's own
+"no LLM needed" runs) followed by `graphify cluster-only .`. **This ran in a fresh worktree
+(isolated per this task's own harness requirement), so the graph was rebuilt from scratch rather
+than incrementally** — `graphify-out/` is gitignored (confirmed: `git check-ignore graphify-out`),
+so this is expected, not a regression: 2,503 nodes, 6,898 edges, 156 communities, from 270 code
+files (99 non-code files skipped under `--code-only`, matching this session's no-LLM-key state).
+
+A BFS trace (`graphify query`) seeded on target generation, loss computation, mate handling,
+evaluation metrics, validation, and checkpoint selection was cross-checked against direct reads of
+every file it surfaced (`Read`, not graph inference alone — the graph names symbols and file
+locations; the actual math and control flow below is read from source, not inferred from the
+graph). **One correction to this document's own prior planning surfaces directly from this
+trace**, stated up front because it changes §40-§46's framing relative to §38: §38.1's ranking
+spine treated "no monotonic rescaling of loss/target can move correlation" as settled, citing
+§23.4's affine-invariance result. Re-reading `train.py`'s actual loss computation exposes the
+conflation: **§23.4 is a fact about a fixed, already-trained model's output — `corr(a·X+b, Y) =
+corr(X, Y)` for a post-hoc transform of one predictor. It says nothing about *retraining* with a
+different `K` or loss shape**, which produces genuinely different weights and therefore a
+genuinely different `predicted_cp` ranking, not an affine transform of the same one. §23.7's own
+text already flagged this distinction ("one hypothesis to test... not an already-diagnosed root
+cause") — §38.1 over-hardened it into a settled "cannot." **This section, and §41-§46 below,
+supersede §38.1/§38.3's classification of Lever A as unable to move correlation; §38's other
+findings (mate-bias is structural, Stage 1 volume exhausted, the single-transform trade-off risk)
+are unaffected and are reused, not relitigated.** Per this project's standing practice of
+preserving the investigation's error record rather than silently fixing it (§32.4's own precedent),
+§38.1/§38.3 are left as originally written; this correction is recorded here, not backfilled there.
+
+### 40.1 Module trace, by required area
+
+**Target generation** — `trainer/trainer/model/train.py`: `target_cp()` (lines 110-118, reads
+`PositionLabel.eval_cp` or maps `eval_mate` to a flat `MATE_EQUIVALENT_CP = 3000.0` constant,
+line 45) and `texel_sigmoid()` (lines 99-107, `1/(1+10^(-Kx/400))`, the same formula
+`KFinder.java`/`TunerEvaluator.java` use, per its own docstring). Both are called from `train()`'s
+loop (line 219-220) and from `validator.py`'s `evaluate_held_out`/`calibration_report`/
+`fit_affine_calibration` (all three import `target_cp`/`texel_sigmoid` directly from `train.py`,
+lines 31-35 of `validator.py` — a real, single-source-of-truth dependency, not a duplicated
+implementation).
+
+**Loss computation** — `trainer/trainer/model/train.py`, `train()`'s loop, lines 218-229:
+`predicted_prob = texel_sigmoid(predicted_cp, config.k)`; `loss = torch.mean((predicted_prob -
+targets) ** 2)`. **This is already Texel-style MSE computed in sigmoid/probability space, not raw
+centipawn MSE** — the candidate list's "logistic(cp/K)" is this document's already-implemented
+incumbent, not a new option (§41.0 states this explicitly before the comparison). No per-record
+weight tensor exists anywhere in this path — confirmed by reading `encode_batch()`/`encode_fens()`
+(`trainer/trainer/model/batching.py`, lines 46-70): the batch encoding produces only
+`(indices, offsets)` tensors per perspective, nothing weight-shaped.
+
+**Mate handling** — the flat `MATE_EQUIVALENT_CP` constant (`train.py:45`) inside `target_cp()`,
+already the subject of §32.5's "collision" finding (this constant and the now-filtered
+9605/20000 Stage 1 sentinel values saturate to the same ≈1.0 sigmoid target) and §38's RQ-3. No
+other module computes or stores a mate-aware target; `PositionMetadata` (`contracts/dataset.py`,
+confirmed in §31) has no mate-distance field distinct from `PositionLabel.eval_mate` itself, which
+already carries signed plies-to-mate — `target_cp()` simply discards that magnitude today
+(`MATE_EQUIVALENT_CP if label.eval_mate > 0 else -MATE_EQUIVALENT_CP`, line 114, the sign is kept,
+the distance is not).
+
+**Evaluation metrics** — `trainer/trainer/validation/validator.py`: `evaluate_held_out()` (lines
+70-88) computes held-out loss identically to the training loss (same `texel_sigmoid`/MSE, applied
+to held-out records) **and** `label_correlation` via `_pearson_correlation()` (lines 243-251)
+computed directly on **raw `predicted_cp`/`target_cps`, never on the sigmoid-transformed
+values**. `calibration_report()` (lines 182-240) computes bias/compression/MAE/RMSE the same way,
+always in raw cp space, split by mate/cp label and by phase. **This is the linchpin fact tying
+four of this section's six required trace areas together**: because correlation, calibration, and
+checkpoint selection (below) all key off raw `predicted_cp`, *any* candidate objective whose
+network output is not itself a cp-scaled quantity (win-probability regression, §41.4; a
+`WDL`-only-trained net, part of §41.3) breaks held-out evaluation, checkpoint selection, and
+inference simultaneously unless an explicit inverse mapping is added — not three separate,
+independent compatibility problems, one root cause.
+
+**Validation** — the same `validator.py` module in full, plus `fit_affine_calibration()` (lines
+127-149, unaffected by any Phase 4A candidate — it operates post-hoc on whatever `predicted_cp`
+a checkpoint already produces, regardless of what objective trained it) and `eval_scale_check()`
+(lines 91-111, compares against a classical-engine-labeled corpus, also raw-cp-space, also
+unaffected in principle by which objective produced the checkpoint being checked).
+
+**Checkpoint selection** — **not inside `train.py` or `validator.py` at all**; each phase script
+implements its own `_select_best_checkpoint()`, and this trace found it **duplicated verbatim
+across four scripts**: `trainer/scripts/phase1_optimization_sweep.py` (lines 92-104),
+`trainer/scripts/phase1_experiment_2a.py` (lines 80-89-ish), `trainer/scripts/
+phase1_experiment_2b.py` (lines 92-101-ish), and `trainer/scripts/phase3_experiment_3a.py` (lines
+126-134-ish) — all four select the checkpoint with the highest logged `held_out_correlation`,
+identical logic, copy-pasted rather than shared. Confirmed by direct grep across all four files,
+not assumed from one. **Consequence for this section's deliverable**: any Phase 4A experiment
+script following this project's own established pattern (§26.5's Experiment ID scheme, reusing
+the existing phase-script structure) will duplicate this helper a fifth time — a pre-existing,
+project-wide characteristic this task's scope does not include fixing (no refactor recommended
+here, per "do not implement anything"), but worth naming so a future session doesn't rediscover it
+from scratch. Because selection keys off `held_out_correlation` (raw-cp-space, per the point
+above), it is objective-agnostic **only** for candidates that keep producing a cp-scaled
+`predicted_cp` — the same compatibility fact from "Evaluation metrics" propagates here unchanged.
+
+### 40.2 WDL data-availability trace — a finding beyond §38.4's stated unknown
+
+§38.4 flagged "whether Stage 2's `c9` WDL field is actually populated" as an open unknown. This
+trace resolves it further than "unknown," with a more specific and less favorable finding than
+§38.4 speculated:
+
+- `PositionLabel` (`trainer/contracts/dataset.py`, lines 71-102) **already has** an optional
+  `wdl: Optional[float]` field, documented as `[0.0, 1.0]`, side-to-move-relative, with an explicit
+  provenance note: "Stage 3 (self-play): typically `wdl`... Stage 1/Stage 2: typically
+  `eval_cp`/`eval_mate` only" (lines 85-89). The *contract* already supports a WDL target; no
+  contract change is needed to populate it.
+- **No concrete provider populates it.** `train.py`'s own module docstring (lines 14-23) states
+  this explicitly: "every `DatasetProvider` reachable from this PR's dependency chain... has no
+  WDL field at all... `TextDatasetProvider` never populates it." `target_cp()` raises loudly
+  (`ValueError`, line 115-118) on a WDL-only label rather than silently treating an unimplemented
+  blend as satisfied — a deliberate fail-fast design, not an oversight.
+- `trainer/trainer/dataset/mmap_shard.py` **cannot even store a WDL value yet**: grep confirms
+  `SHARD_DTYPE has no wdl field yet` (module docstring) and `write_shard cannot represent a
+  wdl-only PositionLabel` (lines 65-66, a raised `ValueError`) — the binary shard format itself
+  needs extending before any WDL-labeled data could persist through this pipeline at all, a fact
+  §38.4/§6's original Experiment 6 scope ("extend `SHARD_DTYPE`") already anticipated in outline,
+  now confirmed at the exact line.
+- **New finding, not previously documented**: `trainer/scripts/stockfish_label.py`'s `_read_fens()`
+  (lines 253-260) treats **each entire input line as the FEN string, verbatim** (`fen =
+  line.strip()`). §1's already-established fact that `quiet-labeled.epd` (Stage 2's position
+  source, 725,000 lines) "carries a `c9` field" describes an EPD file whose lines are conventionally
+  `<FEN fields> c9 "<result>";` — an opcode-annotated EPD record, not a bare FEN. **This reader does
+  not parse or strip that annotation** — if the real source file's lines carry a trailing `c9`
+  opcode, today's code passes the *entire annotated line*, unparsed, to Stockfish's `evaluate()` as
+  if it were a plain FEN. This is a previously-undocumented gap this session's own code trace
+  surfaces, not merely "c9 might be sparsely populated" (§38.4's framing) — the mechanism by which
+  `c9` would ever reach a `PositionLabel.wdl` field does not exist in the current pipeline at all,
+  independent of how densely the source file actually populates it. **Whether this causes silent
+  data corruption today (Stockfish's UCI `position fen` parser may or may not tolerate a trailing
+  opcode) was not tested in this task — flagged as a prerequisite check for any future WDL work,
+  not resolved here, per "no code was executed to test this."**
+- `trainer/scripts/acquire_stage1_lichess.py` (Stage 1, Lichess cloud-eval) has no WDL-adjacent
+  field in its source API at all (a cloud engine evaluation, not a game outcome) — a WDL blend, if
+  pursued, is structurally a Stage-2-only (or future Stage-3-only) intervention, not something
+  Stage 1 could ever contribute to, independent of any implementation work.
+
+**Net effect on implementation-complexity estimates below**: §38.3 rated the WDL-blend candidate's
+engineering effort "Medium (one-time format work)." This trace grounds that into four concrete,
+verified prerequisites (contract field exists; provider population absent; shard format absent;
+EPD parser does not extract `c9`) rather than one general statement — §41.3/§43 below reflect this
+more granular, and net moderately higher, effort estimate.
+
+## 41. Objective analysis
+
+Per this task's instruction: raw centipawn regression, logistic(cp/K), WDL probability targets,
+win-probability regression, hybrid centipawn + mate objectives, multi-head objectives. **§41.0
+states a framing correction before the comparison, because otherwise this section double-counts
+an option that already ships.**
+
+### 41.0 Framing: "logistic(cp/K)" is the incumbent, not a candidate
+
+`train.py`'s current loss (§40.1) already computes `mean[(σ(predicted_cp, K) − σ(target_cp,
+K))²]`, `σ(x,K) = 1/(1+10^(-Kx/400))` — this **is** "logistic(cp/K)" applied to both sides of a
+squared-error loss. Every comparison below is framed as a *deviation from this incumbent*: raw
+cp regression removes the sigmoid entirely; WDL/win-probability change what the *target* (or the
+network's own output) represents; hybrid/multi-head compose with the incumbent rather than
+replacing it. Treating "logistic(cp/K)" as a novel fifth option would silently "recommend" what
+already ships — flagged here so §44-§46 don't repeat that error.
+
+**Gradient math, incumbent, derived directly from `train.py:99-107,229` (not assumed):** for one
+sample, `dL/dp = 2(σ(p,K) − σ(t,K)) · σ'(p,K)`, where `σ'(x,K) = β·σ(x,K)·(1−σ(x,K))`,
+`β = K·ln(10)/400`. At `K=2.773456` (the current, `KFinder`-calibrated value, §1/§23.7):
+`β ≈ 0.015965/cp`, `σ'(0) ≈ 0.003991` (the maximum slope, at `p=0`), and `σ'(p)` decays to ~1% of
+that maximum by `|p|≈288cp` — reproducing §23.7's own "99% saturation by ≈288cp" figure exactly
+(verified by direct computation this session, not re-quoted from §23.7 uncritically).
+
+- **Near 0 cp**: `σ'(p)` is at its maximum — the best-conditioned region of the loss, consistent
+  with §32.6's empirical finding that near-zero positions are the model's best-predicted bucket
+  (MAE 55-72cp).
+- **Large cp**: `σ'(p) → 0` exponentially — gradient vanishes regardless of how large the
+  prediction-target residual actually is, the evidenced mechanism (§23.7) behind the
+  compression/large-cp-bias symptom (§27.4-§27.5, §32.6).
+- **Mate handling**: `target_cp()` maps every mate label to `±3,000` (train.py:45,114), deep in
+  the saturated zone (`σ(3000, 2.773456) ≈ 1.0` to float precision) — every mate distance produces
+  a numerically indistinguishable target (§32.5's already-established "collision" finding), and the
+  prediction-side gradient vanishes at the same magnitude regardless of label type.
+- **Compatibility with existing inference**: total, by construction — this is the path
+  `predicted_cp` already takes through `canonical.py`/`quantizer.py`/`NnueEvaluator.java`.
+- **Implementation complexity**: none (already shipping). The one free parameter in this objective
+  family is `K` itself — a retrain-and-resweep of `K` (§38's `P4I`) stays inside this same
+  objective, it does not create a new one.
+
+### 41.1 Raw centipawn regression (no sigmoid)
+
+**Math**: `L = mean[(p − t)²]`, no `texel_sigmoid` anywhere in the loss.
+
+**Gradient**: `dL/dp = 2(p − t)/N` — linear in the residual, no saturation term, for any residual
+magnitude.
+
+- **Near 0 cp**: gradient scales with the (typically small) residual for near-zero positions —
+  proportionally weaker pull per-sample than for large-residual positions, the inverse of the
+  incumbent's near-zero concentration. No experiment in Phases 1-3 tested this objective, so
+  whether this starves near-zero learning in practice is unevidenced, not established either way.
+- **Large cp**: gradient scales *linearly* with residual magnitude — directly removes the
+  saturation mechanism §23.7 identified, but at a real, evidenced cost: §32.2's own pre-filtering
+  skew/kurtosis numbers (Stage 1: skew 13.630, excess kurtosis 228.185) and §32.4's demonstration
+  that a handful of extreme-magnitude records can dominate a variance/squared-error-based statistic
+  (the mechanism Pearson correlation and raw-cp MSE share) mean raw-cp MSE training risks importing
+  the same extreme-value sensitivity into the *loss* that §32.4 already showed distorts the
+  *evaluation metric*. Even post-sentinel-filtering (§35), §32.6's own bucketed data (extreme
+  non-mate MAE 2,246cp on the current net) show legitimate large residuals that would dominate a
+  raw-cp MSE's gradient sum out of proportion to their 102/4,000 (2.55%) share of held-out records.
+- **Mate handling**: `MATE_EQUIVALENT_CP=3,000` becomes an *unbounded*-gradient target under this
+  loss (no saturation caps its influence) — a mate-labeled record with a 1,000cp residual
+  contributes 1,000× the per-sample gradient of a 1cp cp-labeled residual. Given mate labels are
+  11.52% of the corpus (§32.1) and already carry the corpus's largest residuals under the current
+  net (§32.6: mate MAE ≈2,785cp), raw-cp MSE plausibly lets mate-labeled gradient dominate total
+  training signal — a real, mechanism-grounded risk, explicitly **not evidenced by any completed
+  experiment**, since this objective has never been run.
+- **Compatibility with existing inference**: total — `predicted_cp` is already the exact quantity
+  `NnueEvaluator.java` consumes; zero change to `network.py`, `canonical.py`, `quantizer.py`, or
+  Java code.
+- **Implementation complexity**: very low — remove the two `texel_sigmoid(...)` calls in `train.py`
+  lines 219-220/228, compute `loss = torch.mean((predicted_cp - target_cps) ** 2)` directly.
+  `K` becomes unused for training. `validator.py`'s `_pearson_correlation` needs no change (already
+  cp-space); `evaluate_held_out`'s *loss* field would need the same substitution to stay
+  representative of what's actually being trained, a one-line mirror of the same change.
+
+### 41.2 Logistic(cp/K) — see §41.0 (the incumbent; not re-listed as a separate candidate)
+
+### 41.3 WDL probability targets
+
+**Math**: replace (or blend) `σ(target_cp, K)` with an empirical outcome-derived probability —
+either `target = wdl` directly (using `PositionLabel.wdl`, §40.2), or the PRD's originally
+specified λ-blend, `target = λ·wdl + (1−λ)·σ(eval_cp, K)` (`train.py`'s own module docstring,
+lines 14-23, explicitly deferred). `L = (σ(p,K) − target)²` — **the prediction-side transform
+stays `σ(predicted_cp, K)`, unchanged**; only the target's *source* changes. This is the design
+choice that keeps this candidate inference-compatible at all (below).
+
+**Gradient**: identical functional form to the incumbent on the *prediction* side —
+`dL/dp = 2(σ(p,K) − target)·σ'(p,K)`, so it inherits the same large-`|p|` vanishing-gradient
+profile (§41.0) unless paired with a loss-shape change too (§42's Huber/log-cosh, or hybrid,
+§41.5). What changes is the *target's information content*: an outcome-derived probability
+reflects the empirical result distribution at a position, not an engine's point-estimate cp
+squashed through a fixed, Classical-calibrated `K` — directly testing §6/Experiment 6's original
+"is target formulation leaving signal on the table" question, independent of volume.
+
+- **Near 0 cp**: a WDL target near 0.5 (drawish positions) carries real outcome-frequency
+  information that may diverge from `σ(eval_cp, K)` for positions where the raw cp underrates or
+  overrates practical winning chances — the mechanism this candidate is meant to test, unevidenced
+  by any completed experiment in this project.
+- **Large cp / mate handling**: WDL-sourced mate targets are empirically ≈1.0/0.0 directly, with no
+  `MATE_EQUIVALENT_CP`-vs-sentinel collision class of problem (§32.5) at all — a genuinely
+  different, principled answer to the flat-mate-constant problem than §41.5's target-representation
+  variant, via target-*source* substitution rather than target-*representation* scaling.
+- **Compatibility with existing inference**: **preserved, but only because the prediction side
+  keeps `σ(predicted_cp, K)`** — `predicted_cp` itself is untouched in scale or meaning; `network.py`,
+  `canonical.py`, `quantizer.py`, and Java inference all need zero change. This is the load-bearing
+  design choice distinguishing this candidate from §41.4 (pure win-probability regression) below.
+- **Implementation complexity — grounded in §40.2's trace, higher than a generic "extend the
+  format" estimate**: (a) `PositionLabel.wdl` already exists as a contract field, zero change
+  needed there; (b) `mmap_shard.py`'s `SHARD_DTYPE` cannot store a wdl value — format extension
+  required (`mmap_shard.py:60-66`); (c) `stockfish_label.py`'s `_read_fens` does not parse the `c9`
+  opcode out of Stage 2's source EPD lines at all (§40.2, a previously-undocumented gap) — a parser
+  change is required before any real WDL data could reach this pipeline, distinct from and prior to
+  the format-extension work; (d) `target_cp()`/`texel_sigmoid()`'s call sites need a wdl-aware
+  branch or the PRD's deferred `Labeler`-stage blending function. **Medium-high**, not the flatter
+  "Medium" §38.3 originally estimated before this trace.
+
+### 41.4 Win-probability regression (pure)
+
+**Math**: the network's own raw output *is* a probability (e.g. a sigmoid activation on the final
+layer itself, not a separate loss-space transform of an otherwise-open-ended cp output), trained
+with BCE or MSE against an empirical win-probability target.
+
+**Gradient**: for the standard BCE-on-logits formulation, the combined gradient simplifies to
+`(σ(logit) − t)` — linear in the residual with **no separate saturation term** in the combined
+expression (the "saturating" nonlinearity is now the network's own output activation, not an
+add-on loss-space transform layered atop an unbounded cp output) — the most direct removal, of any
+candidate in this catalog, of the specific vanishing-gradient mechanism §23.7 identified.
+
+- **Near 0 cp**: well-conditioned — BCE's gradient is best-behaved near `p=0.5`.
+- **Large cp / mate handling**: a genuine forced mate maps cleanly to `p≈1.0/0.0` with no flat
+  `MATE_EQUIVALENT_CP`-style constant needed at all — the same principled treatment as §41.3,
+  reached architecturally rather than via target substitution.
+- **Compatibility with existing inference: breaks outright — the most invasive candidate in this
+  catalog.** `network.py`'s forward pass (`network.py:85-100`) currently returns `raw_sum *
+  output_scale / (qa*qb)`, defined and consumed as a **centipawn** value by every downstream
+  consumer: `NnueEvaluator.java`'s search comparisons and pruning margins (calibrated to the
+  Classical cp scale — `network.py`'s own docstring states this is "a hard requirement," not a
+  convenience), `calibration_report`'s bias/compression/MAE/RMSE (all cp-unit metrics), and
+  `evaluate_held_out`'s correlation (computed against raw `target_cps`, §40.1's linchpin fact). A
+  probability-valued network output requires either (a) a new, separately-calibrated
+  inverse-sigmoid conversion at *every* consumption point — training diagnostics, checkpoint
+  selection, export, and the Java engine's search — each a new calibration-drift surface distinct
+  from anything in this roadmap's error record so far, or (b) restricting the probability output to
+  an auxiliary head only (§41.6, multi-head), never exposed to inference directly.
+- **Implementation complexity: High.** Beyond §41.3's data-pipeline prerequisites (also needed
+  here, if trained against real outcome data), this candidate additionally requires: a new
+  inverse-mapping layer threaded through `network.py`'s forward pass, every `validator.py` metric
+  function, `quantizer.py`/`canonical.py`'s export format (a probability-scaled weight is not the
+  same fixed-point quantity `NnueOracle.java`'s int16 qa/qb encoding was built around — `network.py`'s
+  docstring: "the two must agree for the K-calibrated loss to be meaningful"), and plausibly a
+  `.nnue` format-version bump (`canonical.py`'s hardcoded `ARCHITECTURE_ID = 1`, cross-referenced
+  against `NnueNetwork.java`'s strict single-version rejection, per `canonical.py`'s own comment —
+  this specific Java-side rejection behavior was not independently re-read this session, cited from
+  `canonical.py`'s comment rather than re-verified against the Java source directly). This is
+  squarely the class of change ADR-001 gates behind its own revisit conditions (§24.4), not a
+  Phase 4A-scale experiment.
+
+### 41.5 Hybrid centipawn + mate objectives
+
+**Math**: branch or blend by label type — e.g. `L = 1_{cp}·L_incumbent + 1_{mate}·w_mate·L_mate`
+(mate-aware loss weighting, §38's RQ-2/`P4II`), or replace the flat `MATE_EQUIVALENT_CP` with a
+mate-distance-aware target `f(plies\_to\_mate)` inside `target_cp()` for mate-labeled records only
+(mate-target representation, §38's RQ-3) — this document's §38 already scoped both variants in
+detail; this section restates them under the objective-analysis rubric this task requires, without
+re-deriving what §38 already established.
+
+**Gradient**: for the weighting variant, mate-labeled gradient magnitude scales by `w_mate`
+relative to cp-labeled records — a direct, first-order lever on how much §23.7's vanishing-gradient
+problem specifically starves the mate-labeled minority relative to the cp-labeled majority. For the
+distance-aware-target variant, `σ(t,K)` no longer collapses every mate distance to the same
+saturated value (§32.5) — different distances now produce different residuals against the same
+`p`, restoring differential gradient signal within the mate subset.
+
+- **Near 0 cp / large non-mate cp**: unaffected by design — this candidate's mechanism is scoped
+  to the mate-labeled branch only, leaving ordinary and large-but-non-mate positions exactly at the
+  incumbent's behavior (the isolating, additive-only design §24.4(ii) and §38's RQ-2/RQ-3 already
+  require, precisely to avoid repeating §23.5's single-transform trade-off).
+- **Mate handling**: this candidate's entire purpose — directly targets §33's hypothesis #2
+  (reconfirmed 5x).
+- **Compatibility with existing inference**: high, if implemented as a training-time-only
+  additive/branching term — `predicted_cp`'s scale and meaning are unchanged; zero export/
+  quantization/format impact.
+- **Implementation complexity**: low-medium — a per-record mate mask (`label.eval_mate is not
+  None`, the exact boolean already computed at `validator.py:205` for the mate/cp calibration
+  split, a proven pattern) threaded into `train.py`'s loss line for the weighting variant; a small,
+  local change to `target_cp()` (lines 110-118) for the distance-aware variant — though, per §38's
+  RQ-3 failure-mode note, the resulting distance function itself needs its own extreme-value check
+  (§32.6's bucketing discipline) since mate distance is right-skewed with a long tail (mate-in-64,
+  §32.3).
+
+### 41.6 Multi-head objectives
+
+**Math**: an auxiliary output head (`nn.Linear(2*hidden_width, 2)` in place of `network.py:75`'s
+`...,1)`) trained jointly, `L = L_primary + α·L_aux`, gradient from both heads flowing back through
+the shared feature-transformer (`self.ft`). This is architecturally a *wrapper* — it composes with
+any of §41.1-§41.5 as the auxiliary target, not a distinct target/loss shape of its own.
+
+**Gradient**: the shared FT layer receives gradient contributions from both heads simultaneously —
+a standard multi-task-learning mechanism for improving a shared representation even when only one
+head's output is ultimately consumed. **Precedent-only**: no experiment in Phases 1-3 tested any
+auxiliary-loss design in this codebase; whether it would move *this* net's correlation is
+unevidenced, not merely unconfirmed.
+
+- **Near 0 cp / large cp / mate handling**: entirely dependent on the auxiliary target chosen —
+  not this candidate's own distinguishing property.
+- **Compatibility with existing inference: high, but conditionally** — only if the auxiliary head
+  is strictly training-time and discarded before export. `canonical.py`'s `checkpoint_to_canonical()`
+  and `quantizer.py`'s `quantize()` would need an explicit "export the primary head's slice only"
+  step (e.g. `output_layer.weight[0:1, :]`/`output_layer.bias[0:1]`) — a small, well-scoped but
+  **new** code path; `canonical.py`'s `_validate_shapes()` (confirmed present, read this session)
+  would reject a 2-output `output_layer` under its current shape assumptions without this change.
+  If both heads were meant to influence inference (an ensemble or gated combination), that is a
+  materially different, ADR-001-class change, not Phase-4A-scale.
+- **Implementation complexity**: Medium — `network.py`'s output-layer shape change (low),
+  `train.py`'s loss line needing a second target/loss term plus an `α` hyperparameter (low-medium,
+  same class of change as §41.5), `canonical.py`/`quantizer.py`'s new "primary-head-only export"
+  path (low, but untested against this project's existing shape-validation code and needs its own
+  test coverage before use, per this project's `feedback_review_passes_after_green_tests`
+  convention).
+
+## 42. Loss analysis
+
+Per this task's instruction: MSE, MAE, Huber, log-cosh, weighted, asymmetric, ranking losses —
+each discussed for which failure mode it addresses. Every loss below can, in principle, be applied
+in either coordinate space (raw cp, per §41.1, or sigmoid/probability space, per the incumbent/
+§41.0) unless stated otherwise; this section states the failure mode each *shape* addresses,
+independent of which space it's applied in, since that choice is §41's axis, not this one.
+
+**MSE** (the incumbent's shape, §41.0, or as raw-cp regression, §41.1): squared-error strongly
+penalizes large residuals. In probability space (incumbent), this is offset by `σ'(p,K)`'s
+saturation, producing the vanishing-gradient-at-extremes behavior already analyzed in §41.0. In raw
+cp-space (§41.1), no such offset exists — MSE broadly shares the "outlier-sensitive" failure mode
+with Pearson correlation, since both are built on squared deviations (§32.4's own finding that a
+handful of extreme records dominate a variance-based statistic is the same mechanism, applied to a
+different statistic).
+
+**MAE**: `L = mean|p−t|` (either space). Gradient: `dL/dp = sign(p−t)/N` — **constant magnitude
+regardless of residual size**. Failure mode addressed: outlier domination, directly and completely
+— a single 20,000cp-off record contributes exactly the same per-sample gradient as a 1cp-off
+record, neutralizing §41.1's raw-cp-MSE extreme-value-domination risk without needing the sigmoid
+saturation mechanism at all. Trade-off, evidence-grounded rather than generic: MAE's gradient is
+constant-magnitude *everywhere*, including very close to the target — it does not replicate the
+incumbent's beneficial near-zero-region gradient *concentration* (§32.6's empirical finding that
+near-zero positions are already this project's best-predicted bucket under the current loss); MAE
+removes that concentration rather than preserving it, an explicit trade-off, not a strict
+improvement over the incumbent.
+
+**Huber**: `L = 0.5(p−t)²` for `|p−t|≤δ`, `δ(|p−t|−0.5δ)` otherwise. Gradient: linear (MSE-like)
+inside the `δ`-radius, constant-magnitude (MAE-like) outside it. Failure mode addressed: the
+extreme-value-domination problem, with MSE's smooth, magnitude-proportional gradient preserved for
+the *bulk* of the corpus (near-zero/moderate positions, §32.6's best-predicted buckets) while
+capping the influence of the small number of legitimate large-residual records (§32.6's extreme
+non-mate/mate buckets) at a tunable threshold. **This is the most direct single-parameter answer,
+of any loss in this catalog, to §33's hypothesis #2/§32.6's monotonic-magnitude-error finding** —
+distinct from, but complementary to, §41.5's *target*-side mate-specific candidate: Huber operates
+on the loss shape, is agnostic to cp-space vs. probability-space, and needs no change to
+`target_cp()` itself. `δ` is a new hyperparameter requiring its own cheap sweep — an explicit,
+bounded tuning surface, structurally analogous to `K`'s own (borrowed, not re-derived) provenance
+history (§23.7).
+
+**Log-cosh**: `L = mean[log(cosh(p−t))]`. Gradient: `dL/dp = tanh(p−t)` — ≈linear for small
+residuals, ≈constant-magnitude for large ones, a smooth (everywhere-differentiable) approximation
+to Huber's piecewise behavior, with no explicit `δ` to tune. Failure mode addressed: the same
+extreme-value-domination problem as Huber; the difference from Huber is implementation convenience
+(no threshold hyperparameter, no gradient kink at the threshold), not a different failure mode.
+
+**Weighted losses**: `L = mean[w_i·(base loss)_i]`, `w_i` a per-record weight — e.g. up-weighting
+mate-labeled records (§38's RQ-2/`P4II`, §41.5), up-weighting large-`|cp|` records generally (the
+general form of §38's Lever-A "extreme-value handling" candidate), or down-weighting one data
+source relative to another to address §32.2's measured cross-source cp-distribution divergence.
+Failure mode addressed: whichever the chosen weighting targets — a *family*, not one fix; its
+distinguishing property is changing *which records dominate the gradient sum* without changing the
+loss's functional shape, complementary to (combinable with) Huber/log-cosh's change to *how* a
+given residual maps to gradient magnitude. **Grounded implementation note (§40.1)**: no per-record
+weight infrastructure exists anywhere in the current pipeline — `encode_batch()`/`train.py`'s loss
+line carry no weight tensor today. Adding one is a small, well-isolated change (a weight tensor
+computed alongside `target_cps`, replacing `torch.mean(...)` with a weighted mean) — the same class
+of change §38's RQ-2 already scoped for the mate-specific case; this section states the general
+mechanism once.
+
+**Asymmetric losses**: `L = mean[ρ_τ(p−t)]`, penalizing over- vs. under-estimation differently
+(e.g. a pinball/quantile-style loss). **Failure mode addressed: none identified by Phases 1-3's
+evidence.** §32.6's own bucket table shows "mate favoring mover" bias −2,768.5cp and "mate against
+mover" bias +2,851.6cp — comparable magnitudes, *opposite* signs, both compressing *toward* zero
+from their respective directions: a **symmetric** compression-toward-zero pattern, not a
+sign-dependent one. Nothing in Phases 1-3 motivates a directional-penalty loss over a
+magnitude-aware one (Huber/log-cosh/weighted) for the compression symptom specifically. **Included
+here per this task's instruction to evaluate it; not recommended, and explicitly flagged as
+speculative relative to this project's own completed evidence** (§44 restates this under Evidence
+Mapping's "avoid speculative arguments" requirement).
+
+**Ranking losses** (if appropriate — this task asks the question explicitly): e.g. a pairwise
+margin/hinge loss on `(p_i − p_j)` vs. `sign(t_i − t_j)`, directly optimizing relative ordering
+rather than absolute-magnitude fit. **Is it appropriate? A real, evidence-grounded argument for
+considering it**: §26.0/§23.4 already establish correlation — a ranking-adjacent statistic — as
+this roadmap's primary metric *because* affine-invariant magnitude fixes provably cannot move it
+(§23.4, correctly scoped this time to post-hoc transforms only, §40's correction) — a ranking loss
+optimizes the thing actually being measured directly, rather than every regression loss above,
+which optimizes magnitude and hopes correlation follows. Failure mode addressed: the low cp-only
+correlation (0.362, §23.4) more directly than any candidate above. **Implementation complexity,
+honestly assessed as substantially higher than any regression-loss variant**: requires
+restructuring `train.py`'s batch construction to sample *pairs or groups* of positions with a known
+relative ordering — `encode_batch`/`EncodedBatch` (`batching.py`) has no pairing concept today, and
+this pipeline's per-position, source-order-agnostic corpus provides no structure for
+same-position-comparable pairs (comparing `target_cp` across *unrelated* positions from different
+games/sources is a much weaker ranking signal than comparing sibling moves from the same position,
+which nothing in this pipeline currently groups). **A real candidate for a future, larger
+investigation — not a Phase 4A-scale change** (§45/§46 rank it accordingly, not dismiss it).
+
+## 43. Architecture impact analysis
+
+Per this task's instruction: document every module that would require modification for each
+candidate objective, building directly on §40's trace (not re-deriving it).
+
+| Module | §41.1 Raw cp | §41.0 Incumbent (K only) | §41.3 WDL blend | §41.4 Win-prob regression | §41.5 Hybrid mate | §41.6 Multi-head |
+|---|---|---|---|---|---|---|
+| `trainer/trainer/model/train.py` (loss line, `target_cp`, `texel_sigmoid`) | Yes — remove sigmoid calls | Yes — `K` value only, no structural change | Yes — target-source branch/blend | Yes — loss + inverse-map | Yes — mate-branch/weight or `target_cp()` distance function | Yes — second loss term, `α` |
+| `trainer/trainer/model/network.py` (`NnueNet`, `output_layer`) | No | No | No | **Yes — output activation** | No | **Yes — output-layer shape** |
+| `trainer/trainer/model/batching.py` (`encode_batch`) | No | No | No | No | No (unless weighting needs a weight tensor — see below) | No |
+| `trainer/trainer/contracts/dataset.py` (`PositionLabel.wdl`) | No | No | No (field exists, unused) | No (field exists, unused) | No | No |
+| `trainer/trainer/dataset/mmap_shard.py` (`SHARD_DTYPE`) | No | No | **Yes — format extension required** | **Yes — format extension required** | No | No |
+| `trainer/scripts/stockfish_label.py` (`_read_fens`) | No | No | **Yes — `c9` parsing required (§40.2 new finding)** | **Yes — same** | No | No |
+| `trainer/trainer/validation/validator.py` (`evaluate_held_out`, `calibration_report`) | Loss-field mirror only | No | No (prediction side unchanged, §41.3) | **Yes — every metric needs an inverse map (§40.1 linchpin)** | No | No (primary head only) |
+| `trainer/trainer/export/canonical.py` (`CanonicalNetwork`, `_validate_shapes`, `ARCHITECTURE_ID`) | No | No | No | **Yes — probability-scaled weights, plausible format-version bump** | No | **Yes — primary-head-only export path** |
+| `trainer/trainer/quantization/quantizer.py` (`quantize()`) | No | No | No | **Yes — same reason as `canonical.py`** | No | **Yes — same** |
+| `trainer/scripts/phase*_*.py` (`_select_best_checkpoint`, duplicated 4x, §40.1) | No | No | No | No (as long as correlation stays cp-space) | No | No |
+| `engine-core/.../NnueEvaluator.java`, `NnueNetwork.java` (inference, format-id rejection) | No | No | No | **Yes — likely, per `canonical.py`'s comment; not independently re-verified this session** | No | No (primary head only) |
+
+**Reading the table**: columns §41.1/§41.0/§41.5 (raw cp, K-only, hybrid mate) touch only
+`train.py` and, for hybrid's distance-aware variant, nothing beyond it — no export, quantization,
+validation-metric, or Java-side change in any of the three. Columns §41.3/§41.4/§41.6 (WDL, win-
+probability, multi-head) each touch the data pipeline, export, or inference layer to a degree
+scaling with how far the candidate moves away from "keep `predicted_cp` as the network's raw,
+cp-scaled, single-valued output" — exactly the linchpin fact §40.1 identified, now shown
+module-by-module rather than asserted once.
+
+## 44. Evidence mapping (Phases 1-3 only)
+
+Per this task's instruction: use only evidence accumulated in Phases 1-3; for each candidate,
+which observed bottleneck it addresses and which it does not; avoid speculative arguments
+unsupported by completed experiments.
+
+| Candidate | Addresses (cited) | Does not address / unevidenced (cited) |
+|---|---|---|
+| Incumbent, K retrain (§41.0) | §23.7's saturation mechanism is exact, mechanism-level evidence (verified by direct computation, §41.0) — an evidenced *cause* of the compression symptom (§27.4-§27.5, §32.6) | **Whether retraining at a different `K` moves *correlation* is genuinely untested** — §40's correction: this is not foreclosed by §23.4 (that result is about post-hoc transforms of a fixed model, §40) |
+| Raw cp regression (§41.1) | Removes the saturation mechanism §23.7 identified, directly, by construction | Reintroduces the extreme-value-domination mechanism §32.4 already demonstrated distorts a squared-error-based statistic (Pearson correlation) — analogous risk for the loss itself, unevidenced for *this* loss specifically since it has never been run |
+| WDL blend (§41.3) | §6/Experiment 6's original "is target formulation leaving signal on the table" question, still open per §37's "net position entering Phase 4"; §32.5's flat-mate-constant/sentinel-collision problem, addressed via target-source substitution | No experiment has run this in this project — "Unknown, plausible (Stockfish/nnue-pytorch precedent)" is §6's own honest framing, reused verbatim, not upgraded |
+| Win-probability regression (§41.4) | Same mechanism-level argument as WDL for removing saturation, architecturally rather than via target substitution | Same "untested in this project" status as WDL, **plus** a compatibility cost (§41.4) with no precedent anywhere in this project's own history to draw on |
+| Hybrid mate (weighting or distance-target, §41.5) | §33's hypothesis #2 — "very strong, independently reconfirmed five times" (§23.4/§23.7, §27.5, §28.5, §29.6, §32.6) — on the *existence and severity* of the mate-bias problem | Zero ablation has been run on *this specific fix* — problem-evidence is strong, fix-evidence is absent, exactly §38.1's own honest distinction, reused here |
+| Multi-head (§41.6) | No direct evidence in this project either way | Entirely precedent-only (general multi-task-learning literature, outside this project's evidence base) — the least evidence-grounded candidate in the objective catalog |
+| MSE (incumbent shape / raw-cp shape) | See incumbent/raw-cp rows above | — |
+| MAE | Directly and completely removes extreme-value domination (a structural, not merely empirical, property of the `sign()` gradient) | Removes the near-zero gradient concentration §32.6 shows is currently beneficial — a real trade-off, not addressed by any completed experiment measuring the net effect |
+| Huber / log-cosh | §32.6's monotonic magnitude-bucketed error (the finest-grained completed measurement in this roadmap) directly motivates capping large-residual gradient influence while preserving near-zero conditioning | The specific `δ` (Huber) or implicit transition scale (log-cosh) that would work best for *this* net's residual distribution is unmeasured — no sweep has been run |
+| Weighted (general) | Same problem-evidence as its specific instances (mate-aware, §38 RQ-2; extreme-value, §38 Lever A) | The general family's own effectiveness, independent of which weighting is chosen, is not something Phases 1-3 measured — each instance needs its own evidence |
+| Asymmetric | **None** — §32.6's mate-bias bucket is sign-*symmetric* (compression toward zero from both directions, comparable magnitudes, opposite signs), directly contradicting the premise that a sign-dependent penalty would help | Speculative relative to this project's own completed evidence; included only because this task's instruction requires evaluating it |
+| Ranking | The low cp-only correlation (0.362, §23.4) directly, more so than any regression-loss candidate, since it optimizes the primary metric's own mathematical structure rather than a magnitude proxy for it | No experiment in this project has ever constructed or evaluated a pairwise/listwise training signal — the entire mechanism is precedent-only relative to this codebase, and the pipeline has no pairing infrastructure to build on (§42) |
+
+## 45. Decision matrix
+
+Ranked by accumulated evidence per §44, not intuition — per this task's instruction. Columns as
+specified: expected information gain, implementation effort, scientific risk, compatibility with
+existing architecture, reversibility. **Objectives and loss-shapes are ranked as two related but
+distinct axes** (an objective candidate and a loss-shape candidate can combine — e.g. "incumbent
+objective, Huber shape" — this matrix ranks each axis's options against the same five columns
+rather than enumerating every combination, consistent with §41's own framing that loss-shape is
+orthogonal to target/objective choice except where a candidate's own description ties them
+together, as hybrid-mate and multi-head do).
+
+**Objective candidates:**
+
+| Candidate | Expected information gain | Implementation effort | Scientific risk | Compatibility with existing architecture | Reversibility | Priority |
+|---|---|---|---|---|---|---|
+| Incumbent, K retrain (§41.0) | **High — the corrected, previously-mis-scoped question**: closes a specific, named, 15+-section-old hypothesis (§23.7) under retraining for the first time; either outcome (moves correlation or doesn't) is directly informative | Very low — one scalar hyperparameter, zero new modules (§43's table, all "No" outside `train.py`) | Low — re-verify calibration after (§24.6's standing caution), no structural change | Total — already the production path | Total — a checkpoint-scoped experiment, per §26.5's preservation policy; nothing shared is touched | **1** |
+| Hybrid mate (§41.5) | High on the mate-bias symptom specifically (§33 hyp. #2, 5x reconfirmed); low-medium on correlation (mate is ~11.5% of the corpus, §32.1) | Low-medium — one module (`train.py`), a proven boolean-mask pattern already used elsewhere (`validator.py:205`) | Medium — §23.5's single-transform trade-off risk, mitigated by the additive-only design already required (§24.4(ii)) | High — training-time only, zero export/inference impact | High — same checkpoint-scoped isolation as above | **2** |
+| Huber/log-cosh loss shape (§42, applied atop the incumbent objective) | Medium-high — the most direct single-parameter answer to §32.6's finest-grained completed evidence, but shares the "untested under retraining" caveat with the K-retrain row | Low — a loss-shape swap, one new hyperparameter (`δ`) for Huber, none for log-cosh | Low-medium — same class of risk as K retrain (re-verify calibration) | Total — training-time only | Total | 3 — natural Phase 4B candidate if `P4I` (§46) is inconclusive |
+| WDL blend (§41.3) | **Unknown, but the only candidate class with a plausible mechanism to move correlation via target-*source* substitution rather than gradient-reshaping** — untested, precedent-only (§6) | Medium-high (§40.2's four concrete prerequisites: contract field exists but unpopulated, shard format extension, EPD parser extension, blend logic) | Medium — touches the training-target contract; CLAUDE.md §4's mirror-symmetry/regression re-run applies | High for the prediction side (unchanged), but the *data pipeline* needs real, multi-module work (§43) | Medium — new data artifacts (extended shards) persist outside the checkpoint-scoped pattern above | 4 |
+| Multi-head (§41.6) | Low-medium — precedent-only, no project-specific evidence either way (§44) | Medium — new output shape, new export path, new test surface | Medium — new, untested code paths in `canonical.py`/`quantizer.py` | High if auxiliary-head-only (§41.6's conditional); breaks otherwise | Medium | 5 |
+| Win-probability regression (§41.4) | Low-medium — same untested mechanism as WDL, no added evidence to justify its much larger cost | High | High — the largest blast radius of any candidate (network, validator, export, quantizer, plausibly Java/format) | **Low — breaks by default**, ADR-001-class change | Low — a format-version-class change is not a checkpoint-scoped, easily-discarded experiment | 6 — not recommended for Phase 4A; revisit only after cheaper candidates are exhausted, per ADR-001's own gating pattern |
+
+**Loss-shape candidates (orthogonal axis, combinable with any objective above unless noted):**
+
+| Candidate | Expected information gain | Implementation effort | Scientific risk | Compatibility | Reversibility | Note |
+|---|---|---|---|---|---|---|
+| MSE (incumbent shape) | — (baseline) | None | None | Total | — | Reference row |
+| Huber / log-cosh | See objective-matrix row above | Low | Low-medium | Total | Total | Ranked jointly above; not re-ranked here |
+| MAE | Low — a known, evidence-grounded trade-off (removes outlier domination, removes near-zero concentration) rather than a clear net improvement | Low | Medium — the near-zero-region regression is a real, named risk (§42), not hypothetical | Total | Total | Not recommended as Phase 4A's primary candidate; a plausible secondary ablation if Huber's own result is ambiguous |
+| Weighted (general) | Depends entirely on the specific weighting chosen — see hybrid-mate/extreme-value rows | Low | Low-medium | Total | Total | Not a standalone candidate — its instances are ranked individually |
+| Asymmetric | **Low — directly contradicted by §32.6's symmetric bias pattern** | Low-medium | Medium (no evidence base to bound risk against) | Total | Total | Not recommended — §44's evidence mapping is explicit that this project's own data argues against it |
+| Ranking | Potentially high on the primary metric (correlation) specifically, but entirely unevidenced in this codebase | **High — new pairing infrastructure required, none exists** | Medium-high — broadest untested mechanism in this catalog | Total (training-time only) | Total | Flagged as a real future candidate, explicitly not Phase-4A-scale (§42) |
+
+## 46. Phase 4A experimental design
+
+Per this task's instruction: recommend **one** Phase 4A experiment.
+
+### 46.1 Recommendation: `P4I` — retrain ablation of the incumbent's `K` parameter
+
+**Experiment ID note**: this is the same run §26.5 already reserved the `P4I` PhaseCode for and
+§38.3/§39/RQ-1 already scoped — **this section uses `P4I` as the canonical ID, not a new
+`P4A-K` label**, so the checkpoint directory and every artifact this run produces stays consistent
+with §26.5's existing scheme rather than introducing a second name for one experiment.
+
+**This is not a repeat of §38's `P4I`/RQ-1 in substance — it is the same experiment under
+corrected framing** (§40's correction): §38.5 recommended the K sweep as a "cheap diagnostic...
+known in advance not to solve the primary problem." That framing is retracted here. The K sweep is
+recommended again, for a different, stronger reason: **whether retraining with a different `K` can
+move correlation is a genuinely open, mechanism-backed, previously-mis-scoped-as-closed question**,
+and it is the cheapest possible test of that question in this entire catalog (§45's matrix,
+priority 1).
+
+**Why a K sweep answers "what supervision objective" rather than dodging it**: this task's purpose
+is to determine the best supervision objective before writing code, and a fair reading could ask
+why the recommended first experiment tunes a parameter of the *incumbent* objective rather than
+testing an alternative one outright. The answer is in §41.0's own saturation-point table: `K`
+directly interpolates the cp-sigmoid family's *shape* — moving from `K=5.0` (99% saturation at
+≈160cp, closer to fully saturated/step-function-like) to `K=1.5` (≈532cp, closer to
+locally-linear, approaching raw-cp-regression behavior in the sub-500cp range where most of the
+corpus lives, §32.2). **Every candidate objective in §41 that removes or relocates saturation —
+raw cp regression (§41.1), WDL (§41.3), win-probability (§41.4), hybrid mate (§41.5) — shares the
+same underlying bet: that de-saturating the gradient somewhere in this space moves correlation.**
+The K sweep is not orthogonal to that question; it is the cheapest possible entry point into it,
+using zero new modules (§43) to test the shared premise before paying any of the other candidates'
+much larger implementation costs (§45).
+
+### 46.2 Null hypothesis
+
+`H0`: retraining P1-G04's frozen optimization schedule at each of several `K` values (data,
+architecture, and every other §26.1-declared control held fixed) does not improve held-out
+correlation beyond P1-G04's reference value by more than the measured noise floor (std≈0.0019,
+n=3, §27.2), for any `K` tested.
+
+### 46.3 Independent variable
+
+`K` only (`train.py:99-107`'s `texel_sigmoid` slope parameter), swept across a grid chosen from
+§41.0's own saturation formula rather than arbitrary round numbers — verified this session by
+direct computation (matching §23.7's cited figures exactly):
+
+| K | 99% saturation point |
+|---|---|
+| 1.5 | ≈532cp |
+| 2.0 | ≈399cp |
+| **2.773456 (current/baseline)** | **≈288cp** |
+| 3.5 | ≈228cp |
+| 5.0 | ≈160cp |
+
+Grid: `K ∈ {1.5, 2.0, 2.773456, 3.5, 5.0}` — chosen to move the saturation onset materially in
+both directions (roughly 1.85x wider to 1.8x narrower than baseline) rather than a narrow
+perturbation, so a null result is informative about the mechanism's range, not just one point near
+it.
+
+### 46.4 Held constant
+
+P1-G04's frozen schedule (steps=20,000, LR=0.01, cosine, warmup=200, seed=42, batch_size=256,
+§27.11), architecture (`hidden_width=256`, `qa=127`, `qb=64`, `output_scale=400`), feature
+representation (plain-768), Stage 1 (20,000, sentinel-filtered per §35.9's now-adopted ingestion
+hygiene) + Stage 2 (20,000) dataset, split seed=42. **Benchmark declared in advance, per §38.3's
+own earlier flag that this choice must be explicit**: primary reporting benchmark is **v1-clean**
+(§35.8, the now-adopted-as-hygiene sentinel-filtered set) with **v1** also reported alongside for
+continuity with every pre-§35 historical number — neither is picked silently.
+
+### 46.5 Success criteria
+
+At least one `K` value's selected checkpoint (peak held-out correlation, §24.4's curve rule, via
+the existing `_select_best_checkpoint` pattern, §40.1) clears held-out correlation beyond P1-G04's
+reference (0.5315 v1 / 0.5931 v1-clean) by more than the noise floor (~0.004-0.006, §27.2's 2-3σ
+convention) **and** held-out loss is not worse than P1-G04's own (§26.3's existing Phase 1 pattern,
+reused) **and** the mate/cp calibration split (`calibration_report`) shows no new single-transform-
+style trade-off — cp-labeled bias/MAE does not regress beyond the noise floor (§23.5's failure mode,
+explicitly checked for, not assumed absent).
+
+### 46.6 Failure criteria
+
+Every `K` value's selected-checkpoint correlation delta from P1-G04 falls within the noise floor,
+in both directions — `H0` not rejected. **Explicitly, per §26.4's own standing definition, this is
+not a failed experiment** — it is a clean, informative negative result that would falsify the
+"gradient-reshaping via `K` alone can move correlation" hypothesis specifically (leaving §23.7's
+separately-established compression-mechanism claim intact — that claim was never about correlation)
+and would redirect Phase 4 toward Huber/log-cosh (§45's priority 3, a different gradient-reshaping
+mechanism), hybrid mate (§45's priority 2, already independently justified regardless of this
+experiment's outcome), or WDL (§45's priority 4) as the next candidate.
+
+**Bound on how far a null result generalizes, stated explicitly so it isn't over-read**: `K` only
+*relocates* the sigmoid's saturation point along the cp axis (§41.0's saturation-point table) — it
+never *removes* saturation the way Huber/log-cosh (which cap large-residual influence without an
+exponentially-vanishing tail) or raw-cp regression (which removes the sigmoid outright) do. A null
+`P4I` result is therefore evidence against *this specific* de-saturation mechanism, not against
+"loss/target reformulation can move correlation" as a class — §45's ranking already places
+Huber/log-cosh, hybrid mate, and WDL as independently-justified next candidates precisely because
+each moves gradient-vs-magnitude behavior through a mechanism `K` alone does not test. A null result
+here narrows the field; it does not close Phase 4.
+
+### 46.7 Rollback criteria
+
+Reuses §26.4's existing early-termination machinery verbatim, not redefined here: sustained loss
+increase or unbounded gradient norm (divergence); oscillating loss/correlation with no discernible
+trend (instability); held-out loss/correlation worse than Phase 0's untrained baseline (§24.4,
+validation collapse); an implementation bug discovered mid-run. Any triggering cell stops
+immediately, per §26.4 — a broken run's numbers must not enter the comparison table. **No shared
+state is at risk**: per §26.5's checkpoint-preservation policy, every cell writes to its own
+`P4I`-scoped output directory; nothing here touches P1-G04's own checkpoint or any prior
+experiment's artifacts. If promoted, P1-G04 remains the reference model (§26.10) until a
+full-metric comparison clears every criterion in §46.5 — correlation alone is not sufficient,
+matching every promotion decision this roadmap has made so far.
+
+### 46.8 Justification for highest expected information gain
+
+1. **Closes a specific, long-open, load-bearing hypothesis.** §23.7's saturation claim has been
+   carried in this document, explicitly caveated as "supported, not confirmed," since before Phase
+   1 began (§25's hypothesis table) — 15+ sections without ever being tested under retraining. This
+   experiment is the first opportunity to actually test it, not merely continue citing it.
+2. **Cheapest possible test in this entire catalog.** §43's module table shows zero modules outside
+   `train.py` touched — no new data engineering, no architecture change, no format/export change.
+   §45's effort column ranks it "Very low," the only candidate at that tier.
+3. **Directly tests, for the first time, whether reshaping the loss's gradient-vs-magnitude profile
+   can move the primary, binding metric.** §40's correction reopened this question; leaving it
+   untested after identifying the error would repeat the exact mistake being corrected.
+4. **Either outcome is immediately actionable and cheap to obtain.** A positive result promotes a
+   new reference model and reframes the rest of Phase 4 around a demonstrated lever. A clean
+   negative result (§46.6) rules out one specific mechanism while leaving Huber/log-cosh (a related
+   but distinct mechanism) and the target-substitution candidates (hybrid mate, WDL) as the next,
+   still-viable, already-ranked options — informationally productive either way, matching this
+   project's own stated experimental philosophy (§24.5's "either outcome is informative and cheap"
+   reasoning, reused here for the same structural reason: cheap, mechanism-grounded, and decisive
+   regardless of which way it lands).
+
+## 47. Graphify validation (post-analysis, 2026-07-20)
+
+Per this task's instruction, refreshed after the analysis above to confirm no architectural drift
+and that documentation references still resolve.
+
+```
+$ graphify update .
+Re-extracting code files in . (no LLM needed)...
+  AST extraction: 99/99 uncached files (100%) [16 workers]
+  warning: 9 source file(s) produced zero nodes and are absent from the graph
+[graphify watch] Rebuilt: 3990 nodes, 8315 edges, 260 communities
+```
+
+**Verification checklist**:
+- **No architectural changes introduced**: confirmed directly, not inferred from node count —
+  `git status`/`git diff --stat` after this task's entire analysis show exactly one file changed,
+  this research document (678 insertions, §40-§47), across the whole task; no file under
+  `trainer/trainer/`, `trainer/scripts/`, or any `engine-*` module was modified.
+- **Node/edge count is not directly comparable to §40's baseline, and that's stated plainly rather
+  than glossed over**: §40 used `graphify . --update --code-only` (2,503 nodes/6,898 edges/157
+  communities); this pass used `graphify update .` (3,990 nodes/8,315 edges/260 communities) — a
+  different subcommand with different file-classification scope, not a before/after diff of the
+  same command. The count difference reflects that scope mismatch, not a code change (confirmed
+  above via `git status`, the actually meaningful check for this checklist item, not raw node
+  count parity across two differently-scoped commands).
+- **All six required trace areas identified**: target generation, loss computation, mate handling,
+  evaluation metrics, validation, and checkpoint selection are each traced to specific files and
+  line numbers in §40.1, cross-checked against direct source reads (not graph inference alone).
+- **Every module that would require modification for each candidate objective is documented**:
+  §43's table enumerates eleven modules (ten Python/trainer modules plus the Java inference layer)
+  against all six objective candidates — the task's explicit "document every module" requirement.
+- **WDL data-availability trace resolved beyond §38.4's stated unknown**: §40.2 establishes four
+  concrete, code-verified prerequisites for the WDL-blend candidate, superseding §38.4's more
+  general "unknown" framing with specific facts (contract field exists and is unpopulated; shard
+  format cannot store it; the EPD parser does not extract `c9`; Stage 1 has no WDL-adjacent source
+  at all).
+- **§38's ranking-spine correction is recorded, not silently applied**: §40's opening paragraph
+  states explicitly that §41-§46 supersede §38.1/§38.3's "cannot move correlation" classification
+  for retrained (as opposed to post-hoc-transformed) objectives, while confirming §38's other
+  findings (mate-bias is structural, Stage 1 volume exhausted, the single-transform trade-off risk)
+  are unaffected and reused — per this project's standing practice of preserving the investigation's
+  error record (§32.4's own precedent) rather than back-editing an earlier section to look correct
+  in hindsight.
+
+**Explicitly out of scope, per this task's instruction**: no loss function was implemented, no
+trainer code was modified, no retraining was performed, no dataset/checkpoint was touched. §40-§47
+are documentation, code-tracing, and experimental design only. **Stopped after the design review,
+per this task's explicit instruction — Phase 4A implementation (`P4I`) has not begun.**
