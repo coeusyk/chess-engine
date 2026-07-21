@@ -19,8 +19,13 @@ needs to be read end-to-end to find one result.
    memory files** (e.g. "§27.2", "§35.9") — those citations are not repeated here.
 2. **[phase4-p4i-k-sweep.md](phase4-p4i-k-sweep.md)** — Experiment P4I: coarse-to-fine retrain
    ablation of the texel-sigmoid loss's `K` parameter. Training report, metric comparison,
-   adaptive decision, and recommendation.
-3. *(future Phase 4 experiments — P4II, WDL blend, etc. — each get their own file here, added as
+   adaptive decision, and recommendation. Result: low K clears 2σ but not 3σ — a
+   threshold-contingent, not clean-null, result (see file for full disclosure).
+3. **[phase4-p4i-replication.md](phase4-p4i-replication.md)** — P4I low-K reproducibility check:
+   one additional model at the same K, a second training seed, measuring seed-to-seed variance
+   under the *actual* Phase 4 configuration rather than reusing Phase 1's cross-configuration
+   noise-floor estimate.
+4. *(future Phase 4 experiments — P4II, WDL blend, etc. — each get their own file here, added as
    they're run; this list is updated as new files land, not maintained separately.)*
 
 ## Conventions carried forward unchanged from the original document
