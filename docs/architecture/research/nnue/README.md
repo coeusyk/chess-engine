@@ -75,7 +75,15 @@ needs to be read end-to-end to find one result.
     threshold-contingent band (10-25cp) — a real, disclosed ambiguous result, not resolved either
     way. Reconciles the original §32.5 duplicate-FEN finding as a distinct (unisolated) carryover
     mechanism, not the same thing this experiment measures.
-12. *(future Phase 5 experiments each get their own file here, added as they're run; this list is
+12. **[phase5-p5-wdlalt-lambda.md](phase5-p5-wdlalt-lambda.md)** — Experiment P5-WDLALT, Phase 5's
+    #2-ranked candidate: WDL blend at an alternate operating point (λ=0.8, a light outcome touch,
+    vs P4IV's λ=0.5 midpoint) — resolves a self-contradiction in `phase5-roadmap.md`'s own text
+    (disclosed, confirmed with the user, not resolved unilaterally). Result: cp-only correlation
+    still regresses slightly (-0.0011, vs P4IV's -0.0037 at λ=0.5) — not promotable, but the
+    dose-response pattern (~3.4x smaller regression at a lighter touch) is suggestive that the
+    outcome signal itself carries no positive ranking information, not merely that λ=0.5 was too
+    heavy a dose. RMSE/calibration flat at both checkpoints.
+13. *(future Phase 5 experiments each get their own file here, added as they're run; this list is
     updated as new files land, not maintained separately.)*
 
 ## 0. Roadmap status (updated after Phase 4 closure, 2026-07-21 — Phase 4 is now CLOSED)
@@ -98,6 +106,7 @@ closes — the retrospective is the current source of truth for synthesis-level 
 | Huber/log-cosh loss shape | Open, unexecuted — **reranked down** (Phase 4C audit): mechanistically predicted low value on the primary metric, same `σ'(p,K)` saturation wall as the closed Lever-B pair (`phase4c-reranking-wdl-audit.md` §2). Not started — deliberately not run this cycle, per this task's explicit "do not start Huber/log-cosh" instruction. |
 | WDL blend, λ=0.5 (P4IV, Lever C) | **✓ Closed** — not promotable; majority-population (cp-only) correlation regressed slightly at every reading, no rubric-contamination confound (unlike P4II/P4III, this intervention never touches evaluation) — a clean, direct null (`phase4-p4iv-wdl-blend.md`) |
 | Label budget-sensitivity (RQ-5, Phase 5 #1) | **✓ Closed — diagnostic, not an intervention.** Median 25k-vs-50k spread 13cp, threshold-contingent (10-25cp pre-registered band) — a disclosed ambiguous result (`phase5-rq5-label-noise-floor.md`) |
+| WDL blend, λ=0.8 (P5-WDLALT, Phase 5 #2) | **✓ Closed** — not promotable; cp-only correlation regressed slightly (-0.0011), ~3.4x smaller than P4IV's λ=0.5 regression (-0.0037) — dose-response evidence suggestive that the outcome signal carries no positive ranking information for the majority population (`phase5-p5-wdlalt-lambda.md`) |
 
 **Remaining Phase 4 work is entirely supervision-objective territory** — every lever outside
 loss/target formulation (optimization, data volume, label-outlier cleaning, the incumbent
