@@ -41,8 +41,44 @@ from trainer.reproducibility import capture, seed_everything
 
 # A large-but-finite centipawn stand-in for a forced mate, so mate-only labels share
 # the same sigmoid-target code path as eval_cp labels rather than a special-cased
-# branch in the loss itself.
+# branch in the loss itself. Retained only for `target_cp(..., distance_aware=False)`
+# (research doc RQ-3/`P4III`: reproduces the pre-Phase-4C flat-target behavior exactly,
+# for direct comparison against historical experiment numbers) -- the production
+# default (`distance_aware=True`) no longer uses this constant; see MATE_BASE_CP below.
 MATE_EQUIVALENT_CP = 3000.0
+
+# Phase 4C (research doc RQ-3/`P4III`, §39): mate-distance-aware target, replacing the
+# flat MATE_EQUIVALENT_CP for mate-labeled records. Derived from `texel_sigmoid`'s own
+# saturation formula (K=2.773456's calibrated value), not chosen by eye -- see the
+# research doc's RQ-3 report for the full derivation and the disclosed confound it
+# accepts (this necessarily also de-scales mate-target magnitude, see below).
+#
+# `MATE_BASE_CP` (mate-in-0/1, the shortest/most-certain distance): anchored near the
+# 99th percentile of |eval_cp| in the sentinel-filtered training corpus (measured
+# directly: 976cp, rounded to 1000) -- keeps short/common mate distances more extreme
+# than ~99% of ordinary evaluations, preserving the "categorically decisive" semantic
+# the flat design intended, at the cost of near-zero residual gradient at this end
+# (`texel_sigmoid`'s own gradient-ratio formula: sigma'(1000)/sigma'(0) approx 4.7e-7)
+# -- an accepted trade-off since the shortest, most-certain mates are also the ones a
+# reasonably-trained net should already predict confidently.
+#
+# `MATE_FLOOR_CP` (the longest mate distance observed in this training corpus, 64
+# moves): the centipawn value where residual gradient has decayed to exactly 10% of
+# its zero-crossing peak (`sigma'(x)/sigma'(0) = 4*sigma(x)*(1-sigma(x))`, solved
+# numerically: 227.8cp) -- genuinely differentiable, restoring real training signal for
+# long, less-certain mates, at the cost of a mate target *smaller* than roughly 29% of
+# ordinary cp-labeled evaluations in this corpus (measured: 9,221/31,796 records exceed
+# 375cp). This confound -- distance-awareness necessarily entailing some magnitude
+# de-scaling under this K-calibrated sigmoid -- is disclosed here explicitly, not
+# discovered after the fact: any target kept above roughly 1,000-1,200cp collapses to
+# an indistinguishable sigma=1.0 in float32 regardless of its exact value (verified
+# directly this session), so "stay extreme AND stay differentiable" is not jointly
+# achievable for the long tail under the current loss -- only the short/common end of
+# the distribution (median mate distance in this corpus: 5 moves) keeps the "more
+# extreme than nearly all ordinary evaluations" property intact.
+MATE_BASE_CP = 1000.0
+MATE_FLOOR_CP = 227.8
+MATE_MAX_OBSERVED_N = 64  # longest |eval_mate| in the sentinel-filtered training corpus, declared in advance
 
 
 @dataclass(frozen=True)
@@ -94,6 +130,13 @@ class TrainingConfig:
     # pre-existing config/checkpoint's behavior exactly (`train()`'s loss line reduces
     # to a plain mean, see `train()`'s docstring for the identity this preserves).
     mate_weight: float = 1.0
+    # Phase 4C (research doc RQ-3/`P4III`, §39): whether train()'s loss line grades
+    # mate-labeled records against the distance-aware target (see target_cp()'s own
+    # docstring) or the pre-Phase-4C flat MATE_EQUIVALENT_CP. Default False reproduces
+    # every pre-existing config/checkpoint's behavior exactly -- an unpromoted P4III
+    # candidate must not silently become the new default for unrelated future training
+    # runs, the same discipline mate_weight's own default=1.0 follows.
+    mate_target_distance_aware: bool = False
 
 
 def load_config(path: Path) -> TrainingConfig:
@@ -113,11 +156,32 @@ def texel_sigmoid(x: torch.Tensor, k: float) -> torch.Tensor:
     return 1.0 / (1.0 + torch.pow(torch.tensor(10.0), -k * x / 400.0))
 
 
-def target_cp(label: PositionLabel) -> float:
+def target_cp(label: PositionLabel, distance_aware: bool = False) -> float:
+    """`distance_aware=False` (the default): reproduces the pre-Phase-4C flat
+    `MATE_EQUIVALENT_CP` behavior exactly, matching every prior config/checkpoint in
+    this roadmap -- `train()`'s own loss line only opts into the alternative below via
+    `TrainingConfig.mate_target_distance_aware` (default `False`, same reasoning), never
+    by relying on this function's own default changing global behavior.
+
+    `distance_aware=True` (research doc RQ-3/`P4III`, unpromoted as of that experiment,
+    §39): mate-labeled records get a magnitude that linearly decays from `MATE_BASE_CP`
+    (mate-in-0/1) to `MATE_FLOOR_CP` (at `MATE_MAX_OBSERVED_N` moves-to-mate or beyond,
+    clamped) -- see the constants' own comments for the saturation-formula derivation.
+    `eval_mate` is in *moves* to mate (UCI/Lichess-API convention, confirmed against
+    both label sources this session), not plies. Evaluation call sites (`validator.py`
+    and everything built on it) always call this with the default -- they have no
+    `TrainingConfig` to consult, so any future promoted use of `distance_aware=True`
+    would need its own, deliberate evaluation-side plumbing, not assumed for free.
+    """
     if label.eval_cp is not None:
         return float(label.eval_cp)
     if label.eval_mate is not None:
-        return MATE_EQUIVALENT_CP if label.eval_mate > 0 else -MATE_EQUIVALENT_CP
+        sign = 1.0 if label.eval_mate > 0 else -1.0
+        if not distance_aware:
+            return sign * MATE_EQUIVALENT_CP
+        distance = min(abs(label.eval_mate), MATE_MAX_OBSERVED_N)
+        magnitude = MATE_BASE_CP - (MATE_BASE_CP - MATE_FLOOR_CP) * distance / MATE_MAX_OBSERVED_N
+        return sign * magnitude
     raise ValueError(
         "PositionLabel has neither eval_cp nor eval_mate -- WDL-only labels have no "
         "target-cp equivalent yet (no WDL-bearing DatasetProvider exists before Phase E)"
@@ -202,6 +266,12 @@ def train(
     `mate_weight=1.0` train identical checkpoints under the current code
     (`test_train_default_mate_weight_matches_explicit_mate_weight_one`).
 
+    `config.mate_target_distance_aware` (Phase 4C, research doc RQ-3/`P4III`, unpromoted)
+    selects which `target_cp()` mate-branch formula this loss line grades against. The
+    default `False` reproduces the pre-Phase-4C flat `MATE_EQUIVALENT_CP` target exactly
+    -- an unpromoted P4III candidate does not silently change what any other caller of
+    `train()` trains toward.
+
     If `checkpoint_dir` is given, a checkpoint is additionally written at every logged
     diagnostic point (not just the final step) to `checkpoint_dir/step-{step:06d}.pt`,
     named by step so ordering is visible from the filename alone -- research doc
@@ -233,7 +303,10 @@ def train(
             position_in_epoch += 1
 
         batch = encode_batch(batch_records)
-        target_cps = torch.tensor([target_cp(r.label) for r in batch_records], dtype=torch.float32)
+        target_cps = torch.tensor(
+            [target_cp(r.label, distance_aware=config.mate_target_distance_aware) for r in batch_records],
+            dtype=torch.float32,
+        )
         targets = texel_sigmoid(target_cps, config.k)
         # Phase 4B (RQ-2/`P4II`): mate-labeled records get `config.mate_weight`, everything
         # else weight 1.0 -- the same is_mate boolean-mask pattern `validator.py:205`'s

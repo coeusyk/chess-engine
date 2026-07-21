@@ -34,10 +34,17 @@ needs to be read end-to-end to find one result.
    weighting (RQ-2, Lever B). A large apparent pooled-correlation gain that a subset-correlation
    check (this experiment's own methodology contribution, folded into `measurement-model.md` §4)
    showed to be a composition/leverage artifact, not a genuine improvement — not promotable.
-6. *(future Phase 4 experiments — RQ-3, WDL blend, etc. — each get their own file here, added as
-   they're run; this list is updated as new files land, not maintained separately.)*
+6. **[phase4-p4iii-mate-target.md](phase4-p4iii-mate-target.md)** — Experiment P4III: mate-target
+   representation (RQ-3, Lever B). An even larger apparent pooled-correlation gain that turned out
+   to be a pure rubric-contamination artifact — the *identical, untrained* baseline model "gains"
+   the same amount just from being graded on a redefined target. Under the correct same-rubric
+   comparison, no learned effect on either the majority population or the intervention's own
+   intended (mate-labeled) subset — not promotable. Closes Lever B's two-intervention arc (RQ-2 +
+   RQ-3); `measurement-model.md` §10 records the cross-experiment synthesis.
+7. *(future Phase 4 experiments — Huber/log-cosh, WDL blend, etc. — each get their own file here,
+   added as they're run; this list is updated as new files land, not maintained separately.)*
 
-## 0. Roadmap status (updated after Experiment P4II, 2026-07-21)
+## 0. Roadmap status (updated after Experiment P4III, 2026-07-21)
 
 | Research direction | Status |
 |---|---|
@@ -45,14 +52,23 @@ needs to be read end-to-end to find one result.
 | Stage 1 data-volume scaling (Experiments 2A/2B) | **✓ Closed** — falsified under fixed and proportional compute |
 | Sentinel-value filtering (Phase 3 / Experiment 3A) | **✓ Closed** — confirmed a benchmark-composition artifact, not a model fix; adopted as permanent ingestion hygiene anyway |
 | K exploration (P4I + replication) | **✓ Closed — exhausted under the current supervision objective, not disproven** (see below) |
-| Mate-aware loss weighting (P4II, RQ-2) | **✓ Closed** — not promotable; pooled-correlation gain was a composition artifact (`phase4-p4ii-mate-weight.md`) |
-| Mate-target representation (RQ-3) | Open, unexecuted — natural next Lever-B candidate per the existing sequencing, not begun (this task's explicit stop condition) |
+| Mate-aware loss weighting (P4II, RQ-2) | **✓ Closed** — not promotable; pooled-correlation gain was a composition/leverage artifact (`phase4-p4ii-mate-weight.md`) |
+| Mate-target representation (P4III, RQ-3) | **✓ Closed** — not promotable; pooled-correlation gain was a rubric-contamination artifact, no learned effect on majority or target subset (`phase4-p4iii-mate-target.md`) |
 | Huber/log-cosh loss shape | Open, unexecuted |
 | WDL blend (Lever C) | Open, unexecuted — the only candidate with a plausible mechanism to move correlation via target-source substitution rather than gradient-reshaping; still highest-ceiling, still requires the §40.2 data prerequisites |
 
 **Remaining Phase 4 work is entirely supervision-objective territory** — every lever outside
-loss/target formulation (optimization, data volume, label-outlier cleaning, and now the incumbent
-objective's own `K` parameter) has been tried and closed.
+loss/target formulation (optimization, data volume, label-outlier cleaning, the incumbent
+objective's own `K` parameter, and now both Lever-B mate-specific interventions) has been tried and
+closed. `measurement-model.md` §10 records a cross-experiment synthesis worth weighing when this
+ranking is next revisited: P4II (loss weighting) and P4III (target representation) both failed to
+produce a *promotable* effect — in both, the majority (cp-labeled) population was unmoved and any
+mate-subset movement was small and non-promotable (P4II's own mate-subset correlation did move
+modestly but only via a majority-flat, pooled-leverage artifact; P4III's mate-subset movement,
++0.0031, was flat within noise) — under the current single-scalar-output-plus-sigmoid-loss
+architecture, future mate-handling work may need an architecture- or output-level change (a
+separate head, a WDL target source) rather than further loss/target reshaping within the existing
+scalar output. This is evidence for a future ranking discussion, not a re-ranking performed here.
 
 **K exploration closure, stated precisely (per this task's explicit language requirement)**: K
 retraining changes optimization behavior (P4I: three genuinely different models trained, not an
@@ -72,24 +88,27 @@ research direction worth pursuing further on its own.
 These are established, load-bearing project conventions — restated here only as pointers, not
 redefined, so they don't drift between files:
 
-- **Experimental Protocol** (§26 of the main document): controlled-variable declarations, promotion
-  criteria, early-termination criteria, the `<PhaseCode>[-<Tag>]-<NNN>` Experiment ID scheme
-  (§26.5), and the Learning Log template (§26.6) — every new file in this folder uses these without
-  redefining them. **Metric hierarchy superseded**: §26's original "correlation primary,
-  calibration/RMSE/bias secondary" statement is superseded by
-  [`measurement-model.md`](measurement-model.md)'s per-metric classification (v1-clean correlation
-  specifically as Primary; v1 correlation/RMSE/calibration as Secondary; mate/cp compression,
-  magnitude-bucket MAEs, and histograms as Exploratory) — use that file's table, not this bullet,
-  when classifying a metric.
+- **Experimental Protocol** (§26 of the main document): controlled-variable declarations,
+  early-termination criteria, the `<PhaseCode>[-<Tag>]-<NNN>` Experiment ID scheme (§26.5), and the
+  Learning Log template (§26.6) — every new file in this folder uses these without redefining them.
+  **Metric hierarchy and promotion rule superseded**: §26's original "correlation primary,
+  calibration/RMSE/bias secondary" statement, and every prior version of the promotion rule in
+  this folder's own files, are superseded by [`measurement-model.md`](measurement-model.md)'s
+  current, permanent versions — §1/§1a's per-metric classification (pooled v1-clean correlation as
+  screening only; cp-only correlation as the primary majority-population metric; mate-only
+  correlation as mechanism-validation only; RMSE/calibration as regression guards; compression/
+  bucket MAEs/histograms as exploratory) and §6/§7's majority-population and promotion rules. Use
+  that file, not this bullet or any single experiment's own report, as the current source of truth
+  for metric classification and promotion criteria.
 - **Benchmark versioning** (§35.8): "v1" = the original 4,000-record held-out set; "v1-clean" =
   the same set minus 8 confirmed sentinel-value records (3,992 records). Never conflate the two
   without an explicit label.
-- **Rolling reference model** (§26.10 of the main document, restated after P4II): **P1-G04 remains
+- **Rolling reference model** (§26.10 of the main document, restated after P4III): **P1-G04 remains
   the reference model** (held-out correlation 0.5315 on v1 / 0.5931 on v1-clean, reused via
-  `P3A-001`'s checkpoint throughout P4I/P4II). Neither P4I nor P4II promoted a replacement. Any
-  promotion decision in a later file updates this line — check the most recent phase file's own
-  "Decision" section for the current reference model rather than assuming this README is
-  live-updated on every promotion.
+  `P3A-001`'s checkpoint throughout P4I/P4II/P4III). None of P4I, P4II, or P4III promoted a
+  replacement. Any promotion decision in a later file updates this line — check the most recent
+  phase file's own "Decision" section for the current reference model rather than assuming this
+  README is live-updated on every promotion.
 - **Graphify-first discovery**: `graphify . --update` (or `--code-only` when no LLM key is
   configured) before reading implementation files for a new phase/experiment, and a validation
   pass after — established across every phase in the main document (§31/§34/§35.1/§35.10/§40/§47),

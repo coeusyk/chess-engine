@@ -6,7 +6,18 @@ import torch
 from trainer.contracts import PositionLabel, PositionMetadata, PositionRecord
 from trainer.dataset.text_provider import TextDatasetProvider
 from trainer.model.network import derive_weight_clip_bounds
-from trainer.model.train import TrainingConfig, _learning_rate_at_step, load_config, texel_sigmoid, train
+from trainer.model.train import (
+    MATE_BASE_CP,
+    MATE_EQUIVALENT_CP,
+    MATE_FLOOR_CP,
+    MATE_MAX_OBSERVED_N,
+    TrainingConfig,
+    _learning_rate_at_step,
+    load_config,
+    target_cp,
+    texel_sigmoid,
+    train,
+)
 
 FIXTURE_DIR = Path(__file__).parent.parent / "fixtures"
 
@@ -299,3 +310,101 @@ def test_train_mate_weight_above_one_changes_the_trained_model(tmp_path):
     )
     assert differing
     assert baseline_checkpoint["final_loss"] != weighted_checkpoint["final_loss"]
+
+
+def _mate_label(eval_mate: int) -> PositionLabel:
+    return PositionLabel(eval_mate=eval_mate)
+
+
+def test_target_cp_cp_labeled_records_are_unaffected_by_distance_aware_toggle():
+    # Phase 4C (RQ-3/P4III): only the mate branch changes; cp-labeled records must be
+    # byte-identical regardless of distance_aware, since target_cp's whole change is
+    # scoped to the mate branch (research doc's additive-only design requirement).
+    label = PositionLabel(eval_cp=137)
+    assert target_cp(label, distance_aware=True) == 137.0
+    assert target_cp(label, distance_aware=True) == target_cp(label, distance_aware=False)
+
+
+def test_target_cp_distance_aware_false_reproduces_the_flat_pre_phase4c_behavior():
+    assert target_cp(_mate_label(1), distance_aware=False) == MATE_EQUIVALENT_CP
+    assert target_cp(_mate_label(64), distance_aware=False) == MATE_EQUIVALENT_CP
+    assert target_cp(_mate_label(-5), distance_aware=False) == -MATE_EQUIVALENT_CP
+
+
+def test_target_cp_distance_aware_shortest_mate_anchors_at_mate_base_cp():
+    # eval_mate magnitude 0 is the shortest possible distance (min(abs(m), N)=0), so
+    # the linear interpolation's own formula gives exactly MATE_BASE_CP at that point --
+    # checked at m=0 directly (a real, observed value in this project's own corpus, per
+    # the constants' own derivation comment) rather than only at m=1.
+    assert target_cp(_mate_label(0), distance_aware=True) == pytest.approx(-MATE_BASE_CP)
+
+
+def test_target_cp_distance_aware_longest_observed_mate_anchors_at_mate_floor_cp():
+    assert target_cp(_mate_label(MATE_MAX_OBSERVED_N), distance_aware=True) == pytest.approx(MATE_FLOOR_CP)
+    assert target_cp(_mate_label(-MATE_MAX_OBSERVED_N), distance_aware=True) == pytest.approx(-MATE_FLOOR_CP)
+
+
+def test_target_cp_distance_aware_clamps_beyond_the_longest_observed_mate():
+    # A hypothetical mate distance longer than any seen in this training corpus must
+    # not extrapolate the linear decay past MATE_FLOOR_CP (could go negative or collide
+    # with ordinary cp values otherwise) -- clamped, not linearly extended.
+    far_beyond = target_cp(_mate_label(MATE_MAX_OBSERVED_N + 50), distance_aware=True)
+    at_max_observed = target_cp(_mate_label(MATE_MAX_OBSERVED_N), distance_aware=True)
+    assert far_beyond == pytest.approx(at_max_observed)
+
+
+def test_target_cp_distance_aware_decays_monotonically_between_the_two_anchors():
+    magnitudes = [abs(target_cp(_mate_label(n), distance_aware=True)) for n in range(0, MATE_MAX_OBSERVED_N + 1)]
+    assert magnitudes == sorted(magnitudes, reverse=True)
+    assert magnitudes[0] == pytest.approx(MATE_BASE_CP)
+    assert magnitudes[-1] == pytest.approx(MATE_FLOOR_CP)
+
+
+def test_target_cp_distance_aware_preserves_sign_convention_including_zero():
+    # eval_mate=0 (a real, observed value in this project's corpus -- 32 records) hits
+    # the `else` branch of the sign check, same as the pre-Phase-4C code's own
+    # convention (`eval_mate > 0` is False at 0) -- preserved exactly, not changed.
+    assert target_cp(_mate_label(5), distance_aware=True) > 0
+    assert target_cp(_mate_label(-5), distance_aware=True) < 0
+    assert target_cp(_mate_label(0), distance_aware=True) < 0
+
+
+def test_target_cp_default_is_the_flat_pre_phase4c_behavior():
+    # target_cp()'s own bare default must stay False -- an unpromoted P4III candidate
+    # must not silently change what any caller without an explicit opt-in trains/grades
+    # toward (mirrors mate_weight's default=1.0 discipline).
+    assert target_cp(_mate_label(1)) == MATE_EQUIVALENT_CP
+    assert target_cp(_mate_label(MATE_MAX_OBSERVED_N)) == MATE_EQUIVALENT_CP
+
+
+def test_train_default_mate_target_distance_aware_matches_explicit_false(tmp_path):
+    explicit_config = TrainingConfig(**{**vars(TINY_CONFIG), "mate_target_distance_aware": False})
+    train(TINY_CONFIG, _records(), tmp_path / "default.pt")
+    train(explicit_config, _records(), tmp_path / "explicit.pt")
+
+    default_checkpoint = torch.load(tmp_path / "default.pt", weights_only=False)
+    explicit_checkpoint = torch.load(tmp_path / "explicit.pt", weights_only=False)
+    for key in default_checkpoint["model_state_dict"]:
+        assert torch.equal(
+            default_checkpoint["model_state_dict"][key], explicit_checkpoint["model_state_dict"][key]
+        )
+    assert default_checkpoint["final_loss"] == explicit_checkpoint["final_loss"]
+
+
+def test_train_mate_target_distance_aware_true_changes_the_trained_model(tmp_path):
+    # Proves config.mate_target_distance_aware actually reaches the loss (not dead
+    # code): the fixture's one mate-labeled record (mate=3) gets a different target
+    # under distance_aware=True than the flat default, so the trained weights must
+    # differ from the default (flat-target) baseline.
+    distance_aware_config = TrainingConfig(**{**vars(TINY_CONFIG), "mate_target_distance_aware": True})
+    train(TINY_CONFIG, _records(), tmp_path / "baseline.pt")
+    train(distance_aware_config, _records(), tmp_path / "distance_aware.pt")
+
+    baseline_checkpoint = torch.load(tmp_path / "baseline.pt", weights_only=False)
+    distance_aware_checkpoint = torch.load(tmp_path / "distance_aware.pt", weights_only=False)
+    differing = any(
+        not torch.equal(baseline_checkpoint["model_state_dict"][key], distance_aware_checkpoint["model_state_dict"][key])
+        for key in baseline_checkpoint["model_state_dict"]
+    )
+    assert differing
+    assert baseline_checkpoint["final_loss"] != distance_aware_checkpoint["final_loss"]
