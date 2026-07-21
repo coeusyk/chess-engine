@@ -41,10 +41,19 @@ needs to be read end-to-end to find one result.
    comparison, no learned effect on either the majority population or the intervention's own
    intended (mate-labeled) subset — not promotable. Closes Lever B's two-intervention arc (RQ-2 +
    RQ-3); `measurement-model.md` §10 records the cross-experiment synthesis.
-7. *(future Phase 4 experiments — Huber/log-cosh, WDL blend, etc. — each get their own file here,
+7. **[phase4c-reranking-wdl-audit.md](phase4c-reranking-wdl-audit.md)** — Phase 4C: investigation,
+   not a trained-model experiment. Checks whether P4II/P4III's accumulated evidence changes the
+   remaining candidates' expected information gain before continuing on the original ordering.
+   Finds a mechanistic argument down-ranking Huber/log-cosh (same `σ'(p,K)` saturation wall as the
+   closed Lever-B pair) and up-ranks WDL blend (untouched by that mechanism) — and audits WDL's
+   real data-availability prerequisites directly (Stockfish binary, actual source EPD file, actual
+   production shard), finding the source data 100% populated and the existing corpus backfillable
+   with zero re-labeling, substantially narrowing §43's original cost estimate. No implementation
+   this turn — ranking/cost-estimate update only, pending review.
+8. *(future Phase 4 experiments — Huber/log-cosh, WDL blend, etc. — each get their own file here,
    added as they're run; this list is updated as new files land, not maintained separately.)*
 
-## 0. Roadmap status (updated after Experiment P4III, 2026-07-21)
+## 0. Roadmap status (updated after the Phase 4C reranking audit, 2026-07-21)
 
 | Research direction | Status |
 |---|---|
@@ -54,21 +63,23 @@ needs to be read end-to-end to find one result.
 | K exploration (P4I + replication) | **✓ Closed — exhausted under the current supervision objective, not disproven** (see below) |
 | Mate-aware loss weighting (P4II, RQ-2) | **✓ Closed** — not promotable; pooled-correlation gain was a composition/leverage artifact (`phase4-p4ii-mate-weight.md`) |
 | Mate-target representation (P4III, RQ-3) | **✓ Closed** — not promotable; pooled-correlation gain was a rubric-contamination artifact, no learned effect on majority or target subset (`phase4-p4iii-mate-target.md`) |
-| Huber/log-cosh loss shape | Open, unexecuted |
-| WDL blend (Lever C) | Open, unexecuted — the only candidate with a plausible mechanism to move correlation via target-source substitution rather than gradient-reshaping; still highest-ceiling, still requires the §40.2 data prerequisites |
+| Huber/log-cosh loss shape | Open, unexecuted — **reranked down** (Phase 4C audit): mechanistically predicted low value on the primary metric, same `σ'(p,K)` saturation wall as the closed Lever-B pair (`phase4c-reranking-wdl-audit.md` §2) |
+| WDL blend (Lever C) | Open, unexecuted — **reranked up**, now the highest-expected-value remaining candidate: the only one whose mechanism is untouched by the demonstrated saturation wall, and its data-availability risk (§40.2's flagged unknown) is now resolved — source data 100% populated, existing corpus backfillable with zero re-labeling, engineering cost narrowed from Medium-high to Medium (`phase4c-reranking-wdl-audit.md` §5, §7) |
 
 **Remaining Phase 4 work is entirely supervision-objective territory** — every lever outside
 loss/target formulation (optimization, data volume, label-outlier cleaning, the incumbent
 objective's own `K` parameter, and now both Lever-B mate-specific interventions) has been tried and
-closed. `measurement-model.md` §10 records a cross-experiment synthesis worth weighing when this
-ranking is next revisited: P4II (loss weighting) and P4III (target representation) both failed to
-produce a *promotable* effect — in both, the majority (cp-labeled) population was unmoved and any
-mate-subset movement was small and non-promotable (P4II's own mate-subset correlation did move
-modestly but only via a majority-flat, pooled-leverage artifact; P4III's mate-subset movement,
-+0.0031, was flat within noise) — under the current single-scalar-output-plus-sigmoid-loss
-architecture, future mate-handling work may need an architecture- or output-level change (a
-separate head, a WDL target source) rather than further loss/target reshaping within the existing
-scalar output. This is evidence for a future ranking discussion, not a re-ranking performed here.
+closed. `measurement-model.md` §10 records a cross-experiment synthesis: P4II (loss weighting) and
+P4III (target representation) both failed to produce a *promotable* effect — in both, the majority
+(cp-labeled) population was unmoved and any mate-subset movement was small and non-promotable
+(P4II's own mate-subset correlation did move modestly but only via a majority-flat, pooled-leverage
+artifact; P4III's mate-subset movement, +0.0031, was flat within noise). **This ranking has now
+been revisited** (`phase4c-reranking-wdl-audit.md`, 2026-07-21, per this task's explicit "don't
+auto-continue on the original ordering" instruction): the same `σ'(p,K)` mechanism generalizes to
+predict Huber/log-cosh (as originally scoped, atop the incumbent sigmoid objective) will hit the
+same wall, while WDL blend's target-source-substitution mechanism is untouched by it — reranking
+WDL blend above Huber/log-cosh among the remaining candidates. Neither is implemented yet; this is
+a ranking and cost-estimate update, pending review before either is scheduled.
 
 **K exploration closure, stated precisely (per this task's explicit language requirement)**: K
 retraining changes optimization behavior (P4I: three genuinely different models trained, not an
