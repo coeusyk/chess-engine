@@ -58,11 +58,27 @@ needs to be read end-to-end to find one result.
    Shard format extended to carry `wdl`; existing Stage 2 corpus backfilled via a pure FEN join
    (zero Stockfish re-execution). `measurement-model.md` §10.2 extends the cross-experiment
    synthesis to a third non-promotable intervention.
-9. *(future Phase 4 experiments — Huber/log-cosh, a re-scoped WDL blend, etc. — each get their own
-   file here, added as they're run; this list is updated as new files land, not maintained
-   separately.)*
+9. **[phase4-retrospective.md](phase4-retrospective.md)** — Phase 4 closure: per-experiment
+   retrospective (P4I through P4IV, hypothesis/outcome/methodology-contribution/lessons for each),
+   an intervention taxonomy spanning the whole roadmap (not just Phase 4), a precise per-class
+   research-saturation assessment, and a summary of which Phase 4 infrastructure remains useful
+   independent of any single experiment's outcome. Read this before starting any Phase 5 work.
+10. **[phase5-roadmap.md](phase5-roadmap.md)** — Phase 5 planning: a reranked candidate list built
+    from the retrospective's accumulated evidence (not the original roadmap's ordering), and a
+    separate architectural-opportunities catalog (auxiliary heads, multi-task learning, alternative
+    outputs, representation changes) identified but not designed in detail. Planning only — nothing
+    in this file has been implemented.
+11. *(future Phase 5 experiments each get their own file here, added as they're run; this list is
+    updated as new files land, not maintained separately.)*
 
-## 0. Roadmap status (updated after Experiment P4IV, 2026-07-21)
+## 0. Roadmap status (updated after Phase 4 closure, 2026-07-21 — Phase 4 is now CLOSED)
+
+**Phase 4 is closed.** P4I through P4IV are implemented, reviewed, merged, and documented; none
+promoted a replacement for the reference model. See
+**[phase4-retrospective.md](phase4-retrospective.md)** for the full retrospective and
+**[phase5-roadmap.md](phase5-roadmap.md)** for the evidence-based Phase 5 candidate ranking. The
+table below is retained as the per-experiment status record; it is not live-updated once a phase
+closes — the retrospective is the current source of truth for synthesis-level claims.
 
 | Research direction | Status |
 |---|---|
