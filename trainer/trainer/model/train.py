@@ -88,6 +88,12 @@ class TrainingConfig:
     # `learning_rate` for the whole run), so no prior caller or test needs updating.
     lr_schedule: str = "constant"
     warmup_steps: int = 0
+    # Phase 4B (research doc RQ-2/`P4II`, §39): per-record loss weight applied to
+    # mate-labeled records only (cp-labeled records always weight 1.0). Default 1.0
+    # makes mate-labeled and cp-labeled records equal-weighted, reproducing every
+    # pre-existing config/checkpoint's behavior exactly (`train()`'s loss line reduces
+    # to a plain mean, see `train()`'s docstring for the identity this preserves).
+    mate_weight: float = 1.0
 
 
 def load_config(path: Path) -> TrainingConfig:
@@ -185,6 +191,17 @@ def train(
     two parameters) since it is a Phase-1-wide pipeline change, not a per-call option
     (research doc §26.1: bundled into every Phase 1 grid cell, not swept).
 
+    `config.mate_weight` (Phase 4B, research doc RQ-2/`P4II`) scales the loss
+    contribution of mate-labeled records only; cp-labeled records always weight 1.0.
+    The default `mate_weight=1.0` makes every record equal-weighted, so the weighted-mean
+    loss formula is algebraically identical to a plain unweighted mean at that default
+    (proven directly, `tests/model/test_train.py::
+    test_weighted_mean_formula_reduces_to_plain_mean_at_uniform_weight`) -- not verified
+    bit-for-bit against this module's pre-Phase-4B literal code path (which no longer
+    exists to compare against), only that the implicit default and an explicit
+    `mate_weight=1.0` train identical checkpoints under the current code
+    (`test_train_default_mate_weight_matches_explicit_mate_weight_one`).
+
     If `checkpoint_dir` is given, a checkpoint is additionally written at every logged
     diagnostic point (not just the final step) to `checkpoint_dir/step-{step:06d}.pt`,
     named by step so ordering is visible from the filename alone -- research doc
@@ -218,6 +235,17 @@ def train(
         batch = encode_batch(batch_records)
         target_cps = torch.tensor([target_cp(r.label) for r in batch_records], dtype=torch.float32)
         targets = texel_sigmoid(target_cps, config.k)
+        # Phase 4B (RQ-2/`P4II`): mate-labeled records get `config.mate_weight`, everything
+        # else weight 1.0 -- the same is_mate boolean-mask pattern `validator.py:205`'s
+        # calibration split already uses. At the default mate_weight=1.0 this is a uniform
+        # weight of 1.0 everywhere, so `weighted_squared_error.sum() / weights.sum()` is
+        # algebraically identical to `torch.mean((predicted_prob - targets) ** 2)`
+        # (see `tests/model/test_train.py`'s identity check -- proven against this
+        # formula directly, not against the prior code path, which no longer exists).
+        is_mate = torch.tensor(
+            [r.label.eval_mate is not None for r in batch_records], dtype=torch.float32
+        )
+        weights = 1.0 + is_mate * (config.mate_weight - 1.0)
 
         current_lr = _learning_rate_at_step(config, step)
         for param_group in optimizer.param_groups:
@@ -226,7 +254,8 @@ def train(
         optimizer.zero_grad()
         predicted_cp = model(batch.us_indices, batch.us_offsets, batch.them_indices, batch.them_offsets)
         predicted_prob = texel_sigmoid(predicted_cp, config.k)
-        loss = torch.mean((predicted_prob - targets) ** 2)
+        weighted_squared_error = weights * (predicted_prob - targets) ** 2
+        loss = weighted_squared_error.sum() / weights.sum()
         loss.backward()
         gradient_norm = _gradient_norm(model)
         optimizer.step()

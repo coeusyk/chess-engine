@@ -252,3 +252,50 @@ def test_train_without_checkpoint_dir_writes_no_intermediate_checkpoints(tmp_pat
     train(TINY_CONFIG, _records(), tmp_path / "final.pt", log_interval=1)
     # No stray directories/files beyond the one explicit checkpoint_path.
     assert list(tmp_path.iterdir()) == [tmp_path / "final.pt"]
+
+
+def test_weighted_mean_formula_reduces_to_plain_mean_at_uniform_weight():
+    # Phase 4B (RQ-2/`P4II`): the exact identity train()'s loss line relies on --
+    # weights.sum()-normalized weighted mean, with every weight == 1.0, must equal
+    # torch.mean() bit-for-bit. This is the algebraic claim the default mate_weight=1.0
+    # rests on; checked directly rather than only via an end-to-end training run.
+    squared_error = torch.tensor([0.04, 0.01, 0.09, 0.16, 0.25])
+    weights = torch.ones_like(squared_error)
+    weighted_mean = (weights * squared_error).sum() / weights.sum()
+    assert torch.equal(weighted_mean, torch.mean(squared_error))
+
+
+def test_train_default_mate_weight_matches_explicit_mate_weight_one(tmp_path):
+    # `_records()`'s fixture (stage1_sample.csv) has one mate-labeled record among
+    # five -- exercises the is_mate mask on a non-trivial mix. Confirms the implicit
+    # default and an explicit mate_weight=1.0 are the same code path, not just the
+    # same declared default.
+    explicit_config = TrainingConfig(**{**vars(TINY_CONFIG), "mate_weight": 1.0})
+    train(TINY_CONFIG, _records(), tmp_path / "default.pt")
+    train(explicit_config, _records(), tmp_path / "explicit.pt")
+
+    default_checkpoint = torch.load(tmp_path / "default.pt", weights_only=False)
+    explicit_checkpoint = torch.load(tmp_path / "explicit.pt", weights_only=False)
+    for key in default_checkpoint["model_state_dict"]:
+        assert torch.equal(
+            default_checkpoint["model_state_dict"][key], explicit_checkpoint["model_state_dict"][key]
+        )
+    assert default_checkpoint["final_loss"] == explicit_checkpoint["final_loss"]
+
+
+def test_train_mate_weight_above_one_changes_the_trained_model(tmp_path):
+    # Proves config.mate_weight actually reaches the loss (not dead code): a non-unit
+    # weight on the fixture's one mate-labeled record must change the gradient signal
+    # and therefore the trained weights, versus the mate_weight=1.0 baseline above.
+    weighted_config = TrainingConfig(**{**vars(TINY_CONFIG), "mate_weight": 5.0})
+    train(TINY_CONFIG, _records(), tmp_path / "baseline.pt")
+    train(weighted_config, _records(), tmp_path / "weighted.pt")
+
+    baseline_checkpoint = torch.load(tmp_path / "baseline.pt", weights_only=False)
+    weighted_checkpoint = torch.load(tmp_path / "weighted.pt", weights_only=False)
+    differing = any(
+        not torch.equal(baseline_checkpoint["model_state_dict"][key], weighted_checkpoint["model_state_dict"][key])
+        for key in baseline_checkpoint["model_state_dict"]
+    )
+    assert differing
+    assert baseline_checkpoint["final_loss"] != weighted_checkpoint["final_loss"]
