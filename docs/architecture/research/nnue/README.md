@@ -50,10 +50,19 @@ needs to be read end-to-end to find one result.
    production shard), finding the source data 100% populated and the existing corpus backfillable
    with zero re-labeling, substantially narrowing §43's original cost estimate. No implementation
    this turn — ranking/cost-estimate update only, pending review.
-8. *(future Phase 4 experiments — Huber/log-cosh, WDL blend, etc. — each get their own file here,
-   added as they're run; this list is updated as new files land, not maintained separately.)*
+8. **[phase4-p4iv-wdl-blend.md](phase4-p4iv-wdl-blend.md)** — Experiment P4IV: WDL-blended training
+   target (RQ-4, Lever C), the highest-ranked candidate per the Phase 4C audit above. A clean,
+   single-rubric null result (the intervention never touches any evaluation path, so unlike P4II/
+   P4III no rubric-decomposition was needed to interpret it): the majority-population metric
+   (cp-only correlation) is not improved, slightly regressed at every reading — not promotable.
+   Shard format extended to carry `wdl`; existing Stage 2 corpus backfilled via a pure FEN join
+   (zero Stockfish re-execution). `measurement-model.md` §10.2 extends the cross-experiment
+   synthesis to a third non-promotable intervention.
+9. *(future Phase 4 experiments — Huber/log-cosh, a re-scoped WDL blend, etc. — each get their own
+   file here, added as they're run; this list is updated as new files land, not maintained
+   separately.)*
 
-## 0. Roadmap status (updated after the Phase 4C reranking audit, 2026-07-21)
+## 0. Roadmap status (updated after Experiment P4IV, 2026-07-21)
 
 | Research direction | Status |
 |---|---|
@@ -63,23 +72,24 @@ needs to be read end-to-end to find one result.
 | K exploration (P4I + replication) | **✓ Closed — exhausted under the current supervision objective, not disproven** (see below) |
 | Mate-aware loss weighting (P4II, RQ-2) | **✓ Closed** — not promotable; pooled-correlation gain was a composition/leverage artifact (`phase4-p4ii-mate-weight.md`) |
 | Mate-target representation (P4III, RQ-3) | **✓ Closed** — not promotable; pooled-correlation gain was a rubric-contamination artifact, no learned effect on majority or target subset (`phase4-p4iii-mate-target.md`) |
-| Huber/log-cosh loss shape | Open, unexecuted — **reranked down** (Phase 4C audit): mechanistically predicted low value on the primary metric, same `σ'(p,K)` saturation wall as the closed Lever-B pair (`phase4c-reranking-wdl-audit.md` §2) |
-| WDL blend (Lever C) | Open, unexecuted — **reranked up**, now the highest-expected-value remaining candidate: the only one whose mechanism is untouched by the demonstrated saturation wall, and its data-availability risk (§40.2's flagged unknown) is now resolved — source data 100% populated, existing corpus backfillable with zero re-labeling, engineering cost narrowed from Medium-high to Medium (`phase4c-reranking-wdl-audit.md` §5, §7) |
+| Huber/log-cosh loss shape | Open, unexecuted — **reranked down** (Phase 4C audit): mechanistically predicted low value on the primary metric, same `σ'(p,K)` saturation wall as the closed Lever-B pair (`phase4c-reranking-wdl-audit.md` §2). Not started — deliberately not run this cycle, per this task's explicit "do not start Huber/log-cosh" instruction. |
+| WDL blend, λ=0.5 (P4IV, Lever C) | **✓ Closed** — not promotable; majority-population (cp-only) correlation regressed slightly at every reading, no rubric-contamination confound (unlike P4II/P4III, this intervention never touches evaluation) — a clean, direct null (`phase4-p4iv-wdl-blend.md`) |
 
 **Remaining Phase 4 work is entirely supervision-objective territory** — every lever outside
 loss/target formulation (optimization, data volume, label-outlier cleaning, the incumbent
-objective's own `K` parameter, and now both Lever-B mate-specific interventions) has been tried and
-closed. `measurement-model.md` §10 records a cross-experiment synthesis: P4II (loss weighting) and
-P4III (target representation) both failed to produce a *promotable* effect — in both, the majority
-(cp-labeled) population was unmoved and any mate-subset movement was small and non-promotable
-(P4II's own mate-subset correlation did move modestly but only via a majority-flat, pooled-leverage
-artifact; P4III's mate-subset movement, +0.0031, was flat within noise). **This ranking has now
-been revisited** (`phase4c-reranking-wdl-audit.md`, 2026-07-21, per this task's explicit "don't
-auto-continue on the original ordering" instruction): the same `σ'(p,K)` mechanism generalizes to
-predict Huber/log-cosh (as originally scoped, atop the incumbent sigmoid objective) will hit the
-same wall, while WDL blend's target-source-substitution mechanism is untouched by it — reranking
-WDL blend above Huber/log-cosh among the remaining candidates. Neither is implemented yet; this is
-a ranking and cost-estimate update, pending review before either is scheduled.
+objective's own `K` parameter, and every Lever-B/C intervention tried so far) has been tried and
+closed. `measurement-model.md` §10 records a cross-experiment synthesis, now covering three
+independent, structurally different interventions: P4II (loss weighting), P4III (target
+reformulation), and P4IV (target-source blend) each failed to produce a *promotable* effect on the
+majority population. P4II/P4III share a demonstrated mechanism (the `σ'(p,K)` saturation wall,
+§10.1); P4IV's null is **not** explained by that same mechanism (its majority-population records
+were never in the saturated zone) and its own cause remains unestablished (§10.2) — a genuinely
+different kind of null, not a repeat of the first two. **The ranking was revisited before P4IV ran**
+(`phase4c-reranking-wdl-audit.md`, 2026-07-21, per that task's explicit "don't auto-continue on the
+original ordering" instruction): the `σ'(p,K)` mechanism was used to predict Huber/log-cosh (as
+originally scoped, atop the incumbent sigmoid objective) would likely hit the same wall, reranking
+WDL blend above it — WDL blend was then run and closed not-promotable. Huber/log-cosh remains
+unexecuted, deliberately not started this cycle.
 
 **K exploration closure, stated precisely (per this task's explicit language requirement)**: K
 retraining changes optimization behavior (P4I: three genuinely different models trained, not an
@@ -114,10 +124,10 @@ redefined, so they don't drift between files:
 - **Benchmark versioning** (§35.8): "v1" = the original 4,000-record held-out set; "v1-clean" =
   the same set minus 8 confirmed sentinel-value records (3,992 records). Never conflate the two
   without an explicit label.
-- **Rolling reference model** (§26.10 of the main document, restated after P4III): **P1-G04 remains
+- **Rolling reference model** (§26.10 of the main document, restated after P4IV): **P1-G04 remains
   the reference model** (held-out correlation 0.5315 on v1 / 0.5931 on v1-clean, reused via
-  `P3A-001`'s checkpoint throughout P4I/P4II/P4III). None of P4I, P4II, or P4III promoted a
-  replacement. Any promotion decision in a later file updates this line — check the most recent
+  `P3A-001`'s checkpoint throughout P4I/P4II/P4III/P4IV). None of P4I, P4II, P4III, or P4IV promoted
+  a replacement. Any promotion decision in a later file updates this line — check the most recent
   phase file's own "Decision" section for the current reference model rather than assuming this
   README is live-updated on every promotion.
 - **Graphify-first discovery**: `graphify . --update` (or `--code-only` when no LLM key is

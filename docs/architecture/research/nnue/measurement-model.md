@@ -1,10 +1,13 @@
 # NNUE retraining — Measurement Model appendix
 
-**Status**: permanent protocol reference, alongside [the main document](2026-07-19-nnue-improvement-analysis.md)'s §26 Experimental Protocol. Updated as new metric-reliability findings land (most recently: Experiment P4III's rubric-contamination and definitional-artifact findings, §5/§7 below) — not a per-experiment report. This is the single source of truth for metric classification; per-experiment reports cite it rather than re-deriving promotion suitability from scratch.
+**Status**: permanent protocol reference, alongside [the main document](2026-07-19-nnue-improvement-analysis.md)'s §26 Experimental Protocol. Updated as new metric-reliability findings land (most recently: Experiment P4IV's clean, no-rubric-contamination null result extending §10's cross-experiment synthesis) — not a per-experiment report. This is the single source of truth for metric classification; per-experiment reports cite it rather than re-deriving promotion suitability from scratch.
 
 This appendix exists because three completed experiments (P4I's replication, P4II, P4III) each
 surfaced a distinct way a metric can mislead if read without knowing its own variance, composition
-sensitivity, or vulnerability to whatever rubric it's computed under.
+sensitivity, or vulnerability to whatever rubric it's computed under. P4IV (§10.2) added no new
+failure mode to the catalog below — its own methodological contribution was confirming that an
+intervention scoped entirely to `train()`'s loss line, never touching any evaluation call path,
+allows a direct single-rubric comparison with none of §4/§5's composition/rubric risks.
 
 ## 1. Metric catalog
 
@@ -185,7 +188,9 @@ preference — every prior experiment in this roadmap that skipped this step (P4
 promotion criteria were pre-registered in §26.3) had to retrofit its own interpretation after the
 fact; every experiment since has pre-declared and been easier to review as a result.
 
-## 10. Synthesis: the structural wall under mate-specific interventions (P4II + P4III together)
+## 10. Synthesis: three independent interventions, three non-promotable results (P4II + P4III + P4IV)
+
+**§10.1 — the structural wall under mate-specific interventions (P4II + P4III together)**
 
 Both completed Lever-B experiments — P4II (loss weighting) and P4III (target representation) —
 independently hit the **same mechanistic wall**, via two structurally different interventions:
@@ -200,17 +205,46 @@ sub-~1,200cp band ordinary cp evaluations already occupy — at which point "mat
 of the mate-labeled corpus, median 5 moves) still sit in near-zero gradient at any target extreme
 enough to remain distinguishable from a large ordinary advantage.
 
-**Forward implication for candidate ranking**: two independent interventions within the current
-single-scalar-output-plus-sigmoid-loss architecture (a loss reweighting, and a target
-reformulation) both failed to produce a *promotable* effect. In both, the majority (cp-labeled)
-population was unmoved, and any mate-subset movement was small and non-promotable: P4II's own
-mate-subset correlation did move modestly, but only via a majority-flat, pooled-leverage artifact
-(§4); P4III's mate-subset movement (+0.0031) was flat within noise (§5). Neither shows the
-mechanism did *nothing* to mate records — both show it produced nothing promotable. If mate
-handling is to move materially, the more promising remaining levers
-are likely **architecture- or output-level** changes (a separate auxiliary head, a WDL target
-source with its own loss term) rather than further reshaping of the existing single-target
-sigmoid-MSE loss — reweighting and retargeting within that one scalar have now both been tried.
-This is a candidate-ranking input for future Phase 4 planning, not a re-opening of P4II or P4III
-(both remain closed, per §RQ-2/RQ-3's own results) and not a re-ranking of WDL/Huber/multi-head
-performed here — it is evidence to weigh the next time that ranking is revisited.
+**Forward implication for candidate ranking (as it stood after P4III)**: two independent
+interventions within the current single-scalar-output-plus-sigmoid-loss architecture (a loss
+reweighting, and a target reformulation) both failed to produce a *promotable* effect. In both,
+the majority (cp-labeled) population was unmoved, and any mate-subset movement was small and
+non-promotable: P4II's own mate-subset correlation did move modestly, but only via a
+majority-flat, pooled-leverage artifact (§4); P4III's mate-subset movement (+0.0031) was flat
+within noise (§5). Neither shows the mechanism did *nothing* to mate records — both show it
+produced nothing promotable. At that point, `measurement-model.md` flagged a WDL target source as
+the more promising remaining lever, precisely because it is untouched by the `σ'(p,K)`
+saturation mechanism (below) — that lever has since been tried (§10.2).
+
+**§10.2 — P4IV extends the synthesis: a third, mechanistically *different* intervention, also not
+promotable**
+
+P4IV (`phase4-p4iv-wdl-blend.md`) tested a target-*source* blend (λ-weighted mix of the
+sigmoid-scaled eval target and an outcome-derived `wdl` value, on the FEN-join-backfilled Stage 2
+corpus) — a structurally different mechanism from P4II/P4III's loss/target reshaping *within* the
+mate branch: the blend touches ~50% of the whole training corpus (both cp- and mate-labeled
+records that happen to carry `wdl`), not a subset scoped to mate handling, and it changes the
+target's *information content* rather than its position relative to the sigmoid's saturation
+point. **This result is not evidence for or against the §10.1 saturation-wall mechanism** — P4IV's
+majority-population records were never in the saturated zone in the first place, so a null there
+cannot be explained by `σ'(p,K)` vanishing. The mechanism behind P4IV's null is not established by
+this single test point: candidates include (a) the outcome-derived `wdl` signal, at λ=0.5 and on
+this specific backfilled 20,000-record subset, simply not carrying ranking information beyond what
+Stockfish's fixed-node search-derived `eval_cp` already provides for these positions, or (b)
+single-game-outcome data being noisy enough (one game's result is a high-variance, low-information
+estimator of a *position's* value) that blending it in at λ=0.5 dilutes a more precise existing
+signal for the majority of records — neither is distinguished by this experiment, and no further
+λ value or blend design was tested this session (§9's stop condition).
+
+**Forward implication for candidate ranking, updated**: three independent interventions —
+a loss reweighting (P4II), a target reformulation (P4III), and a target-source blend (P4IV) — have
+now each been tried once and found non-promotable, via at least two distinct mechanisms (a
+demonstrated saturation wall for P4II/P4III; an unestablished, plausibly information-content or
+noise-related mechanism for P4IV). This does not, by itself, mean every remaining candidate is
+doomed — architecture- or output-level changes (a separate auxiliary head, a differently-scoped WDL
+blend, e.g. a smaller λ or restricted to high-confidence outcomes) remain untested. It does mean the
+"try a target-source substitution" lever specifically has now produced one real data point, not
+zero — future ranking discussions should weigh P4IV's result alongside P4II/P4III's, not treat WDL
+blend as still-untested-and-therefore-promising. This is a candidate-ranking input, not a
+re-opening of P4II, P4III, or P4IV (all three remain closed) and not a re-ranking of Huber/
+multi-head performed here — it is evidence to weigh the next time that ranking is revisited.

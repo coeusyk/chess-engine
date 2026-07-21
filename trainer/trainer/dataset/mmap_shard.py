@@ -12,10 +12,21 @@ Invariant -- this module is not a DatasetProvider itself and does not import one
 `search_depth`/`search_nodes` were added in D-8 (issue #199, Stage 2 Stockfish
 labeling) -- exactly the extension this module's own D-2-era docstring anticipated
 ("extending SHARD_DTYPE when Stage 2/3 land is expected, not a design flaw being
-deferred"). `wdl`/`game_id` remain unstored -- Stage 3 (self-play) concerns, per
-ADR-007's staging, out of scope until that stage lands. No existing committed shard
-files use the old layout (confirmed: nothing has shipped real `.bin` shards from this
-format yet, only ephemeral test fixtures), so this is a safe, non-breaking extension.
+deferred"). `game_id` remains unstored -- no consumer needs it yet.
+
+`wdl` was added in Phase 4-WDL (research doc RQ-4, `docs/architecture/research/nnue/
+phase4c-reranking-wdl-audit.md`). Unlike the D-8 extension, one real shard already
+existed on disk under the old layout (`outputs/datasets/stage2-quiet-sf/shard-0.bin`,
+20,000 records, gitignored build output -- confirmed via `find -L . -name "*.bin"`
+and `git ls-files`, no committed `.bin` fixtures exist anywhere in this repo) --
+**this is a breaking format change for that file**: its byte layout no longer matches
+`SHARD_DTYPE`, so `read_shard()` against it now raises `ValueError` (`np.memmap`'s own
+itemsize-mismatch check, verified directly this session -- a loud failure, not a
+silent misparse). `trainer/scripts/backfill_stage2_wdl.py` migrates it to a new
+directory (`stage2-quiet-sf-wdl/`) under the new layout, backfilling `wdl` via a pure
+FEN join against `data/quiet-labeled.epd` -- the original `stage2-quiet-sf/` directory
+is left untouched (non-destructive; any future non-WDL work can still use it, though
+`read_shard()` itself can no longer open it without going through the same migration).
 """
 
 from __future__ import annotations
@@ -39,6 +50,8 @@ SHARD_DTYPE = np.dtype(
         ("has_eval_cp", "?"),
         ("eval_mate", "i4"),
         ("has_eval_mate", "?"),
+        ("wdl", "f4"),
+        ("has_wdl", "?"),
         ("ply", "i4"),
         ("has_ply", "?"),
         ("search_depth", "i4"),
@@ -56,21 +69,19 @@ def _encode(record: PositionRecord) -> tuple:
         raise ValueError(f"FEN exceeds {_FEN_BYTES}-byte shard field: {record.fen!r}")
     label = record.label
     metadata = record.metadata
-    if label.eval_cp is None and label.eval_mate is None:
-        # SHARD_DTYPE has no wdl field yet (module docstring: extend it when a
-        # wdl-producing source needs this writer). Silently dropping a wdl-only
-        # label here would write a record that reads back as an invalid
-        # PositionLabel (ValueError on decode) -- fail loudly at write time instead.
-        raise ValueError(
-            f"write_shard cannot represent a wdl-only PositionLabel for {record.fen!r} "
-            "-- SHARD_DTYPE has no wdl field; extend it before writing wdl-sourced data"
-        )
+    # No "at least one label field present" guard needed here: PositionLabel's own
+    # __post_init__ already enforces that invariant at construction time, and every
+    # field this format stores (eval_cp, eval_mate, wdl) now has a has_* flag, so a
+    # wdl-only label round-trips correctly -- unlike before this module's Phase 4-WDL
+    # extension, when a wdl-only label had no representable field at all.
     return (
         fen_bytes,
         label.eval_cp if label.eval_cp is not None else 0,
         label.eval_cp is not None,
         label.eval_mate if label.eval_mate is not None else 0,
         label.eval_mate is not None,
+        label.wdl if label.wdl is not None else 0.0,
+        label.wdl is not None,
         metadata.ply if metadata.ply is not None else 0,
         metadata.ply is not None,
         metadata.search_depth if metadata.search_depth is not None else 0,
@@ -85,6 +96,7 @@ def _decode(row: np.void) -> PositionRecord:
     label = PositionLabel(
         eval_cp=int(row["eval_cp"]) if bool(row["has_eval_cp"]) else None,
         eval_mate=int(row["eval_mate"]) if bool(row["has_eval_mate"]) else None,
+        wdl=float(row["wdl"]) if bool(row["has_wdl"]) else None,
     )
     metadata = PositionMetadata(
         ply=int(row["ply"]) if bool(row["has_ply"]) else None,

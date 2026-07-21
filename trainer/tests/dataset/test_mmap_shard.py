@@ -93,17 +93,46 @@ def test_oversized_fen_is_rejected(tmp_path):
         write_shard([record], tmp_path / "shard-2.bin")
 
 
-def test_wdl_only_label_is_rejected_loudly_not_silently_dropped(tmp_path):
-    # Standards-review finding: SHARD_DTYPE has no wdl field yet -- write_shard must
-    # fail at write time, not silently drop the label and fail confusingly later at
-    # read time.
+def test_wdl_only_label_round_trips(tmp_path):
+    # Phase 4-WDL: SHARD_DTYPE now has a wdl field, so a wdl-only label (no eval_cp/
+    # eval_mate -- PositionLabel's own __post_init__ still requires at least one of
+    # the three) is representable and must round-trip, not raise.
     record = PositionRecord(
         fen="4k3/8/8/8/8/8/8/4K3 w - - 0 1",
         label=PositionLabel(wdl=1.0),
         metadata=PositionMetadata(),
     )
-    with pytest.raises(ValueError, match="wdl"):
-        write_shard([record], tmp_path / "shard-3.bin")
+    shard_ref = write_shard([record], tmp_path / "shard-3.bin")
+
+    restored = list(read_shard(shard_ref))[0]
+    assert restored.label.eval_cp is None
+    assert restored.label.eval_mate is None
+    assert restored.label.wdl == 1.0
+
+
+def test_wdl_round_trips_alongside_eval_cp(tmp_path):
+    record = PositionRecord(
+        fen="4k3/8/8/8/8/8/4Q3/4K3 w - - 0 1",
+        label=PositionLabel(eval_cp=123, wdl=0.75),
+        metadata=PositionMetadata(),
+    )
+    shard_ref = write_shard([record], tmp_path / "shard-wdl-cp.bin")
+
+    restored = list(read_shard(shard_ref))[0]
+    assert restored.label.eval_cp == 123
+    assert restored.label.wdl == 0.75
+
+
+def test_absent_wdl_round_trips_as_none(tmp_path):
+    record = PositionRecord(
+        fen="4k3/8/8/8/8/8/4Q3/4K3 w - - 0 1",
+        label=PositionLabel(eval_cp=1),
+        metadata=PositionMetadata(),
+    )
+    shard_ref = write_shard([record], tmp_path / "shard-no-wdl.bin")
+
+    restored = list(read_shard(shard_ref))[0]
+    assert restored.label.wdl is None
 
 
 def test_write_shard_streams_across_multiple_internal_batches(tmp_path):

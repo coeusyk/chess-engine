@@ -19,6 +19,38 @@ from trainer.model.train import (
     train,
 )
 
+WDL_TINY_CONFIG = TrainingConfig(
+    hidden_width=4,
+    qa=127,
+    qb=64,
+    output_scale=400,
+    k=1.0,
+    learning_rate=0.05,
+    seed=42,
+    steps=3,
+    batch_size=2,
+)
+
+
+def _wdl_records():
+    # Direct construction (not the CSV fixture -- TextDatasetProvider never
+    # populates wdl, per phase4c-reranking-wdl-audit.md SS4). wdl deliberately set
+    # far from what the eval-only sigmoid target would already predict (eval_cp near
+    # 0 -> sigmoid target near 0.5; wdl=1.0/0.0 at the extremes), so a wdl_lambda<1.0
+    # blend actually moves the target and is detectable end-to-end.
+    return [
+        PositionRecord(
+            fen="4k3/8/8/8/8/8/4Q3/4K3 w - - 0 1",
+            label=PositionLabel(eval_cp=10, wdl=1.0),
+            metadata=PositionMetadata(),
+        ),
+        PositionRecord(
+            fen="4k3/8/8/8/8/8/4q3/4K3 b - - 0 1",
+            label=PositionLabel(eval_cp=-10, wdl=0.0),
+            metadata=PositionMetadata(),
+        ),
+    ]
+
 FIXTURE_DIR = Path(__file__).parent.parent / "fixtures"
 
 TINY_CONFIG = TrainingConfig(
@@ -310,6 +342,66 @@ def test_train_mate_weight_above_one_changes_the_trained_model(tmp_path):
     )
     assert differing
     assert baseline_checkpoint["final_loss"] != weighted_checkpoint["final_loss"]
+
+
+def test_wdl_blend_formula_is_identity_at_lambda_one():
+    # Phase 4-WDL (RQ-4): the exact identity train()'s loss line relies on for its
+    # safe default -- wdl_lambda=1.0 must make the blended target bit-identical to the
+    # unblended sigmoid target, regardless of what wdl_values holds.
+    sigmoid_targets = torch.tensor([0.5, 0.1, 0.9])
+    wdl_values = torch.tensor([1.0, 0.0, 0.5])
+    wdl_lambda = 1.0
+    blended = wdl_lambda * sigmoid_targets + (1.0 - wdl_lambda) * wdl_values
+    assert torch.equal(blended, sigmoid_targets)
+
+
+def test_train_default_wdl_lambda_matches_explicit_lambda_one(tmp_path):
+    explicit_config = TrainingConfig(**{**vars(WDL_TINY_CONFIG), "wdl_lambda": 1.0})
+    train(WDL_TINY_CONFIG, _wdl_records(), tmp_path / "default.pt")
+    train(explicit_config, _wdl_records(), tmp_path / "explicit.pt")
+
+    default_checkpoint = torch.load(tmp_path / "default.pt", weights_only=False)
+    explicit_checkpoint = torch.load(tmp_path / "explicit.pt", weights_only=False)
+    for key in default_checkpoint["model_state_dict"]:
+        assert torch.equal(
+            default_checkpoint["model_state_dict"][key], explicit_checkpoint["model_state_dict"][key]
+        )
+    assert default_checkpoint["final_loss"] == explicit_checkpoint["final_loss"]
+
+
+def test_train_wdl_lambda_below_one_changes_the_trained_model_when_wdl_present(tmp_path):
+    # Proves config.wdl_lambda actually reaches the loss (not dead code) when records
+    # carry a wdl value.
+    blended_config = TrainingConfig(**{**vars(WDL_TINY_CONFIG), "wdl_lambda": 0.2})
+    train(WDL_TINY_CONFIG, _wdl_records(), tmp_path / "baseline.pt")
+    train(blended_config, _wdl_records(), tmp_path / "blended.pt")
+
+    baseline_checkpoint = torch.load(tmp_path / "baseline.pt", weights_only=False)
+    blended_checkpoint = torch.load(tmp_path / "blended.pt", weights_only=False)
+    differing = any(
+        not torch.equal(baseline_checkpoint["model_state_dict"][key], blended_checkpoint["model_state_dict"][key])
+        for key in baseline_checkpoint["model_state_dict"]
+    )
+    assert differing
+    assert baseline_checkpoint["final_loss"] != blended_checkpoint["final_loss"]
+
+
+def test_train_wdl_lambda_below_one_is_a_no_op_when_no_record_has_wdl(tmp_path):
+    # has_wdl mask correctness: records without a wdl value must be unaffected by
+    # wdl_lambda regardless of its value -- the CSV fixture (_records()) has no wdl
+    # field at all (TextDatasetProvider never populates it).
+    default_config = TrainingConfig(**{**vars(TINY_CONFIG), "wdl_lambda": 1.0})
+    no_wdl_signal_config = TrainingConfig(**{**vars(TINY_CONFIG), "wdl_lambda": 0.0})
+    train(default_config, _records(), tmp_path / "default.pt")
+    train(no_wdl_signal_config, _records(), tmp_path / "lambda_zero.pt")
+
+    default_checkpoint = torch.load(tmp_path / "default.pt", weights_only=False)
+    lambda_zero_checkpoint = torch.load(tmp_path / "lambda_zero.pt", weights_only=False)
+    for key in default_checkpoint["model_state_dict"]:
+        assert torch.equal(
+            default_checkpoint["model_state_dict"][key], lambda_zero_checkpoint["model_state_dict"][key]
+        )
+    assert default_checkpoint["final_loss"] == lambda_zero_checkpoint["final_loss"]
 
 
 def _mate_label(eval_mate: int) -> PositionLabel:

@@ -11,16 +11,17 @@ separate concern for whichever future PR actually trains at that scale; a `torch
 `DataLoader` wired to `trainer.reproducibility`'s `worker_init_fn`/
 `dataloader_generator` is the natural next step then, not built preemptively here.
 
-Second scope boundary (also deliberate): the PRD's "Trainer Requirements" describes
-the target as a "blend of sigmoid-scaled eval and WDL outcome." Only the eval_cp/
-eval_mate half of that blend is implemented here -- every `DatasetProvider` reachable
-from this PR's dependency chain (D-1/D-2/D-3, Stage 1 text data) has no WDL field at
-all (`trainer/trainer/contracts/dataset.py`'s `PositionLabel` allows it, but
-`TextDatasetProvider` never populates it). `target_cp` raises loudly on a WDL-only
-label rather than silently treating the blend as satisfied. The actual lambda-blend
-becomes real work once a WDL-bearing source exists (Stage 3 self-play, Phase E, or a
-future `Labeler` stage per the PRD's own component table) -- not built preemptively
-against data that doesn't exist yet.
+Second scope boundary (updated, Phase 4-WDL): the PRD's "Trainer Requirements"
+describes the target as a "blend of sigmoid-scaled eval and WDL outcome." The
+lambda-blend half is now implemented (`TrainingConfig.wdl_lambda`, see below) --
+`target_cp` itself is unchanged and still raises loudly on a WDL-only label (no
+current `DatasetProvider` produces one; `TextDatasetProvider`/Stage 1 has no WDL
+field, per `docs/architecture/research/nnue/phase4c-reranking-wdl-audit.md` §4).
+The blend operates entirely in `train()`'s loss line, directly on `PositionLabel.wdl`
+where present, not through `target_cp()` -- see `train()`'s own docstring. Only
+Stage 2 (via `trainer/scripts/backfill_stage2_wdl.py`'s FEN-join backfill) currently
+populates `wdl`; this is a Stage-2-only intervention for now, not a claim that Stage 1
+or a future Stage 3 self-play source is wired in.
 """
 
 from __future__ import annotations
@@ -137,6 +138,14 @@ class TrainingConfig:
     # candidate must not silently become the new default for unrelated future training
     # runs, the same discipline mate_weight's own default=1.0 follows.
     mate_target_distance_aware: bool = False
+    # Phase 4-WDL (research doc RQ-4, phase4c-reranking-wdl-audit.md): lambda-blend
+    # weight between the sigmoid-scaled eval target and PositionLabel.wdl, for records
+    # that carry a wdl value (DR-E1's own convention: 1.0 = pure eval, 0.0 = pure
+    # outcome). Default 1.0 reproduces every pre-existing config/checkpoint's behavior
+    # exactly, the same safe-default discipline mate_weight/mate_target_distance_aware
+    # already follow -- see train()'s own docstring for the blend formula and how
+    # records without a wdl value are left unaffected regardless of this value.
+    wdl_lambda: float = 1.0
 
 
 def load_config(path: Path) -> TrainingConfig:
@@ -272,6 +281,19 @@ def train(
     -- an unpromoted P4III candidate does not silently change what any other caller of
     `train()` trains toward.
 
+    `config.wdl_lambda` (Phase 4-WDL, research doc RQ-4): for records whose label
+    carries a `wdl` value, the sigmoid-space target is blended
+    `wdl_lambda * sigmoid_target + (1 - wdl_lambda) * label.wdl` (DR-E1's own
+    lambda-blend formula, `docs/architecture/research/DR-E1-self-play-data-generation.md`
+    §1 point 3). Records with no `wdl` value are unaffected regardless of `wdl_lambda`
+    -- a per-record `has_wdl` mask selects the blended target only where `wdl` is
+    actually present, falling back to the unblended sigmoid target everywhere else, the
+    same mask-based isolation `mate_weight`'s `is_mate` mask already uses. The default
+    `wdl_lambda=1.0` makes the blend formula algebraically identical to the unblended
+    target (`1.0*sigmoid_target + 0.0*label.wdl == sigmoid_target`), reproducing every
+    pre-existing config/checkpoint's behavior exactly regardless of whether any record
+    in the corpus carries a `wdl` value at all.
+
     If `checkpoint_dir` is given, a checkpoint is additionally written at every logged
     diagnostic point (not just the final step) to `checkpoint_dir/step-{step:06d}.pt`,
     named by step so ordering is visible from the filename alone -- research doc
@@ -308,6 +330,20 @@ def train(
             dtype=torch.float32,
         )
         targets = texel_sigmoid(target_cps, config.k)
+        # Phase 4-WDL (RQ-4): blend in PositionLabel.wdl where present. has_wdl gates
+        # the blend to only records that actually carry a wdl value -- records without
+        # one keep their unblended sigmoid target regardless of wdl_lambda, the same
+        # isolation discipline mate_weight's is_mate mask below already establishes.
+        # At the default wdl_lambda=1.0 this is an exact no-op (see train()'s docstring).
+        has_wdl = torch.tensor(
+            [r.label.wdl is not None for r in batch_records], dtype=torch.float32
+        )
+        wdl_values = torch.tensor(
+            [r.label.wdl if r.label.wdl is not None else 0.0 for r in batch_records],
+            dtype=torch.float32,
+        )
+        blended_targets = config.wdl_lambda * targets + (1.0 - config.wdl_lambda) * wdl_values
+        targets = has_wdl * blended_targets + (1.0 - has_wdl) * targets
         # Phase 4B (RQ-2/`P4II`): mate-labeled records get `config.mate_weight`, everything
         # else weight 1.0 -- the same is_mate boolean-mask pattern `validator.py:205`'s
         # calibration split already uses. At the default mate_weight=1.0 this is a uniform
