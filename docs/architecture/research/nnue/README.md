@@ -68,7 +68,14 @@ needs to be read end-to-end to find one result.
     separate architectural-opportunities catalog (auxiliary heads, multi-task learning, alternative
     outputs, representation changes) identified but not designed in detail. Planning only — nothing
     in this file has been implemented.
-11. *(future Phase 5 experiments each get their own file here, added as they're run; this list is
+11. **[phase5-rq5-label-noise-floor.md](phase5-rq5-label-noise-floor.md)** — Experiment RQ-5, Phase
+    5's #1-ranked candidate: a label budget-sensitivity measurement (25k vs 50k Stockfish node
+    budget, n=1,000), not a trained-model intervention — no trainer code, loss, target, dataset, or
+    checkpoint touched. Result: median spread 13cp, landing in the pre-registered
+    threshold-contingent band (10-25cp) — a real, disclosed ambiguous result, not resolved either
+    way. Reconciles the original §32.5 duplicate-FEN finding as a distinct (unisolated) carryover
+    mechanism, not the same thing this experiment measures.
+12. *(future Phase 5 experiments each get their own file here, added as they're run; this list is
     updated as new files land, not maintained separately.)*
 
 ## 0. Roadmap status (updated after Phase 4 closure, 2026-07-21 — Phase 4 is now CLOSED)
@@ -90,6 +97,7 @@ closes — the retrospective is the current source of truth for synthesis-level 
 | Mate-target representation (P4III, RQ-3) | **✓ Closed** — not promotable; pooled-correlation gain was a rubric-contamination artifact, no learned effect on majority or target subset (`phase4-p4iii-mate-target.md`) |
 | Huber/log-cosh loss shape | Open, unexecuted — **reranked down** (Phase 4C audit): mechanistically predicted low value on the primary metric, same `σ'(p,K)` saturation wall as the closed Lever-B pair (`phase4c-reranking-wdl-audit.md` §2). Not started — deliberately not run this cycle, per this task's explicit "do not start Huber/log-cosh" instruction. |
 | WDL blend, λ=0.5 (P4IV, Lever C) | **✓ Closed** — not promotable; majority-population (cp-only) correlation regressed slightly at every reading, no rubric-contamination confound (unlike P4II/P4III, this intervention never touches evaluation) — a clean, direct null (`phase4-p4iv-wdl-blend.md`) |
+| Label budget-sensitivity (RQ-5, Phase 5 #1) | **✓ Closed — diagnostic, not an intervention.** Median 25k-vs-50k spread 13cp, threshold-contingent (10-25cp pre-registered band) — a disclosed ambiguous result (`phase5-rq5-label-noise-floor.md`) |
 
 **Remaining Phase 4 work is entirely supervision-objective territory** — every lever outside
 loss/target formulation (optimization, data volume, label-outlier cleaning, the incumbent
