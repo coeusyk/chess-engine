@@ -63,7 +63,8 @@ class NnueNet(nn.Module):
     this module (Section 6: "the model has no knowledge of `.nnue`'s byte layout").
     """
 
-    def __init__(self, hidden_width: int, qa: float, qb: float, output_scale: float):
+    def __init__(self, hidden_width: int, qa: float, qb: float, output_scale: float,
+                  with_aux_wdl_head: bool = False):
         super().__init__()
         self.hidden_width = hidden_width
         self.qa = qa
@@ -73,6 +74,18 @@ class NnueNet(nn.Module):
         self.ft = nn.EmbeddingBag(FEATURES_PER_PERSPECTIVE, hidden_width, mode="sum")
         self.ft_bias = nn.Parameter(torch.zeros(hidden_width))
         self.output_layer = nn.Linear(2 * hidden_width, 1)
+        # Experiment P5-AUXHEAD (Phase 5 candidate #3's scoped design, see
+        # docs/architecture/research/nnue/phase5-p5-auxhead-design.md): an optional
+        # training-only auxiliary head predicting game outcome (wdl) from the *same*
+        # shared activation the primary head consumes. Deliberately NOT constructed at the
+        # default -- a plain NnueNet's state_dict must keep exactly its historical key set,
+        # so every pre-existing config, checkpoint, and test is unaffected bit-for-bit
+        # (the same safe-default discipline TrainingConfig's mate_weight/wdl_lambda follow).
+        #
+        # This head is never exported and never reaches inference: checkpoint_to_canonical()
+        # reads weights by explicit key name, so `wdl_head.*` is structurally invisible to
+        # the export path (verified in tests/export/test_auxiliary_head_export_isolation.py).
+        self.wdl_head = nn.Linear(2 * hidden_width, 1) if with_aux_wdl_head else None
 
     def _accumulate(self, indices: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
         """Shared FT weights applied to one perspective's active-feature indices --
@@ -82,6 +95,35 @@ class NnueNet(nn.Module):
         """
         return self.ft(indices, offsets) + self.ft_bias
 
+    def shared_activation(
+        self,
+        us_indices: torch.Tensor,
+        us_offsets: torch.Tensor,
+        them_indices: torch.Tensor,
+        them_offsets: torch.Tensor,
+    ) -> torch.Tensor:
+        """The clipped-ReLU, both-perspectives activation vector -- the shared
+        representation every head consumes. Extracted from `forward()` (which now calls it)
+        so that every head is defined against one definition of the shared representation
+        rather than each re-deriving its own, subtly divergent, version. `forward()`'s
+        numerical behavior is unchanged by the extraction.
+
+        Note what this does and does not guarantee: callers that invoke this *and*
+        `forward()` in the same step recompute the activation rather than reusing one
+        tensor. That costs an extra feature-transformer forward pass, and is deliberate for
+        clarity over micro-optimization -- it is not a correctness difference, since
+        `EmbeddingBag` is deterministic (the two results are bitwise equal) and autograd
+        sums the gradients of both paths into the same `ft` parameters exactly as a single
+        shared tensor would.
+        """
+        acc_us = self._accumulate(us_indices, us_offsets)
+        acc_them = self._accumulate(them_indices, them_offsets)
+
+        activation_us = torch.clamp(acc_us, 0, self.qa)
+        activation_them = torch.clamp(acc_them, 0, self.qa)
+
+        return torch.cat([activation_us, activation_them], dim=1)
+
     def forward(
         self,
         us_indices: torch.Tensor,
@@ -89,15 +131,31 @@ class NnueNet(nn.Module):
         them_indices: torch.Tensor,
         them_offsets: torch.Tensor,
     ) -> torch.Tensor:
-        acc_us = self._accumulate(us_indices, us_offsets)
-        acc_them = self._accumulate(them_indices, them_offsets)
-
-        activation_us = torch.clamp(acc_us, 0, self.qa)
-        activation_them = torch.clamp(acc_them, 0, self.qa)
-
-        combined = torch.cat([activation_us, activation_them], dim=1)
+        combined = self.shared_activation(us_indices, us_offsets, them_indices, them_offsets)
         raw_sum = self.output_layer(combined).squeeze(-1)
         return raw_sum * self.output_scale / (self.qa * self.qb)
+
+    def auxiliary_wdl_logit(
+        self,
+        us_indices: torch.Tensor,
+        us_offsets: torch.Tensor,
+        them_indices: torch.Tensor,
+        them_offsets: torch.Tensor,
+    ) -> torch.Tensor:
+        """Raw logit of the training-only auxiliary WDL head (P5-AUXHEAD).
+
+        Returns a *logit*, not a probability -- the caller pairs this with
+        `binary_cross_entropy_with_logits`, which is numerically stabler than an explicit
+        sigmoid followed by BCE. Gradient from this path reaches the shared feature
+        transformer and this head only; it never touches `output_layer`, which is what
+        keeps the primary evaluation objective uncontaminated (design record §1).
+        """
+        if self.wdl_head is None:
+            raise ValueError(
+                "auxiliary_wdl_logit() requires a model built with with_aux_wdl_head=True"
+            )
+        combined = self.shared_activation(us_indices, us_offsets, them_indices, them_offsets)
+        return self.wdl_head(combined).squeeze(-1)
 
     def clip_ft_weights_(self) -> None:
         """Applies the overflow-safety clip (`derive_weight_clip_bounds`) to the FT

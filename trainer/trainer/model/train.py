@@ -146,6 +146,17 @@ class TrainingConfig:
     # already follow -- see train()'s own docstring for the blend formula and how
     # records without a wdl value are left unaffected regardless of this value.
     wdl_lambda: float = 1.0
+    # Phase 5 (`P5-AUXHEAD`, docs/architecture/research/nnue/phase5-p5-auxhead-design.md):
+    # weight of a training-only auxiliary game-outcome (wdl) objective, computed from a
+    # second head that shares the feature transformer with the primary evaluation head.
+    # Structurally different from wdl_lambda above: wdl_lambda blends outcome INTO the
+    # primary target (so the primary head is fitted to contaminated values -- the design
+    # P4IV/P5-WDLALT tested and closed); this instead leaves the primary target pure and
+    # lets outcome signal reach only the SHARED representation via a separate gradient
+    # path. Default 0.0 constructs no auxiliary head at all, reproducing every pre-existing
+    # config/checkpoint's behavior exactly -- including its state_dict key set -- the same
+    # safe-default discipline mate_weight/mate_target_distance_aware/wdl_lambda follow.
+    aux_wdl_weight: float = 0.0
 
 
 def load_config(path: Path) -> TrainingConfig:
@@ -302,7 +313,8 @@ def train(
     """
     seed_everything(config.seed)
 
-    model = NnueNet(config.hidden_width, config.qa, config.qb, config.output_scale)
+    model = NnueNet(config.hidden_width, config.qa, config.qb, config.output_scale,
+                     with_aux_wdl_head=config.aux_wdl_weight > 0.0)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
 
     records = list(records)
@@ -365,7 +377,36 @@ def train(
         predicted_prob = texel_sigmoid(predicted_cp, config.k)
         weighted_squared_error = weights * (predicted_prob - targets) ** 2
         loss = weighted_squared_error.sum() / weights.sum()
-        loss.backward()
+        # Phase 5 (`P5-AUXHEAD`): add the auxiliary game-outcome objective, if enabled. The
+        # auxiliary term is a mean over *wdl-bearing records only* -- not over the whole
+        # batch -- so its magnitude does not drift with a given batch's mask density; the
+        # denominator is floored at 1.0 so an all-missing batch contributes exactly zero
+        # rather than NaN (roughly half the corpus carries no wdl, so this is a real case,
+        # not a defensive flourish).
+        #
+        # `loss` (the primary objective) is what gets appended to `losses`, while
+        # `total_loss` is what gets optimized -- deliberate, so an auxiliary run's loss
+        # curve stays on the same scale as every prior experiment's rather than silently
+        # including a second, differently-scaled term.
+        #
+        # Scope of that guarantee, stated precisely: it covers `losses` (and the
+        # `training_loss` diagnostic derived from it). It does NOT cover `gradient_norm`
+        # below, which is computed over every parameter after `total_loss.backward()` and
+        # therefore includes both the auxiliary head's gradients and the auxiliary
+        # contribution to the shared FT gradients. On an auxiliary run that diagnostic is
+        # consequently not comparable to a primary-only run's -- disclosed here and in the
+        # experiment report rather than left as an unstated trap for the next reader.
+        total_loss = loss
+        if config.aux_wdl_weight > 0.0:
+            aux_logits = model.auxiliary_wdl_logit(
+                batch.us_indices, batch.us_offsets, batch.them_indices, batch.them_offsets
+            )
+            per_record_bce = torch.nn.functional.binary_cross_entropy_with_logits(
+                aux_logits, wdl_values, reduction="none"
+            )
+            aux_loss = (has_wdl * per_record_bce).sum() / has_wdl.sum().clamp(min=1.0)
+            total_loss = loss + config.aux_wdl_weight * aux_loss
+        total_loss.backward()
         gradient_norm = _gradient_norm(model)
         optimizer.step()
         model.clip_ft_weights_()

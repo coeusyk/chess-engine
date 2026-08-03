@@ -92,7 +92,22 @@ needs to be read end-to-end to find one result.
     `phase5-roadmap.md`'s "Medium-high / ADR-001-adjacent" cost estimate for this candidate to
     **Low** (that rating belonged to the win-probability-native design, a different catalog item).
     Recommends **go**; deliberately does not implement.
-14. *(future Phase 5 experiments each get their own file here, added as they're run; this list is
+14. **[phase5-p5-auxhead-design.md](phase5-p5-auxhead-design.md)** — P5-AUXHEAD-001's
+    **pre-implementation design record**, written before any code: gradient flow, checkpoint
+    layout, export behavior, inference behavior, strict-loading policy, rollback plan, and the
+    measured derivation of the declared IV value. Kept separate from the results report so the
+    design cannot be retro-fitted to the numbers.
+15. **[phase5-p5-auxhead-multitask.md](phase5-p5-auxhead-multitask.md)** — Experiment
+    P5-AUXHEAD-001: the auxiliary WDL head (multi-task) the #3 scoping pass recommended, now
+    implemented and run. A training-only second head shares the feature transformer; the primary
+    target stays pure `eval_cp` (structurally unlike the P4IV/P5-WDLALT blend family). **Not
+    promotable** — fails all four §7 conditions (cp-only −0.0017/−0.0029, pooled −0.026, RMSE and
+    calibration both regressed). Includes an auxiliary-task validity check showing the auxiliary
+    head was fitted *worse than a constant predictor* while still carrying ranking signal, which
+    makes this null **confounded**: it does not establish that outcome signal is unhelpful to the
+    shared representation, only that this parameterization regressed. Recommends re-running with
+    a properly conditioned auxiliary path before down-ranking the multi-task class.
+16. *(future Phase 5 experiments each get their own file here, added as they're run; this list is
     updated as new files land, not maintained separately.)*
 
 ## 0. Roadmap status (updated after Phase 4 closure, 2026-07-21 — Phase 4 is now CLOSED)
@@ -117,6 +132,7 @@ closes — the retrospective is the current source of truth for synthesis-level 
 | Label budget-sensitivity (RQ-5, Phase 5 #1) | **✓ Closed — diagnostic, not an intervention.** Median 25k-vs-50k spread 13cp, threshold-contingent (10-25cp pre-registered band) — a disclosed ambiguous result (`phase5-rq5-label-noise-floor.md`) |
 | WDL blend, λ=0.8 (P5-WDLALT, Phase 5 #2) | **✓ Closed** — not promotable; cp-only correlation regressed slightly (-0.0011), ~3.4x smaller than P4IV's λ=0.5 regression (-0.0037) — dose-response evidence suggestive that the outcome signal carries no positive ranking information for the majority population (`phase5-p5-wdlalt-lambda.md`) |
 | Auxiliary WDL head (Phase 5 #3) | **✓ Scoping closed — investigation, not an intervention.** Export/quantization/Java-inference blast radius measured at **zero** (bitwise-identical arrays, regression-guarded by a committed test); roadmap cost estimate corrected Medium-high → **Low**. Recommends go; implementation not started (`phase5-arch-scoping-auxiliary-head.md`) |
+| Auxiliary WDL head, `aux_wdl_weight=0.04` (P5-AUXHEAD-001) | **✓ Closed — not promotable**, fails all four §7 conditions (cp-only −0.0017/−0.0029, pooled −0.026, RMSE +9.1/+37.7, calibration regressed). **Null is confounded**: the auxiliary head itself fitted worse than a constant predictor (BCE 0.74–1.16 vs 0.68) while still carrying ranking signal (corr ≈0.54–0.60), so this does *not* establish that outcome signal is unhelpful to the shared representation. Multi-task class **not** closed — re-run with a conditioned auxiliary path first (`phase5-p5-auxhead-multitask.md`) |
 
 **Remaining Phase 4 work is entirely supervision-objective territory** — every lever outside
 loss/target formulation (optimization, data volume, label-outlier cleaning, the incumbent
