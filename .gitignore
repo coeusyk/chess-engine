@@ -76,3 +76,9 @@ tools/output/
 
 ### Graphify ###
 graphify-out/
+
+### token-savior MCP ###
+# Its index currently lives outside the repo (~/.local/share/token-savior), so this
+# matches nothing today -- kept as a guard in case a future version writes in-tree.
+.token-savior/
+token-savior-index*

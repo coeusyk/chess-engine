@@ -107,7 +107,20 @@ needs to be read end-to-end to find one result.
     makes this null **confounded**: it does not establish that outcome signal is unhelpful to the
     shared representation, only that this parameterization regressed. Recommends re-running with
     a properly conditioned auxiliary path before down-ranking the multi-task class.
-16. *(future Phase 5 experiments each get their own file here, added as they're run; this list is
+16. **[phase5-auxhead-failure-diagnostics.md](phase5-auxhead-failure-diagnostics.md)** —
+    P5-AUXHEAD-DIAG-001: a **read-only diagnostic investigation** (no training, no architecture
+    change, no production module touched) into *why* P5-AUXHEAD-001's auxiliary task fitted worse
+    than a constant predictor. Finds a clear bottleneck: the auxiliary head has no logit-scale
+    control, so its logits inflate to ±39 and predictions polarize (76% in the extreme deciles,
+    entropy −36%), which combined with 27.6% draw targets (`y=0.5`, irreducible BCE floor 0.191)
+    destroys calibration while leaving ranking intact. Also measures that auxiliary gradients
+    **dominated the backbone 2.5–5.3×** for the first 4,000 steps despite the 0.04 weight, and
+    that primary/auxiliary backbone gradients are **near-orthogonal** (mean cos ≈ +0.02), not
+    opposed. Rejects six hypotheses on evidence (class imbalance, prediction collapse, negative
+    transfer, clipped-ReLU saturation, dead dimensions, intrinsic unlearnability). Recommends one
+    minimal next experiment — normalize the auxiliary head's input — while stating explicitly that
+    a primary-metric gain should not be expected from it.
+17. *(future Phase 5 experiments each get their own file here, added as they're run; this list is
     updated as new files land, not maintained separately.)*
 
 ## 0. Roadmap status (updated after Phase 4 closure, 2026-07-21 — Phase 4 is now CLOSED)
@@ -133,6 +146,7 @@ closes — the retrospective is the current source of truth for synthesis-level 
 | WDL blend, λ=0.8 (P5-WDLALT, Phase 5 #2) | **✓ Closed** — not promotable; cp-only correlation regressed slightly (-0.0011), ~3.4x smaller than P4IV's λ=0.5 regression (-0.0037) — dose-response evidence suggestive that the outcome signal carries no positive ranking information for the majority population (`phase5-p5-wdlalt-lambda.md`) |
 | Auxiliary WDL head (Phase 5 #3) | **✓ Scoping closed — investigation, not an intervention.** Export/quantization/Java-inference blast radius measured at **zero** (bitwise-identical arrays, regression-guarded by a committed test); roadmap cost estimate corrected Medium-high → **Low**. Recommends go; implementation not started (`phase5-arch-scoping-auxiliary-head.md`) |
 | Auxiliary WDL head, `aux_wdl_weight=0.04` (P5-AUXHEAD-001) | **✓ Closed — not promotable**, fails all four §7 conditions (cp-only −0.0017/−0.0029, pooled −0.026, RMSE +9.1/+37.7, calibration regressed). **Null is confounded**: the auxiliary head itself fitted worse than a constant predictor (BCE 0.74–1.16 vs 0.68) while still carrying ranking signal (corr ≈0.54–0.60), so this does *not* establish that outcome signal is unhelpful to the shared representation. Multi-task class **not** closed — re-run with a conditioned auxiliary path first (`phase5-p5-auxhead-multitask.md`) |
+| Auxiliary-head failure diagnostics (P5-AUXHEAD-DIAG-001) | **✓ Closed — read-only investigation, bottleneck identified.** Cause of the confound: unbounded auxiliary logit scale (±39, 76% of predictions in extreme deciles) interacting with 27.6% draw targets; auxiliary gradients also dominated the backbone 2.5–5.3× early despite the 0.04 weight, and are near-orthogonal (cos ≈ +0.02) to the primary gradient — not opposed. Six hypotheses rejected on evidence. Recommends one minimal follow-up (normalize auxiliary input), with the caveat that a primary-metric gain is *not* expected (`phase5-auxhead-failure-diagnostics.md`) |
 
 **Remaining Phase 4 work is entirely supervision-objective territory** — every lever outside
 loss/target formulation (optimization, data volume, label-outlier cleaning, the incumbent
