@@ -78,7 +78,8 @@ tools/output/
 graphify-out/
 
 ### token-savior MCP ###
-# Its index currently lives outside the repo (~/.local/share/token-savior), so this
-# matches nothing today -- kept as a guard in case a future version writes in-tree.
+# Writes a symbol index into the repo root on first use (~6 MB, grows with the codebase)
+# -- derived data, regenerated on demand, never committed. The daemon also keeps state
+# under ~/.local/share/token-savior, outside the repo.
+.token-savior-cache.json
 .token-savior/
-token-savior-index*
