@@ -83,7 +83,16 @@ needs to be read end-to-end to find one result.
     dose-response pattern (~3.4x smaller regression at a lighter touch) is suggestive that the
     outcome signal itself carries no positive ranking information, not merely that λ=0.5 was too
     heavy a dose. RMSE/calibration flat at both checkpoints.
-13. *(future Phase 5 experiments each get their own file here, added as they're run; this list is
+13. **[phase5-arch-scoping-auxiliary-head.md](phase5-arch-scoping-auxiliary-head.md)** — Phase 5's
+    #3-ranked candidate: an architecture **scoping investigation** (not a trained-model experiment,
+    per the roadmap's own definition of this candidate), covering the auxiliary WDL head / shared
+    feature-transformer design. Finds the export path structurally immune to extra parameters —
+    canonical and quantized arrays are bitwise identical with an auxiliary head attached, so the
+    `.nnue` format and the whole Java inference side need zero changes. Corrects
+    `phase5-roadmap.md`'s "Medium-high / ADR-001-adjacent" cost estimate for this candidate to
+    **Low** (that rating belonged to the win-probability-native design, a different catalog item).
+    Recommends **go**; deliberately does not implement.
+14. *(future Phase 5 experiments each get their own file here, added as they're run; this list is
     updated as new files land, not maintained separately.)*
 
 ## 0. Roadmap status (updated after Phase 4 closure, 2026-07-21 — Phase 4 is now CLOSED)
@@ -107,6 +116,7 @@ closes — the retrospective is the current source of truth for synthesis-level 
 | WDL blend, λ=0.5 (P4IV, Lever C) | **✓ Closed** — not promotable; majority-population (cp-only) correlation regressed slightly at every reading, no rubric-contamination confound (unlike P4II/P4III, this intervention never touches evaluation) — a clean, direct null (`phase4-p4iv-wdl-blend.md`) |
 | Label budget-sensitivity (RQ-5, Phase 5 #1) | **✓ Closed — diagnostic, not an intervention.** Median 25k-vs-50k spread 13cp, threshold-contingent (10-25cp pre-registered band) — a disclosed ambiguous result (`phase5-rq5-label-noise-floor.md`) |
 | WDL blend, λ=0.8 (P5-WDLALT, Phase 5 #2) | **✓ Closed** — not promotable; cp-only correlation regressed slightly (-0.0011), ~3.4x smaller than P4IV's λ=0.5 regression (-0.0037) — dose-response evidence suggestive that the outcome signal carries no positive ranking information for the majority population (`phase5-p5-wdlalt-lambda.md`) |
+| Auxiliary WDL head (Phase 5 #3) | **✓ Scoping closed — investigation, not an intervention.** Export/quantization/Java-inference blast radius measured at **zero** (bitwise-identical arrays, regression-guarded by a committed test); roadmap cost estimate corrected Medium-high → **Low**. Recommends go; implementation not started (`phase5-arch-scoping-auxiliary-head.md`) |
 
 **Remaining Phase 4 work is entirely supervision-objective territory** — every lever outside
 loss/target formulation (optimization, data volume, label-outlier cleaning, the incumbent

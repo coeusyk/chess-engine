@@ -73,11 +73,21 @@ each candidate's rationale says explicitly where they diverge.
   blend — all modifications to the *existing* scalar objective) have failed. That is real evidence
   the next lever worth investigating is architecture-level, not another variation within the same
   family.
-- **Implementation cost / engineering risk: Medium-high** for full implementation — new output
-  shape, export-path changes, ADR-001-adjacent scope. This is why the recommendation here is a
-  **scoping/design investigation first**, not full implementation: understand the interface and
-  blast radius (following the architecture-review skill's axes — coupling, module boundaries,
-  export/inference impact) before committing engineering time.
+- **Implementation cost / engineering risk: ~~Medium-high~~ → CORRECTED to Low (2026-08-03).**
+  ~~Medium-high for full implementation — new output shape, export-path changes, ADR-001-adjacent
+  scope.~~ The scoping pass this item called for has now been run
+  (**[phase5-arch-scoping-auxiliary-head.md](phase5-arch-scoping-auxiliary-head.md)**) and found
+  that original estimate to be inaccurate **for the auxiliary-head design specifically**.
+  *Rationale for the correction:* `checkpoint_to_canonical()` extracts weights from a checkpoint by
+  explicit key name, so an auxiliary head's parameters are never read — the exported canonical and
+  quantized arrays are **bitwise identical** to a primary-head-only model's (verified executably,
+  and locked in by `trainer/tests/export/test_auxiliary_head_export_isolation.py`). There is
+  therefore no new *exported* output shape, no export-path change, and no ADR-001 implication
+  (feature representation and `.nnue` format both untouched). The Medium-high rating appears to have
+  been carried over from the **win-probability-native output** item in Deliverable 6, which
+  genuinely is ADR-001-class; the two designs were not distinguished when this estimate was written.
+  Remaining work is ~25 lines across `network.py`/`train.py` plus a P4IV-shaped experiment script.
+  The scoping recommendation itself was still correct to make — it is what surfaced the error.
 - **Likelihood of changing the reference model: Unknown — this is exactly what makes it worth
   scoping.** No project-specific evidence exists either way; the value of the scoping step is
   turning "unknown" into an informed estimate before the higher-cost implementation step is taken.
@@ -207,11 +217,16 @@ are identified as future research directions, not designed in detail.
 |---|---|---|---|---|---|
 | 1 | Label-noise floor (RQ-5) | High | Low | Low | None — diagnostic only, not an intervention |
 | 2 | WDL blend, alternate operating point | Medium | Very low | Low | Low-medium |
-| 3 | Architecture scoping (auxiliary head) | High (as a class) | Medium-high (full impl.) | Medium-high (full impl.) | Unknown — the point of scoping |
+| 3 | Architecture scoping (auxiliary head) | High (as a class) | ~~Medium-high~~ **Low** (corrected — see item 3) | ~~Medium-high~~ **Low** (corrected) | Unknown — the point of scoping |
 | 4 | Huber/log-cosh, atop incumbent (as scoped) | Low-medium | Low | Low | Low |
 | 5 | Huber/log-cosh, raw-cp-space (unscoped) | Medium | Medium (provisional) | Low-medium | Unclear |
 | 6 | Ranking losses | Potentially high | High | Medium-high | Unknown |
 | 7 | Multi-head / win-probability-native (full impl.) | Unknown | Very high | High | Unknown |
 
-This ranking is a recommendation pending review — nothing above has been implemented, and per the
-governing task's stop condition, Phase 5 implementation does not begin from this document alone.
+This ranking was a recommendation pending review when first written. **Status as of 2026-08-03**:
+the ranking was reviewed and accepted, and candidates #1 (RQ-5 label budget-sensitivity), #2
+(P5-WDLALT, WDL blend at λ=0.8), and #3 (auxiliary-head architecture scoping) have each been run
+and closed, one per task, in ranked order — see this folder's README index for each one's report and
+outcome. Candidates #4-#7 remain unstarted; the ordering below them is unchanged, and item 3's
+cost/risk correction (above) does not re-rank anything, since #1-#3 were already complete when it
+was made.
