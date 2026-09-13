@@ -6,12 +6,14 @@ before either arm was trained. That record is the contract this report is graded
 hypothesis, mathematical treatment, control identity, and preregistered mechanism/primary
 criteria are specified there and are not restated in full here.
 
-**Verdict: mechanism not repaired by the preregistered criteria.** RMS normalization produced
-a consistent, measurable attenuation of every diagnosed pathology (lower auxiliary BCE at every
-checkpoint, a lower peak early gradient ratio, modestly narrower logit polarization) but did not
-cross any of the three preregistered mechanism thresholds, and the primary evaluation shows no
-benefit regardless. This is a cleaner negative result than P5-AUXHEAD-001's: the auxiliary
-gradient's magnitude sensitivity was a real, partial contributor to the failure, but not the
+**Verdict: mechanism not repaired by the preregistered criteria.** RMS normalization produced a
+real, transient early improvement (the only arm that ever beats the constant-predictor baseline,
+at 3 of 20 checkpoints) and a mostly-sustained, non-material reduction in logit polarization
+(16 of 20 checkpoints), but the improvement was not durable -- auxiliary BCE reverses from step
+3,999 onward and ends worse than at any prior checkpoint -- and none of the three preregistered
+mechanism criteria were jointly satisfied. The primary evaluation shows no benefit regardless.
+This is a cleaner negative result than P5-AUXHEAD-001's: the auxiliary gradient's magnitude
+sensitivity was a real, partial contributor to the failure, but not the
 dominant or sufficient cause.
 
 ## 1. What this replaces
@@ -38,8 +40,27 @@ gitignored per the existing `outputs/` convention):
   the audit's reconciled 40,000-record corpus).
 - P3A-001 checkpoint SHA-256 `c2c33d1dd7af5345d8772aa0761e79d5b9bc8bff7aff409b946078684c08d0ef`
   -- matches the recovery review's independently computed value exactly.
-- P1-G04 checkpoint SHA-256 `479e61e732785af5f97c90fec7b71b72debc6922181d6f1199d2364765d20f2b`,
-  recorded for display-only continuity (never used for gating).
+- P1-G04 checkpoint SHA-256 `acd24d68bc21d34e09ad71f651e7f0c5055adb32f90b0cae9480ea3343036cd8`
+  (`outputs/phase1/P1-G04/checkpoints/step-015999.pt`, the selected checkpoint -- see the
+  correction below), recorded for display-only continuity (never used for gating).
+
+**Correction (post-review):** an earlier version of this report and its driver script pinned
+`outputs/phase1/P1-G04/final.pt` (SHA-256 `479e61e732785af5f97c90fec7b71b72debc6922181d6f1199d2364765d20f2b`)
+as "the P1-G04 checkpoint," disagreeing with the recovery audit's recorded hash for the same
+name. Root cause: `final.pt` and `checkpoints/step-015999.pt` are two genuinely different,
+both-legitimate files from the same training run -- `final.pt` is the run's last-step (19,999)
+checkpoint with additional saved state (optimizer state, experiment metadata), while
+`step-015999.pt` is the periodic checkpoint at the run's *selected* step (peak held-out pooled
+correlation), which is what "P1-G04" canonically refers to throughout this research line (the
+audit's own recomputed v1 correlation, 0.5315414, matches `step-015999.pt` exactly and does not
+match `final.pt`'s 0.5310997). This was a wrong-file bug in this experiment's own driver script
+(`P1_G04_CHECKPOINT`), not a data-integrity problem, a corrupted checkpoint, or a discrepancy in
+the audit. It is fixed in `trainer/scripts/phase5_auxhead_rms.py` and the provenance and
+display-only table below are regenerated from the corrected path (read-only re-evaluation, no
+retraining). **This does not affect P5-AUXHEAD-RMS-001's validity**: P1-G04 was declared
+display-only in the design record (§5) and never participated in the mechanism or primary
+gating, which compare only the matched control, the treatment, and the P3A-001 baseline --
+none of which this bug touched.
 - Environment: PyTorch 2.13.0+cu130, NumPy 2.5.1, CUDA available (RTX 4060) but **not used** --
   training in this trainer is CPU-only (no `.cuda()`/`.to(device)` call exists in the training
   loop), matching every prior Phase-4/5 run's execution path.
@@ -99,37 +120,76 @@ Train-fitted constant BCE, recomputed from pinned data and scored on the identic
 arm trained it, since it comes from the training corpus's WDL distribution, but it was
 recomputed independently for each arm's diagnostic run and matched to seven decimal places).
 
-**Reading against the three preregistered mechanism criteria:**
+**Correction (post-review):** an earlier version of this report stated that treatment "does not
+beat the constant predictor (0.6803206) at any checkpoint." That statement was false and is
+corrected below against the full 20-checkpoint trajectory (recomputed from the pinned diagnostic
+JSON, not re-estimated). No raw measurement changed; only the interpretation of measurements
+already in this report's table is corrected. The preregistration (design record §7.1) is
+unchanged and is not being reinterpreted after the fact -- the three criteria below are exactly
+those stated before either arm trained.
+
+**Reading against the three preregistered mechanism criteria, checkpoint by checkpoint:**
 
 1. **Held-out auxiliary BCE beats both the constant predictor and the matched control (both
-   required).** Treatment beats the control at every checkpoint (e.g. final 1.1024 vs 1.1619).
-   It does **not** beat the constant predictor (0.6803206) at any checkpoint -- both arms
-   diverge well above it. **Fails** (partial credit: real, consistent improvement over control;
-   the harder half of the bar was never in reach).
-2. **Logit polarization materially reduced.** Extreme-decile fraction falls from 0.7582 to
-   0.7416 at the final checkpoint (about 1.7 percentage points), and the effect is consistent
-   at every checkpoint (0.6187 -> 0.5148 at step 999). Directionally correct, but this is a
-   modest attenuation, not a material reduction in the pathology's severity. **Fails** the
-   "materially reduced" bar as preregistered.
+   required).** Against the constant predictor (0.6803206): treatment beats it at exactly the
+   first **3 of 20** diagnostic checkpoints -- steps 999 (0.5445), 1,999 (0.5928), and 2,999
+   (0.6267) -- a real, transient early success covering roughly the first 15% of training. It
+   does not sustain: from step 3,999 onward (0.6909) treatment is worse than the constant
+   predictor at every remaining checkpoint, monotonically, reaching 1.1024 at the final step. The
+   control never beats the constant predictor at any checkpoint (minimum 0.7022, at step 999),
+   so the transient early win is a real, treatment-specific effect, not shared background noise.
+   Against the matched control: treatment beats it at **11 of 20** checkpoints, not all of
+   them -- it wins throughout the transient-success window and again from step 15,999 onward, but
+   is worse than the control across a middle stretch (steps 5,999-14,999, 9 checkpoints). It does
+   win at both checkpoints the rest of this report actually reads against (selected, step 3,999:
+   0.6909 vs 0.7448; final, step 19,999: 1.1024 vs 1.1619). **Fails** the joint "beats both"
+   requirement at the checkpoints that matter for a promotion read (selected and final): the
+   constant-predictor half of the bar is not met at either one, even though the control-beating
+   half is.
+2. **Logit polarization materially reduced.** Extreme-decile fraction: treatment beats control at
+   **16 of 20** checkpoints (all except a mid-training dip at steps 8,999-11,999), including at
+   both the selected checkpoint (0.6152 vs 0.6598) and the final checkpoint (0.7416 vs 0.7582, a
+   1.7-percentage-point reduction). This is the most consistent of the three criteria, and
+   directionally correct throughout, but a roughly 2-point reduction against a baseline already at
+   75-76% is a modest attenuation, not the qualitative break in the pathology "materially reduced"
+   was meant to describe. **Fails** the preregistered bar, on the same reading applied
+   consistently: a real, mostly-sustained but small effect is not what the design record's
+   "materially reduced" language was set up to accept.
 3. **Early gradient-ratio dominance (2.5-5.3x) followed by collapse to ~0.15 no longer
-   present.** The pattern is attenuated (peak ratio drops from 5.325 to 3.037, and the ratio
-   falls below 1.0 by step 2,999 in the treatment versus step 4,999 in the control) but the
-   qualitative shape -- early dominance above 1, later collapse to about 0.14-0.15 -- is still
-   present in both arms. **Fails**: reduced in magnitude and duration, not eliminated.
+   present.** The very-early peak is genuinely lower (3.037 vs 5.325 at step 999, 0.426 vs 2.463
+   at step 2,999), but by step 3,999 the treatment ratio is back to 1.128 -- comparable order to
+   the control's 2.786 -- and for the remainder of training both arms show the same noisy,
+   non-monotonic pattern between roughly 0.15 and 1.7 before collapsing to 0.14-0.15 at the final
+   step. **Fails clearly**: the peak is attenuated, but the qualitative shape -- early dominance
+   above 1, eventual collapse -- is present in both arms and was not eliminated in the treatment.
 
-**A secondary, unplanned but informative observation, consistent with the design record's own
-predicted mechanism:** the auxiliary-head weight norm at the final checkpoint is **4.5x larger**
-under RMS normalization (10.83 vs 2.42). This is exactly the head-compensation the design record
-flagged as the honest risk of any input-scaling intervention (§3): removing the backbone's
-magnitude signal from the auxiliary head's input does not prevent the head from re-inflating its
-own weights to reach a comparably wide logit range from a now-unit-scale input. The head
-partially undid the intervention by growing its own weights, which is consistent with why the
-logit range and BCE trajectory improved only modestly rather than resolving.
+**All three criteria were required for mechanism success (design record §7.1: "all three
+required").** Criterion 1 is met only transiently (3 of 20 checkpoints) and fails at the
+checkpoints that matter for a read (selected, final); criterion 2 is a real but non-material
+effect; criterion 3 fails clearly. The joint requirement is not satisfied, so **the overall
+mechanism verdict is unchanged: failure.** The transient early success at criterion 1 does not
+become a promotion claim -- it is evidence the mechanism is real, not evidence the intervention
+worked.
 
-**Interpretation: Branch A -- "RMS conditioning did not resolve the auxiliary-task failure."**
-Every mechanism metric moved in the hypothesized direction and none crossed the preregistered
-bar. Per the design record and the governing task, this stops the investigation at this design;
-no LayerNorm, weight cap, or aux-weight change is chained onto this result.
+**A secondary, unplanned observation:** the auxiliary-head weight norm at the final checkpoint is
+4.5x larger under RMS normalization (10.83 vs 2.42). This is consistent with -- not proof of --
+the head-compensation risk the design record flagged (§3): removing the backbone's magnitude
+signal from the auxiliary head's input does not by itself prevent the head from re-inflating its
+own weights to reach a comparably wide logit range from a now-unit-scale input. The correlation
+between the weight-norm growth and the reversal after step 2,999-3,999 is suggestive, not
+established as causal; no experiment here isolates weight-norm growth as the mechanism of the
+reversal from other explanations (for example, the same optimization dynamics that caused the
+original drift continuing to operate on a different geometry).
+
+**Interpretation: Branch A -- mechanism failure, precisely characterized.** RMS normalization
+substantially improved auxiliary learning early in training -- at steps 999-2,999 it is the only
+arm of the two that ever beats the constant predictor -- but the improvement was not durable: the
+auxiliary head re-entered an overconfident, BCE-worsening regime from step 3,999 onward while its
+weight norm grew substantially. This supports the hypothesis that magnitude sensitivity
+contributed to the original pathology, but RMS normalization alone was insufficient to repair it.
+Per the design record and the governing task, this stops the investigation at this design; no
+LayerNorm, weight cap, aux-weight change, or scheduler change is chained onto this result without
+a new, mechanism-driven hypothesis.
 
 ## 5. Primary research evaluation
 
@@ -140,7 +200,7 @@ selection rule -- the treatment checkpoint was never selected by auxiliary BCE.
 | Arm | Benchmark | n | CpSubsetCorr | MateSubsetCorr | PooledCorr | RMSE | Bias |
 |---|---|---|---|---|---|---|---|
 | baseline (P3A-001) | v1-clean | 3,992 | 0.5941 | 0.6401 | 0.5933 | 1030.1 | -191.1 |
-| P1-G04 (display only) | v1-clean | 3,992 | 0.5931 | 0.6362 | 0.5926 | 1029.4 | -188.5 |
+| P1-G04 (display only) | v1-clean | 3,992 | 0.5933 | 0.6358 | 0.5931 | 1030.2 | -189.4 |
 | control, selected | v1-clean | 3,992 | 0.5924 | 0.5552 | 0.5673 | 1067.8 | -196.2 |
 | control, final | v1-clean | 3,992 | 0.5912 | 0.6149 | 0.5668 | 1039.2 | -193.5 |
 | **treatment, selected** | v1-clean | 3,992 | 0.5938 | 0.5551 | 0.5606 | 1067.3 | -198.1 |
@@ -173,20 +233,35 @@ normalization was an insufficient, not merely inconclusive, fix for the diagnose
 
 ## 6. What this does and does not establish
 
-- It establishes that the auxiliary head's sensitivity to the shared activation's magnitude was
-  a real, measurable contributor to the P5-AUXHEAD-001 failure: removing that sensitivity
-  produced a consistent, monotonic improvement in auxiliary BCE, gradient-ratio dominance, and
-  logit polarization at every one of the 20 diagnostic checkpoints, in both arms trained under
-  the identical seed/schedule/data.
-- It does not establish that magnitude drift was the dominant or sufficient cause: none of the
-  three preregistered thresholds were crossed, and the auxiliary head substantially regrew its
-  own weight norm (4.5x) under the RMS-normalized input, which is a plausible reason the
-  improvement stayed partial -- the head can and did partially compensate through its own
-  parameters, exactly the risk the design record flagged rather than ruled out.
+Wording here is deliberately no stronger than the experiment supports -- "establishes" is
+avoided in favor of "supports" throughout, per the correction above.
+
+- It **supports** the hypothesis that the auxiliary head's sensitivity to the shared activation's
+  magnitude was a real contributor to the P5-AUXHEAD-001 failure: removing that sensitivity
+  produced a genuine, treatment-specific early improvement (the only arm of the two that ever
+  beats the constant predictor, at 3 of 20 checkpoints) and a mostly-consistent, non-material
+  reduction in logit polarization (16 of 20 checkpoints). It does not establish this as the sole
+  or dominant cause -- see below.
+- It does **not** establish that magnitude drift was the dominant or sufficient cause, and it does
+  not establish that RMS normalization repairs the failure: none of the three preregistered
+  criteria were jointly satisfied, the early improvement reversed by step 3,999, and the auxiliary
+  head's weight norm grew substantially (4.5x) under the RMS-normalized input over the same
+  window. That growth is **consistent with, not proof of,** the head-compensation risk the design
+  record flagged -- no experiment here isolates it as the specific cause of the reversal, as
+  distinct from other candidate explanations for why the intervention did not durably resolve the
+  pathology.
+- A bounded statement of what the evidence supports: RMS normalization substantially improved
+  auxiliary learning early in training, but the improvement was not durable. The auxiliary head
+  later re-entered an overconfident regime while its weight norm grew strongly. This supports the
+  hypothesis that magnitude sensitivity contributed to the original pathology, but RMS
+  normalization alone was insufficient to repair it.
 - It does not establish, and does not need to establish, any primary-representation benefit:
   primary metrics are flat-to-slightly-regressed in both arms, consistent with mechanism failure.
 - One seed. Not a strength claim, not a promotion candidate. No SPRT, no self-play, no export,
-  no Stage-3 work followed from this result, per the design record's stopping conditions.
+  no Stage-3 work followed from this result, per the design record's stopping conditions. Further
+  multi-task work on this auxiliary head requires a new, mechanism-driven hypothesis -- not an
+  automatic follow-on (LayerNorm, weight cap, temperature, aux-weight change, or scheduler
+  change) chained onto this result.
 
 ## 7. What was and was not changed
 

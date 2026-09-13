@@ -71,8 +71,13 @@ STAGE2_DIR = Path("outputs/datasets/stage2-quiet-sf-wdl")
 OUTPUT_ROOT = Path("outputs/phase5") / "P5-AUXHEAD-RMS"
 
 # Historical Phase-1 promoted research reference (display-only for this experiment; see design
-# record §5 -- must never participate in pass/fail gating).
-P1_G04_CHECKPOINT = Path("outputs/phase1/P1-G04/final.pt")
+# record §5 -- must never participate in pass/fail gating). "P1-G04" canonically means the
+# *selected* checkpoint at step 15,999 (peak held-out pooled correlation, matching the recovery
+# audit's recomputed v1 correlation 0.5315414 exactly) -- NOT outputs/phase1/P1-G04/final.pt,
+# which is a different, later (step 19,999) artifact from the same run. An earlier version of
+# this file pointed here at final.pt by mistake; the two files hash differently
+# (acd24d68... for step-015999.pt vs 479e61e7... for final.pt) and are not interchangeable.
+P1_G04_CHECKPOINT = Path("outputs/phase1/P1-G04/checkpoints/step-015999.pt")
 
 ARMS = {"control": False, "treatment": True}
 
