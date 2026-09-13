@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import math
 import random
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Dict, List
@@ -44,12 +45,12 @@ from scripts.phase4_p4i_k_sweep import (
     HIDDEN_WIDTH, QA, QB, OUTPUT_SCALE, K_BASE, SPLIT_SEED, _is_sentinel,
 )
 
-RUN_ROOT = Path("outputs/phase5/P5-AUXHEAD/P5-AUXHEAD-001")
-OUTPUT_ROOT = Path("outputs/phase5/P5-AUXHEAD-DIAG")
+DEFAULT_RUN_ROOT = Path("outputs/phase5/P5-AUXHEAD/P5-AUXHEAD-001")
+DEFAULT_OUTPUT_ROOT = Path("outputs/phase5/P5-AUXHEAD-DIAG")
 STAGE1_DIR = Path("outputs/datasets/stage1-lichess")
 STAGE2_DIR = Path("outputs/datasets/stage2-quiet-sf-wdl")
 
-AUX_WDL_WEIGHT = 0.04  # the value P5-AUXHEAD-001 actually trained at
+AUX_WDL_WEIGHT = 0.04  # the value P5-AUXHEAD-001 and P5-AUXHEAD-RMS-001 both train at
 DIAGNOSTIC_BATCH = 4096
 DIAGNOSTIC_BATCH_SEED = 20260803  # fixed, so every checkpoint is measured on one batch
 
@@ -107,13 +108,38 @@ def _calibration_bins(p: torch.Tensor, y: torch.Tensor, bins: int = 10) -> List[
     return out
 
 
-def _checkpoint_steps() -> List[int]:
-    return sorted(int(p.stem.split("-")[1]) for p in (RUN_ROOT / "checkpoints").glob("step-*.pt"))
+def _checkpoint_steps(run_root: Path) -> List[int]:
+    return sorted(int(p.stem.split("-")[1]) for p in (run_root / "checkpoints").glob("step-*.pt"))
+
+
+def _extreme_decile_fraction(p: torch.Tensor) -> float:
+    """Fraction of predictions in the two extreme deciles [0,0.1) or [0.9,1.0] -- the
+    polarization measure the P5-AUXHEAD-DIAG-001 report used (distinct from the
+    prob_frac_below_0.01/above_0.99 columns, which are a tighter saturation check)."""
+    return float(((p < 0.1) | (p >= 0.9)).float().mean())
+
+
+def _percentiles(x: torch.Tensor, qs=(0.05, 0.25, 0.5, 0.75, 0.95)) -> Dict[str, float]:
+    return {f"p{int(q * 100)}": float(torch.quantile(x, q)) for q in qs}
 
 
 def main() -> int:
-    OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
-    print("=== P5-AUXHEAD-DIAG-001: read-only diagnostic (no training, no production changes) ===")
+    # argv: [run_root] [output_root] [tag] -- all optional, defaulting to P5-AUXHEAD-001's
+    # original locations so this script's historical invocation is unchanged.
+    run_root = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_RUN_ROOT
+    output_root = Path(sys.argv[2]) if len(sys.argv) > 2 else DEFAULT_OUTPUT_ROOT
+    tag = sys.argv[3] if len(sys.argv) > 3 else "P5-AUXHEAD-DIAG-001"
+
+    if not (run_root / "checkpoints").is_dir():
+        raise SystemExit(
+            f"No checkpoints found under {run_root / 'checkpoints'}. Refusing to report an "
+            f"empty trajectory -- run the training driver for this arm first, or pass the "
+            f"correct run_root as argv[1]."
+        )
+
+    output_root.mkdir(parents=True, exist_ok=True)
+    print(f"=== {tag}: read-only diagnostic (no training, no production changes) ===")
+    print(f"    run_root={run_root}")
 
     training_records, held_out_records, _ = combine_and_split(STAGE1_DIR, STAGE2_DIR, SPLIT_SEED)
     training_records = [r for r in training_records if not _is_sentinel(r)]
@@ -153,8 +179,16 @@ def main() -> int:
     held_batch = encode_batch(held_wdl)
     held_y = torch.tensor([r.label.wdl for r in held_wdl], dtype=torch.float32)
 
+    # ---- train-fitted constant, scored on held-out (the correct promotion/mechanism gate;
+    # recovery-review recomputed this at ~0.68032 -- verified here from pinned data, not
+    # hardcoded) --------------------------------------------------------------------
+    train_fitted_const_on_held_out = float(nn.functional.binary_cross_entropy(
+        torch.full_like(held_y, mean_wdl), held_y))
+    print(f"  train-fitted constant BCE, scored on held-out ({len(held_wdl)} records): "
+          f"{train_fitted_const_on_held_out:.7f}")
+
     rows: List[Dict] = []
-    steps = _checkpoint_steps()
+    steps = _checkpoint_steps(run_root)
     print(f"\n--- (1)(4)(5) per-checkpoint gradient + behaviour ({len(steps)} checkpoints,"
           f" diagnostic batch n={DIAGNOSTIC_BATCH}) ---")
     header = (f"{'step':>6}{'g_bb_prim':>11}{'g_bb_aux*w':>12}{'ratio':>8}"
@@ -163,10 +197,23 @@ def main() -> int:
     print(header)
 
     for step in steps:
-        ckpt = torch.load(RUN_ROOT / "checkpoints" / f"step-{step:06d}.pt", weights_only=False)
-        model = NnueNet(HIDDEN_WIDTH, QA, QB, OUTPUT_SCALE, with_aux_wdl_head=True)
+        ckpt = torch.load(run_root / "checkpoints" / f"step-{step:06d}.pt", weights_only=False)
+        # aux_rms_norm is read from the checkpoint's own saved config, defaulting to False for
+        # pre-P5-AUXHEAD-RMS checkpoints that predate the field -- so this script works
+        # unmodified for both the unnormalized control and the RMS treatment.
+        aux_rms_norm = bool(ckpt.get("config", {}).get("aux_rms_norm", False))
+        model = NnueNet(HIDDEN_WIDTH, QA, QB, OUTPUT_SCALE, with_aux_wdl_head=True,
+                         aux_rms_norm=aux_rms_norm)
         model.load_state_dict(ckpt["model_state_dict"])
         backbone = _backbone_params(model)
+
+        with torch.no_grad():
+            shared = model.shared_activation(batch.us_indices, batch.us_offsets,
+                                              batch.them_indices, batch.them_offsets)
+            activation_rms = float(torch.sqrt(torch.mean(shared ** 2)))
+        aux_head_weight_norm = float(torch.linalg.vector_norm(
+            torch.cat([model.wdl_head.weight.detach().reshape(-1),
+                       model.wdl_head.bias.detach().reshape(-1)])))
 
         # primary-only gradient
         model.zero_grad(set_to_none=True)
@@ -196,6 +243,9 @@ def main() -> int:
 
         row = {
             "step": step,
+            "aux_rms_norm": aux_rms_norm,
+            "shared_activation_rms": activation_rms,
+            "aux_head_weight_norm": aux_head_weight_norm,
             "backbone_grad_norm_primary": n_bb_primary,
             "backbone_grad_norm_aux_weighted": n_bb_aux,
             "aux_to_primary_backbone_ratio": n_bb_aux / n_bb_primary if n_bb_primary else None,
@@ -204,9 +254,11 @@ def main() -> int:
             "aux_head_grad_norm": n_head_aux,
             "logit_mean": float(logits.mean()), "logit_std": float(logits.std()),
             "logit_min": float(logits.min()), "logit_max": float(logits.max()),
+            "logit_percentiles": _percentiles(logits),
             "prob_mean": float(probs.mean()), "prob_std": float(probs.std()),
             "prob_frac_below_0p01": float((probs < 0.01).float().mean()),
             "prob_frac_above_0p99": float((probs > 0.99).float().mean()),
+            "extreme_decile_fraction": _extreme_decile_fraction(probs),
             "prediction_entropy": _entropy_of_predictions(probs),
             "held_out_aux_bce": bce,
             "held_out_aux_correlation": corr,
@@ -222,8 +274,10 @@ def main() -> int:
     print(f"\n--- (3) auxiliary prediction behaviour (held-out, n={len(held_wdl)}) ---")
     detail = {}
     for step in (steps[0], steps[len(steps) // 2], steps[-1]):
-        ckpt = torch.load(RUN_ROOT / "checkpoints" / f"step-{step:06d}.pt", weights_only=False)
-        model = NnueNet(HIDDEN_WIDTH, QA, QB, OUTPUT_SCALE, with_aux_wdl_head=True)
+        ckpt = torch.load(run_root / "checkpoints" / f"step-{step:06d}.pt", weights_only=False)
+        aux_rms_norm = bool(ckpt.get("config", {}).get("aux_rms_norm", False))
+        model = NnueNet(HIDDEN_WIDTH, QA, QB, OUTPUT_SCALE, with_aux_wdl_head=True,
+                         aux_rms_norm=aux_rms_norm)
         model.load_state_dict(ckpt["model_state_dict"])
         with torch.no_grad():
             logits = model.auxiliary_wdl_logit(held_batch.us_indices, held_batch.us_offsets,
@@ -241,8 +295,8 @@ def main() -> int:
               f"prob histogram {list(hist.values())}")
 
     summary = {
-        "experiment_id": "P5-AUXHEAD-DIAG-001",
-        "source_run": "P5-AUXHEAD-001",
+        "experiment_id": tag,
+        "source_run": str(run_root),
         "aux_wdl_weight": AUX_WDL_WEIGHT,
         "diagnostic_batch_size": DIAGNOSTIC_BATCH,
         "diagnostic_batch_seed": DIAGNOSTIC_BATCH_SEED,
@@ -250,12 +304,14 @@ def main() -> int:
             "records_with_wdl": total_wdl, "training_records": len(training_records),
             "classes": dist, "mean_wdl": mean_wdl,
             "irreducible_bce_floor": floor, "constant_predictor_bce": const_baseline,
+            "held_out_records_with_wdl": len(held_wdl),
+            "train_fitted_constant_bce_on_held_out": train_fitted_const_on_held_out,
         },
         "trajectory": rows,
         "prediction_detail": detail,
     }
-    (OUTPUT_ROOT / "diagnostics.json").write_text(json.dumps(summary, indent=2))
-    print(f"\nDiagnostics written: {OUTPUT_ROOT / 'diagnostics.json'}")
+    (output_root / "diagnostics.json").write_text(json.dumps(summary, indent=2))
+    print(f"\nDiagnostics written: {output_root / 'diagnostics.json'}")
     return 0
 
 

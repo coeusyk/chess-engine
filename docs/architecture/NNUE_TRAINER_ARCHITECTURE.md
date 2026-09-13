@@ -1,6 +1,8 @@
 # NNUE Trainer Architecture
 
-**Status:** Draft — architecture reference for Phase D, no implementation exists yet
+**Status:** Reference document for the (now implemented) trainer — see
+`docs/architecture/research/nnue/README.md` for the current experiment history and status;
+this file's own architectural decisions are unchanged since drafting
 **Date:** 2026-07-13
 **Relationship to other docs:** Elaborates `docs/NNUE_PRD.md` §3 "Trainer Architecture"
 into a standalone, implementation-facing reference. Where this doc and the PRD appear

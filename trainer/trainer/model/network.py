@@ -63,13 +63,26 @@ class NnueNet(nn.Module):
     this module (Section 6: "the model has no knowledge of `.nnue`'s byte layout").
     """
 
+    # Experiment P5-AUXHEAD-RMS (Phase 5, docs/architecture/research/nnue/
+    # phase5-p5-auxhead-rms-design.md): fixed epsilon for the auxiliary-only RMS
+    # normalization, so an all-zero shared activation yields a finite auxiliary input
+    # (0 / sqrt(0 + eps) == 0) rather than a divide-by-zero.
+    AUX_RMS_EPS = 1e-6
+
     def __init__(self, hidden_width: int, qa: float, qb: float, output_scale: float,
-                  with_aux_wdl_head: bool = False):
+                  with_aux_wdl_head: bool = False, aux_rms_norm: bool = False):
         super().__init__()
         self.hidden_width = hidden_width
         self.qa = qa
         self.qb = qb
         self.output_scale = output_scale
+        # Experiment P5-AUXHEAD-RMS (see AUX_RMS_EPS above): when True, the auxiliary head
+        # consumes a per-sample RMS-normalized copy of the shared activation instead of the
+        # raw one. Applies ONLY inside auxiliary_wdl_logit(); forward() and the primary head
+        # are byte-for-byte unaffected. Adds no parameters, so the state_dict key set is
+        # identical whether this is True or False -- the same safe-default discipline
+        # with_aux_wdl_head follows. Default False reproduces P5-AUXHEAD-001 exactly.
+        self.aux_rms_norm = aux_rms_norm
 
         self.ft = nn.EmbeddingBag(FEATURES_PER_PERSPECTIVE, hidden_width, mode="sum")
         self.ft_bias = nn.Parameter(torch.zeros(hidden_width))
@@ -155,7 +168,21 @@ class NnueNet(nn.Module):
                 "auxiliary_wdl_logit() requires a model built with with_aux_wdl_head=True"
             )
         combined = self.shared_activation(us_indices, us_offsets, them_indices, them_offsets)
-        return self.wdl_head(combined).squeeze(-1)
+        aux_input = combined
+        if self.aux_rms_norm:
+            # P5-AUXHEAD-RMS: per-sample RMS normalization of the auxiliary head's input.
+            # This is NOT a harmless scalar rescale. Writing combined = r * u (r the per-row
+            # RMS scale, u the unit-RMS direction), the auxiliary head now sees only u: the
+            # magnitude r is divided out, so the auxiliary BCE gradient can reshape the shared
+            # feature transformer only through the activation's direction, never through a term
+            # that uniformly scales the whole activation. The primary head still consumes the
+            # full r * u via forward(). Because rms is recomputed here every forward pass rather
+            # than being a fixed constant, Adam cannot absorb it into a learning-rate change --
+            # the distinction from the rejected constant-divisor (/QA) intervention. See the
+            # design record for the full gradient-geometry argument.
+            rms = torch.sqrt(torch.mean(combined ** 2, dim=1, keepdim=True) + self.AUX_RMS_EPS)
+            aux_input = combined / rms
+        return self.wdl_head(aux_input).squeeze(-1)
 
     def clip_ft_weights_(self) -> None:
         """Applies the overflow-safety clip (`derive_weight_clip_bounds`) to the FT

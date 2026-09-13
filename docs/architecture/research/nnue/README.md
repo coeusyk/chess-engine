@@ -120,7 +120,21 @@ needs to be read end-to-end to find one result.
     transfer, clipped-ReLU saturation, dead dimensions, intrinsic unlearnability). Recommends one
     minimal next experiment — normalize the auxiliary head's input — while stating explicitly that
     a primary-metric gain should not be expected from it.
-17. *(future Phase 5 experiments each get their own file here, added as they're run; this list is
+17. **[phase5-p5-auxhead-rms-design.md](phase5-p5-auxhead-rms-design.md)** /
+    **[phase5-p5-auxhead-rms.md](phase5-p5-auxhead-rms.md)** — Experiment P5-AUXHEAD-RMS-001: the
+    read-only diagnostic's recommended follow-up, following an adversarial-review correction to the
+    originally proposed fixed-divisor (`/QA`) intervention (rejected: under this trainer's plain
+    Adam, a constant divisor is confounded with an effective auxiliary-head learning-rate cut, not
+    an isolation of the diagnosed magnitude-drift mechanism). Uses a parameter-free, per-sample RMS
+    normalization of the auxiliary head's input instead. Regenerates a matched unnormalized control
+    (the historical P5-AUXHEAD-001 artifacts are absent from this working tree; `outputs/` is
+    gitignored) — reproduces it near-exactly (same selected step, same gradient-ratio trajectory,
+    same primary cp-only deltas). **Result: mechanism not repaired by the preregistered criteria.**
+    Every mechanism metric (auxiliary BCE, gradient-ratio dominance, logit polarization) improves
+    consistently and directionally but none crosses the preregistered bar; the auxiliary head
+    partially compensates by growing its own weight norm 4.5x. Primary metrics flat-to-slightly-
+    regressed, same as the control. Establishes magnitude drift was a real but insufficient cause.
+18. *(future Phase 5 experiments each get their own file here, added as they're run; this list is
     updated as new files land, not maintained separately.)*
 
 ## 0. Roadmap status (updated after Phase 4 closure, 2026-07-21 — Phase 4 is now CLOSED)
@@ -147,6 +161,7 @@ closes — the retrospective is the current source of truth for synthesis-level 
 | Auxiliary WDL head (Phase 5 #3) | **✓ Scoping closed — investigation, not an intervention.** Export/quantization/Java-inference blast radius measured at **zero** (bitwise-identical arrays, regression-guarded by a committed test); roadmap cost estimate corrected Medium-high → **Low**. Recommends go; implementation not started (`phase5-arch-scoping-auxiliary-head.md`) |
 | Auxiliary WDL head, `aux_wdl_weight=0.04` (P5-AUXHEAD-001) | **✓ Closed — not promotable**, fails all four §7 conditions (cp-only −0.0017/−0.0029, pooled −0.026, RMSE +9.1/+37.7, calibration regressed). **Null is confounded**: the auxiliary head itself fitted worse than a constant predictor (BCE 0.74–1.16 vs 0.68) while still carrying ranking signal (corr ≈0.54–0.60), so this does *not* establish that outcome signal is unhelpful to the shared representation. Multi-task class **not** closed — re-run with a conditioned auxiliary path first (`phase5-p5-auxhead-multitask.md`) |
 | Auxiliary-head failure diagnostics (P5-AUXHEAD-DIAG-001) | **✓ Closed — read-only investigation, bottleneck identified.** Cause of the confound: unbounded auxiliary logit scale (±39, 76% of predictions in extreme deciles) interacting with 27.6% draw targets; auxiliary gradients also dominated the backbone 2.5–5.3× early despite the 0.04 weight, and are near-orthogonal (cos ≈ +0.02) to the primary gradient — not opposed. Six hypotheses rejected on evidence. Recommends one minimal follow-up (normalize auxiliary input), with the caveat that a primary-metric gain is *not* expected (`phase5-auxhead-failure-diagnostics.md`) |
+| Auxiliary-input RMS normalization (P5-AUXHEAD-RMS-001) | **✓ Closed — not promotable, mechanism not repaired.** Replaced the rejected fixed-divisor (`/QA`) proposal with a parameter-free per-sample RMS normalization (adversarial review: a constant divisor is confounded with an Adam learning-rate cut under this trainer). Every mechanism metric improves directionally (final auxiliary BCE 1.102 vs control's 1.162; peak early gradient ratio 3.04 vs 5.33; extreme-decile fraction 74.2% vs 75.8%) but none crosses the preregistered bar — auxiliary BCE never beats the constant predictor (0.6803), and the head partially compensates by growing its own weight norm 4.5×. Primary cp-only correlation flat-to-slightly-regressed, same direction as the control. Establishes magnitude drift as a real, partial, insufficient cause (`phase5-p5-auxhead-rms.md`) |
 
 **Remaining Phase 4 work is entirely supervision-objective territory** — every lever outside
 loss/target formulation (optimization, data volume, label-outlier cleaning, the incumbent

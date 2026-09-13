@@ -157,6 +157,13 @@ class TrainingConfig:
     # config/checkpoint's behavior exactly -- including its state_dict key set -- the same
     # safe-default discipline mate_weight/mate_target_distance_aware/wdl_lambda follow.
     aux_wdl_weight: float = 0.0
+    # Phase 5 (`P5-AUXHEAD-RMS`, docs/architecture/research/nnue/phase5-p5-auxhead-rms-design.md):
+    # when True, the auxiliary head consumes a per-sample RMS-normalized copy of the shared
+    # activation (see NnueNet.auxiliary_wdl_logit); the primary path is unaffected. Only
+    # meaningful when aux_wdl_weight > 0.0. Default False reproduces every pre-existing
+    # config/checkpoint's behavior exactly, including P5-AUXHEAD-001 and its state_dict key
+    # set -- the same safe-default discipline aux_wdl_weight/wdl_lambda follow.
+    aux_rms_norm: bool = False
 
 
 def load_config(path: Path) -> TrainingConfig:
@@ -314,7 +321,8 @@ def train(
     seed_everything(config.seed)
 
     model = NnueNet(config.hidden_width, config.qa, config.qb, config.output_scale,
-                     with_aux_wdl_head=config.aux_wdl_weight > 0.0)
+                     with_aux_wdl_head=config.aux_wdl_weight > 0.0,
+                     aux_rms_norm=config.aux_rms_norm)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
 
     records = list(records)
