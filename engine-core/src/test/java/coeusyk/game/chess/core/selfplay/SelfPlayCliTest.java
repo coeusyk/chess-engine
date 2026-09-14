@@ -127,6 +127,48 @@ class SelfPlayCliTest {
     }
 
     @Test
+    void maxPositionsStopsOnlyBetweenGamesNeverMidGame(@TempDir Path tmp) throws Exception {
+        // E-15 (#223) section 6: a VSPR game must never be cut in half merely because
+        // maxPositions was reached mid-game. --max-plies 6 with the deterministic control
+        // selector produces a full, MOVE_CAP-terminated 6-ply/6-sample game every time (matching
+        // moveCapProducesUnresolvedOutcomeNotDraw's own GameLoopTest coverage) -- setting
+        // --max-positions 1 (well below one game's own sample count) still must emit that whole
+        // 6-sample game, not a 1-sample fragment, before the secondary maxPositions stop takes
+        // effect at the NEXT game boundary (SelfPlayCli.run()'s own loop checks maxPositions only
+        // once per game, before that game starts -- never inside GameLoop.playGame()).
+        String sha = sha256Of(fixturePath());
+        String uuid = NnueNetwork.load(fixturePath()).networkUuid();
+        Path vsprOut = tmp.resolve("pilot.vspr");
+        Path decisionOut = tmp.resolve("decision.json");
+
+        String[] args = {
+                "--network", fixturePath().toString(),
+                "--network-sha256", sha,
+                "--network-uuid", uuid,
+                "--engine-build-id", "test-commit-hash",
+                "--search-depth", "3",
+                "--max-plies", "6",
+                "--max-games", "5",
+                "--max-positions", "1",
+                "--seed", "123",
+                "--output-vspr", vsprOut.toString(),
+                "--output-decision-record", decisionOut.toString(),
+        };
+
+        assertEquals(0, SelfPlayCli.run(args));
+
+        VsprFile decoded;
+        try (InputStream in = Files.newInputStream(vsprOut)) {
+            decoded = VsprCodec.read(in);
+        }
+        assertEquals(1, decoded.frames().size(), "maxPositions=1 must still stop only between games");
+        var onlyGame = decoded.frames().get(0);
+        assertEquals(6, onlyGame.samples().size(), "the one emitted game must be whole (6 plies), not truncated to 1");
+        assertEquals(6, onlyGame.playedMoves().size());
+        assertEquals(TerminationReason.MOVE_CAP, onlyGame.terminationReason());
+    }
+
+    @Test
     void diversityFlagsMustAllBeGivenTogetherOrNotAtAll(@TempDir Path tmp) {
         Path vsprOut = tmp.resolve("pilot.vspr");
         Path decisionOut = tmp.resolve("decision.json");
@@ -215,6 +257,104 @@ class SelfPlayCliTest {
 
         assertEquals(0, SelfPlayCli.run(args));
         assertFalse(Files.exists(tmp.resolve("pilot.vspr.diversity-diagnostics.csv")));
+    }
+
+    @Test
+    void controlMultiPvFlagIsParsedAndDiversityStaysAbsent() {
+        String[] args = {
+                "--network", "n.nnue",
+                "--network-sha256", "a".repeat(64),
+                "--network-uuid", "u",
+                "--engine-build-id", "b",
+                "--search-depth", "6",
+                "--max-plies", "6",
+                "--max-games", "1",
+                "--seed", "1",
+                "--output-vspr", "out.vspr",
+                "--output-decision-record", "out.json",
+                "--control-multipv", "3",
+        };
+        SelfPlayCli.CliArgs parsed = SelfPlayCli.CliArgs.parse(args);
+        assertEquals(3, parsed.controlMultiPv());
+        assertNull(parsed.diversity());
+    }
+
+    @Test
+    void noNewFlagsLeavesControlMultiPvAndDiversityBothAbsent() {
+        String[] args = {
+                "--network", "n.nnue",
+                "--network-sha256", "a".repeat(64),
+                "--network-uuid", "u",
+                "--engine-build-id", "b",
+                "--search-depth", "6",
+                "--max-plies", "6",
+                "--max-games", "1",
+                "--seed", "1",
+                "--output-vspr", "out.vspr",
+                "--output-decision-record", "out.json",
+        };
+        SelfPlayCli.CliArgs parsed = SelfPlayCli.CliArgs.parse(args);
+        assertNull(parsed.controlMultiPv());
+        assertNull(parsed.diversity());
+    }
+
+    @Test
+    void controlMultiPvCannotBeCombinedWithDiversityFlags() {
+        String[] args = {
+                "--network", "n.nnue",
+                "--network-sha256", "a".repeat(64),
+                "--network-uuid", "u",
+                "--engine-build-id", "b",
+                "--search-depth", "6",
+                "--max-plies", "6",
+                "--max-games", "1",
+                "--seed", "1",
+                "--output-vspr", "out.vspr",
+                "--output-decision-record", "out.json",
+                "--control-multipv", "3",
+                "--diversity-max-rank", "3",
+                "--diversity-cp-loss-bound", "40",
+                "--diversity-temperature", "20.0",
+        };
+        assertThrows(IllegalArgumentException.class, () -> SelfPlayCli.CliArgs.parse(args));
+    }
+
+    @Test
+    void controlMultiPvPilotStillProducesBestMoveProvenanceAndNoDiagnosticsFile(@TempDir Path tmp) throws Exception {
+        String sha = sha256Of(fixturePath());
+        String uuid = NnueNetwork.load(fixturePath()).networkUuid();
+        Path vsprOut = tmp.resolve("pilot.vspr");
+        Path decisionOut = tmp.resolve("decision.json");
+
+        String[] args = {
+                "--network", fixturePath().toString(),
+                "--network-sha256", sha,
+                "--network-uuid", uuid,
+                "--engine-build-id", "test-commit-hash",
+                "--search-depth", "3",
+                "--max-plies", "6",
+                "--max-games", "1",
+                "--seed", "123",
+                "--output-vspr", vsprOut.toString(),
+                "--output-decision-record", decisionOut.toString(),
+                "--control-multipv", "3",
+        };
+
+        assertEquals(0, SelfPlayCli.run(args));
+        assertFalse(Files.exists(tmp.resolve("pilot.vspr.diversity-diagnostics.csv")),
+                "control-multipv is still the BestMoveSelector control -- no diversity diagnostics file");
+
+        VsprFile decoded;
+        try (InputStream in = Files.newInputStream(vsprOut)) {
+            decoded = VsprCodec.read(in);
+        }
+        for (var frame : decoded.frames()) {
+            for (var decision : frame.playedMoves()) {
+                assertEquals(coeusyk.game.chess.core.selfplay.vspr.SelectionMechanismKind.BEST_MOVE,
+                        decision.selectionMechanismKind());
+                assertTrue(decision.selectionSeed().isEmpty());
+            }
+        }
     }
 
     @Test

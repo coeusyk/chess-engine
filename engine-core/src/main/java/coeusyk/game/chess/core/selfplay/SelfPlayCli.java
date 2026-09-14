@@ -117,9 +117,14 @@ public final class SelfPlayCli {
                 gamesAttempted++;
                 Searcher searcher = new Searcher();
                 searcher.setEvaluatorStrategy(new NnueEvaluator(network));
-                MoveSelector selector = parsed.diversity() == null
-                        ? new BestMoveSelector()
-                        : parsed.diversity().toSelector();
+                MoveSelector selector;
+                if (parsed.diversity() != null) {
+                    selector = parsed.diversity().toSelector();
+                } else if (parsed.controlMultiPv() != null) {
+                    selector = new BestMoveSelector(parsed.controlMultiPv());
+                } else {
+                    selector = new BestMoveSelector();
+                }
                 BufferedWriter sink = diagnosticsWriter;
                 GameLoop gameLoop = sink == null
                         ? new GameLoop(config, searcher, selector)
@@ -264,7 +269,8 @@ public final class SelfPlayCli {
             long seed,
             Path outputVsprPath,
             Path outputDecisionRecordPath,
-            DiversityArgs diversity) {
+            DiversityArgs diversity,
+            Integer controlMultiPv) {
 
         GeneratorConfig toGeneratorConfig() {
             return new GeneratorConfig(
@@ -294,6 +300,20 @@ public final class SelfPlayCli {
                     Integer.parseInt(maxRankRaw), Integer.parseInt(cpLossBoundRaw),
                     Double.parseDouble(temperatureRaw));
 
+            // E-15 (#223): the matched-control-arm width, valid only when diversity mode is NOT
+            // active -- there is exactly one selector per run, and its identity (BestMoveSelector
+            // vs SeededDiversitySelector) must never be inferred implicitly from which other flags
+            // happen to be present. No flag at all -- #221's original behavior (multiPV=1),
+            // unchanged.
+            String controlMultiPvRaw = opts.get("--control-multipv");
+            if (controlMultiPvRaw != null && diversity != null) {
+                throw new IllegalArgumentException(
+                        "--control-multipv cannot be combined with --diversity-* flags -- a run is "
+                                + "either the BestMoveSelector control (optionally widened via "
+                                + "--control-multipv) or the SeededDiversitySelector treatment, never both");
+            }
+            Integer controlMultiPv = controlMultiPvRaw == null ? null : Integer.parseInt(controlMultiPvRaw);
+
             return new CliArgs(
                     Path.of(require(opts, "--network")),
                     require(opts, "--network-sha256"),
@@ -306,7 +326,8 @@ public final class SelfPlayCli {
                     Long.parseLong(require(opts, "--seed")),
                     Path.of(require(opts, "--output-vspr")),
                     Path.of(require(opts, "--output-decision-record")),
-                    diversity);
+                    diversity,
+                    controlMultiPv);
         }
 
         private static String require(java.util.Map<String, String> opts, String key) {

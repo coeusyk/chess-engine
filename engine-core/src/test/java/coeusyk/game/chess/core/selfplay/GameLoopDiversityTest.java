@@ -118,4 +118,25 @@ class GameLoopDiversityTest {
         GameLoop loop = new GameLoop(config(4, 5L), newSearcher(), new BestMoveSelector(), null);
         assertDoesNotThrow(() -> loop.playGame(1, 5L));
     }
+
+    @Test
+    void controlMultiPvBestMoveSelectorActuallyWidensTheSearchedCandidateSet() {
+        // E-15 (#223): decisive proof BestMoveSelector(3) isn't just a config-record field --
+        // Searcher really is asked for 3 candidates (GameLoop.requiredCandidateCount() ->
+        // searcher.setMultiPV()), still always chooses rank-0.
+        List<SelectionDiagnosticsEntry> entries = new ArrayList<>();
+        GameLoop loop = new GameLoop(config(8, 1L), newSearcher(), new BestMoveSelector(3), entries::add);
+
+        GameFrame frame = loop.playGame(1, 1L);
+
+        assertFalse(entries.isEmpty());
+        assertTrue(entries.stream().anyMatch(e -> e.candidateCount() > 1),
+                "expected at least one ply where BestMoveSelector(3) actually received >1 candidate");
+        for (SelectionDiagnosticsEntry entry : entries) {
+            assertEquals(0, entry.chosenRank(), "BestMoveSelector must always choose rank-0 regardless of width");
+        }
+        for (PlayedMoveDecision decision : frame.playedMoves()) {
+            assertEquals(SelectionMechanismKind.BEST_MOVE, decision.selectionMechanismKind());
+        }
+    }
 }
