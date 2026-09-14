@@ -215,6 +215,35 @@ def target_cp(label: PositionLabel, distance_aware: bool = False) -> float:
     )
 
 
+def _target_cp_for_record(label: PositionLabel, config: TrainingConfig) -> float:
+    """#208's missing-signal policy, applied before `target_cp()` is ever called:
+
+    - A label carrying `eval_cp`/`eval_mate` always gets its real evaluation target,
+      via `target_cp()` unchanged -- `target_cp()` stays a pure CP-domain function
+      that never sees a label it can't evaluate, and its own contract/return type are
+      untouched by this policy.
+    - A WDL-only label (no `eval_cp`/`eval_mate` -- `PositionLabel.__post_init__`
+      guarantees `wdl` is then present) has no evaluation-target component:
+      - `config.wdl_lambda == 0.0`: `train()`'s own blend below uses `label.wdl`
+        directly and never reads this function's return value for that record
+        (multiplied by `wdl_lambda == 0.0` in the blend) -- `0.0` is returned as an
+        inert placeholder, not a synthesized evaluation target.
+      - `config.wdl_lambda > 0.0`: fails loudly and explains the fix, since a
+        WDL-only record has nothing to blend against -- never silently drops the
+        record, renormalizes lambda, or invents a CP value.
+    """
+    if label.eval_cp is not None or label.eval_mate is not None:
+        return target_cp(label, distance_aware=config.mate_target_distance_aware)
+    if config.wdl_lambda > 0.0:
+        raise ValueError(
+            "WDL-only labels (no eval_cp/eval_mate) cannot satisfy an evaluation "
+            f"component when wdl_lambda > 0 (got wdl_lambda={config.wdl_lambda}); "
+            "use wdl_lambda=0.0 to train purely on the WDL outcome, or provide an "
+            "evaluation label (eval_cp/eval_mate)."
+        )
+    return 0.0
+
+
 def _learning_rate_at_step(config: TrainingConfig, step: int) -> float:
     """Phase 1's optimization-schedule knob (research doc §24.4/§26.1) -- optimizer
     *type* is untouched (still plain Adam, per the phase's own scope); only the rate
@@ -312,6 +341,14 @@ def train(
     pre-existing config/checkpoint's behavior exactly regardless of whether any record
     in the corpus carries a `wdl` value at all.
 
+    Issue #208's missing-signal policy governs a WDL-only record (no `eval_cp`/
+    `eval_mate`): `wdl_lambda=0.0` trains purely on `label.wdl` (see
+    `_target_cp_for_record()`); `wdl_lambda>0.0` raises `ValueError` immediately, since
+    there is no evaluation component for the blend to use. Never synthesizes an
+    evaluation target, never renormalizes `wdl_lambda` per-record based on which
+    signals happen to exist, and never silently drops the record -- `wdl_lambda`'s
+    meaning stays the same for every record in a given `train()` call.
+
     If `checkpoint_dir` is given, a checkpoint is additionally written at every logged
     diagnostic point (not just the final step) to `checkpoint_dir/step-{step:06d}.pt`,
     named by step so ordering is visible from the filename alone -- research doc
@@ -346,7 +383,7 @@ def train(
 
         batch = encode_batch(batch_records)
         target_cps = torch.tensor(
-            [target_cp(r.label, distance_aware=config.mate_target_distance_aware) for r in batch_records],
+            [_target_cp_for_record(r.label, config) for r in batch_records],
             dtype=torch.float32,
         )
         targets = texel_sigmoid(target_cps, config.k)

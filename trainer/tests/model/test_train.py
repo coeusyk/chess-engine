@@ -121,17 +121,100 @@ def test_train_enforces_weight_clipping_bound(tmp_path):
     assert torch.all(ft_bias.abs() <= bias_clip + 1e-4)
 
 
-def test_train_rejects_wdl_only_labels_loudly(tmp_path):
-    # No DatasetProvider reachable from D-1/D-2/D-3 ever populates wdl (Stage 1 text
-    # data has none) -- this pins that train() fails loudly rather than silently
-    # treating the PRD's eval/WDL blend as satisfied when it isn't.
-    wdl_only_record = PositionRecord(
+def _wdl_only_record(wdl: float = 1.0) -> PositionRecord:
+    return PositionRecord(
         fen="4k3/8/8/8/8/8/8/4K3 w - - 0 1",
-        label=PositionLabel(wdl=1.0),
+        label=PositionLabel(wdl=wdl),
         metadata=PositionMetadata(),
     )
-    with pytest.raises(ValueError, match="WDL-only labels"):
-        train(TINY_CONFIG, [wdl_only_record], tmp_path / "checkpoint.pt")
+
+
+def test_train_rejects_wdl_only_labels_at_positive_lambda(tmp_path):
+    # #208's missing-signal policy: a WDL-only record (no eval_cp/eval_mate) has no
+    # evaluation component for the blend to use once wdl_lambda > 0 -- TINY_CONFIG's
+    # default wdl_lambda=1.0 exercises exactly that case. The error must name
+    # wdl_lambda=0 as the fix, not a generic "missing CP" message.
+    with pytest.raises(ValueError, match="wdl_lambda"):
+        train(TINY_CONFIG, [_wdl_only_record()], tmp_path / "checkpoint.pt")
+
+
+@pytest.mark.parametrize("wdl_lambda", [0.5, 1.0])
+def test_train_rejects_wdl_only_labels_at_any_positive_lambda(tmp_path, wdl_lambda):
+    config = TrainingConfig(**{**vars(TINY_CONFIG), "wdl_lambda": wdl_lambda})
+    with pytest.raises(ValueError, match="wdl_lambda"):
+        train(config, [_wdl_only_record()], tmp_path / "checkpoint.pt")
+
+
+def test_train_accepts_wdl_only_labels_at_lambda_zero(tmp_path):
+    # WDL-only + wdl_lambda=0 has nothing missing -- the WDL outcome alone is the
+    # target, and target_cp() is never called for this record (see
+    # test_target_cp_is_never_called_for_wdl_only_labels below).
+    config = TrainingConfig(**{**vars(TINY_CONFIG), "wdl_lambda": 0.0})
+    result = train(config, [_wdl_only_record(), _wdl_only_record(wdl=0.0)], tmp_path / "checkpoint.pt")
+    assert (tmp_path / "checkpoint.pt").exists()
+    assert len(result["losses"]) == TINY_CONFIG.steps
+
+
+def test_target_cp_is_never_called_for_wdl_only_labels(monkeypatch, tmp_path):
+    # target_cp() stays a pure CP-domain function that never sees a label it can't
+    # evaluate -- asserted directly, not just inferred from train() not raising.
+    # importlib.import_module, not `import trainer.model.train as train_module`:
+    # trainer/model/__init__.py's own `from .train import train` rebinds the
+    # `trainer.model.train` attribute to that function, shadowing the submodule.
+    import importlib
+
+    train_module = importlib.import_module("trainer.model.train")
+
+    calls = []
+    original = train_module.target_cp
+
+    def spy(label, distance_aware=False):
+        calls.append(label)
+        return original(label, distance_aware=distance_aware)
+
+    monkeypatch.setattr(train_module, "target_cp", spy)
+    config = TrainingConfig(**{**vars(TINY_CONFIG), "wdl_lambda": 0.0})
+    train(config, [_wdl_only_record()], tmp_path / "checkpoint.pt")
+    assert calls == []
+
+
+def test_target_cp_still_raises_on_wdl_only_label_directly():
+    # target_cp()'s own CP-domain contract is unchanged by #208 -- it still refuses a
+    # label it has no evaluation signal for, independent of any wdl_lambda policy
+    # (that policy lives in train(), not here).
+    with pytest.raises(ValueError):
+        target_cp(PositionLabel(wdl=1.0))
+
+
+def test_eval_only_record_unaffected_by_missing_signal_policy(tmp_path):
+    # Regression: an eval-only record (no wdl at all) trains identically regardless
+    # of wdl_lambda, at every boundary value -- the policy only ever engages for a
+    # WDL-only record.
+    record = PositionRecord(
+        fen="4k3/8/8/8/8/8/4Q3/4K3 w - - 0 1",
+        label=PositionLabel(eval_cp=25),
+        metadata=PositionMetadata(),
+    )
+    reference = None
+    for wdl_lambda in (0.0, 0.5, 1.0):
+        config = TrainingConfig(**{**vars(TINY_CONFIG), "wdl_lambda": wdl_lambda})
+        train(config, [record, record], tmp_path / f"eval-only-{wdl_lambda}.pt")
+        checkpoint = torch.load(tmp_path / f"eval-only-{wdl_lambda}.pt", weights_only=False)
+        if reference is None:
+            reference = checkpoint["model_state_dict"]
+        else:
+            for key in reference:
+                assert torch.equal(reference[key], checkpoint["model_state_dict"][key])
+
+
+@pytest.mark.parametrize("wdl_lambda", [0.0, 0.5, 1.0])
+def test_eval_and_wdl_record_blend_unchanged_at_every_lambda(tmp_path, wdl_lambda):
+    # Regression: the existing eval+WDL blend math is untouched by #208 -- this is
+    # exactly the has_wdl-masked blend path, exercised at every requested boundary.
+    config = TrainingConfig(**{**vars(WDL_TINY_CONFIG), "wdl_lambda": wdl_lambda})
+    result = train(config, _wdl_records(), tmp_path / f"blend-{wdl_lambda}.pt")
+    assert (tmp_path / f"blend-{wdl_lambda}.pt").exists()
+    assert len(result["losses"]) == WDL_TINY_CONFIG.steps
 
 
 def test_load_config_reads_all_fields_from_json(tmp_path):
