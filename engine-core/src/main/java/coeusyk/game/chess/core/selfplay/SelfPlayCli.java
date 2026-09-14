@@ -11,8 +11,11 @@ import coeusyk.game.chess.core.selfplay.vspr.VsprFile;
 import coeusyk.game.chess.core.selfplay.vspr.VsprHeader;
 
 import java.io.BufferedOutputStream;
+import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -21,6 +24,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 /**
@@ -70,6 +74,8 @@ public final class SelfPlayCli {
         UUID runIdUuid = UUID.randomUUID();
         byte[] runId = uuidToBytes(runIdUuid);
 
+        OpaqueConfig diversityConfig = parsed.diversity() == null ? null : parsed.diversity().toOpaqueConfig();
+
         VsprHeader header = new VsprHeader(
                 1,
                 runId,
@@ -84,28 +90,56 @@ public final class SelfPlayCli {
                 true,
                 false,
                 (OpaqueConfig) null,
-                (OpaqueConfig) null);
+                diversityConfig);
+
+        // Local diagnostics artifact (#222 section 8) -- generation-time-only, never VSPR fields.
+        // Only written when a stochastic selector is actually in use; absent for the
+        // BestMoveSelector control path, matching DR-E9's "absent means no diversity" convention.
+        BufferedWriter diagnosticsWriter = null;
+        Path diagnosticsPath = null;
+        if (parsed.diversity() != null) {
+            diagnosticsPath = config.outputVsprPath()
+                    .resolveSibling(config.outputVsprPath().getFileName() + ".diversity-diagnostics.csv");
+            diagnosticsWriter = Files.newBufferedWriter(diagnosticsPath);
+            diagnosticsWriter.write("gameId,ply,candidateCount,chosenRank,rank1Kind,rank1Value,"
+                    + "chosenKind,chosenValue,cpLossFromRank1,selectionWeight,selectionProbability\n");
+        }
 
         List<GameFrame> frames = new ArrayList<>();
         int gamesAttempted = 0;
         int totalSamples = 0;
 
-        for (long gameId = 0; gameId < config.maxGames(); gameId++) {
-            if (config.maxPositions() != null && totalSamples >= config.maxPositions()) {
-                break; // secondary stop -- checked at game boundaries only, never mid-game
-            }
-            gamesAttempted++;
-            Searcher searcher = new Searcher();
-            searcher.setEvaluatorStrategy(new NnueEvaluator(network));
-            GameLoop gameLoop = new GameLoop(config, searcher, new BestMoveSelector());
-            long gameSeed = config.seed() + gameId;
+        try {
+            for (long gameId = 0; gameId < config.maxGames(); gameId++) {
+                if (config.maxPositions() != null && totalSamples >= config.maxPositions()) {
+                    break; // secondary stop -- checked at game boundaries only, never mid-game
+                }
+                gamesAttempted++;
+                Searcher searcher = new Searcher();
+                searcher.setEvaluatorStrategy(new NnueEvaluator(network));
+                MoveSelector selector = parsed.diversity() == null
+                        ? new BestMoveSelector()
+                        : parsed.diversity().toSelector();
+                BufferedWriter sink = diagnosticsWriter;
+                GameLoop gameLoop = sink == null
+                        ? new GameLoop(config, searcher, selector)
+                        : new GameLoop(config, searcher, selector, entry -> writeDiagnosticsRow(sink, entry));
+                long gameSeed = config.seed() + gameId;
 
-            // Any SelfPlayGenerationException here propagates straight out of run(): no catch,
-            // no "skip this game and continue," no partial VSPR/decision-record write below --
-            // a hard correctness failure aborts the whole pilot (#221 section 12).
-            GameFrame frame = gameLoop.playGame(gameId, gameSeed);
-            frames.add(frame);
-            totalSamples += frame.samples().size();
+                // Any SelfPlayGenerationException here propagates straight out of run(): no catch,
+                // no "skip this game and continue," no partial VSPR/decision-record write below --
+                // a hard correctness failure aborts the whole pilot (#221 section 12).
+                GameFrame frame = gameLoop.playGame(gameId, gameSeed);
+                frames.add(frame);
+                totalSamples += frame.samples().size();
+            }
+        } finally {
+            if (diagnosticsWriter != null) {
+                diagnosticsWriter.close();
+            }
+        }
+        if (diagnosticsPath != null) {
+            System.out.println("Diversity diagnostics: " + diagnosticsPath);
         }
 
         VsprFile file = new VsprFile(header, List.copyOf(frames));
@@ -186,6 +220,38 @@ public final class SelfPlayCli {
         }
     }
 
+    private static void writeDiagnosticsRow(BufferedWriter writer, SelectionDiagnosticsEntry entry) {
+        try {
+            writer.write(String.format(Locale.ROOT, "%d,%d,%d,%d,%s,%d,%s,%d,%s,%s,%s%n",
+                    entry.gameId(), entry.ply(), entry.candidateCount(), entry.chosenRank(),
+                    entry.rank1Kind(), entry.rank1Value(), entry.chosenKind(), entry.chosenValue(),
+                    entry.cpLossFromRank1() == null ? "" : entry.cpLossFromRank1(),
+                    entry.selectionWeight() == null ? "" : entry.selectionWeight(),
+                    entry.selectionProbability() == null ? "" : entry.selectionProbability()));
+        } catch (IOException e) {
+            throw new UncheckedIOException("failed to write diversity diagnostics row", e);
+        }
+    }
+
+    /** #222 section 4/9: the one preregistered diversity policy's explicit knobs -- absent means
+     * no diversity (DR-E9's own convention), never a hidden default. Schema ID 1 in
+     * {@link VsprHeader#diversityConfig()} is this exact 16-byte layout: maxRank (int32),
+     * cpLossBoundCentipawns (int32), temperature (float64), all big-endian. */
+    record DiversityArgs(int maxRank, int cpLossBoundCentipawns, double temperature) {
+
+        static final int SCHEMA_ID = 1;
+
+        MoveSelector toSelector() {
+            return new SeededDiversitySelector(maxRank, cpLossBoundCentipawns, temperature);
+        }
+
+        OpaqueConfig toOpaqueConfig() {
+            ByteBuffer buf = ByteBuffer.allocate(16);
+            buf.putInt(maxRank).putInt(cpLossBoundCentipawns).putDouble(temperature);
+            return new OpaqueConfig(SCHEMA_ID, buf.array());
+        }
+    }
+
     record CliArgs(
             Path networkPath,
             String expectedNetworkSha256,
@@ -197,7 +263,8 @@ public final class SelfPlayCli {
             Integer maxPositions,
             long seed,
             Path outputVsprPath,
-            Path outputDecisionRecordPath) {
+            Path outputDecisionRecordPath,
+            DiversityArgs diversity) {
 
         GeneratorConfig toGeneratorConfig() {
             return new GeneratorConfig(
@@ -212,6 +279,21 @@ public final class SelfPlayCli {
                 opts.put(args[i], args[i + 1]);
             }
             String maxPositionsRaw = opts.get("--max-positions");
+
+            String maxRankRaw = opts.get("--diversity-max-rank");
+            String cpLossBoundRaw = opts.get("--diversity-cp-loss-bound");
+            String temperatureRaw = opts.get("--diversity-temperature");
+            int presentCount = (maxRankRaw != null ? 1 : 0) + (cpLossBoundRaw != null ? 1 : 0)
+                    + (temperatureRaw != null ? 1 : 0);
+            if (presentCount != 0 && presentCount != 3) {
+                throw new IllegalArgumentException(
+                        "--diversity-max-rank, --diversity-cp-loss-bound and --diversity-temperature "
+                                + "must all be given together, or none of them (BestMoveSelector control)");
+            }
+            DiversityArgs diversity = presentCount == 0 ? null : new DiversityArgs(
+                    Integer.parseInt(maxRankRaw), Integer.parseInt(cpLossBoundRaw),
+                    Double.parseDouble(temperatureRaw));
+
             return new CliArgs(
                     Path.of(require(opts, "--network")),
                     require(opts, "--network-sha256"),
@@ -223,7 +305,8 @@ public final class SelfPlayCli {
                     maxPositionsRaw == null ? null : Integer.parseInt(maxPositionsRaw),
                     Long.parseLong(require(opts, "--seed")),
                     Path.of(require(opts, "--output-vspr")),
-                    Path.of(require(opts, "--output-decision-record")));
+                    Path.of(require(opts, "--output-decision-record")),
+                    diversity);
         }
 
         private static String require(java.util.Map<String, String> opts, String key) {

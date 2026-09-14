@@ -17,6 +17,19 @@ import java.util.Optional;
  * set as {@link #lastCompletedSet()} -- an aborted or partial depth is discarded wholesale, and
  * the previously published set (from an earlier, fully-completed depth) is retained unless a
  * later depth actually completes in full. Never modifies {@code Searcher} itself.
+ *
+ * <p><strong>A depth can legitimately complete with fewer than {@code expectedCandidateCount}
+ * candidates</strong> -- a position with fewer legal moves than the requested multiPV width
+ * simply has {@code Searcher}'s own multiPV loop stop calling this listener early for that
+ * depth (its {@code iteration.bestMove == null} branch), with no abort involved. This is the
+ * common case whenever a caller requests multiPV &gt; 1 on a position in check or with few legal
+ * replies -- discovered by #222 (the first caller to ever request multiPV &gt; 1; #221's
+ * multiPV=1 usage could never hit it, since every non-terminal position has at least one legal
+ * move). {@link #finish()} and the depth-transition handling in {@link #onIteration} both flush
+ * whatever the previous depth actually collected, as long as it was not aborted, even if that is
+ * fewer than {@code expectedCandidateCount} -- callers must call {@link #finish()} once after
+ * their search call returns, so the final depth's buffer (which never sees a "next depth"
+ * transition) is not silently dropped.
  */
 public final class CompletedRootCandidateAdapter implements Searcher.IterationListener {
 
@@ -45,6 +58,7 @@ public final class CompletedRootCandidateAdapter implements Searcher.IterationLi
     @Override
     public void onIteration(IterationInfo info) {
         if (info.depth() != bufferDepth) {
+            flushIfComplete(); // the previous depth's own loop has definitely finished by now
             buffer.clear();
             bufferDepth = info.depth();
             bufferAborted = false;
@@ -59,6 +73,21 @@ public final class CompletedRootCandidateAdapter implements Searcher.IterationLi
         }
         buffer.add(info); // pvIndex order, since Searcher's own loop calls this ascending
         if (buffer.size() == expectedCandidateCount) {
+            lastCompleted = List.copyOf(buffer);
+        }
+    }
+
+    /** Call once after the enclosing search call returns. The final depth reached never gets a
+     * "next depth" {@link #onIteration} transition to flush it, so without this call a
+     * fewer-legal-moves-than-requested final depth would be silently dropped. Idempotent and
+     * harmless to call when the buffer already published via the exact-width path in
+     * {@link #onIteration}. */
+    public void finish() {
+        flushIfComplete();
+    }
+
+    private void flushIfComplete() {
+        if (!bufferAborted && !buffer.isEmpty()) {
             lastCompleted = List.copyOf(buffer);
         }
     }

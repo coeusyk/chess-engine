@@ -17,6 +17,7 @@ import coeusyk.game.chess.core.selfplay.vspr.TrainingSample;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.OptionalLong;
+import java.util.function.Consumer;
 
 /**
  * Owns one game's lifecycle, per DR-E9 sections 3/4/6: one persistent {@link Board} across the
@@ -44,8 +45,17 @@ public final class GameLoop {
     private final Searcher searcher;
     private final MoveSelector moveSelector;
     private final CompletedRootCandidateAdapter candidateAdapter;
+    private final Consumer<SelectionDiagnosticsEntry> diagnosticsSink;
 
     public GameLoop(GeneratorConfig config, Searcher searcher, MoveSelector moveSelector) {
+        this(config, searcher, moveSelector, null);
+    }
+
+    /** Same as the three-arg constructor, but with an optional per-ply diagnostics sink
+     * (#222 section 8's quality-cost record) -- {@code null} means no diagnostics, matching the
+     * three-arg constructor's existing behavior exactly. */
+    public GameLoop(GeneratorConfig config, Searcher searcher, MoveSelector moveSelector,
+            Consumer<SelectionDiagnosticsEntry> diagnosticsSink) {
         if (config.searchBudgetKind() != SearchBudgetKind.DEPTH) {
             // Searcher's public entry points here take a ply depth, not a node or time budget --
             // wiring NODES/TIME_MS through searchWithTimeManager()/a node-limited variant is real
@@ -58,7 +68,13 @@ public final class GameLoop {
         this.config = config;
         this.searcher = searcher;
         this.moveSelector = moveSelector;
-        this.candidateAdapter = new CompletedRootCandidateAdapter(1); // multiPV=1 for this vertical slice
+        this.diagnosticsSink = diagnosticsSink;
+        // Sized (and Searcher's own multiPV set) to whatever this selector actually needs --
+        // BestMoveSelector needs only rank-0; SeededDiversitySelector needs its own maxRank.
+        // GameLoop reads this requirement off the interface, never the selector's sampling logic.
+        int requiredCandidates = moveSelector.requiredCandidateCount();
+        this.candidateAdapter = new CompletedRootCandidateAdapter(requiredCandidates);
+        searcher.setMultiPV(requiredCandidates);
     }
 
     /** Plays exactly one game from the standard starting position, honoring {@code config}'s
@@ -112,6 +128,10 @@ public final class GameLoop {
             try {
                 searcher.iterativeDeepening(board, (int) config.searchBudgetValue(), () -> false, () -> false,
                         candidateAdapter);
+                // The final depth reached never gets a "next depth" callback to flush it -- see
+                // CompletedRootCandidateAdapter's own docstring on this (discovered by #222, the
+                // first caller to ever request multiPV > 1).
+                candidateAdapter.finish();
             } catch (RuntimeException e) {
                 throw new SelfPlayGenerationException(
                         SelfPlayGenerationException.Reason.SEARCH_INVARIANT_FAILURE,
@@ -135,12 +155,22 @@ public final class GameLoop {
             List<IterationInfo> completedSet = candidateAdapter.lastCompletedSet().get();
 
             IterationInfo evaluated = completedSet.get(0); // rank 0 -- the position's own search evaluation
-            int selectedPacked = moveSelector.select(completedSet, gameSeed + ply);
+            long plySeed = SeedDerivation.derive(gameSeed, ply);
+            int selectedPacked = moveSelector.select(completedSet, plySeed);
             validateLegal(board, selectedPacked, ply);
+
+            SelectionMechanismKind mechanismKind = moveSelector.mechanismKind();
+            OptionalLong recordedSeed = mechanismKind == SelectionMechanismKind.BEST_MOVE
+                    ? OptionalLong.empty()
+                    : OptionalLong.of(plySeed);
+
+            if (diagnosticsSink != null) {
+                diagnosticsSink.accept(buildDiagnostics(gameId, ply, completedSet, selectedPacked, moveSelector));
+            }
 
             samples.add(toTrainingSample(ply, rootFen, evaluated));
             playedMoves.add(new PlayedMoveDecision(
-                    selectedPacked, SelectionMechanismKind.BEST_MOVE, null, OptionalLong.empty()));
+                    selectedPacked, mechanismKind, moveSelector.mechanismName(), recordedSeed));
 
             board.makeMove(selectedPacked);
             ply++;
@@ -205,20 +235,55 @@ public final class GameLoop {
                     "score " + scoreCp + " at ply " + ply + " is outside the sane bound (+/-"
                             + SANE_SCORE_BOUND + ") -- treating as corrupted, not a real evaluation");
         }
-        boolean isMate = Math.abs(scoreCp) >= MATE_SCORE - MAX_PLY;
-        ScoreKind kind = isMate ? ScoreKind.MATE : ScoreKind.CP;
-        int value;
-        if (isMate) {
-            // Mate distance in plies (DR-220 section 6), signed -- positive means the position's
-            // side to move delivers mate in N plies, matching this record's own negamax
-            // convention. Deliberately NOT UciApplication's "mate in moves" conversion
-            // ((mateInPly + 1) / 2) -- DR-220's wire field is plies, not moves.
-            int distancePlies = MATE_SCORE - Math.abs(scoreCp);
-            value = scoreCp < 0 ? -distancePlies : distancePlies;
-        } else {
-            value = scoreCp;
-        }
-        return new TrainingSample(ply, fen, true, kind, value, SearchBudgetKind.DEPTH,
+        ScoreDecoded decoded = decodeScore(scoreCp);
+        return new TrainingSample(ply, fen, true, decoded.kind(), decoded.value(), SearchBudgetKind.DEPTH,
                 config.searchBudgetValue());
+    }
+
+    private record ScoreDecoded(ScoreKind kind, int value) {
+    }
+
+    /** Shared by {@link #toTrainingSample} and diagnostics: decodes a raw {@code scoreCp} into a
+     * tagged CP/mate value (DR-220 section 6) -- mate distance in plies, signed, never treated
+     * as an ordinary centipawn value (#222 section 7). */
+    private static ScoreDecoded decodeScore(int scoreCp) {
+        boolean isMate = Math.abs(scoreCp) >= MATE_SCORE - MAX_PLY;
+        if (!isMate) {
+            return new ScoreDecoded(ScoreKind.CP, scoreCp);
+        }
+        int distancePlies = MATE_SCORE - Math.abs(scoreCp);
+        int value = scoreCp < 0 ? -distancePlies : distancePlies;
+        return new ScoreDecoded(ScoreKind.MATE, value);
+    }
+
+    /** #222 section 8: for every selection, record enough to compute chosen rank, rank-1 vs.
+     * chosen score, CP loss (CP-only), candidate count, and selection weight/probability if the
+     * selector reports one. Never written to VSPR -- {@link SelfPlayCli} writes it to a separate
+     * local diagnostics artifact only when a stochastic selector is in use. */
+    private SelectionDiagnosticsEntry buildDiagnostics(
+            long gameId, int ply, List<IterationInfo> candidates, int selectedPacked, MoveSelector selector) {
+        int chosenRank = -1;
+        for (int i = 0; i < candidates.size(); i++) {
+            if (candidates.get(i).pv().get(0).pack() == selectedPacked) {
+                chosenRank = i;
+                break;
+            }
+        }
+        IterationInfo rank1 = candidates.get(0);
+        IterationInfo chosen = chosenRank >= 0 ? candidates.get(chosenRank) : rank1;
+        ScoreDecoded rank1Decoded = decodeScore(rank1.scoreCp());
+        ScoreDecoded chosenDecoded = decodeScore(chosen.scoreCp());
+        Integer cpLoss = (rank1Decoded.kind() == ScoreKind.CP && chosenDecoded.kind() == ScoreKind.CP)
+                ? rank1Decoded.value() - chosenDecoded.value()
+                : null;
+        double weight = selector.lastSelectionWeight();
+        double probability = selector.lastSelectionProbability();
+        return new SelectionDiagnosticsEntry(
+                gameId, ply, candidates.size(), chosenRank,
+                rank1Decoded.kind(), rank1Decoded.value(),
+                chosenDecoded.kind(), chosenDecoded.value(),
+                cpLoss,
+                Double.isNaN(weight) ? null : weight,
+                Double.isNaN(probability) ? null : probability);
     }
 }

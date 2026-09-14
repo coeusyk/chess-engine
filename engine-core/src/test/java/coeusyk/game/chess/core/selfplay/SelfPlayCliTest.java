@@ -15,6 +15,7 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -123,6 +124,97 @@ class SelfPlayCliTest {
                 "--output-decision-record", "out.json",
         };
         assertThrows(IllegalArgumentException.class, () -> SelfPlayCli.run(argsMissingSha));
+    }
+
+    @Test
+    void diversityFlagsMustAllBeGivenTogetherOrNotAtAll(@TempDir Path tmp) {
+        Path vsprOut = tmp.resolve("pilot.vspr");
+        Path decisionOut = tmp.resolve("decision.json");
+        String[] args = {
+                "--network", fixturePath().toString(),
+                "--network-sha256", "a".repeat(64),
+                "--network-uuid", "u",
+                "--engine-build-id", "b",
+                "--search-depth", "3",
+                "--max-plies", "6",
+                "--max-games", "1",
+                "--seed", "1",
+                "--output-vspr", vsprOut.toString(),
+                "--output-decision-record", decisionOut.toString(),
+                "--diversity-max-rank", "3", // cp-loss-bound and temperature deliberately omitted
+        };
+        assertThrows(IllegalArgumentException.class, () -> SelfPlayCli.run(args));
+    }
+
+    @Test
+    void diversityPilotWritesLocalDiagnosticsAndProvenanceButNotVsprFields(@TempDir Path tmp) throws Exception {
+        String sha = sha256Of(fixturePath());
+        String uuid = NnueNetwork.load(fixturePath()).networkUuid();
+        Path vsprOut = tmp.resolve("pilot.vspr");
+        Path decisionOut = tmp.resolve("decision.json");
+
+        String[] args = {
+                "--network", fixturePath().toString(),
+                "--network-sha256", sha,
+                "--network-uuid", uuid,
+                "--engine-build-id", "test-commit-hash",
+                "--search-depth", "3",
+                "--max-plies", "6",
+                "--max-games", "1",
+                "--seed", "123",
+                "--output-vspr", vsprOut.toString(),
+                "--output-decision-record", decisionOut.toString(),
+                "--diversity-max-rank", "3",
+                "--diversity-cp-loss-bound", "40",
+                "--diversity-temperature", "20.0",
+        };
+
+        int exitCode = SelfPlayCli.run(args);
+        assertEquals(0, exitCode);
+
+        Path diagnosticsPath = tmp.resolve("pilot.vspr.diversity-diagnostics.csv");
+        assertTrue(Files.exists(diagnosticsPath), "diagnostics CSV must be written when diversity is enabled");
+        List<String> lines = Files.readAllLines(diagnosticsPath);
+        assertEquals("gameId,ply,candidateCount,chosenRank,rank1Kind,rank1Value,"
+                + "chosenKind,chosenValue,cpLossFromRank1,selectionWeight,selectionProbability", lines.get(0));
+        assertTrue(lines.size() > 1, "expected at least one diagnostics row");
+
+        VsprFile decoded;
+        try (InputStream in = Files.newInputStream(vsprOut)) {
+            decoded = VsprCodec.read(in);
+        }
+        for (var frame : decoded.frames()) {
+            for (var decision : frame.playedMoves()) {
+                assertEquals(coeusyk.game.chess.core.selfplay.vspr.SelectionMechanismKind.NAMED,
+                        decision.selectionMechanismKind());
+                assertEquals("seeded-diversity-v1", decision.mechanismName());
+                assertTrue(decision.selectionSeed().isPresent());
+            }
+        }
+    }
+
+    @Test
+    void bestMoveControlPilotWritesNoDiagnosticsFile(@TempDir Path tmp) throws Exception {
+        String sha = sha256Of(fixturePath());
+        String uuid = NnueNetwork.load(fixturePath()).networkUuid();
+        Path vsprOut = tmp.resolve("pilot.vspr");
+        Path decisionOut = tmp.resolve("decision.json");
+
+        String[] args = {
+                "--network", fixturePath().toString(),
+                "--network-sha256", sha,
+                "--network-uuid", uuid,
+                "--engine-build-id", "test-commit-hash",
+                "--search-depth", "3",
+                "--max-plies", "6",
+                "--max-games", "1",
+                "--seed", "123",
+                "--output-vspr", vsprOut.toString(),
+                "--output-decision-record", decisionOut.toString(),
+        };
+
+        assertEquals(0, SelfPlayCli.run(args));
+        assertFalse(Files.exists(tmp.resolve("pilot.vspr.diversity-diagnostics.csv")));
     }
 
     @Test
