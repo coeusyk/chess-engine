@@ -287,6 +287,7 @@ def train(
     held_out_records: Optional[Iterable[PositionRecord]] = None,
     log_interval: int = 100,
     train_diagnostic_sample: Optional[List[PositionRecord]] = None,
+    initial_state_dict: Optional[dict] = None,
     checkpoint_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Runs `config.steps` optimization steps over `records` and writes a checkpoint to
@@ -354,12 +355,27 @@ def train(
     named by step so ordering is visible from the filename alone -- research doc
     §26.5's checkpoint-preservation policy ("every checkpoint... never overwritten");
     the always-written `checkpoint_path` final-step checkpoint is unaffected either way.
+
+    `initial_state_dict` (E-15, issue #223): by default (`None`), initialization is
+    exactly as before -- `seed_everything(config.seed)` then a freshly-constructed
+    `NnueNet`, relying on `config.seed` alone to reproduce the same starting weights
+    across separate calls. When a matched-arm comparison needs a *verified*
+    byte-identical start (not merely "the same seed was passed," which does not by
+    itself rule out cross-run nondeterminism from GPU/BLAS backend differences), the
+    caller instead constructs one model, saves its `state_dict()`, and passes that
+    dict here for every arm being compared -- this branch loads it into the freshly
+    constructed model in place of relying on the constructor's own RNG-driven init.
+    `seed_everything(config.seed)` still runs unconditionally either way, since
+    `config.seed` also governs data-shuffle order (see the reshuffling note above),
+    not just model initialization.
     """
     seed_everything(config.seed)
 
     model = NnueNet(config.hidden_width, config.qa, config.qb, config.output_scale,
                      with_aux_wdl_head=config.aux_wdl_weight > 0.0,
                      aux_rms_norm=config.aux_rms_norm)
+    if initial_state_dict is not None:
+        model.load_state_dict(initial_state_dict)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
 
     records = list(records)

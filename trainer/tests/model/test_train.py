@@ -109,6 +109,50 @@ def test_train_is_reproducible_given_the_same_seed(tmp_path):
     assert checkpoint_a["final_loss"] == checkpoint_b["final_loss"]
 
 
+def test_train_with_no_initial_state_dict_is_unaffected(tmp_path):
+    # Default (None) must reproduce pre-E-15 behavior exactly -- same as
+    # test_train_is_reproducible_given_the_same_seed, just asserting the new parameter's
+    # default doesn't change anything when omitted.
+    train(TINY_CONFIG, _records(), tmp_path / "a.pt", initial_state_dict=None)
+    train(TINY_CONFIG, _records(), tmp_path / "b.pt")
+
+    checkpoint_a = torch.load(tmp_path / "a.pt", weights_only=False)
+    checkpoint_b = torch.load(tmp_path / "b.pt", weights_only=False)
+    for key in checkpoint_a["model_state_dict"]:
+        assert torch.equal(checkpoint_a["model_state_dict"][key], checkpoint_b["model_state_dict"][key])
+
+
+def test_train_with_explicit_initial_state_dict_starts_both_arms_from_identical_weights(tmp_path):
+    # E-15 (#223) section 8: construct one initial model once, save its state, and confirm
+    # passing that exact dict into two train() calls -- with DIFFERENT training data, and
+    # under a DIFFERENT config.seed each, so the only thing pinning the two arms' starting
+    # weights together is initial_state_dict, not seed_everything() -- reproduces it exactly
+    # in the saved checkpoint. zero_steps_config runs no optimization steps at all, so the
+    # saved checkpoint's weights are the *initial* weights, directly comparable.
+    from trainer.model.network import NnueNet
+
+    seed_model = NnueNet(TINY_CONFIG.hidden_width, TINY_CONFIG.qa, TINY_CONFIG.qb, TINY_CONFIG.output_scale)
+    pinned_state = {k: v.clone() for k, v in seed_model.state_dict().items()}
+
+    # learning_rate=0.0 neutralizes every optimizer step (Adam's own update is scaled by lr),
+    # so the saved checkpoint's weights are still the *initial* weights -- steps=0 itself isn't
+    # usable here since train() unconditionally indexes losses[-1] for the final checkpoint.
+    zero_lr_config_a = TrainingConfig(
+        hidden_width=4, qa=127, qb=64, output_scale=400, k=1.0, learning_rate=0.0, seed=1, steps=2, batch_size=2)
+    zero_lr_config_b = TrainingConfig(
+        hidden_width=4, qa=127, qb=64, output_scale=400, k=1.0, learning_rate=0.0, seed=2, steps=2, batch_size=2)
+
+    train(zero_lr_config_a, _records(), tmp_path / "arm-a.pt", initial_state_dict=pinned_state)
+    train(zero_lr_config_b, list(reversed(_records())), tmp_path / "arm-b.pt", initial_state_dict=pinned_state)
+
+    checkpoint_a = torch.load(tmp_path / "arm-a.pt", weights_only=False)
+    checkpoint_b = torch.load(tmp_path / "arm-b.pt", weights_only=False)
+    for key in pinned_state:
+        assert torch.equal(checkpoint_a["model_state_dict"][key], pinned_state[key])
+        assert torch.equal(checkpoint_b["model_state_dict"][key], pinned_state[key])
+        assert torch.equal(checkpoint_a["model_state_dict"][key], checkpoint_b["model_state_dict"][key])
+
+
 def test_train_enforces_weight_clipping_bound(tmp_path):
     train(TINY_CONFIG, _records(), tmp_path / "checkpoint.pt")
     checkpoint = torch.load(tmp_path / "checkpoint.pt", weights_only=False)
