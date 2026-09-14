@@ -112,10 +112,20 @@ class PositionMetadata:
     represents one source (PRD: "raw labeled positions from one source"), so stage is
     uniform across every position it yields; the dataset-level field is the one
     source of truth, not duplicated per-record.
+
+    `game_id` is a bare numeric identifier, unique only *within* the producing
+    dataset/run -- never globally (established by #209/#220: two different
+    self-play runs may both produce `game_id=0`). The grouping identity a caller
+    actually needs is the pair `(dataset/run identity, game_id)`, not `game_id`
+    alone; this type stores only the numeric half, since the dataset/run identity
+    already lives on `DatasetMetadata`/`ShardRef`, not per-record. `None` means the
+    source never recorded a game boundary at all (e.g. Stage 1/2 sources have no
+    concept of "game"), which is distinct from any particular game_id value,
+    including 0.
     """
 
     ply: Optional[int] = None
-    game_id: Optional[str] = None
+    game_id: Optional[int] = None
     search_depth: Optional[int] = None
     search_nodes: Optional[int] = None
 
