@@ -550,7 +550,8 @@ public class Searcher {
                             elapsedMs,
                             transpositionTable.hashfull(),
                             iteration.principalVariation,
-                            pvIndex + 1
+                            pvIndex + 1,
+                            !iteration.aborted
                     );
                     listener.onIteration(info);
                 }
