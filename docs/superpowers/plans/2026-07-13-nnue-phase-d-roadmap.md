@@ -181,7 +181,7 @@ Expected: unchanged pass count from before this PR (this PR touches zero files u
 - [ ] **Step 10: Run graphify and generate a D-1 graph audit**
 
 ```bash
-/home/coeusyk/.local/share/uv/tools/graphifyy/bin/python \
+<path-to-graphifyy-venv>/bin/python \
   docs/architecture/graph-audits/generate_report.py \
   --before <pre-D-1 snapshot> --after <post-D-1 snapshot> \
   --pr-id D-1 --pr-title "Trainer Scaffolding & ADR Extraction" \

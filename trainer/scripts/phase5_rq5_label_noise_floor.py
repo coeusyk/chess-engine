@@ -57,6 +57,7 @@ import statistics
 import time
 from dataclasses import dataclass
 from pathlib import Path
+import shutil
 from typing import Dict, List, Optional
 
 from scripts.stockfish_label import StockfishLabelConfig, label_positions
@@ -67,7 +68,10 @@ STAGE2_SAMPLE_STRIDE = 36  # matches the documented Stage 2 input convention
 SUB_SAMPLE_SIZE = 1000
 SUB_SAMPLE_STRIDE = 20  # 20,000 / 1,000 -- evenly spaced across the Stage 2 population
 
-ENGINE_PATH = Path("/home/coeusyk/.local/bin/stockfish")
+# Resolved via PATH rather than a hardcoded machine-specific install location -- avoids
+# baking a local username/directory layout into tracked source (falls back to the bare
+# name so a missing binary still fails with a clear "not found" rather than silently).
+ENGINE_PATH = Path(shutil.which("stockfish") or "stockfish")
 NODES_LOW = 25000
 NODES_HIGH = 50000
 

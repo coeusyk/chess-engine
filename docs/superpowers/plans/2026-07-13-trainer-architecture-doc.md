@@ -298,13 +298,13 @@ Then, right after the existing summary block (`lines.append("")` that follows th
 Run:
 
 ```bash
-find /home/coeusyk/projects/chess-engine/graphify-out -maxdepth 2 -iname "graph.json" | head -5
+find graphify-out -maxdepth 2 -iname "graph.json" | head -5
 ```
 
 Identify the before/after snapshot pair used for `C-5-ci-integration.md` (before commit `4f6f7c9`, after commit `4dbc24d`, per that report's header). If both snapshots are still present under `graphify-out/`, regenerate into a scratch path and diff:
 
 ```bash
-/home/coeusyk/.local/share/uv/tools/graphifyy/bin/python \
+<path-to-graphifyy-venv>/bin/python \
   docs/architecture/graph-audits/generate_report.py \
   --before <before-snapshot-path> --after <after-snapshot-path> \
   --pr-id C-5 --pr-title "CI Integration" \

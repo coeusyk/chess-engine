@@ -131,7 +131,7 @@ sparsely populated — it is populated on every line, at a roughly even three-wa
 
 §40.2 flagged, but did not test, whether `_read_fens()` passing the raw, `c9`-annotated line
 verbatim to Stockfish's `position fen` command could corrupt existing labels. Directly verified
-this session against the real local Stockfish binary (`/home/coeusyk/.local/bin/stockfish`,
+this session against the real local Stockfish binary (resolved via `PATH`,
 `Stockfish 18` — the same binary/version the actual Stage 2 run used, per its manifest):
 
 ```

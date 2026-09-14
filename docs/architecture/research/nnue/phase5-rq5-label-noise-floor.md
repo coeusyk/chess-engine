@@ -96,7 +96,7 @@ New script: `trainer/scripts/phase5_rq5_label_noise_floor.py`. Reuses
   regenerated per session per existing project convention).
 - **Labeling**: `label_positions()` called twice over the identical 1,000-FEN file, once at
   `nodes=25000`, once at `nodes=50000`, both against the real Stockfish 18 binary
-  (`/home/coeusyk/.local/bin/stockfish`).
+  (resolved via `PATH`).
 - **Analysis**: matches records by position (both shards same fixed order, same length),
   classifies each pair by label mode (cp vs mate) before diffing — a cp eval and a mate eval
   are not on a comparable scale, so mode mismatches are counted and reported separately rather
@@ -144,9 +144,9 @@ Runtime: 47.4s total (25k arm: 15.8s, 50k arm: 30.2s), matching the throughput s
 by `stockfish-label-e2-real.md`'s own node-budget throughput table.
 
 **Reproduction**: `cd trainer && uv run python -m scripts.phase5_rq5_label_noise_floor`
-(requires `data/quiet-labeled.epd` present locally and a Stockfish binary at
-`/home/coeusyk/.local/bin/stockfish` — both pre-existing, session-local artifacts per this
-repo's established convention, not new prerequisites this experiment introduces).
+(requires `data/quiet-labeled.epd` present locally and a Stockfish binary resolvable via
+`PATH` — both pre-existing, session-local artifacts per this repo's established
+convention, not new prerequisites this experiment introduces).
 
 ## Interpretation
 

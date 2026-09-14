@@ -3905,7 +3905,7 @@ architectural drift was introduced and documentation references still resolve.
 
 ```
 $ graphify update
-Re-extracting code files in /home/coeusyk/projects/chess-engine (no LLM needed)...
+Re-extracting code files in the repo root (no LLM needed)...
   AST extraction: 32/32 uncached files (100%) [16 workers]
 [graphify] backed up curated graph (5 files) -> graphify-out/2026-07-20/
 [graphify watch] Rebuilt: 4228 nodes, 8251 edges, 552 communities

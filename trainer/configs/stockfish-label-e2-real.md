@@ -21,8 +21,8 @@ against the same commit — regenerating is treated as cheaper and more honest t
 committing large derived binary/CSV data that would immediately go stale relative to
 whichever script produced it.
 
-- `engine_path: "/home/coeusyk/.local/bin/stockfish"` — this session's dev-environment
-  path, a symlink to a manually-installed Stockfish 18 release binary (superseding the
+- `engine_path: "stockfish"` — this session's dev-environment path (resolved via `PATH`),
+  a symlink to a manually-installed Stockfish 18 release binary (superseding the
   `apt`-packaged Stockfish 16 at `/usr/games/stockfish`, kept installed but no longer
   first on `PATH`) — captured into the run's own manifest via
   `engine_uci_id`/`engine_binary_sha256` regardless (per the driver's own
@@ -96,7 +96,7 @@ Non-Scope.
 
 Mid-session, this session's environment was upgraded from Stockfish 16 (`apt` package,
 `/usr/games/stockfish`) to a manually-installed Stockfish 18 release binary
-(`/home/coeusyk/.local/bin/stockfish`, now first on `PATH`). The Stage 2 run above was
+(the local Stockfish binary, now first on `PATH`). The Stage 2 run above was
 re-executed identically (same 20,000-FEN input file, same `nodes=25000,
 timeout_seconds=30.0, threads=1`) against Stockfish 18 to get a real (not
 retroactively-adjusted) manifest and throughput number for the engine version this
@@ -137,7 +137,7 @@ is not a valid apples-to-apples comparison.
 | Positions | 20,000 |
 | Engine | Stockfish 18 |
 | Engine binary SHA-256 | `65c1e4dade6102e4f8219be7d24181d25e7e1b6f039a20b3ae49488623ba61e5` |
-| Engine path | `/home/coeusyk/.local/bin/stockfish` |
+| Engine path | `stockfish` (resolved via `PATH`) |
 | Nodes per position | 25,000 |
 | Threads | 1 (driver hardcodes `setoption name Threads value 1` — not a config knob, see `stockfish_label.py`'s own docstring) |
 | Hash | 16 MB (Stockfish's own UCI default — the driver does not send `setoption name Hash`, so whatever the binary defaults to at startup governs; not explicitly pinned) |
