@@ -15,64 +15,72 @@ introduced here — where #209 itself defers a value (adjudication thresholds, d
 weighting), this document defines a bounded, opaque wire slot for it rather than inventing a
 concrete schema #209 didn't specify.
 
-Reviewed against the repository at commit `0af2130` on `phase/15-nnue` (the diagnostic-note
-commit is docs-only and does not touch anything VSPR depends on; the last code-relevant commit
-is `217158d`, cited throughout as precedent).
+**Revision note (this pass):** this is a corrective revision of the version committed at
+`d4af3a4`, following adversarial review that found six defects: insufficient producer-identity
+fields, an internally-contradictory extension mechanism, conflated normal-read and
+recovery-writer truncation semantics, a chess-illegal canonical fixture, an overclaimed
+timestamp-ordering guarantee, and #220/#211 acceptance-criteria drift. All six are corrected
+below; see each section's revision note for what changed and why. Reviewed against the
+repository at commit `d4af3a4` on `phase/15-nnue`.
 
 ---
 
 ## 1. Verdict
 
 VSPR is specified as a single top-level framing: a fixed-format header (one per file, carrying
-run-level `GameConfig`) followed by a sequence of length-prefixed, CRC-32-checked `GameFrame`
-records (one per game), each internally structured as required fields in a fixed order plus one
-optional trailing section gated by a header-level flag. This is the simplest model of the three
-candidates considered (§4) that still satisfies every requirement in scope: streaming decode,
-bounded memory, corruption detection at frame boundaries, multiple games per file, and
-deterministic serialization.
+run-level `GameConfig` and producer identity) followed by a sequence of length-prefixed,
+CRC-32-checked `GameFrame` records (one per game), each internally structured as required
+fields in a fixed order. This is the simplest model of the three candidates considered (§4)
+that still satisfies every requirement in scope: streaming decode, bounded memory, corruption
+detection at frame boundaries, multiple games per file, and deterministic serialization.
 
-The format deliberately does **not** reuse `.nnue`'s exact byte-for-byte header shape, but it
-does reuse `.nnue`'s two load-bearing conventions with a stated reason each: big-endian byte
-order (§3 justifies the deviation from this task's little-endian default) and hard-reject
-version mismatch with no lenient parsing (§3, §7). It also reuses the engine's own existing
-16-bit packed move encoding (`Move.of()`/`Move.from()`/`Move.to()`/`Move.flag()`) verbatim rather
-than inventing a new move representation, and treats every #209-deferred numeric policy
-(adjudication thresholds, diversity weighting) as an opaque, length-bounded, schema-tagged blob
-that VSPR bounds-checks but never interprets.
+The format reuses `.nnue`'s two load-bearing conventions with a stated reason each: big-endian
+byte order (§3) and a single, exact-match, hard-reject version field with no lenient parsing and
+no speculative extension mechanism (§4, §7 — this revision removes the prior draft's
+header-extension TLV list entirely, per §4's revision note). It reuses the engine's own existing
+16-bit packed move encoding verbatim rather than inventing a new move representation, and treats
+every #209-deferred numeric policy (adjudication thresholds, diversity weighting) as an opaque,
+length-bounded, schema-tagged blob that VSPR bounds-checks but never interprets. Producer
+identity is now three distinct, explicit fields (§6): a logical network identity, an exact
+network-artifact hash, and an exact engine-build identity — none of them a filesystem path.
 
-Three golden fixtures (ordinary CP sample, mate-score sample, infrastructure-terminated
-unresolved-outcome game) are fully specified below with exact hex and SHA-256, computed by a
-throwaway, non-committed construction script that mechanically applies this document's own byte
-layout — not hand-typed, and not a decoder in either direction. The remaining seven required
-fixtures are specified as exact, byte-precise deltas from these three, which is the more honest
-representation for corruption/malformed cases: a truncated or version-mismatched fixture *is*,
-by definition, a known-good fixture with one documented byte change.
+Six golden fixtures are fully specified below with exact hex and SHA-256 (ordinary CP sample,
+mate-score sample, natural draw, infrastructure-terminated unresolved game, candidate-section
+present, maximum-length FEN), computed by a throwaway, non-committed construction script that
+mechanically applies this document's own byte layout — not hand-typed, and not a decoder in
+either direction. Every fixture representing a complete game now plays out a real, legal move
+sequence consistent with its recorded outcome and termination reason (§10's revision note). The
+remaining four required fixtures are specified as exact byte-level deltas, which is the correct
+representation for a corruption/malformed case: it *is*, by definition, a known-good fixture
+with one documented byte changed.
 
 ## 2. Design goals / non-goals
 
 **Goals:** cross-language interoperability through shared golden vectors (not shared code);
 bounded decoder memory regardless of input; loud rejection of anything malformed, truncated, or
-version-mismatched; streaming decode of one game at a time; every #209 semantic field
-representable without ambiguity; optional `SearchCandidate` persistence that can be cleanly
-absent.
+version-mismatched — including a file whose only content is a truncated trailing frame (§9,
+§11); streaming decode of one game at a time; every #209 semantic field representable without
+ambiguity; optional `SearchCandidate` persistence that can be cleanly absent; exact producer
+provenance (logical network identity, exact network artifact, exact engine build) without ever
+relying on a filesystem path as identity.
 
-**Non-goals:** a generic, reusable serialization framework (§4 rejects TLV-everywhere for
-exactly this reason); pinning #209's own deferred numeric policy values; cryptographic
-tamper-resistance (§11); solving distributed/multi-writer generation (§9); any Java or Python
-implementation code (§16 forbids it this turn).
+**Non-goals:** a generic, reusable serialization framework or speculative forward-compatibility
+mechanism (§4 — no header extensions exist because no current V1 requirement needs one); pinning
+#209's own deferred numeric policy values; cryptographic tamper-resistance (§15); solving
+distributed/multi-writer generation (§9); wall-clock-synchronized cross-run ordering (§6's
+timestamp note); any Java or Python implementation code (§16 forbids it this turn).
 
 ## 3. Wire-level primitives
 
-**Byte order: big-endian**, explicitly deviating from this task's little-endian default on
-strong repo evidence: `NnueNetwork.java`'s own docstring states its binary format is
-"big-endian, this engine's own versioned layout," using `DataInputStream`/`DataOutputStream`
-(Java's `DataInput`/`DataOutput` are always big-endian, by design). `trainer/trainer/export/
+**Byte order: big-endian**, explicitly deviating from a little-endian default on strong repo
+evidence: `NnueNetwork.java`'s own docstring states its binary format is "big-endian, this
+engine's own versioned layout," using `DataInputStream`/`DataOutputStream` (Java's
+`DataInput`/`DataOutput` are always big-endian, by design). `trainer/trainer/export/
 exporter.py` matches this deliberately — its own docstring says "Java's `DataInput`/`DataOutput`
 interfaces are always big-endian, by design (`struct.pack(">i", ...)` rather than the
 little-endian layout a from-scratch design might otherwise pick)." VSPR is the second
 Java/Python cross-language exchange format in this repository; matching the first one's
-established, load-bearing convention avoids a second, inconsistent idiom (`ByteBuffer` order
-flips in Java, a different `struct` prefix in Python) for no benefit.
+established, load-bearing convention avoids a second, inconsistent idiom for no benefit.
 
 **Primitive widths**, matching `.nnue`'s own precedent of using full-width header fields where
 header size is immaterial, and narrower fields where a value repeats per-record at scale:
@@ -84,6 +92,7 @@ header size is immaterial, and narrower fields where a value repeats per-record 
 | `u32` | 4 bytes | unsigned, big-endian |
 | `i32` | 4 bytes | signed, big-endian, two's complement |
 | `i64` | 8 bytes | signed, big-endian, two's complement |
+| `u8[N]` | N bytes | fixed-width raw bytes, no length prefix — used only where the width is a wire-format constant, never a variable-length value (magic, `runId`, `generatorNetworkSha256`) |
 | `bstr8` | 1+N bytes | `u8` length prefix (0-255), then N raw bytes |
 | `bstr16` | 2+N bytes | `u16` length prefix (0-65535), then N raw bytes |
 | `bool` | 1 byte | `u8`, must be exactly `0x00` or `0x01`; any other value is rejected as an invalid tag (§13) |
@@ -91,14 +100,23 @@ header size is immaterial, and narrower fields where a value repeats per-record 
 
 No sentinel values are used anywhere in this format to mean "absent" (e.g. no reuse of `-1`,
 `Long.MIN_VALUE`, or `0` as a dual-purpose "no value" marker) — every optional field uses the
-explicit `optional<T>` presence-flag form above. This generalizes the task's own instruction
-("if CP and mate share one integer field, require an explicit score-kind tag") to every optional
-field in the format, not just scores: `mmap_shard.py`'s own `has_eval_cp`/`has_eval_mate`/
-`has_wdl` boolean-flag convention (its comment: "a wdl-only label had no representable field at
-all" was exactly the bug that convention exists to prevent) is the same idea already applied one
-layer down in this pipeline; VSPR applies it consistently at the wire level.
+explicit `optional<T>` presence-flag form above. This generalizes the same idea
+`mmap_shard.py`'s own `has_eval_cp`/`has_eval_mate`/`has_wdl` boolean-flag convention already
+applies one layer down in this pipeline (its comment: "a wdl-only label had no representable
+field at all" was exactly the bug that convention exists to prevent) — VSPR applies it
+consistently at the wire level, for every optional field, not just scores.
 
 ## 4. File/header structure
+
+**Revision note:** the prior draft paired a `u16 headerLength` (max 65,535 bytes) with a
+`headerExtensionCount` allowing up to 65,536 extension sections of up to 1 MiB each — a value
+that could never actually fit inside the field meant to describe it, and no current V1
+requirement needed the extension mechanism at all. Both are removed. V1's header is now fully
+fixed-shape: a decoder that supports `formatVersion = 1` knows its exact byte layout and length
+without reading any length-prefix or extension-count field first. If a future revision needs to
+add fields, that is a new `formatVersion` value with its own exact-match hard-reject rule (same
+posture `.nnue` already uses for its own single `formatVersion` field) — not a backward-lenient
+extension inside the existing version.
 
 One VSPR file = one header + zero or more `GameFrame` records, concatenated with no inter-record
 padding.
@@ -106,36 +124,31 @@ padding.
 ```
 VSPR file:
   u8[4]    magic = "VSPR"
-  u8       majorVersion
-  u8       minorVersion
-  u16      headerLength          -- total header bytes, this field included; lets a reader of a
-                                     future minor version skip trailing header extension bytes
-                                     it doesn't recognize without parsing them
-  u8[16]   runId                 -- raw 128-bit UUID, identifies this file/run (§9)
-  i64      createdAtEpochSeconds -- run start time; needed to order multiple runs' output files
-                                     in a generation pipeline, not speculative
+  i32      formatVersion          -- exactly 1 for this specification; any other value is a
+                                      hard reject, no partial/lenient parsing (§7, §11)
+  u8[16]   runId                  -- raw 128-bit UUID, identifies this file/run (§9)
+  i64      createdAtEpochSeconds  -- informational/provenance only; NOT an authoritative
+                                      cross-run ordering signal (§6)
   -- GameConfig (required singleton, §9's per-run fields) --
-  bstr16   generatorNetworkUuid  -- max 128 bytes; the stable identity (§6)
-  bstr16   generatorNetworkPath  -- max 512 bytes; informational provenance only, NEVER identity (§6)
-  i32      maxPlies              -- the run's configured move-cap (#209 §4.3); format-level
-                                     bound on this value is independent and larger (§7)
-  u8       searchBudgetKind      -- 0=depth, 1=nodes, 2=timeMs
+  bstr16   generatorNetworkUuid   -- max 128 bytes; logical/network identity (§6)
+  u8[32]   generatorNetworkSha256 -- exact network-artifact identity (§6)
+  bstr8    engineBuildId          -- max 64 bytes; exact engine-producer-build identity (§6)
+  bstr16   generatorNetworkPath   -- max 512 bytes; informational only, NEVER identity (§6)
+  i32      maxPlies               -- the run's configured move-cap (#209 §4.3); format-level
+                                      bound on this value is independent and larger (§7)
+  u8       searchBudgetKind       -- 0=depth, 1=nodes, 2=timeMs
   i64      searchBudgetValue
   bool     resetSearchStateBetweenGames
-  bool     candidatesPersisted   -- whether every GameFrame below carries its optional
-                                     candidate-set section (§6, §8)
-  optional<opaqueConfig>  adjudicationConfig   -- §5's opaque-blob encoding
-  optional<opaqueConfig>  diversityConfig      -- §5's opaque-blob encoding; if present, this
-                                                   also implies runSeed was used (#209 §9);
+  bool     candidatesPersisted    -- whether every GameFrame below carries its optional
+                                      candidate-set section (§6, §8)
+  optional<opaqueConfig>  adjudicationConfig   -- opaque-blob encoding, below
+  optional<opaqueConfig>  diversityConfig      -- opaque-blob encoding, below; if present,
+                                                   this also implies runSeed was used (#209 §9);
                                                    runSeed itself lives inside the opaque blob,
                                                    since its derivation/consumption is a
                                                    diversity-mechanism concern VSPR does not
                                                    interpret
-  u16      headerExtensionCount
-  repeat headerExtensionCount times:
-    u16    extensionTag
-    u32    extensionLength
-    u8[extensionLength]  extensionBytes   -- always skippable by declared length (§7)
+  -- end of header; fully fixed length for formatVersion=1, nothing to skip --
 
 GameFrame (repeated, one per game, until EOF):
   u32      frameLength      -- bytes of the frame body below, this field and the trailing crc32
@@ -143,16 +156,16 @@ GameFrame (repeated, one per game, until EOF):
   -- frame body (frameLength bytes) --
   i64      gameId
   optional<i64>  gameSeed
-  u8       gameOutcome        -- enum, §9
-  u8       terminationReason  -- enum, §9
-  u8       outcomePerspective -- enum, §9; applies to gameOutcome, recorded once per game (§8)
+  u8       gameOutcome        -- enum, §6
+  u8       terminationReason  -- enum, §6
+  u8       outcomePerspective -- enum, §6; applies to gameOutcome, recorded once per game (§8)
   u32      playedMoveCount    -- bounded, §7
-  repeat playedMoveCount times:  PlayedMoveDecision   -- §8
+  repeat playedMoveCount times:  PlayedMoveDecision   -- §5
   u32      sampleCount        -- bounded by playedMoveCount, §7
-  repeat sampleCount times:      TrainingSample        -- §8
+  repeat sampleCount times:      TrainingSample        -- §5
   if header.candidatesPersisted:
     u32    candidateSetCount  -- bounded by playedMoveCount, §7
-    repeat candidateSetCount times:  CandidateSet       -- §8
+    repeat candidateSetCount times:  CandidateSet       -- §5
   -- end frame body --
   u32      crc32             -- CRC-32 (IEEE 802.3 polynomial, both languages' stdlib default:
                                  java.util.zip.CRC32, Python zlib.crc32) over exactly the
@@ -168,7 +181,7 @@ GameFrame (repeated, one per game, until EOF):
 
 ## 5. Game-frame structure
 
-Covered structurally in §4; the semantic content of each repeated element is:
+The semantic content of each repeated element in a `GameFrame`:
 
 **`PlayedMoveDecision`** (#209 §9):
 ```
@@ -243,9 +256,9 @@ castling letters, `-`, algebraic square names, integers — is a strict ASCII su
 legitimate use for non-ASCII bytes here), max 100 bytes. `mmap_shard.py`'s own `_FEN_BYTES = 90`
 fixed-field precedent (comment: "longest realistic FEN ... is well under 90 bytes; 90 gives
 headroom") is the basis for VSPR's bound; VSPR uses a length-prefixed field instead of a fixed
-90-byte field (unlike the shard format, VSPR is not a fixed-stride mmap layout, so there is no
-reason to pay for 90 bytes on every sample) with 100 bytes as the hard reject ceiling, matching
-the same "well under" margin the shard format already established.
+90-byte field (unlike the shard format, VSPR is not a fixed-stride mmap layout) with 100 bytes
+as the hard reject ceiling, matching the same "well under" margin the shard format already
+established.
 
 **`gameId`**: `i64`, always present (not `optional`) — #209 §9 marks `GameIdentity.gameId` as
 unconditionally required, unlike #207's downstream `Optional[int]` need, which exists only once
@@ -253,12 +266,10 @@ this value crosses into the shard format's own optionality question (§12). VSPR
 an "absent gameId" state to represent.
 
 **Centipawn / mate score**: tagged union, `u8 scoreKind` (`0 = cp`, `1 = mate`) followed by
-`i32 score`, used identically for `TrainingSample.evalScore` and `SearchCandidate.score`. This
-is the literal tagged-union requirement from #209 §5/§6 and this task's own instruction ("If CP
-and mate share one integer field, require an explicit score-kind tag") — there is exactly one
-score field, its kind is always explicit, and a decoder never has to infer which convention
-applies from the numeric magnitude (§13 explains why a magnitude-based heuristic would be
-actively wrong here).
+`i32 score`, used identically for `TrainingSample.evalScore` and `SearchCandidate.score`. There
+is exactly one score field, its kind is always explicit, and a decoder never has to infer which
+convention applies from the numeric magnitude (§13 explains why a magnitude-based heuristic
+would be actively wrong here).
 
 **`GameOutcome`** / **`TerminationReason`** / **`outcomePerspective`**: three separate `u8`
 enums, never collapsed, per #209 §8's explicit design requirement:
@@ -295,30 +306,45 @@ Valid `(outcome, terminationReason)` pairings, enforced at decode time (§13):
 | `threefoldRepetition` | `draw` |
 | `fiftyMoveRule` | `draw` |
 | `insufficientMaterial` | `draw` |
-| `adjudicatedScore` | `whiteWin`, `blackWin`, `draw` — #209 doesn't rule out a drawn
-adjudication policy, so this document doesn't invent that restriction either |
+| `adjudicatedScore` | `whiteWin`, `blackWin`, `draw` — #209 doesn't rule out a drawn adjudication policy, so this document doesn't invent that restriction either |
 | `moveCap` | `unresolved` only |
 | `searchAbortOrFailure` | `unresolved` only |
+
+This table constrains the `(outcome, terminationReason)` pair only — it says nothing about how
+many plies a game must have to reach a given `terminationReason`, which is a chess-legality
+question this document does not attempt to encode structurally (a decoder cannot verify chess
+legality without a full move generator). It is, however, a requirement on this document's own
+**golden fixtures** (§10): every fixture representing a `checkmate`/`stalemate`/
+`threefoldRepetition` termination must play out a `playedMoves` sequence that is actually capable
+of reaching that termination under the real rules of chess, not merely one that satisfies the
+enum-pairing table in isolation.
 
 **Search-budget metadata**: `u8 searchBudgetKind` (`0 = depth`, `1 = nodes`, `2 = timeMs`) + `i64
 searchBudgetValue` — one tagged union, reused identically for `GameConfig.searchBudget` (header,
 once per run) and `TrainingSample.searchBudget` (per sample, since #209 §6 requires each sample
-to carry the budget its own evaluating search actually ran under, which is not necessarily the
-run's nominal configured budget if a future implementation ever varies it). `i64` for the value
-(not `i32`) matches `mmap_shard.py`'s own justification for `search_nodes` being `i8`
-(`numpy` 8-byte int): "a node budget can exceed int32 range at high search depth/time" — the
-same overflow risk applies here.
+to carry the budget its own evaluating search actually ran under). `i64` for the value (not
+`i32`) matches `mmap_shard.py`'s own justification for `search_nodes` being an 8-byte int: "a
+node budget can exceed int32 range at high search depth/time" — the same overflow risk applies
+here.
 
-**Generator network identity**: `generatorNetworkUuid` (`bstr16`, max 128 bytes) is the sole
-identity field a consumer may rely on for network-identity comparison, matching
-`NnueNetwork.networkUuid`'s existing `writeUTF`-compatible string (already present in every
-`.nnue` file today) — VSPR reuses this exact value rather than minting a second identity
-concept. `generatorNetworkPath` (`bstr16`, max 512 bytes) is carried for human-readable
-provenance only (matching `GameConfig.generatorNetworkPath` in #209 §9) and is explicitly
-documented as **not** an identity field, per this task's instruction: "Do not persist a local
-filesystem path as the sole identity of the generating network." A decoder or consumer must
-never compare two games' provenance using this field; only `generatorNetworkUuid` is a valid
-identity comparison.
+**Producer identity — three distinct fields, never conflated:**
+
+| Field | Answers | Width | Stability |
+|---|---|---|---|
+| `generatorNetworkUuid` | "Which network, logically?" | `bstr16`, max 128 bytes | Stable across re-exports of conceptually the same trained network; reuses `NnueNetwork.networkUuid`'s existing `writeUTF`-compatible string, already present in every `.nnue` file today |
+| `generatorNetworkSha256` | "Which exact bytes?" | `u8[32]`, fixed | Changes if the `.nnue` file's bytes change at all (re-quantization, re-export, even a bit-identical rebuild that reorders nothing still hashes the same — the point is it changes whenever the bytes actually do) |
+| `engineBuildId` | "Which exact engine build produced this game?" | `bstr8`, max 64 bytes | For a normal repository build, the git commit SHA (or another immutable build identifier) the engine binary was built from — the exact code that ran `GameLoop`/`Searcher`, independent of which network it loaded |
+
+The prior draft carried only `generatorNetworkUuid` and `generatorNetworkPath` — insufficient
+for exact provenance, since neither pins the exact artifact bytes (a UUID is a logical identity,
+stable across a re-export that changes nothing meaningful but still produces different bytes)
+nor the exact engine code that ran (nothing previously identified the engine build at all).
+`generatorNetworkSha256` and `engineBuildId` close both gaps. `generatorNetworkPath` (`bstr16`,
+max 512 bytes) is retained for human-readable provenance only and remains explicitly **not** an
+identity field: a decoder or consumer must never compare two games' provenance using this field;
+`generatorNetworkUuid` and `generatorNetworkSha256` are the only valid identity comparisons
+(logical and exact-artifact, respectively), and `engineBuildId` is the only valid exact-build
+comparison. No field in this format uses a local filesystem path as identity.
 
 **RNG seeds** (`GameFrame.gameSeed`, `PlayedMoveDecision.selectionSeed`): `i64`, matching
 `i64 createdAtEpochSeconds`'s width class for any 64-bit value in this format. `GameConfig.
@@ -327,26 +353,31 @@ field, since #209 §9 only requires `runSeed` when `diversityConfig` is set, and
 avoids a second `optional<i64>` at the header level that duplicates the same presence condition
 `diversityConfig`'s own presence flag already expresses.
 
-**Timestamps**: exactly one, `createdAtEpochSeconds`, at the file/run level — justified (this
-task's §5 explicitly asks whether timestamps are "truly needed") because a generation pipeline
-producing many VSPR files needs to order them, and a run-level creation time is the minimum
-information that provides that without adding a second, redundant per-game or per-sample
-timestamp #209 never asked for.
+**Timestamps — informational/provenance only, not an ordering guarantee.** `createdAtEpochSeconds`
+is the run's own wall-clock start time, recorded once, as reported by whatever machine produced
+this file. It is useful for a human skimming provenance ("roughly when was this run"), but this
+document makes **no claim** that it provides authoritative ordering across multiple runs or
+multiple files: distributed generation workers are not assumed to have synchronized clocks, and
+nothing in this format corrects for skew, drift, or a worker with a misconfigured clock. Identity
+and ordering of runs come from `runId` (§9) plus whatever ingestion/run metadata #210's own
+dataset-generation manifest records (explicit run sequencing, if any is ever needed, is that
+manifest's job) — never from comparing `createdAtEpochSeconds` values across files and assuming
+the comparison means anything authoritative.
 
 ## 7. Bounds
 
 Every bound below is either (a) derived directly from a cited engine constant, or (b) an
 explicit, generously-sized decoder-allocation safety ceiling that is **not** presented as an
-engine semantic limit. Per this task's own instruction, `GameConfig.maxPlies`'s current
-recommended default (500) and its derived safe ceiling (618, from `Board.UNMAKE_POOL_SIZE`,
-`Searcher.MAX_PLY`, `MAX_CHECK_EXTENSIONS`, `MAX_Q_DEPTH` per #209 §4.3) are **not** encoded as
-VSPR's own format maximum — those numbers are runtime-enforced by `GameConfig.maxPlies` itself
-(an `i32` value the wire format carries, checked by the producer, not re-derived or re-validated
-by a VSPR decoder, which has no way to know a future engine build's `MAX_PLY` value anyway).
+engine semantic limit. `GameConfig.maxPlies`'s current recommended default (500) and its derived
+safe ceiling (618, from `Board.UNMAKE_POOL_SIZE`, `Searcher.MAX_PLY`, `MAX_CHECK_EXTENSIONS`,
+`MAX_Q_DEPTH` per #209 §4.3) are **not** encoded as VSPR's own format maximum — those numbers are
+runtime-enforced by `GameConfig.maxPlies` itself (an `i32` value the wire format carries, checked
+by the producer, not re-derived or re-validated by a VSPR decoder, which has no way to know a
+future engine build's `MAX_PLY` value anyway).
 
 | Quantity | Bound | Basis |
 |---|---|---|
-| `playedMoveCount` per game | 0..65,536 | decoder-allocation safety ceiling only, ~131x the 500-ply recommended default, independent of any engine constant (explicitly not "618" or "500" per this task's instruction) |
+| `playedMoveCount` per game | 0..65,536 | decoder-allocation safety ceiling only, ~131x the 500-ply recommended default, independent of any engine constant |
 | `sampleCount` per game | 0..`playedMoveCount` | structural: every sample is on-trajectory in the initial design (#209 §6), so it must index a real played move |
 | `candidateSetCount` per game | 0..`playedMoveCount` | structural: at most one candidate set per ply |
 | `candidateCount` per `CandidateSet` | 0..218 | the proven maximum number of legal chess moves in any reachable position — a real combinatorial bound, not a guess |
@@ -354,10 +385,11 @@ by a VSPR decoder, which has no way to know a future engine build's `MAX_PLY` va
 | `mechanismName` length | 0..32 bytes | generous for a short identifier string, not a policy decision |
 | `fen` length | 0..100 bytes | `mmap_shard.py`'s own 90-byte precedent plus the same margin it already uses (§6) |
 | `generatorNetworkUuid` length | 0..128 bytes | a UUID is ~36 bytes; generous headroom for a longer future identity scheme without a format change |
+| `generatorNetworkSha256` length | exactly 32 bytes | fixed by SHA-256's own output size — not length-prefixed, nothing to bound |
+| `engineBuildId` length | 0..64 bytes | a git commit SHA is 40 (SHA-1) or 64 (SHA-256) hex characters; 64 covers both with no truncation |
 | `generatorNetworkPath` length | 0..512 bytes | a filesystem path, generous but bounded |
 | `opaqueConfig.payload` length | 0..4096 bytes | generous for a future adjudication/diversity schema this document does not define, bounded so a corrupt length field cannot force a large allocation |
 | `frameLength` (one `GameFrame`) | 0..64 MiB | decoder-allocation safety ceiling; a realistic 500-ply game with samples is a few KB, this is >1000x headroom, not a semantic limit |
-| `headerExtensionCount` / any `extensionLength` | 0..65,536 sections / 0..1 MiB each | generous forward-compatibility headroom, bounded against corruption |
 
 Every one of these bounds is checked **before** the corresponding allocation is made (matching
 `NnueNetwork.load`'s own established pattern: `hiddenWidth` is range-checked before any array of
@@ -366,239 +398,394 @@ that size is allocated).
 ## 8. Outcome/termination encoding
 
 Covered fully in §6 (enum tables and the valid-pairing table) and §5 (game-scoped fields
-recorded once per frame, never duplicated per sample). The one addition here: `GameOutcome` and
-`TerminationReason` are stored as two independent `u8` fields with no shared bit-packing between
-them, specifically so #209 §8's requirement ("these are two different pieces of information ...
-and need to be distinguishable, not collapsed into one field") is a structural property of the
-format, not a documentation-only convention a producer could still violate by packing them into
-one byte.
+recorded once per frame, never duplicated per sample). `GameOutcome` and `TerminationReason` are
+stored as two independent `u8` fields with no shared bit-packing between them, specifically so
+#209 §8's requirement ("these are two different pieces of information ... and need to be
+distinguishable, not collapsed into one field") is a structural property of the format, not a
+documentation-only convention a producer could still violate by packing them into one byte.
 
 ## 9. Identity / provenance and resume semantics
 
 **File/run identity**: `runId`, a 128-bit UUID in the header, identifies one VSPR file as one
-generation run. **One VSPR file = one run**, by design — this is the simplest choice that
-satisfies #209's actual requirement ("`gameId` ... unique within an ingestion run") without
-building any cross-file or distributed-writer coordination this task explicitly says not to
-solve unless necessary.
+generation run. **One VSPR file = one run**, by design — the simplest choice that satisfies
+#209's actual requirement ("`gameId` ... unique within an ingestion run") without building any
+cross-file or distributed-writer coordination this document does not need to solve.
 
 **`gameId` scope**: unique within one file's `runId`, assigned sequentially by the writer
 (`GameLoop`) starting at an implementation-chosen value — VSPR does not mandate starting at 0 or
 1, only that it never repeats within one file. Cross-run uniqueness is explicitly **not**
-guaranteed by VSPR and is #210's stated responsibility (#209 §10: "a resumed run needs its own
-explicit collision/remapping rule ... which section 10 already flags as #210's
-responsibility ... not solved here").
+guaranteed by VSPR and is #210's stated responsibility (#209 §10).
 
-**Resumed generation — recommended default**: start a new file with a new `runId` rather than
-appending to an existing one. This trivially avoids `gameId` collision (a new `runId` means a
-resumed run's games are unambiguously a different run, even if its `gameId` sequence restarts
-from the same starting value) and needs no special writer logic beyond "open a new file."
+### Normal reader / ingester semantics (strict — the default, and the only mode a plain "open and
+decode this file" operation ever uses)
 
-**Appending — supported, not recommended as default**: because every `GameFrame` is
-self-delimiting (`frameLength` + body + `crc32`), a writer *may* append new, complete
-`GameFrame`s to an existing file under the same `runId` if an operational need justifies it (a
-long-running generation job that periodically flushes to the same file). A resuming appender
-must: (1) read the header and confirm the `runId` it intends to continue, (2) scan forward
-frame-by-frame from just after the header, verifying each frame's declared `frameLength` and
-`crc32`, (3) if the last frame is incomplete (declared length extends past EOF, or the file ends
-mid-header-parse of that frame) — **truncate the file at the start of that incomplete frame
-before appending**, never append after unverified trailing bytes, and (4) continue `gameId`
-numbering from one past the last successfully verified frame's `gameId`. A reader is never
-responsible for silently skipping a mid-file corrupt region to find more valid frames after it —
-that would let corruption anywhere in the middle of a file mask itself as "just one bad game";
-only a well-formed trailing partial frame (exactly what a crash mid-write produces) gets the
-lenient "truncate and stop" treatment, and only at end-of-file.
+- A truncated header (fewer bytes available than the fixed V1 header requires, or `magic`/
+  `formatVersion` mismatched) is a **hard reject of the whole file**. There is no valid file
+  identity to recover a partial read from.
+- A truncated `GameFrame` (declared `frameLength` extends past EOF, or the trailing `crc32` is
+  missing or doesn't match) is an **error**, not a silently-shorter result. A streaming decoder
+  yields each complete, `crc32`-verified frame as it's parsed; when it reaches an incomplete
+  trailing frame, it **raises an explicit truncation error** rather than treating end-of-input
+  as end-of-file. This applies uniformly regardless of how many complete frames came before it —
+  including **zero**: a file consisting of nothing but one incomplete frame must never decode as
+  a valid, zero-game file. The absence of an error is what "no more games" means; running out of
+  bytes mid-frame is never silently reinterpreted as that.
+- A `crc32` mismatch on an otherwise length-complete frame is the same category of error —
+  reject that frame, do not attempt to use its contents.
+- **No silent skip-and-continue past corruption in the middle of a file.** A normal reader must
+  not attempt to resynchronize by scanning for the next plausible frame boundary after a corrupt
+  or unrecognized frame — corruption anywhere in a file must surface as an error, never as "the
+  file just had fewer games than expected, no error."
+
+### Explicit resume/recovery writer semantics (opt-in, separate operation — never invoked
+implicitly by a normal read)
+
+A writer that wants to append to an existing VSPR file (an operational choice, not the
+recommended default — see below) performs a distinct, explicitly-invoked recovery procedure,
+never something a normal reader does on its own:
+
+1. Read the header and confirm the `runId` it intends to continue.
+2. Scan forward frame-by-frame from just after the header, verifying each frame's declared
+   `frameLength` and `crc32`.
+3. **If and only if** the very last frame at end-of-file is incomplete due to tail truncation
+   (exactly what a crash mid-write produces) — truncate the file back to the start of that
+   incomplete frame before appending anything new. Never append after unverified trailing bytes.
+4. Continue `gameId` numbering from one past the last successfully verified frame's `gameId`.
+5. **This procedure never repairs or skips mid-file corruption.** It handles exactly one
+   situation: a well-formed prefix of complete, verified frames followed by one incomplete frame
+   at the physical end of the file. If corruption is found anywhere before that trailing
+   position — a `crc32` mismatch, a bound violation, an invalid enum — the recovery procedure
+   stops and reports failure; it does not attempt to salvage a "good" file by cutting out the
+   corrupt middle.
+
+**Recommended default: do not append; start a new file with a new `runId` per resumption.** This
+trivially avoids `gameId` collision (a new `runId` means a resumed run's games are unambiguously
+a different run, even if its `gameId` sequence restarts from the same starting value) and needs
+no special writer logic beyond "open a new file." The append path above exists because every
+`GameFrame` is self-delimiting and therefore *supports* it, for an operational need that
+justifies the extra procedure — not because it is the recommended way to resume.
 
 ## 10. Cross-language golden fixture specification
 
-Three fixtures are given in full below (computed once, by a throwaway construction script — see
+**Revision note:** the prior draft's "ordinary CP sample" fixture recorded a two-ply game
+(`e2e4 e7e5`) with `terminationReason = fiftyMoveRule` — a pairing the enum-pairing table in §6
+permits in isolation, but one no real two-ply game can ever actually reach (the fifty-move rule
+requires 100 consecutive halfmoves without a pawn move or capture; both of that game's moves
+*were* pawn moves). §6's revision note above makes this an explicit requirement on fixtures, not
+just the enum table: every fixture representing a complete game must play out a real, legal move
+sequence capable of reaching its recorded termination. All fixtures below that represent a full
+game now do so — verified move-by-move, not merely "a valid enum pairing."
+
+Six fixtures are given in full below (computed once, by a throwaway construction script — see
 the note at the end of this section — never hand-typed and never committed to the repository).
-The remaining seven required fixtures are specified as exact byte-level deltas from these three,
-which is the correct representation for a corruption/malformed case: it *is*, by definition, a
-known-good fixture with one documented byte changed.
+The remaining four required fixtures are specified as exact byte-level deltas, which is the
+correct representation for a corruption/malformed case: it *is*, by definition, a known-good
+fixture with one documented byte changed.
 
-All three share one header (`GameConfig`): `majorVersion=1, minorVersion=0`, `runId =
-00000000-0000-0000-0000-0000000000AA AA` (16 raw bytes, all-zero except the last two, chosen to
-be visually unambiguous in a hex dump), `createdAtEpochSeconds = 1700000000`,
-`generatorNetworkUuid = "fixture-net-0001"`, `generatorNetworkPath = ""` (empty — deliberately,
-to also exercise the zero-length `bstr16` case), `maxPlies = 500`, `searchBudgetKind = 0`
-(depth), `searchBudgetValue = 6`, `resetSearchStateBetweenGames = true`, `candidatesPersisted =
-false`, `adjudicationConfig` absent, `diversityConfig` absent, `headerExtensionCount = 0`.
+All fixtures share one header (`GameConfig`): `formatVersion=1`, `runId =
+0000...00AAAA` (16 raw bytes, all-zero except the last two, chosen to be visually unambiguous in
+a hex dump), `createdAtEpochSeconds = 1700000000`, `generatorNetworkUuid = "fixture-net-0001"`
+(16 ASCII bytes), `generatorNetworkSha256` = 30 zero bytes followed by `0xBE 0xEF` (32 bytes
+total, same "visually unambiguous fixture marker" convention as `runId`), `engineBuildId =
+"fixture-build-0001"` (18 ASCII bytes), `generatorNetworkPath = ""` (empty — deliberately, to
+also exercise the zero-length
+`bstr16` case), `maxPlies = 500`, `searchBudgetKind = 0` (depth), `searchBudgetValue = 6`,
+`resetSearchStateBetweenGames = true`, `candidatesPersisted = false` (except Fixture 6, which
+flips it), `adjudicationConfig` absent, `diversityConfig` absent. This header serializes to
+exactly **120 bytes**, verified below field-by-field against the script's actual output (not
+hand-summed):
 
-Header hex (70 bytes, shared by all three fixtures below — this is exactly the first 70 bytes
-of each full fixture given below, not repeated verbatim here to avoid a second hand-wrapped copy
-of the same bytes; see the per-fixture entries for the complete, verified hex).
+| Field | Offset | Size |
+|---|---|---|
+| `magic` | 0 | 4 |
+| `formatVersion` | 4 | 4 |
+| `runId` | 8 | 16 |
+| `createdAtEpochSeconds` | 24 | 8 |
+| `generatorNetworkUuid` | 32 | 18 |
+| `generatorNetworkSha256` | 50 | 32 |
+| `engineBuildId` | 82 | 19 |
+| `generatorNetworkPath` | 101 | 2 |
+| `maxPlies` | 103 | 4 |
+| `searchBudgetKind` | 107 | 1 |
+| `searchBudgetValue` | 108 | 8 |
+| `resetSearchStateBetweenGames` | 116 | 1 |
+| `candidatesPersisted` | 117 | 1 |
+| `adjudicationConfigPresent` | 118 | 1 |
+| `diversityConfigPresent` | 119 | 1 |
+| **total** | | **120** |
+
+The frame section starts at offset 120 in every fixture. Within any frame body, `gameId` starts
+at offset 124 (120 + 4-byte `frameLength`), `hasGameSeed` at 132, **`gameOutcome` at 133**,
+`terminationReason` at 134, `outcomePerspective` at 135, `playedMoveCount` at 136 — identical
+across every fixture below, since all of them share the same header length and the same
+`gameId`/`gameSeed`-absent shape up to that point.
 
 ### Fixture 1 — ordinary CP sample game
 
-Semantic object: one game, `gameId=1`, two played moves (`e2e4`, `e7e5`, both `FLAG_NORMAL`),
-one on-trajectory sample at `ply=0` with the resulting position's FEN, `evalScoreKind=cp`,
-`evalScore=35`, `searchBudget = depth 6`. Outcome recorded as `draw` /
-`fiftyMoveRule` (fixture-only pairing, chosen because it's a valid `(draw, fiftyMoveRule)` pair
-per §6's table — not semantically meaningful for a 2-ply game, only structurally valid), no
-diversity, no candidate sets.
+Semantic object: **Fool's Mate** — the shortest possible legal checkmate in chess: `1.f3 e5 2.g4
+Qh4#` (4 plies: `f2f3`, `e7e5`, `g2g4`, `d8h4`, all `FLAG_NORMAL`). `gameId=1`, outcome
+`blackWin` / `checkmate` (Black delivers mate) — a real, verifiable pairing, not merely an
+enum-table-legal one. One on-trajectory sample at `ply=0` (the position after `1.f3`, Black to
+move), `evalScoreKind=cp`, `evalScore=35`, `searchBudget = depth 6`. No diversity, no candidate
+sets.
 
-Full bytes (185 bytes total), hex:
+Full bytes (242 bytes total), hex:
 ```
-565350520100004600000000000000000000000000aaaa000000006553f1000010666978747572
-652d6e65742d303030310000000001f40000000000000000060100000000000000006b00000000
-000000010002030000000002070c00000934000000000001000000003b726e62716b626e722f70
-707070707070702f382f382f3450332f382f50505050315050502f524e42514b424e522062204
-b516b7120653320302031010000000023000000000000000006bbcee0f1
+56535052000000010000000000000000000000000000aaaa000000006553f1000010666978747572
+652d6e65742d30303031000000000000000000000000000000000000000000000000000000000000
+beef12666978747572652d6275696c642d303030310000000001f400000000000000000601000000
+0000007200000000000000010001000000000004054d000009340000078e000007fb000000000001
+000000003a726e62716b626e722f70707070707070702f382f382f382f3550322f50505050503150
+502f524e42514b424e522062204b516b71202d203020310100000000230000000000000000065196
+8ab5
 ```
 
-SHA-256: `3a44a14452f7f50cc3b19984523115c366496d8f06075a04acbaf7be2b3ef490`
-
-*(Field-by-field walk, offsets into the 185-byte buffer: `[0:70]` header as above. `[70:74]`
-`frameLength = 0x0000006b` = 107. `[74:82]` `gameId = 1`. `[82]` `hasGameSeed = 0`. `[83]`
-`gameOutcome = 2` (draw). `[84]` `terminationReason = 3` (fiftyMoveRule). `[85]`
-`outcomePerspective = 0` (white). `[86:90]` `playedMoveCount = 2`. `[90:92]` move 1's packed
-encoding, `move=0x070c` = 1804 = `Move.of(from=12, to=28, flag=0)` (e2-e4: square 12 is e2,
-square 28 is e4, `FLAG_NORMAL=0`), `[92]` `selectionMechanismKind = 0` (bestMove) ... — this
-document's prose spec is the normative source; the hex above is the byte-exact artifact this
-walk cross-checks against, both produced by the same construction step.)*
+SHA-256: `aa1f3c2c8db50d7ba38da13563e2155c24062a3a46874c9f2a407cf77661f055`
 
 ### Fixture 2 — mate-score sample
 
-Same header. `gameId=2`, one played move (`e2e4`), one sample at `ply=0`, `evalScoreKind=mate`,
-`evalScore=3` (mate in 3, side to move's own perspective). Outcome `whiteWin` /
-`checkmate` (a valid pairing per §6's table).
+Same header, same Fool's Mate move sequence, `gameId=2`, same outcome (`blackWin`/`checkmate`).
+The sample is now taken at `ply=2` — the position after `1.f3 e5 2.g4`, Black to move, where
+`...Qh4#` is actually available: `evalScoreKind=mate`, `evalScore=1` (mate in 1, side-to-move's
+own perspective). This is a genuinely correct mate-in-1 claim for that exact position, not just a
+structurally valid tag.
 
-Full bytes (181 bytes total), hex:
+Full bytes (245 bytes total), hex:
 ```
-565350520100004600000000000000000000000000aaaa000000006553f1000010666978747572
-652d6e65742d303030310000000001f4000000000000000006010000000000000000670000000000
-000002000000000000000107 0c000000000001000000003b726e62716b626e722f707070707070
-70702f382f382f3450332f382f50505050315050502f524e42514b424e522062204b516b7120653
-32030203101010000000300000000000000000654d59a39
+56535052000000010000000000000000000000000000aaaa000000006553f1000010666978747572
+652d6e65742d30303031000000000000000000000000000000000000000000000000000000000000
+beef12666978747572652d6275696c642d303030310000000001f400000000000000000601000000
+0000007500000000000000020001000000000004054d000009340000078e000007fb000000000001
+000000023d726e62716b626e722f70707070317070702f382f3470332f3650312f3550322f505050
+505032502f524e42514b424e522062204b516b71202d203020320101000000010000000000000000
+06521e8e94
 ```
 
-SHA-256: `bd2b0e26a92117a68508bdffec1c02d9179f5c31f7442c46fbabde3dcd9dfde0`
+SHA-256: `a7298f75fb56deb3776a8784228d58009e87067bb9277505c55523acf9b330b8`
+
+### Fixture 3 — drawn game by natural rule
+
+Semantic object: threefold repetition via a repeated knight shuffle, `1.Nf3 Nf6 2.Ng1 Ng8 3.Nf3
+Nf6 4.Ng1 Ng8` (8 plies: `g1f3, g8f6, f3g1, f6g8, g1f3, g8f6, f3g1, f6g8`, all `FLAG_NORMAL`) —
+legal, and the starting position recurs a third time exactly after the 8th ply, since nothing
+but the two knights ever moves. `gameId=3`, outcome `draw` / `threefoldRepetition` — a real
+threefold, not merely an enum-table-legal pairing. One sample at `ply=0` (the position after
+`1.Nf3`), `evalScoreKind=cp`, `evalScore=10`.
+
+Full bytes (258 bytes total), hex:
+```
+56535052000000010000000000000000000000000000aaaa000000006553f1000010666978747572
+652d6e65742d30303031000000000000000000000000000000000000000000000000000000000000
+beef12666978747572652d6275696c642d303030310000000001f400000000000000000601000000
+0000008200000000000000030002020000000008054600000b7e0000019500000fad000005460000
+0b7e0000019500000fad000000000001000000003a726e62716b626e722f70707070707070702f38
+2f382f382f354e322f50505050505050502f524e42514b4231522062204b516b71202d2031203101
+000000000a00000000000000000607fb328a
+```
+
+SHA-256: `dcf84913117080e89a8650db617c29e20179c6b58b6f45310df7253d46b80bd9`
 
 ### Fixture 4 — infrastructure termination, unresolved outcome, zero samples
 
-Same header. `gameId=4`, one played move, **zero samples** (exercising the accept-zero-sample
-case, §13). Outcome `unresolved` / `moveCap` — the exact case the outcome/termination-reason
-separation exists to encode correctly (§6, #209 §8).
+Semantic object: an entirely ordinary, non-terminal, two-ply position (`1.Nf3 Nf6`, both
+`FLAG_NORMAL`) — capped or aborted mid-game, which is an infrastructure/configuration event, not
+a chess-rules claim, so there is no legality constraint to satisfy here the way there is for a
+natural termination. `gameId=4`, outcome `unresolved` / `moveCap`, **zero samples** (exercising
+the accept-zero-sample case, §13).
 
-Full bytes (102 bytes total), hex:
+Full bytes (156 bytes total), hex:
 ```
-565350520100004600000000000000000000000000aaaa000000006553f1000010666978747572
-652d6e65742d303030310000000001f4000000000000000006010000000000000000180000000000
-0000040003060000000001070c000000000000e368bb0e
+56535052000000010000000000000000000000000000aaaa000000006553f1000010666978747572
+652d6e65742d30303031000000000000000000000000000000000000000000000000000000000000
+beef12666978747572652d6275696c642d303030310000000001f400000000000000000601000000
+0000001c00000000000000040003060000000002054600000b7e000000000000189cefa9
 ```
 
-SHA-256: `bc604d9e3edb0e68e4e35c11782b0f0d651353a17f531ea97dbe8dc2c6d76062`
+SHA-256: `e7b5d4245aa69a66acd5211de206f40cbd93b3bb9f26437a81d32036e739b01a`
 
-### Fixtures 3, 5-10 — specified as exact deltas
+### Fixture 5 — optional candidate section absent
 
-| # | Case | Construction | Decoder behavior |
+Fixtures 1, 2, 3, and 4 above are all already this case (`candidatesPersisted = 0x00` at header
+offset 117) — no separate fixture needed.
+
+### Fixture 6 — optional candidate section present
+
+Fixture 1's header with byte offset 117 (`candidatesPersisted`) changed `0x00 -> 0x01`, plus one
+`CandidateSet` appended to the frame body before the `crc32` trailer: `ply=0, depth=6,
+candidateCount=1`, one `SearchCandidate{move=0x070c (f2f3), rank=0, scoreKind=0, score=35,
+pvLength=0, complete=1}`; `frameLength` and `crc32` recomputed for the new body length.
+
+Full bytes (268 bytes total), hex:
+```
+56535052000000010000000000000000000000000000aaaa000000006553f1000010666978747572
+652d6e65742d30303031000000000000000000000000000000000000000000000000000000000000
+beef12666978747572652d6275696c642d303030310000000001f400000000000000000601010000
+0000008c00000000000000010001000000000004054d000009340000078e000007fb000000000001
+000000003a726e62716b626e722f70707070707070702f382f382f382f3550322f50505050503150
+502f524e42514b424e522062204b516b71202d203020310100000000230000000000000000060000
+000100000000000000060001054d000000000000230000013da4705e
+```
+
+SHA-256: `194abdf017ef31cd89226044452757ed848a9671a60c5326571bb66be514cc8a`
+
+### Fixture 7 — maximum-length-but-valid FEN/string case
+
+Fixture 1's shape, sample `fen` field replaced with a 100-byte ASCII string (the real FEN content
+padded with trailing space characters past its natural length — spaces are ASCII and this only
+tests the length boundary, not content validity), `bstr8` length byte `= 100`; `frameLength`/
+`crc32` recomputed.
+
+Full bytes (284 bytes total), hex:
+```
+56535052000000010000000000000000000000000000aaaa000000006553f1000010666978747572
+652d6e65742d30303031000000000000000000000000000000000000000000000000000000000000
+beef12666978747572652d6275696c642d303030310000000001f400000000000000000601000000
+0000009c00000000000000010001000000000004054d000009340000078e000007fb000000000001
+0000000064726e62716b626e722f70707070707070702f382f382f382f3550322f50505050503150
+502f524e42514b424e522062204b516b71202d203020312020202020202020202020202020202020
+20202020202020202020202020202020202020202020202020010000000023000000000000000006
+a9069298
+```
+
+SHA-256: `0e27990b82172f41bdcb8f1cb5b4063ecf94d966fc30f60fac4d63193adbc08e`
+
+### Fixtures 8, 9, 10 — specified as exact deltas from Fixture 1
+
+**Revision note:** the prior draft's Fixture 8 entry said a file consisting only of a truncated
+trailing frame "yields zero games, not an error" for a *normal* read. That directly contradicted
+§9's own normal-reader rule and is corrected here: a normal read of this fixture is now
+specified to **error**, matching §9/§11 precisely. The bytes and truncation point are unchanged
+in spirit (still Fixture 1 cut mid-body); only the documented decoder behavior for a *normal*
+read changes.
+
+| # | Case | Construction | Normal-reader behavior |
 |---|---|---|---|
-| 3 | Drawn game by natural rule | Fixture 1, unchanged (`draw`/`fiftyMoveRule` is already a category-A natural termination) — fixture 1 doubles as this case | accept |
-| 5 | Optional candidate section absent | Fixtures 1/2/4, unchanged (`header.candidatesPersisted = 0x00`, byte offset 65 of the shared header) — all three already exercise this | accept |
-| 6 | Optional candidate section present | Fixture 1's header with byte 65 (`candidatesPersisted`) changed `0x00 -> 0x01`, plus one `CandidateSet` appended to the frame body before the `crc32` trailer: `ply=0, depth=6, candidateCount=1`, one `SearchCandidate{move=0x070c, rank=0, scoreKind=0, score=35, pvLength=0, complete=1}`; `frameLength` and `crc32` recomputed for the new body length | accept |
-| 7 | Maximum-length-but-valid FEN/string case | Fixture 1's sample `fen` field replaced with a 100-byte ASCII string (padded with trailing space characters past the real FEN content — spaces are valid FEN-adjacent whitespace and this only tests the length boundary, not content validity), `bstr8` length byte `= 100`; `frameLength`/`crc32` recomputed | accept (100 is the inclusive bound, §7) |
-| 8 | Malformed / truncated frame | Fixture 1, truncated to its first 100 bytes (cuts off mid-frame-body, well before the declared `frameLength=107` body + trailing `crc32` are complete) | reject — the incomplete trailing frame is discarded per §9; if this is the *only* frame in the file, the file yields zero games, not an error, matching the resume-truncation rule in §9 (a partial trailing frame is not itself a hard file-level error, it is simply not a game) |
-| 9 | Unknown major version | Fixture 1's header byte 4 (`majorVersion`) changed `0x01 -> 0x02` | reject — hard, whole-file rejection per §13, no lenient parsing attempted |
-| 10 | Invalid enum/tag | Fixture 1's frame byte at offset 83 (`gameOutcome`) changed `0x02 -> 0xFF` | reject — `0xFF` is not a defined `GameOutcome` value (§6, §13) |
+| 8 | Malformed / truncated frame | Fixture 1 (242 bytes), truncated to its first 190 bytes — the header (120 bytes) and the 4-byte `frameLength` field are complete, but only 66 of the declared 114-byte frame body follow, well short of the full body plus the trailing 4-byte `crc32` | **reject with an explicit truncation error** — this file contains zero complete frames and a normal reader must never report that as "a valid file with zero games"; only the *explicit resume/recovery procedure* in §9 is permitted to treat a trailing incomplete frame leniently, and only as a precursor to truncate-and-append, never as a successful plain decode |
+| 9 | Unknown format version | Fixture 1's header byte offset 7 (the low byte of the big-endian 4-byte `formatVersion` field, which reads `0x00000001`) changed `0x01 -> 0x02`, making `formatVersion = 2` | reject — hard, whole-file rejection, no lenient parsing attempted (§4, §7) |
+| 10 | Invalid enum/tag | Fixture 1's frame byte at offset 133 (`gameOutcome`) changed `0x01 -> 0xFF` | reject — `0xFF` is not a defined `GameOutcome` value (§6, §13) |
 
-**On construction method**: all ten fixtures above are produced from the same field values this
+**On construction method**: all fixtures above are produced from the same field values this
 document specifies in prose (§4-§8), applied by a single-purpose, non-reusable, uncommitted
 construction script (inline `struct.pack` calls per field, no `encode()`/`decode()` function, no
-class) run once in this session's scratch directory to eliminate hand-arithmetic transcription
-errors in the hex dumps above — not the real Java serializer or Python decoder this task
-forbids, and not checked into the repository. Materializing these as actual `.bin` fixture files
-plus real Java/Python stub decoders that consume them is #211's stated scope
-(#209 §10: "None of these require a live self-play run — they are fixtures against this
-document's own types").
+class) run in this session's scratch directory to eliminate hand-arithmetic transcription errors
+in the hex dumps above — not the real Java serializer or Python decoder this task forbids, and
+not checked into the repository. This corrective pass caught and fixed **two independent bugs**
+in the prior pass's own construction script before recomputing these fixtures: a `runId` literal
+that was one byte short (15 raw bytes where the spec requires 16 — the script's own bug, not a
+spec bug, but exactly the kind of error this construction-and-cross-check discipline exists to
+catch) and the chess-illegal Fixture 1 content described in this section's opening revision
+note. Materializing these as actual `.bin` fixture files plus real Java/Python stub decoders that
+consume them is #211's scope (§12).
 
 ## 11. Corruption/truncation behavior
 
-Summarized from §4/§7/§9/§13:
+**Revision note:** this section previously blurred normal-read and recovery-writer semantics
+together. It is now a pure summary of §9's two explicitly separated rule sets; see §9 for the
+full statement and the reasoning.
 
-- **Header-level corruption** (bad magic, unsupported major version, `headerLength` implying a
-  read past EOF, any header field violating its bound in §7): reject the **whole file** — there
-  is no valid file identity to recover a partial read from.
+- **Header-level corruption** (bad magic, wrong `formatVersion`, or a read that runs out of
+  bytes before the fixed 120-byte V1 header completes): reject the **whole file**.
 - **Frame-level corruption** (declared `frameLength` extends past EOF, `crc32` mismatch, any
-  frame-body field violating a §7 bound or §13 validity rule): reject **that frame only**.
-  Frames before it, already successfully decoded, remain valid; a streaming decoder does not
-  need to re-validate or discard them.
-- **Trailing partial frame** (exactly what a crash mid-write produces): treated the same as
-  frame-level corruption for a plain read (reject, stop), and additionally has the explicit
-  truncate-and-resume behavior specified in §9 for a writer that wants to append.
-- **No silent skip-and-continue past corruption in the middle of a file.** A decoder must not
-  attempt to resynchronize by scanning for the next plausible frame boundary after a corrupt or
-  unrecognized frame — that would let corruption anywhere in a file masquerade as "one bad game"
-  when it might mean the whole file's frame count is now misaligned. Only a well-formed trailing
-  partial frame at end-of-file gets lenient treatment.
+  frame-body field violating a §7 bound or §13 validity rule): a normal reader **errors** on
+  that frame — it does not silently treat the file as ending early with no error. Frames before
+  it, already successfully decoded and `crc32`-verified, remain valid; a streaming decoder does
+  not need to re-validate or discard them, but the overall decode operation must still surface
+  the error, even if some frames were already yielded.
+- **A file whose only content is one incomplete frame** is the boundary case this revision
+  fixes explicitly: it is **not** a valid zero-game file to a normal reader. It errors, the same
+  as any other truncated frame — there is no special case where "the very first frame is also
+  the last (incomplete) one" becomes silently acceptable.
+- **Only the explicit, separately-invoked resume/recovery procedure** (§9) may treat a trailing
+  incomplete frame leniently — and only as the trigger for its own truncate-and-append behavior,
+  never as a successful plain decode. A normal reader never performs this procedure implicitly.
+- **No silent skip-and-continue past corruption anywhere in a file, under either mode.** Recovery
+  handles exactly one shape (a good prefix plus one incomplete trailing frame); it does not
+  repair or skip a corrupt frame in the middle of a file, and neither does a normal reader.
 
-## 12. #207 / #210 / #211 exports
+## 12. #207 / #210 / #211 exports and ownership
 
 **To #207 (shard/game-ID storage):** VSPR's `gameId` is an always-present `i64`, unique within
 one `runId` (§9) — exactly the value #207's `Optional[int]`-equivalent field needs to receive
 once it crosses into the shard format; VSPR itself has no "absent gameId" state, so the
 `Optional`-ness only begins at #207's own boundary (a shard record not sourced from VSPR at all).
-No other VSPR-internal field is exported to #207; the shard's own record layout stays entirely
-its own concern, unreused here.
 
 **To #210 (ingestion):** the decoder #210 builds must validate, before yielding any semantic
-record: magic + version (whole-file reject on mismatch, §4/§13), every `frameLength`/`crc32`
-pair (frame reject on mismatch), every bound in §7 (reject on violation, before the
-corresponding allocation), every enum tag in §6 (reject on an undefined value), the
-`(gameOutcome, terminationReason)` pairing table in §6 (reject on an invalid pairing), and that
-`ply` values on samples and candidate sets are `< playedMoveCount` (reject on violation). #210's
-decoder is **not** responsible for research-policy decisions — it does not interpret
-`opaqueConfig` payloads, does not decide whether a `gameId` collision across multiple input files
-is acceptable (that is #210's own ingestion-time policy, informed by but not dictated by this
-document), and does not re-derive or second-guess `GameConfig.maxPlies` against `Board.
-UNMAKE_POOL_SIZE` — it only checks the format-level bounds this document defines in §7.
+record: magic + `formatVersion` (whole-file reject on mismatch, §4/§7), every
+`frameLength`/`crc32` pair (frame reject on mismatch, §9/§11 — including the "only frame is
+incomplete" case), every bound in §7 (reject on violation, before the corresponding allocation),
+every enum tag in §6 (reject on an undefined value), the `(gameOutcome, terminationReason)`
+pairing table in §6 (reject on an invalid pairing), and that `ply` values on samples and
+candidate sets are `< playedMoveCount` (reject on violation). It should also use
+`generatorNetworkSha256` and `engineBuildId` (§6), not just `generatorNetworkUuid`, wherever
+exact-artifact or exact-build provenance is what a consumer actually needs — #210's own
+dataset-generation manifest is the natural place to carry these through. #210's decoder is
+**not** responsible for research-policy decisions — it does not interpret `opaqueConfig`
+payloads, does not decide whether a `gameId` collision across multiple input files is acceptable
+(that is #210's own ingestion-time policy), and does not re-derive or second-guess
+`GameConfig.maxPlies` against `Board.UNMAKE_POOL_SIZE`.
 
-**To #211 (deterministic fixtures):** §10's ten fixtures (three full, seven exact deltas) are
-the starting set; #211's job is to materialize them as real files, write the real Java encoder/
-decoder and Python decoder stubs, and check both against the identical bytes given here — not to
-reinterpret this document's byte layout independently.
+**Ownership split between #220 and #211 (resolved, revision to the prior acceptance criteria):**
+
+- **#220 (this document) owns:** the semantic wire contract, the exact byte layout, the exact
+  golden fixture specification (§10, given as hex/SHA-256 plus deltas), and the corruption/
+  version rejection rules (§7, §9, §11, §13). #220 does **not** own, and does not depend on,
+  any materialized `.bin` fixture files or any Java/Python code, real or stub.
+- **#211 owns:** materializing §10's fixtures as real, checked-in files; a real Java
+  implementation/stub and a real Python implementation/stub that each consume those exact bytes;
+  and the deterministic, cross-language PR-CI checks that assert both languages agree on the
+  same golden vectors (matching #211's own current scope, which already lists "Java ↔ Python
+  decoding of the same golden vectors" and "malformed, truncated, and version-mismatched input
+  rejection" as hand-authored-fixture tests against #220's vectors).
+
+This resolves the prior drift, where #220's own acceptance criteria asked for "a Java and a
+Python decoder (stubs are acceptable)" checked against the golden vectors — that requirement is
+removed from #220 (see the GitHub issue update accompanying this revision) and now belongs
+entirely to #211, which already depends on #220 for its input. #211 does not depend on anything
+#220 doesn't already provide as of this revision, so there is no dependency cycle: #220 → #211
+is the only edge.
 
 ## 13. Failure-mode review
 
-Every scenario the governing task listed for adversarial review, with reject/accept behavior:
-
 | Scenario | Behavior |
 |---|---|
-| Truncated header | reject (whole file) |
-| Truncated game frame | reject (that frame only; §11) |
+| Truncated header | reject (whole file, §11) |
+| Truncated game frame | reject with an explicit error (that frame; §9, §11) |
+| A file whose only content is one incomplete frame | reject with an explicit error — **not** a valid zero-game file (§9, §11; this revision's central fix) |
 | Corrupted length field (`frameLength` implying a read past EOF, or exceeding the 64 MiB §7 ceiling) | reject (that frame) |
 | Absurd candidate count (>218) | reject, before allocating the candidate array (§7) |
 | Absurd PV length (>128) | reject, before allocating (§7) |
 | Non-ASCII FEN bytes (any byte ≥ 0x80) | reject — FEN is specified ASCII-only (§6) |
 | Unknown score kind (not 0 or 1) | reject (§6, §13) |
-| Mate score encoded with CP tag (tag says `cp`, value is semantically mate-shaped) | **not detectable by VSPR alone** — there is no reliable magnitude heuristic that distinguishes a legitimate large centipawn evaluation from a mis-tagged mate score without false-positives on real extreme-but-valid CP evaluations; the only enforceable check is that `scoreKind ∈ {0, 1}` (an invalid tag value is rejected, §6/§13), and a self-consistent-but-semantically-wrong tag is a producer bug outside what any wire format can catch, the same way a shard record with a swapped `eval_cp`/`eval_mate` value today is outside `mmap_shard.py`'s own detection ability |
+| Mate score encoded with CP tag (tag says `cp`, value is semantically mate-shaped) | **not detectable by VSPR alone** — there is no reliable magnitude heuristic that distinguishes a legitimate large centipawn evaluation from a mis-tagged mate score without false-positives on real extreme-but-valid CP evaluations; the only enforceable check is that `scoreKind ∈ {0, 1}` (an invalid tag value is rejected), and a self-consistent-but-semantically-wrong tag is a producer bug outside what any wire format can catch |
 | Unresolved outcome with natural checkmate termination | reject — `checkmate` only pairs with `whiteWin`/`blackWin` per the table in §6; `unresolved` only pairs with `moveCap`/`searchAbortOrFailure` |
-| Duplicate `gameId` within one run | reject at decode time — a decoder tracks seen `gameId` values within one file and rejects a repeat; this is a decode-time validation rule, not free from the format alone |
-| Resumed file with overlapping IDs | primarily avoided procedurally (§9's recommended default: new `runId` per resume); the same duplicate-`gameId` rule above is the defense-in-depth check if an append path is used instead |
-| Partial final write | treated as a trailing partial frame — reject that frame, keep everything before it (§9, §11) |
-| Unknown minor-version optional section | skip by declared length — this is exactly what `headerExtensionCount`'s `{tag, length, bytes}` triples exist for (§4, §7) |
-| Unknown required section | not representable in this format — the core schema (§4-§5) has no "unknown required section" slot; anything that isn't one of the defined extension entries and doesn't match the fixed core layout is a structural mismatch, caught as either a version rejection or a frame-level corruption reject |
+| Duplicate `gameId` within one run | reject at decode time — a decoder tracks seen `gameId` values within one file and rejects a repeat |
+| Resumed file with overlapping IDs | primarily avoided procedurally (§9's recommended default: new `runId` per resume); the same duplicate-`gameId` rule is the defense-in-depth check if an append path is used instead |
+| Partial final write | treated as a trailing incomplete frame — a normal read **errors**; only the explicit resume procedure may truncate-and-continue (§9, §11) |
+| Unknown/future format version | reject — no extension or lenient-parsing mechanism exists in V1; any version other than exactly `1` is a hard reject (§4, §7) |
 | Zero-sample game | **accept** — a game may legitimately complete with no sampled positions; not corruption |
 | Game with samples but no played moves | reject — structurally impossible: any sample's `ply` must be `< playedMoveCount`, and `playedMoveCount = 0` makes every possible `ply` value invalid |
 | Inconsistent sample `ply` > game length | reject — the same `ply < playedMoveCount` check |
 
 ## 14. Open decisions
 
-- **Golden fixtures 6-10's exact `.bin` materialization and cross-language stub verification**
-  are #211's scope, not this document's — §10 gives the byte-exact specification; #211
-  produces the checked-in files and the code that reads them.
+- **Golden fixtures' exact `.bin` materialization and cross-language stub verification** are
+  #211's scope, not this document's — §10 gives the byte-exact specification; #211 produces the
+  checked-in files and the code that reads them (§12).
 - **`opaqueConfig` schema IDs for `adjudicationConfig`/`diversityConfig`** are reserved
   (`schemaId = 1` used only as a fixture placeholder in §10) but not assigned a real meaning —
   whichever future document defines the concrete adjudication-threshold or diversity-weighting
   field layout also owns registering its `schemaId`. This document deliberately does not invent
-  that schema, per its own scope boundary (§1) and this task's explicit instruction not to
-  invent training semantics inside the wire-format task.
+  that schema.
 - **Whether `SearchCandidate` persistence is ever actually turned on for a real generation run**
-  is unresolved by #209 itself (§9's own closing list) and stays unresolved here — VSPR supports
-  it cleanly either way (`header.candidatesPersisted`), which is the only thing this document
-  needed to guarantee.
+  is unresolved by #209 itself and stays unresolved here — VSPR supports it cleanly either way
+  (`header.candidatesPersisted`), which is the only thing this document needed to guarantee.
 - **CRC-32's collision resistance is intentionally weak** (§15) — if a future failure model
   changes (e.g. VSPR files start crossing an untrusted boundary), this decision should be
   revisited explicitly, not silently upgraded.
+- **A future genuinely-additive format change** (one where an old decoder could safely ignore
+  new content) has no defined mechanism in this revision — it would need its own `formatVersion`
+  value and its own explicitly-written compatibility rule at the time it's actually needed,
+  rather than a speculative extension point kept around unused in the meantime.
 
 ## 15. Checksum / integrity decision
 
@@ -623,12 +810,12 @@ already puts that responsibility — not duplicated inside VSPR itself.
 ## 16. Recommended next task
 
 **Materialize §10's fixtures and write the Java encoder/decoder plus Python decoder stub
-against them — #211's stated scope**, now that this document gives it byte-exact golden vectors
-and a complete field-by-field specification to build against. #210 (ingestion) remains blocked
-on both this document and #207 landing, per #209's own dependency order; nothing in this
-document changes that ordering. No self-play, training, dataset generation, or SPRT work is
-unblocked by this document — those all remain gated behind #209/#210/#211/#212 as already
-established.
+against them — #211's stated scope**, now that this document gives it byte-exact golden vectors,
+a complete field-by-field specification, and (per §12) sole, unambiguous ownership of the
+implementation work. #210 (ingestion) remains blocked on both this document and #207 landing,
+per #209's own dependency order; nothing in this revision changes that ordering. No self-play,
+training, dataset generation, or SPRT work is unblocked by this document — those all remain
+gated behind #209/#210/#211/#212 as already established.
 
 Not recommended next: any Java or Python implementation against this specification in the same
 turn that produced it, per this task's explicit instruction.
