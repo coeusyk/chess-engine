@@ -15,8 +15,8 @@ Baseline verified against commits `f1b4f9d`, `298e724`, `4b3dc25`, `470103e` on 
 
 | Artifact | Path | SHA-256 |
 |---|---|---|
-| **A. Training-lineage checkpoint** (P3A-001, what the trainer actually loads/produces) | `outputs/phase3/P3A-001/checkpoints/step-016999.pt` | `c2c33d1dd7af5345d8772aa0761e79d5b9bc8bff7aff409b946078684c08d0ef` |
-| **B. Exported runtime NNUE artifact** (what the Java self-play generator loads, #221/#222) | `outputs/selfplay-bootstrap/p3a001-export/013b548c-303b-4156-a6ba-367400de3eb2.nnue` | `8dc03caa0429bf03ca92165fd4de95ad9550d57796ba9a2f45aecfa4e05bb02d` (network UUID `013b548c-303b-4156-a6ba-367400de3eb2`) |
+| **A. Training-lineage checkpoint** (P3A-001, what the trainer actually loads/produces) | `trainer/outputs/phase3/P3A-001/checkpoints/step-016999.pt` | `c2c33d1dd7af5345d8772aa0761e79d5b9bc8bff7aff409b946078684c08d0ef` |
+| **B. Exported runtime NNUE artifact** (what the Java self-play generator loads, #221/#222) | `trainer/outputs/selfplay-bootstrap/p3a001-export/013b548c-303b-4156-a6ba-367400de3eb2.nnue` | `8dc03caa0429bf03ca92165fd4de95ad9550d57796ba9a2f45aecfa4e05bb02d` (network UUID `013b548c-303b-4156-a6ba-367400de3eb2`) |
 | **C. Engine source** | git commit on `phase/15-nnue` at generation time | `f1b4f9d88e0c0068f2459d0ca29167c51b48bdff` as of this document; E-15 execution must re-pin whatever commit is current when it actually generates, and record it, not reuse this value blindly |
 | **D. Engine binary artifact** | none exists | see below |
 
