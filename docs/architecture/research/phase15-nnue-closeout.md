@@ -23,7 +23,10 @@ order:
   off-trajectory design is explicitly named as future, undecided work, not started.
 - **#220 (VSPR wire format)**: the versioned Vex Self-Play Record byte layout, split out of #209
   once a second, Python-side decoder needed to exist alongside the Java one. Closed as a golden-
-  fixture spec, with no serializer or decoder code (Java or Python) written against it yet.
+  fixture spec only, with no serializer or decoder code written against it at that point. The
+  actual Java and Python codecs were built afterward under #211 and #210, and both are exercised
+  and passing as of this closeout (`VsprCodecTest`, 21 of 21; the Python golden-fixture decoder
+  tests, 25 of 25).
 - **#211 (fixtures and codec cross-check)**: the checked-in golden fixtures and the deterministic
   Java/Python round-trip tests that hold #220's format contract in place on every PR.
 - **#207 (shard versioning)**: versioned `SHARD_DTYPE` so `game_id` could be added without
@@ -111,7 +114,7 @@ consistently signed, small, and not enough on its own to establish whether the e
   miscalibrated.
 - **The `SeededDiversitySelector` Stage-3 line is paused.** Not abandoned, not promoted: paused,
   pending either more matched-seed evidence on the existing frozen corpora or a specific, costed
-  reason to pursue corpus-level replication (`DR-M2` sections 7 to 9).
+  reason to pursue corpus-level replication (`DR-M2` sections 7 and 8).
 - **Durable artifacts and contracts** (section 3 above) stay in the codebase regardless of this
   pause; they are general Stage-3 plumbing, not artifacts of this one mechanism.
 - **Nothing here is promoted to production.** No NNUE checkpoint from either experiment ships; the
