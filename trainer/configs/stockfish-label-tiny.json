@@ -1,0 +1,5 @@
+{
+  "engine_path": "/path/to/stockfish",
+  "nodes": 10000,
+  "timeout_seconds": 30.0
+}

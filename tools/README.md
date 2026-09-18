@@ -137,6 +137,41 @@ tools\sprt.bat engine-uci\target\engine-uci-0.2.0-SNAPSHOT.jar path\to\baseline.
 SPRT parameters (elo0=0, elo1=50, alpha=0.05, beta=0.05) are set in the scripts.
 Results are saved to `tools/results/sprt_<timestamp>.pgn`.
 
+**Verifying the actual Concurrency/Threads used for a run:** `tools/sprt.ps1` prints them as
+the first line of both its console output and the run's own `.log` file
+(`SPRT: new vs old ... concurrency=... threads/engine=...`) — check there rather than assuming
+the script's defaults. `Hash` and any `-NewOptions`/`-OldOptions` are *not* logged anywhere by
+the script; the only way to recover them is your own shell history. See
+`docs/engineering/investigations/2026-07-17-sprt-throughput-investigation.md` for the full
+throughput/concurrency investigation this was learned from, and `tools/benchmark_concurrency.ps1`
+for empirically finding the concurrency that maximizes games/hour on your own machine.
+
+---
+
+## Benchmarking SPRT Concurrency
+
+`tools/benchmark_concurrency.ps1` empirically finds the cutechess `-concurrency` value that
+maximizes games/hour on the machine you run it on, instead of guessing or hardcoding a value.
+It plays short, fixed-length, non-SPRT matches (same JAR on both sides, `Threads=1` on both
+sides — engine strength is held constant throughout) at an increasing list of concurrency
+values, and stops the moment RAM gets tight, a time forfeit/crash/disconnect appears, or
+games/hour stops improving meaningfully.
+
+```powershell
+.\tools\benchmark_concurrency.ps1 -Jar engine-uci\target\engine-uci-X.Y.Z.jar
+```
+
+By default it tests concurrency 2, 4, 6, 8, 10, 12, 14 (20 games each) at TC=60+0.6 — override
+`-ConcurrencyLevels`, `-GamesPerStep`, and `-TC` to match your own setup; **`-TC` must match
+what you actually run in production, or the result won't be representative.** It prints a
+summary table (games/hour, average game duration, CPU%, RAM%, JVM count, stability) and writes
+it to `tools/results/concurrency_benchmark_<timestamp>.csv`, along with the recommended
+concurrency and why the sweep stopped where it did.
+
+This does not change `tools/sprt.ps1`'s default concurrency for you — it only measures. Treat
+its recommendation as the starting point for that default, not a value to apply blindly without
+reading the "why it stopped" line in its output.
+
 ---
 
 ## Tagging a New Baseline Release

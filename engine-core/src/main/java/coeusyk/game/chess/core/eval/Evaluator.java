@@ -638,9 +638,13 @@ public class Evaluator {
     private static int connectedPawnCount(long pawns) {
         // A pawn is connected if it attacks a friendly pawn, or a friendly pawn attacks it
         long attacks = ((pawns & NOT_A_FILE) >>> 1) | ((pawns & NOT_H_FILE) << 1);
-        // Also count supporters one rank behind (diagonal support)
-        attacks |= ((pawns & NOT_A_FILE) >>> 9) | ((pawns & NOT_H_FILE) << 7)
-                 | ((pawns & NOT_A_FILE) << 7)  | ((pawns & NOT_H_FILE) >>> 9);
+        // Also count supporters one rank behind/ahead (diagonal support), all four diagonals.
+        // Issue #213: the two >>>7/<<9 terms were previously duplicated as <<7/>>>9 with the
+        // wrong file mask, which silently dropped the up-right/down-right diagonal entirely
+        // and produced file-wraparound noise instead -- breaking eval color-symmetry for any
+        // position where that noise didn't cancel out between the two colors.
+        attacks |= ((pawns & NOT_A_FILE) >>> 9) | ((pawns & NOT_H_FILE) >>> 7)
+                 | ((pawns & NOT_A_FILE) << 7)  | ((pawns & NOT_H_FILE) << 9);
         return Long.bitCount(pawns & attacks);
     }
 

@@ -1,0 +1,629 @@
+from pathlib import Path
+
+import pytest
+import torch
+
+from trainer.contracts import PositionLabel, PositionMetadata, PositionRecord
+from trainer.dataset.text_provider import TextDatasetProvider
+from trainer.model.network import derive_weight_clip_bounds
+from trainer.model.train import (
+    MATE_BASE_CP,
+    MATE_EQUIVALENT_CP,
+    MATE_FLOOR_CP,
+    MATE_MAX_OBSERVED_N,
+    TrainingConfig,
+    _learning_rate_at_step,
+    load_config,
+    target_cp,
+    texel_sigmoid,
+    train,
+)
+
+WDL_TINY_CONFIG = TrainingConfig(
+    hidden_width=4,
+    qa=127,
+    qb=64,
+    output_scale=400,
+    k=1.0,
+    learning_rate=0.05,
+    seed=42,
+    steps=3,
+    batch_size=2,
+)
+
+
+def _wdl_records():
+    # Direct construction (not the CSV fixture -- TextDatasetProvider never
+    # populates wdl, per phase4c-reranking-wdl-audit.md SS4). wdl deliberately set
+    # far from what the eval-only sigmoid target would already predict (eval_cp near
+    # 0 -> sigmoid target near 0.5; wdl=1.0/0.0 at the extremes), so a wdl_lambda<1.0
+    # blend actually moves the target and is detectable end-to-end.
+    return [
+        PositionRecord(
+            fen="4k3/8/8/8/8/8/4Q3/4K3 w - - 0 1",
+            label=PositionLabel(eval_cp=10, wdl=1.0),
+            metadata=PositionMetadata(),
+        ),
+        PositionRecord(
+            fen="4k3/8/8/8/8/8/4q3/4K3 b - - 0 1",
+            label=PositionLabel(eval_cp=-10, wdl=0.0),
+            metadata=PositionMetadata(),
+        ),
+    ]
+
+FIXTURE_DIR = Path(__file__).parent.parent / "fixtures"
+
+TINY_CONFIG = TrainingConfig(
+    hidden_width=4,
+    qa=127,
+    qb=64,
+    output_scale=400,
+    k=1.0,
+    learning_rate=0.01,
+    seed=42,
+    steps=3,
+    batch_size=2,
+)
+
+
+def _records():
+    provider = TextDatasetProvider(directory=FIXTURE_DIR, identifier="x", source_ref="x")
+    shard = next(iter(provider.shards()))
+    return list(provider.positions(shard))
+
+
+def test_texel_sigmoid_matches_kfinder_java_formula():
+    # sigma(0) = 0.5 regardless of K -- the same fixed point KFinder.java's own
+    # sigmoid(eval=0, k) has.
+    assert texel_sigmoid(torch.tensor(0.0), k=1.0).item() == 0.5
+
+
+def test_train_produces_a_loadable_checkpoint(tmp_path):
+    checkpoint_path = tmp_path / "checkpoint.pt"
+    result = train(TINY_CONFIG, _records(), checkpoint_path)
+
+    assert checkpoint_path.exists()
+    assert len(result["losses"]) == TINY_CONFIG.steps
+
+    checkpoint = torch.load(checkpoint_path, weights_only=False)
+    assert set(checkpoint.keys()) == {
+        "model_state_dict",
+        "optimizer_state_dict",
+        "config",
+        "experiment_metadata",
+        "final_loss",
+    }
+    assert checkpoint["config"]["hidden_width"] == 4
+    assert checkpoint["experiment_metadata"]["seed"] == 42
+
+
+def test_train_is_reproducible_given_the_same_seed(tmp_path):
+    train(TINY_CONFIG, _records(), tmp_path / "a.pt")
+    train(TINY_CONFIG, _records(), tmp_path / "b.pt")
+
+    checkpoint_a = torch.load(tmp_path / "a.pt", weights_only=False)
+    checkpoint_b = torch.load(tmp_path / "b.pt", weights_only=False)
+
+    for key in checkpoint_a["model_state_dict"]:
+        assert torch.equal(checkpoint_a["model_state_dict"][key], checkpoint_b["model_state_dict"][key])
+    assert checkpoint_a["final_loss"] == checkpoint_b["final_loss"]
+
+
+def test_train_with_no_initial_state_dict_is_unaffected(tmp_path):
+    # Default (None) must reproduce pre-E-15 behavior exactly -- same as
+    # test_train_is_reproducible_given_the_same_seed, just asserting the new parameter's
+    # default doesn't change anything when omitted.
+    train(TINY_CONFIG, _records(), tmp_path / "a.pt", initial_state_dict=None)
+    train(TINY_CONFIG, _records(), tmp_path / "b.pt")
+
+    checkpoint_a = torch.load(tmp_path / "a.pt", weights_only=False)
+    checkpoint_b = torch.load(tmp_path / "b.pt", weights_only=False)
+    for key in checkpoint_a["model_state_dict"]:
+        assert torch.equal(checkpoint_a["model_state_dict"][key], checkpoint_b["model_state_dict"][key])
+
+
+def test_train_with_explicit_initial_state_dict_starts_both_arms_from_identical_weights(tmp_path):
+    # E-15 (#223) section 8: construct one initial model once, save its state, and confirm
+    # passing that exact dict into two train() calls -- with DIFFERENT training data, and
+    # under a DIFFERENT config.seed each, so the only thing pinning the two arms' starting
+    # weights together is initial_state_dict, not seed_everything() -- reproduces it exactly
+    # in the saved checkpoint. zero_steps_config runs no optimization steps at all, so the
+    # saved checkpoint's weights are the *initial* weights, directly comparable.
+    from trainer.model.network import NnueNet
+
+    seed_model = NnueNet(TINY_CONFIG.hidden_width, TINY_CONFIG.qa, TINY_CONFIG.qb, TINY_CONFIG.output_scale)
+    pinned_state = {k: v.clone() for k, v in seed_model.state_dict().items()}
+
+    # learning_rate=0.0 neutralizes every optimizer step (Adam's own update is scaled by lr),
+    # so the saved checkpoint's weights are still the *initial* weights -- steps=0 itself isn't
+    # usable here since train() unconditionally indexes losses[-1] for the final checkpoint.
+    zero_lr_config_a = TrainingConfig(
+        hidden_width=4, qa=127, qb=64, output_scale=400, k=1.0, learning_rate=0.0, seed=1, steps=2, batch_size=2)
+    zero_lr_config_b = TrainingConfig(
+        hidden_width=4, qa=127, qb=64, output_scale=400, k=1.0, learning_rate=0.0, seed=2, steps=2, batch_size=2)
+
+    train(zero_lr_config_a, _records(), tmp_path / "arm-a.pt", initial_state_dict=pinned_state)
+    train(zero_lr_config_b, list(reversed(_records())), tmp_path / "arm-b.pt", initial_state_dict=pinned_state)
+
+    checkpoint_a = torch.load(tmp_path / "arm-a.pt", weights_only=False)
+    checkpoint_b = torch.load(tmp_path / "arm-b.pt", weights_only=False)
+    for key in pinned_state:
+        assert torch.equal(checkpoint_a["model_state_dict"][key], pinned_state[key])
+        assert torch.equal(checkpoint_b["model_state_dict"][key], pinned_state[key])
+        assert torch.equal(checkpoint_a["model_state_dict"][key], checkpoint_b["model_state_dict"][key])
+
+
+def test_train_enforces_weight_clipping_bound(tmp_path):
+    train(TINY_CONFIG, _records(), tmp_path / "checkpoint.pt")
+    checkpoint = torch.load(tmp_path / "checkpoint.pt", weights_only=False)
+
+    bias_clip, weight_clip = derive_weight_clip_bounds(TINY_CONFIG.qa)
+    ft_weight = checkpoint["model_state_dict"]["ft.weight"]
+    ft_bias = checkpoint["model_state_dict"]["ft_bias"]
+
+    assert torch.all(ft_weight.abs() <= weight_clip + 1e-4)
+    assert torch.all(ft_bias.abs() <= bias_clip + 1e-4)
+
+
+def _wdl_only_record(wdl: float = 1.0) -> PositionRecord:
+    return PositionRecord(
+        fen="4k3/8/8/8/8/8/8/4K3 w - - 0 1",
+        label=PositionLabel(wdl=wdl),
+        metadata=PositionMetadata(),
+    )
+
+
+def test_train_rejects_wdl_only_labels_at_positive_lambda(tmp_path):
+    # #208's missing-signal policy: a WDL-only record (no eval_cp/eval_mate) has no
+    # evaluation component for the blend to use once wdl_lambda > 0 -- TINY_CONFIG's
+    # default wdl_lambda=1.0 exercises exactly that case. The error must name
+    # wdl_lambda=0 as the fix, not a generic "missing CP" message.
+    with pytest.raises(ValueError, match="wdl_lambda"):
+        train(TINY_CONFIG, [_wdl_only_record()], tmp_path / "checkpoint.pt")
+
+
+@pytest.mark.parametrize("wdl_lambda", [0.5, 1.0])
+def test_train_rejects_wdl_only_labels_at_any_positive_lambda(tmp_path, wdl_lambda):
+    config = TrainingConfig(**{**vars(TINY_CONFIG), "wdl_lambda": wdl_lambda})
+    with pytest.raises(ValueError, match="wdl_lambda"):
+        train(config, [_wdl_only_record()], tmp_path / "checkpoint.pt")
+
+
+def test_train_accepts_wdl_only_labels_at_lambda_zero(tmp_path):
+    # WDL-only + wdl_lambda=0 has nothing missing -- the WDL outcome alone is the
+    # target, and target_cp() is never called for this record (see
+    # test_target_cp_is_never_called_for_wdl_only_labels below).
+    config = TrainingConfig(**{**vars(TINY_CONFIG), "wdl_lambda": 0.0})
+    result = train(config, [_wdl_only_record(), _wdl_only_record(wdl=0.0)], tmp_path / "checkpoint.pt")
+    assert (tmp_path / "checkpoint.pt").exists()
+    assert len(result["losses"]) == TINY_CONFIG.steps
+
+
+def test_target_cp_is_never_called_for_wdl_only_labels(monkeypatch, tmp_path):
+    # target_cp() stays a pure CP-domain function that never sees a label it can't
+    # evaluate -- asserted directly, not just inferred from train() not raising.
+    # importlib.import_module, not `import trainer.model.train as train_module`:
+    # trainer/model/__init__.py's own `from .train import train` rebinds the
+    # `trainer.model.train` attribute to that function, shadowing the submodule.
+    import importlib
+
+    train_module = importlib.import_module("trainer.model.train")
+
+    calls = []
+    original = train_module.target_cp
+
+    def spy(label, distance_aware=False):
+        calls.append(label)
+        return original(label, distance_aware=distance_aware)
+
+    monkeypatch.setattr(train_module, "target_cp", spy)
+    config = TrainingConfig(**{**vars(TINY_CONFIG), "wdl_lambda": 0.0})
+    train(config, [_wdl_only_record()], tmp_path / "checkpoint.pt")
+    assert calls == []
+
+
+def test_target_cp_still_raises_on_wdl_only_label_directly():
+    # target_cp()'s own CP-domain contract is unchanged by #208 -- it still refuses a
+    # label it has no evaluation signal for, independent of any wdl_lambda policy
+    # (that policy lives in train(), not here).
+    with pytest.raises(ValueError):
+        target_cp(PositionLabel(wdl=1.0))
+
+
+def test_eval_only_record_unaffected_by_missing_signal_policy(tmp_path):
+    # Regression: an eval-only record (no wdl at all) trains identically regardless
+    # of wdl_lambda, at every boundary value -- the policy only ever engages for a
+    # WDL-only record.
+    record = PositionRecord(
+        fen="4k3/8/8/8/8/8/4Q3/4K3 w - - 0 1",
+        label=PositionLabel(eval_cp=25),
+        metadata=PositionMetadata(),
+    )
+    reference = None
+    for wdl_lambda in (0.0, 0.5, 1.0):
+        config = TrainingConfig(**{**vars(TINY_CONFIG), "wdl_lambda": wdl_lambda})
+        train(config, [record, record], tmp_path / f"eval-only-{wdl_lambda}.pt")
+        checkpoint = torch.load(tmp_path / f"eval-only-{wdl_lambda}.pt", weights_only=False)
+        if reference is None:
+            reference = checkpoint["model_state_dict"]
+        else:
+            for key in reference:
+                assert torch.equal(reference[key], checkpoint["model_state_dict"][key])
+
+
+@pytest.mark.parametrize("wdl_lambda", [0.0, 0.5, 1.0])
+def test_eval_and_wdl_record_blend_unchanged_at_every_lambda(tmp_path, wdl_lambda):
+    # Regression: the existing eval+WDL blend math is untouched by #208 -- this is
+    # exactly the has_wdl-masked blend path, exercised at every requested boundary.
+    config = TrainingConfig(**{**vars(WDL_TINY_CONFIG), "wdl_lambda": wdl_lambda})
+    result = train(config, _wdl_records(), tmp_path / f"blend-{wdl_lambda}.pt")
+    assert (tmp_path / f"blend-{wdl_lambda}.pt").exists()
+    assert len(result["losses"]) == WDL_TINY_CONFIG.steps
+
+
+def test_load_config_reads_all_fields_from_json(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        '{"hidden_width": 4, "qa": 127, "qb": 64, "output_scale": 400, "k": 1.0, '
+        '"learning_rate": 0.01, "seed": 42, "steps": 3, "batch_size": 2}'
+    )
+    config = load_config(config_path)
+    assert config == TINY_CONFIG
+
+
+def test_train_without_held_out_records_logs_diagnostics_with_no_held_out_loss(tmp_path):
+    result = train(TINY_CONFIG, _records(), tmp_path / "checkpoint.pt", log_interval=1)
+
+    assert len(result["diagnostics"]) == TINY_CONFIG.steps  # log_interval=1: every step
+    for diagnostic in result["diagnostics"]:
+        assert diagnostic.held_out_loss is None
+        assert diagnostic.learning_rate == TINY_CONFIG.learning_rate
+        assert diagnostic.gradient_norm >= 0.0
+
+
+def test_train_with_held_out_records_populates_held_out_loss(tmp_path):
+    result = train(TINY_CONFIG, _records(), tmp_path / "checkpoint.pt", held_out_records=_records(), log_interval=1)
+
+    assert all(d.held_out_loss is not None for d in result["diagnostics"])
+
+
+def test_train_log_interval_controls_diagnostic_count_and_always_logs_final_step(tmp_path):
+    config = TrainingConfig(**{**vars(TINY_CONFIG), "steps": 5})
+    result = train(config, _records(), tmp_path / "checkpoint.pt", log_interval=2)
+
+    # steps are 0-indexed: logged at step 1 (2nd step), 3 (4th step), and 4 (final, steps-1)
+    assert [d.step for d in result["diagnostics"]] == [1, 3, 4]
+
+
+def test_train_diagnostics_do_not_affect_reproducibility(tmp_path):
+    # Same assertion as test_train_is_reproducible_given_the_same_seed, but with
+    # held_out_records + a tight log_interval exercised -- confirms the new
+    # instrumentation (gradient-norm read, intermediate evaluate_held_out calls)
+    # doesn't perturb the training RNG stream or resulting weights.
+    train(TINY_CONFIG, _records(), tmp_path / "a.pt", held_out_records=_records(), log_interval=1)
+    train(TINY_CONFIG, _records(), tmp_path / "b.pt", held_out_records=_records(), log_interval=1)
+
+    checkpoint_a = torch.load(tmp_path / "a.pt", weights_only=False)
+    checkpoint_b = torch.load(tmp_path / "b.pt", weights_only=False)
+    for key in checkpoint_a["model_state_dict"]:
+        assert torch.equal(checkpoint_a["model_state_dict"][key], checkpoint_b["model_state_dict"][key])
+    assert checkpoint_a["final_loss"] == checkpoint_b["final_loss"]
+
+
+def test_train_reshuffle_across_many_epochs_remains_seed_reproducible(tmp_path):
+    # Phase 1 (research doc §24.4/§26.1): per-epoch reshuffling. 5 records, batch_size=2,
+    # steps=20 forces several epoch wraps (several reshuffles) within one run -- still
+    # must be bit-identical given the same seed, since the reshuffle is itself seeded.
+    config = TrainingConfig(**{**vars(TINY_CONFIG), "steps": 20})
+    train(config, _records(), tmp_path / "a.pt")
+    train(config, _records(), tmp_path / "b.pt")
+
+    checkpoint_a = torch.load(tmp_path / "a.pt", weights_only=False)
+    checkpoint_b = torch.load(tmp_path / "b.pt", weights_only=False)
+    for key in checkpoint_a["model_state_dict"]:
+        assert torch.equal(checkpoint_a["model_state_dict"][key], checkpoint_b["model_state_dict"][key])
+    assert checkpoint_a["final_loss"] == checkpoint_b["final_loss"]
+
+
+def test_train_reshuffle_does_not_mutate_caller_supplied_record_order(tmp_path):
+    # train() must reshuffle only its own local copy of records, never the caller's
+    # list -- a caller reusing the same list across multiple train() calls (as the
+    # Phase 1 grid does) must see the same original order every time.
+    caller_records = _records()
+    original_order = list(caller_records)
+    config = TrainingConfig(**{**vars(TINY_CONFIG), "steps": 20})
+
+    train(config, caller_records, tmp_path / "checkpoint.pt")
+
+    assert caller_records == original_order
+
+
+def test_learning_rate_at_step_constant_schedule_is_flat():
+    config = TrainingConfig(**{**vars(TINY_CONFIG), "steps": 100, "lr_schedule": "constant"})
+    for step in (0, 1, 50, 99):
+        assert _learning_rate_at_step(config, step) == TINY_CONFIG.learning_rate
+
+
+def test_learning_rate_at_step_cosine_warms_up_then_decays_to_zero():
+    config = TrainingConfig(
+        **{**vars(TINY_CONFIG), "steps": 100, "lr_schedule": "cosine", "warmup_steps": 10, "learning_rate": 0.01}
+    )
+    # Warmup: monotonically increasing, reaching the full rate at the last warmup step.
+    warmup_lrs = [_learning_rate_at_step(config, s) for s in range(10)]
+    assert warmup_lrs == sorted(warmup_lrs)
+    assert warmup_lrs[0] > 0
+    assert warmup_lrs[-1] == pytest.approx(config.learning_rate)
+
+    # Peak at the end of warmup, then cosine decay down to ~0 at the final step.
+    assert _learning_rate_at_step(config, 10) == pytest.approx(config.learning_rate, abs=1e-9)
+    assert _learning_rate_at_step(config, 99) == pytest.approx(0.0, abs=1e-3)
+
+    # Monotonically non-increasing through the decay phase.
+    decay_lrs = [_learning_rate_at_step(config, s) for s in range(10, 100)]
+    assert decay_lrs == sorted(decay_lrs, reverse=True)
+
+
+def test_learning_rate_at_step_rejects_unknown_schedule():
+    config = TrainingConfig(**{**vars(TINY_CONFIG), "lr_schedule": "step-decay"})
+    with pytest.raises(ValueError, match="unknown lr_schedule"):
+        _learning_rate_at_step(config, 0)
+
+
+def test_train_diagnostic_learning_rate_reflects_schedule(tmp_path):
+    config = TrainingConfig(
+        **{**vars(TINY_CONFIG), "steps": 10, "lr_schedule": "cosine", "warmup_steps": 2, "learning_rate": 0.01}
+    )
+    result = train(config, _records(), tmp_path / "checkpoint.pt", log_interval=1)
+
+    logged_lrs = [d.learning_rate for d in result["diagnostics"]]
+    expected_lrs = [_learning_rate_at_step(config, step) for step in range(config.steps)]
+    assert logged_lrs == expected_lrs
+    # Not flat -- the schedule is actually taking effect, not silently ignored.
+    assert len(set(logged_lrs)) > 1
+
+
+def test_train_populates_train_diagnostics_only_when_sample_given(tmp_path):
+    with_sample = train(
+        TINY_CONFIG, _records(), tmp_path / "a.pt", log_interval=1, train_diagnostic_sample=_records()
+    )
+    without_sample = train(TINY_CONFIG, _records(), tmp_path / "b.pt", log_interval=1)
+
+    assert all(d.train_correlation is not None for d in with_sample["diagnostics"])
+    assert all(d.train_rmse is not None for d in with_sample["diagnostics"])
+    assert all(d.train_bias is not None for d in with_sample["diagnostics"])
+    assert all(d.train_correlation is None for d in without_sample["diagnostics"])
+
+
+def test_train_populates_held_out_calibration_diagnostics(tmp_path):
+    result = train(TINY_CONFIG, _records(), tmp_path / "checkpoint.pt", held_out_records=_records(), log_interval=1)
+
+    assert all(d.held_out_correlation is not None for d in result["diagnostics"])
+    assert all(d.held_out_rmse is not None for d in result["diagnostics"])
+    assert all(d.held_out_bias is not None for d in result["diagnostics"])
+
+
+def test_train_writes_a_checkpoint_per_diagnostic_point_when_checkpoint_dir_given(tmp_path):
+    checkpoint_dir = tmp_path / "checkpoints"
+    config = TrainingConfig(**{**vars(TINY_CONFIG), "steps": 5})
+    result = train(config, _records(), tmp_path / "final.pt", log_interval=2, checkpoint_dir=checkpoint_dir)
+
+    expected_steps = [d.step for d in result["diagnostics"]]
+    written = sorted(checkpoint_dir.glob("step-*.pt"))
+    assert len(written) == len(expected_steps)
+    assert written == [checkpoint_dir / f"step-{step:06d}.pt" for step in expected_steps]
+    # Final logged checkpoint's weights match the run's own final checkpoint_path save.
+    final_step_checkpoint = torch.load(written[-1], weights_only=False)
+    final_path_checkpoint = torch.load(tmp_path / "final.pt", weights_only=False)
+    for key in final_step_checkpoint["model_state_dict"]:
+        assert torch.equal(final_step_checkpoint["model_state_dict"][key], final_path_checkpoint["model_state_dict"][key])
+
+
+def test_train_without_checkpoint_dir_writes_no_intermediate_checkpoints(tmp_path):
+    train(TINY_CONFIG, _records(), tmp_path / "final.pt", log_interval=1)
+    # No stray directories/files beyond the one explicit checkpoint_path.
+    assert list(tmp_path.iterdir()) == [tmp_path / "final.pt"]
+
+
+def test_weighted_mean_formula_reduces_to_plain_mean_at_uniform_weight():
+    # Phase 4B (RQ-2/`P4II`): the exact identity train()'s loss line relies on --
+    # weights.sum()-normalized weighted mean, with every weight == 1.0, must equal
+    # torch.mean() bit-for-bit. This is the algebraic claim the default mate_weight=1.0
+    # rests on; checked directly rather than only via an end-to-end training run.
+    squared_error = torch.tensor([0.04, 0.01, 0.09, 0.16, 0.25])
+    weights = torch.ones_like(squared_error)
+    weighted_mean = (weights * squared_error).sum() / weights.sum()
+    assert torch.equal(weighted_mean, torch.mean(squared_error))
+
+
+def test_train_default_mate_weight_matches_explicit_mate_weight_one(tmp_path):
+    # `_records()`'s fixture (stage1_sample.csv) has one mate-labeled record among
+    # five -- exercises the is_mate mask on a non-trivial mix. Confirms the implicit
+    # default and an explicit mate_weight=1.0 are the same code path, not just the
+    # same declared default.
+    explicit_config = TrainingConfig(**{**vars(TINY_CONFIG), "mate_weight": 1.0})
+    train(TINY_CONFIG, _records(), tmp_path / "default.pt")
+    train(explicit_config, _records(), tmp_path / "explicit.pt")
+
+    default_checkpoint = torch.load(tmp_path / "default.pt", weights_only=False)
+    explicit_checkpoint = torch.load(tmp_path / "explicit.pt", weights_only=False)
+    for key in default_checkpoint["model_state_dict"]:
+        assert torch.equal(
+            default_checkpoint["model_state_dict"][key], explicit_checkpoint["model_state_dict"][key]
+        )
+    assert default_checkpoint["final_loss"] == explicit_checkpoint["final_loss"]
+
+
+def test_train_mate_weight_above_one_changes_the_trained_model(tmp_path):
+    # Proves config.mate_weight actually reaches the loss (not dead code): a non-unit
+    # weight on the fixture's one mate-labeled record must change the gradient signal
+    # and therefore the trained weights, versus the mate_weight=1.0 baseline above.
+    weighted_config = TrainingConfig(**{**vars(TINY_CONFIG), "mate_weight": 5.0})
+    train(TINY_CONFIG, _records(), tmp_path / "baseline.pt")
+    train(weighted_config, _records(), tmp_path / "weighted.pt")
+
+    baseline_checkpoint = torch.load(tmp_path / "baseline.pt", weights_only=False)
+    weighted_checkpoint = torch.load(tmp_path / "weighted.pt", weights_only=False)
+    differing = any(
+        not torch.equal(baseline_checkpoint["model_state_dict"][key], weighted_checkpoint["model_state_dict"][key])
+        for key in baseline_checkpoint["model_state_dict"]
+    )
+    assert differing
+    assert baseline_checkpoint["final_loss"] != weighted_checkpoint["final_loss"]
+
+
+def test_wdl_blend_formula_is_identity_at_lambda_one():
+    # Phase 4-WDL (RQ-4): the exact identity train()'s loss line relies on for its
+    # safe default -- wdl_lambda=1.0 must make the blended target bit-identical to the
+    # unblended sigmoid target, regardless of what wdl_values holds.
+    sigmoid_targets = torch.tensor([0.5, 0.1, 0.9])
+    wdl_values = torch.tensor([1.0, 0.0, 0.5])
+    wdl_lambda = 1.0
+    blended = wdl_lambda * sigmoid_targets + (1.0 - wdl_lambda) * wdl_values
+    assert torch.equal(blended, sigmoid_targets)
+
+
+def test_train_default_wdl_lambda_matches_explicit_lambda_one(tmp_path):
+    explicit_config = TrainingConfig(**{**vars(WDL_TINY_CONFIG), "wdl_lambda": 1.0})
+    train(WDL_TINY_CONFIG, _wdl_records(), tmp_path / "default.pt")
+    train(explicit_config, _wdl_records(), tmp_path / "explicit.pt")
+
+    default_checkpoint = torch.load(tmp_path / "default.pt", weights_only=False)
+    explicit_checkpoint = torch.load(tmp_path / "explicit.pt", weights_only=False)
+    for key in default_checkpoint["model_state_dict"]:
+        assert torch.equal(
+            default_checkpoint["model_state_dict"][key], explicit_checkpoint["model_state_dict"][key]
+        )
+    assert default_checkpoint["final_loss"] == explicit_checkpoint["final_loss"]
+
+
+def test_train_wdl_lambda_below_one_changes_the_trained_model_when_wdl_present(tmp_path):
+    # Proves config.wdl_lambda actually reaches the loss (not dead code) when records
+    # carry a wdl value.
+    blended_config = TrainingConfig(**{**vars(WDL_TINY_CONFIG), "wdl_lambda": 0.2})
+    train(WDL_TINY_CONFIG, _wdl_records(), tmp_path / "baseline.pt")
+    train(blended_config, _wdl_records(), tmp_path / "blended.pt")
+
+    baseline_checkpoint = torch.load(tmp_path / "baseline.pt", weights_only=False)
+    blended_checkpoint = torch.load(tmp_path / "blended.pt", weights_only=False)
+    differing = any(
+        not torch.equal(baseline_checkpoint["model_state_dict"][key], blended_checkpoint["model_state_dict"][key])
+        for key in baseline_checkpoint["model_state_dict"]
+    )
+    assert differing
+    assert baseline_checkpoint["final_loss"] != blended_checkpoint["final_loss"]
+
+
+def test_train_wdl_lambda_below_one_is_a_no_op_when_no_record_has_wdl(tmp_path):
+    # has_wdl mask correctness: records without a wdl value must be unaffected by
+    # wdl_lambda regardless of its value -- the CSV fixture (_records()) has no wdl
+    # field at all (TextDatasetProvider never populates it).
+    default_config = TrainingConfig(**{**vars(TINY_CONFIG), "wdl_lambda": 1.0})
+    no_wdl_signal_config = TrainingConfig(**{**vars(TINY_CONFIG), "wdl_lambda": 0.0})
+    train(default_config, _records(), tmp_path / "default.pt")
+    train(no_wdl_signal_config, _records(), tmp_path / "lambda_zero.pt")
+
+    default_checkpoint = torch.load(tmp_path / "default.pt", weights_only=False)
+    lambda_zero_checkpoint = torch.load(tmp_path / "lambda_zero.pt", weights_only=False)
+    for key in default_checkpoint["model_state_dict"]:
+        assert torch.equal(
+            default_checkpoint["model_state_dict"][key], lambda_zero_checkpoint["model_state_dict"][key]
+        )
+    assert default_checkpoint["final_loss"] == lambda_zero_checkpoint["final_loss"]
+
+
+def _mate_label(eval_mate: int) -> PositionLabel:
+    return PositionLabel(eval_mate=eval_mate)
+
+
+def test_target_cp_cp_labeled_records_are_unaffected_by_distance_aware_toggle():
+    # Phase 4C (RQ-3/P4III): only the mate branch changes; cp-labeled records must be
+    # byte-identical regardless of distance_aware, since target_cp's whole change is
+    # scoped to the mate branch (research doc's additive-only design requirement).
+    label = PositionLabel(eval_cp=137)
+    assert target_cp(label, distance_aware=True) == 137.0
+    assert target_cp(label, distance_aware=True) == target_cp(label, distance_aware=False)
+
+
+def test_target_cp_distance_aware_false_reproduces_the_flat_pre_phase4c_behavior():
+    assert target_cp(_mate_label(1), distance_aware=False) == MATE_EQUIVALENT_CP
+    assert target_cp(_mate_label(64), distance_aware=False) == MATE_EQUIVALENT_CP
+    assert target_cp(_mate_label(-5), distance_aware=False) == -MATE_EQUIVALENT_CP
+
+
+def test_target_cp_distance_aware_shortest_mate_anchors_at_mate_base_cp():
+    # eval_mate magnitude 0 is the shortest possible distance (min(abs(m), N)=0), so
+    # the linear interpolation's own formula gives exactly MATE_BASE_CP at that point --
+    # checked at m=0 directly (a real, observed value in this project's own corpus, per
+    # the constants' own derivation comment) rather than only at m=1.
+    assert target_cp(_mate_label(0), distance_aware=True) == pytest.approx(-MATE_BASE_CP)
+
+
+def test_target_cp_distance_aware_longest_observed_mate_anchors_at_mate_floor_cp():
+    assert target_cp(_mate_label(MATE_MAX_OBSERVED_N), distance_aware=True) == pytest.approx(MATE_FLOOR_CP)
+    assert target_cp(_mate_label(-MATE_MAX_OBSERVED_N), distance_aware=True) == pytest.approx(-MATE_FLOOR_CP)
+
+
+def test_target_cp_distance_aware_clamps_beyond_the_longest_observed_mate():
+    # A hypothetical mate distance longer than any seen in this training corpus must
+    # not extrapolate the linear decay past MATE_FLOOR_CP (could go negative or collide
+    # with ordinary cp values otherwise) -- clamped, not linearly extended.
+    far_beyond = target_cp(_mate_label(MATE_MAX_OBSERVED_N + 50), distance_aware=True)
+    at_max_observed = target_cp(_mate_label(MATE_MAX_OBSERVED_N), distance_aware=True)
+    assert far_beyond == pytest.approx(at_max_observed)
+
+
+def test_target_cp_distance_aware_decays_monotonically_between_the_two_anchors():
+    magnitudes = [abs(target_cp(_mate_label(n), distance_aware=True)) for n in range(0, MATE_MAX_OBSERVED_N + 1)]
+    assert magnitudes == sorted(magnitudes, reverse=True)
+    assert magnitudes[0] == pytest.approx(MATE_BASE_CP)
+    assert magnitudes[-1] == pytest.approx(MATE_FLOOR_CP)
+
+
+def test_target_cp_distance_aware_preserves_sign_convention_including_zero():
+    # eval_mate=0 (a real, observed value in this project's corpus -- 32 records) hits
+    # the `else` branch of the sign check, same as the pre-Phase-4C code's own
+    # convention (`eval_mate > 0` is False at 0) -- preserved exactly, not changed.
+    assert target_cp(_mate_label(5), distance_aware=True) > 0
+    assert target_cp(_mate_label(-5), distance_aware=True) < 0
+    assert target_cp(_mate_label(0), distance_aware=True) < 0
+
+
+def test_target_cp_default_is_the_flat_pre_phase4c_behavior():
+    # target_cp()'s own bare default must stay False -- an unpromoted P4III candidate
+    # must not silently change what any caller without an explicit opt-in trains/grades
+    # toward (mirrors mate_weight's default=1.0 discipline).
+    assert target_cp(_mate_label(1)) == MATE_EQUIVALENT_CP
+    assert target_cp(_mate_label(MATE_MAX_OBSERVED_N)) == MATE_EQUIVALENT_CP
+
+
+def test_train_default_mate_target_distance_aware_matches_explicit_false(tmp_path):
+    explicit_config = TrainingConfig(**{**vars(TINY_CONFIG), "mate_target_distance_aware": False})
+    train(TINY_CONFIG, _records(), tmp_path / "default.pt")
+    train(explicit_config, _records(), tmp_path / "explicit.pt")
+
+    default_checkpoint = torch.load(tmp_path / "default.pt", weights_only=False)
+    explicit_checkpoint = torch.load(tmp_path / "explicit.pt", weights_only=False)
+    for key in default_checkpoint["model_state_dict"]:
+        assert torch.equal(
+            default_checkpoint["model_state_dict"][key], explicit_checkpoint["model_state_dict"][key]
+        )
+    assert default_checkpoint["final_loss"] == explicit_checkpoint["final_loss"]
+
+
+def test_train_mate_target_distance_aware_true_changes_the_trained_model(tmp_path):
+    # Proves config.mate_target_distance_aware actually reaches the loss (not dead
+    # code): the fixture's one mate-labeled record (mate=3) gets a different target
+    # under distance_aware=True than the flat default, so the trained weights must
+    # differ from the default (flat-target) baseline.
+    distance_aware_config = TrainingConfig(**{**vars(TINY_CONFIG), "mate_target_distance_aware": True})
+    train(TINY_CONFIG, _records(), tmp_path / "baseline.pt")
+    train(distance_aware_config, _records(), tmp_path / "distance_aware.pt")
+
+    baseline_checkpoint = torch.load(tmp_path / "baseline.pt", weights_only=False)
+    distance_aware_checkpoint = torch.load(tmp_path / "distance_aware.pt", weights_only=False)
+    differing = any(
+        not torch.equal(baseline_checkpoint["model_state_dict"][key], distance_aware_checkpoint["model_state_dict"][key])
+        for key in baseline_checkpoint["model_state_dict"]
+    )
+    assert differing
+    assert baseline_checkpoint["final_loss"] != distance_aware_checkpoint["final_loss"]

@@ -1,8 +1,11 @@
 package coeusyk.game.chess.uci;
 
 import coeusyk.game.chess.core.eval.EvalParams;
+import coeusyk.game.chess.core.eval.nnue.NnueEvaluator;
+import coeusyk.game.chess.core.eval.nnue.NnueNetwork;
 import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Move;
+import coeusyk.game.chess.core.models.Piece;
 import coeusyk.game.chess.core.movegen.MovesGenerator;
 import coeusyk.game.chess.core.search.IterationInfo;
 import coeusyk.game.chess.core.search.SearchResult;
@@ -15,6 +18,7 @@ import coeusyk.game.chess.uci.syzygy.OnlineSyzygyProber;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -36,11 +40,19 @@ public class UciApplication {
     private int multiPV = 1;
     private int hashSizeMb = 64;
     private int pawnHashSizeMb = 1;
-    // NNUE is not implemented yet (Phase B) — "NNUE" is parsed and acknowledged
-    // via an info string fallback, but the effective evaluator is always Classical.
+    // "NNUE" is accepted at setoption time; whether a search actually uses NNUE is
+    // resolved lazily at go-time (resolveNnueNetworkForSearch), since EvalFile may
+    // not be set yet, or may point to a file that fails to load — either falls back
+    // to Classical with an info string rather than crashing (PRD US-2).
     private String evalType = "Classical";
-    @SuppressWarnings("unused") // UCI setoption stub — wired up when the NNUE loader lands (Phase B)
     private String evalFile = "";
+    // PR C-3 (issue #187): gates the sampled rebuild assertion inside NnueEvaluator's
+    // onMake (zero overhead when false) and the nnue features/acc/verify UCI commands.
+    private boolean nnueDebug = false;
+    // Cache of the last successfully loaded network, keyed by evalFile's value at
+    // load time, so a network isn't re-read from disk on every go.
+    private NnueNetwork nnueNetwork;
+    private String loadedNnueFilePath;
     private int threads = 1;
     private long moveOverheadMs = 30;
     @SuppressWarnings("unused") // UCI setoption stub — wired up when local Syzygy probing is added
@@ -121,6 +133,17 @@ public class UciApplication {
             }
         }
         UciApplication app = new UciApplication();
+        // Issue #206: evaluator selection in the benchmark path. Only meaningful
+        // combined with --bench; setting these on a normal UCI-session launch is
+        // harmless (the same fields setoption already assigns during a session).
+        for (int i = 0; i < args.length - 1; i++) {
+            if ("--eval-type".equals(args[i])) {
+                app.evalType = args[i + 1];
+            }
+            if ("--eval-file".equals(args[i])) {
+                app.evalFile = args[i + 1];
+            }
+        }
         for (int i = 0; i < args.length; i++) {
             if ("--bench".equals(args[i])) {
                 int depth = DEFAULT_BENCH_DEPTH;
@@ -168,6 +191,7 @@ public class UciApplication {
                 System.out.println("option name Contempt type spin default 0 min 0 max 200");
                 System.out.println("option name EvalType type combo default Classical var Classical var NNUE");
                 System.out.println("option name EvalFile type string default <empty>");
+                System.out.println("option name NnueDebug type check default false");
                 System.out.println("uciok");
             } else if ("isready".equals(line)) {
                 System.out.println("readyok");
@@ -217,15 +241,108 @@ public class UciApplication {
                 break;
             } else if ("eval".equals(line)) {
                 handleEval();
+            } else if (line.startsWith("nnue ")) {
+                handleNnueDebug(line);
             }
 
             System.out.flush();
         }
     }
 
+    /**
+     * PR C-3 (issue #187): {@code nnue features}/{@code nnue acc}/{@code nnue
+     * verify} — gated behind {@code NnueDebug}, root-position-only (no persistent
+     * live-search reference exists once {@code go} returns; see class-level note on
+     * {@link #resolveNnueNetworkForSearch}). Builds a throwaway {@link NnueEvaluator}
+     * over the current {@link #board}, matching {@link #handleEval}'s pattern —
+     * never touches the live search's own evaluator instance.
+     */
+    private void handleNnueDebug(String line) {
+        if (!nnueDebug) {
+            System.out.println("info string nnue debug commands require NnueDebug=true");
+            return;
+        }
+        if (!"NNUE".equals(evalType)) {
+            System.out.println("info string nnue debug commands require EvalType=NNUE");
+            return;
+        }
+        NnueEvaluator nnueEvaluator = buildRootNnueEvaluator();
+        if (nnueEvaluator == null) {
+            // resolveNnueNetworkForSearch() already printed its own fallback info string.
+            return;
+        }
+
+        String subcommand = line.substring("nnue ".length()).trim();
+        if ("features".equals(subcommand)) {
+            printBreakdown(nnueEvaluator.dumpActiveFeatures(board));
+        } else if ("acc".equals(subcommand)) {
+            printBreakdown(nnueEvaluator.dumpAccumulators());
+        } else if ("verify".equals(subcommand)) {
+            printBreakdown(formatVerifyResult(nnueEvaluator.verifyAgainstRebuild(board)));
+        } else {
+            System.out.println("info string Unknown nnue subcommand '" + subcommand
+                    + "' — expected features, acc, or verify.");
+        }
+    }
+
+    /**
+     * {@link NnueEvaluator.RebuildDiff}'s default record {@code toString()} prints
+     * raw {@code perspectiveColor} ints ({@link Piece#White}=8, {@link
+     * Piece#Black}=16) — opaque over a UCI console. Formats it the way {@link
+     * NnueEvaluator#dumpAccumulators} already labels perspectives (white=/black=).
+     */
+    static String formatVerifyResult(NnueEvaluator.RebuildDiff diff) {
+        if (diff.matches()) {
+            return "verify: OK (incremental matches from-scratch rebuild)";
+        }
+        String perspective = diff.perspectiveColor() == Piece.White ? "white" : "black";
+        return "verify: MISMATCH perspective=" + perspective
+                + " index=" + diff.firstDivergingIndex()
+                + " delta=" + diff.delta();
+    }
+
     private void handleEval() {
+        if ("NNUE".equals(evalType)) {
+            NnueEvaluator nnueEvaluator = buildRootNnueEvaluator();
+            if (nnueEvaluator != null) {
+                printBreakdown(nnueEvaluator.explainEval(board));
+                return;
+            }
+            // resolveNnueNetworkForSearch() already printed its own fallback info
+            // string (missing/invalid EvalFile) — fall through to Classical below.
+        }
         coeusyk.game.chess.core.eval.Evaluator ev = new coeusyk.game.chess.core.eval.Evaluator();
-        String breakdown = ev.explainEval(board);
+        printBreakdown(ev.explainEval(board));
+    }
+
+    /**
+     * Shared by both search-thread construction sites in {@code handleGo}: builds
+     * the live search's own {@link NnueEvaluator}, configured with the current
+     * {@link #nnueDebug} flag, so every future construction site stays in sync
+     * with that flag by construction rather than by convention.
+     */
+    private NnueEvaluator newSearchNnueEvaluator(NnueNetwork network) {
+        return new NnueEvaluator(network, nnueDebug);
+    }
+
+    /**
+     * Shared by {@link #handleEval} and {@link #handleNnueDebug}: a throwaway,
+     * non-debug-mode {@link NnueEvaluator} reset over the current root {@link
+     * #board} — never the live search's own evaluator instance. Returns {@code
+     * null} if {@code EvalType} isn't NNUE or the network fails to resolve (the
+     * caller's own fallback/rejection message applies in that case).
+     */
+    private NnueEvaluator buildRootNnueEvaluator() {
+        NnueNetwork network = resolveNnueNetworkForSearch();
+        if (network == null) {
+            return null;
+        }
+        NnueEvaluator nnueEvaluator = new NnueEvaluator(network);
+        nnueEvaluator.reset(board);
+        return nnueEvaluator;
+    }
+
+    private static void printBreakdown(String breakdown) {
         for (String line : breakdown.split("\n")) {
             System.out.println("info string " + line);
         }
@@ -406,18 +523,55 @@ public class UciApplication {
             if ("classical".equalsIgnoreCase(trimmed)) {
                 evalType = "Classical";
             } else if ("nnue".equalsIgnoreCase(trimmed)) {
-                System.out.println("info string NNUE evaluator is not available in this build; "
-                        + "falling back to Classical.");
-                evalType = "Classical";
+                // Whether this actually resolves to NNUE (valid EvalFile, loads OK) is
+                // decided lazily at go-time — EvalFile may not be set yet.
+                evalType = "NNUE";
             } else {
                 System.out.println("info string Unknown EvalType value '" + trimmed
                         + "' — expected Classical or NNUE. Keeping " + evalType + ".");
             }
         } else if ("evalfile".equals(optionNameLower)) {
-            // Inert in Phase A — no NNUE loader exists yet to consume this path.
             evalFile = valuePart.trim();
+        } else if ("nnuedebug".equals(optionNameLower)) {
+            nnueDebug = "true".equalsIgnoreCase(valuePart);
         }
         // Unknown options are silently ignored per UCI spec.
+    }
+
+    /**
+     * Resolves which {@link NnueNetwork} (if any) this search should use, called once
+     * per {@code go} before the main searcher and any Lazy SMP helpers are
+     * constructed — not once per thread, so the fallback info string (if any) is
+     * printed exactly once, not once per helper. Returns {@code null} whenever the
+     * search should use Classical: {@code EvalType} isn't {@code NNUE}, no
+     * {@code EvalFile} is set, or the file failed to load (PRD US-2: never crash,
+     * always fall back with an info string).
+     */
+    private NnueNetwork resolveNnueNetworkForSearch() {
+        if (!"NNUE".equals(evalType)) {
+            return null;
+        }
+        if (evalFile.isEmpty()) {
+            System.out.println("info string NNUE evaluator requested but EvalFile is not set; "
+                    + "falling back to Classical.");
+            return null;
+        }
+        if (nnueNetwork != null && evalFile.equals(loadedNnueFilePath)) {
+            return nnueNetwork;
+        }
+        try {
+            NnueNetwork loaded = NnueNetwork.load(Path.of(evalFile));
+            nnueNetwork = loaded;
+            loadedNnueFilePath = evalFile;
+            System.out.println("info string NNUE network loaded: " + loaded.networkUuid());
+            return loaded;
+        } catch (Exception e) {
+            System.out.println("info string Failed to load NNUE network from '" + evalFile
+                    + "' (" + e.getMessage() + "); falling back to Classical.");
+            nnueNetwork = null;
+            loadedNnueFilePath = null;
+            return null;
+        }
     }
 
     private void openNewBook() {
@@ -562,6 +716,10 @@ public class UciApplication {
             // already be running at generation N while the main thread bumps to N+1,
             // immediately evicting any shallow entries deposited by the helpers.
             sharedTT.incrementGeneration();
+            // Resolved once per go (not once per thread) so any fallback info string
+            // prints exactly once; each thread below still gets its own NnueEvaluator
+            // instance — never the same instance shared across threads.
+            NnueNetwork nnueNetworkForSearch = resolveNnueNetworkForSearch();
             if (effectiveHelpers > 0) {
                 // Snapshot the current position string from the board so each
                 // helper can create an independent Board without sharing state.
@@ -579,6 +737,9 @@ public class UciApplication {
                             helper.setSharedTranspositionTable(sharedTT);
                             helper.setPawnHashSizeMb(pawnHashSizeMb);
                             helper.setContempt(contempt);
+                            if (nnueNetworkForSearch != null) {
+                                helper.setEvaluatorStrategy(newSearchNnueEvaluator(nnueNetworkForSearch));
+                            }
                             Board helperBoard = new Board(positionFen);
                             helperBoard.setSearchMode(true);
                             helper.iterativeDeepening(
@@ -617,6 +778,9 @@ public class UciApplication {
             searcher.setSharedTranspositionTable(sharedTT);
             searcher.setPawnHashSizeMb(pawnHashSizeMb);
             searcher.setContempt(contempt);
+            if (nnueNetworkForSearch != null) {
+                searcher.setEvaluatorStrategy(newSearchNnueEvaluator(nnueNetworkForSearch));
+            }
             if (multiPV > 1) {
                 searcher.setMultiPV(multiPV);
             }
@@ -700,7 +864,17 @@ public class UciApplication {
     }
 
     private void runBench(int depth) {
-        new BenchRunner().run(depth);
+        if (!"NNUE".equals(evalType)) {
+            new BenchRunner().run(depth);
+            return;
+        }
+        NnueNetwork network = resolveNnueNetworkForSearch();
+        if (network == null) {
+            // resolveNnueNetworkForSearch() already printed its own fallback info string.
+            new BenchRunner().run(depth);
+            return;
+        }
+        new BenchRunner().run(depth, () -> new NnueEvaluator(network), "NNUE (" + network.networkUuid() + ")");
     }
 
     private void printInfoLine(IterationInfo info) {

@@ -1,4 +1,4 @@
-[TunerMain] Dataset:       C:\Users\yashk\WorkDir\Projects\ChessEngine\chess-engine\engine-tuner\src\test\resources\quiet-labeled-sample.epd
+[TunerMain] Dataset:       engine-tuner\src\test\resources\quiet-labeled-sample.epd
 [TunerMain] Max positions: 1020
 [TunerMain] Max iters:     500
 [TunerMain] Loaded 1,020 positions
@@ -106,5 +106,5 @@
 [Tuner] iter  98  MSE=0.17061538  improved=true  time=85ms
 [Tuner] iter  99  MSE=0.17061538  improved=false  time=79ms
 [Tuner] converged after 99 iterations
-[TunerMain] Tuned parameters written to: C:\Users\yashk\WorkDir\Projects\ChessEngine\chess-engine\tuned_params.txt
+[TunerMain] Tuned parameters written to: tuned_params.txt
 [TunerMain] Copy values manually from tuned_params.txt into engine-core source files.

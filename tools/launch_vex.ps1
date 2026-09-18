@@ -75,7 +75,8 @@ $java = if ($env:JAVA) {
 $jvmArgs = @(
     "-Xmx$Heap",
     "-XX:+UseG1GC",
-    "-XX:MaxGCPauseMillis=5"
+    "-XX:MaxGCPauseMillis=5",
+    "--add-modules", "jdk.incubator.vector"
 )
 
 # Build full invocation

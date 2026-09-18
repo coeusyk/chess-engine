@@ -1,0 +1,27 @@
+{
+  "spec_version": 1,
+  "feature_set_id": "plain-768",
+  "_provenance": "white_indices/black_indices computed from FeatureExtractor.activeFeatureIndices() (engine-core, the frozen reference implementation) on 2026-07-13, D-3. Startpos values independently cross-checked against FeatureIndexParityTest.STARTPOS_EXPECTED (hand-derived) and match exactly.",
+  "positions": [
+    {
+      "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "white_indices": [48, 49, 50, 51, 52, 53, 54, 55, 121, 126, 186, 189, 248, 255, 315, 380, 392, 393, 394, 395, 396, 397, 398, 399, 449, 454, 514, 517, 576, 583, 643, 708],
+      "black_indices": [48, 49, 50, 51, 52, 53, 54, 55, 121, 126, 186, 189, 248, 255, 315, 380, 392, 393, 394, 395, 396, 397, 398, 399, 449, 454, 514, 517, 576, 583, 643, 708]
+    },
+    {
+      "fen": "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+      "white_indices": [27, 36, 48, 49, 50, 53, 54, 55, 92, 106, 179, 180, 248, 255, 301, 380, 392, 394, 395, 397, 404, 406, 417, 431, 465, 469, 526, 528, 576, 583, 652, 708],
+      "black_indices": [23, 25, 44, 46, 48, 50, 51, 53, 105, 109, 168, 182, 248, 255, 308, 380, 392, 393, 394, 397, 398, 399, 412, 419, 466, 484, 523, 524, 576, 583, 661, 708]
+    },
+    {
+      "fen": "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+      "white_indices": [25, 52, 54, 225, 344, 394, 403, 421, 607, 743],
+      "black_indices": [29, 43, 50, 231, 351, 396, 398, 417, 601, 736]
+    },
+    {
+      "fen": "r4rk1/3qppbp/6p1/2p1n3/2B1P3/2P5/P2Q1PPP/R4RK1 b - - 0 20",
+      "white_indices": [36, 42, 48, 53, 54, 55, 162, 248, 253, 307, 382, 396, 397, 399, 406, 410, 476, 526, 576, 581, 651, 710],
+      "black_indices": [34, 46, 52, 53, 55, 100, 182, 248, 253, 307, 382, 392, 397, 398, 399, 402, 412, 538, 576, 581, 651, 710]
+    }
+  ]
+}

@@ -267,6 +267,10 @@ Phases are sequential milestones with acceptance criteria; no calendar commitmen
 | **D — Training pipeline** | Modular PyTorch trainer (§3 components), text-dataset provider, mmap shards, calibrated loss + clipping, quantization validator + weight histograms, export with provenance manifest, trainer reproducibility CI; Stockfish labeling driver | First real net trains end-to-end reproducibly with a complete manifest; held-out correlation reported; eval scale verified against classical on a corpus |
 | **E — Validation & optimization** | Gauntlets, SPRT runs, profiling; Vector API optimization only if the performance gate demands it (validated against scalar); self-play data generation begins | All three §1 gates pass → NNUE becomes default. Otherwise iterate on the net (not the gates) |
 
+**Phase 15 status (self-play/Stage-3):** the seeded-diversity Stage-3 retraining line (E-9 through
+E-16, DR-M1, DR-M2) is paused after two null/inconclusive experiments. See
+`docs/architecture/research/phase15-nnue-closeout.md` for the full record.
+
 Small, focused PRs per logical step; accumulator implementation and trainer loss/quantization code get mandatory review passes. Each phase produces an ADR where a decision was made (already drafted in Appendix A).
 
 ### Technical Risks
@@ -283,7 +287,7 @@ Small, focused PRs per logical step; accumulator implementation and trainer loss
 
 ### Open Questions (TBD before the affected phase)
 
-1. Which public text-format dataset for Stage 1 (candidates: Zurichess quiet set, Lichess evaluated positions) — decide at Phase D start.
+1. ~~Which public text-format dataset for Stage 1 (candidates: Zurichess quiet set, Lichess evaluated positions) — decide at Phase D start.~~ **Resolved at PR D-2 (issue #193): Lichess evaluated positions.** See `trainer/configs/stage1-dataset.md` for full rationale. Re-confirmed, not re-opened, at issue #202 (E-2)'s closing commit — no further deferral.
 2. Training hardware (local GPU vs. cloud) — affects Stage 2/3 data volume targets only.
 3. Self-play opening variety source (existing book vs. external opening suite) — Phase E.
 4. Trainer location: separate repo vs. `trainer/` directory — Phase D start.
@@ -331,6 +335,14 @@ ADRs live in `docs/adr/`, numbered, immutable once accepted (superseded, never e
 - **ADR-003:** Copy-per-ply accumulator stack vs. in-place reverse deltas — Phase B.
 - **ADR-004:** Evaluator lifecycle hooks vs. Board change-listeners — Phase A.
 - **ADR-005:** Pure NNUE runtime vs. hybrid blending — Phase A.
-- **ADR-006:** Self-written PyTorch trainer vs. pure-Java trainer vs. existing framework (bullet) — Phase D.
-- **ADR-007:** Staged training data (public text → SF labeling → self-play); binpack exclusion — Phase D.
+- **[ADR-006](adr/ADR-006-self-written-pytorch-trainer.md):** Self-written PyTorch trainer vs. pure-Java trainer vs. existing framework (bullet) — Phase D.
+- **[ADR-007](adr/ADR-007-staged-training-data.md):** Staged training data (public text → SF labeling → self-play); binpack exclusion — Phase D.
 - **ADR-008:** Scalar-first inference with Vector API as a validated optimization phase — Phase E (written even if the Vector API is never needed, recording why).
+
+**Addendum (2026-07-13, not part of the original 2026-07-07 grilling session above):**
+during Phase D planning, one further decision emerged that this session never
+anticipated — trainer repository location (§5 Open Questions item 4 above), resolved
+via a dedicated `/grilling` round and recorded as
+**[ADR-010](adr/ADR-010-trainer-repository-location.md):** trainer repository
+location (`trainer/` in-repo vs. separate repo) — Phase D start, per
+`docs/architecture/NNUE_TRAINER_ARCHITECTURE.md` §16.

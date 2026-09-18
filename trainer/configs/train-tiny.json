@@ -1,0 +1,11 @@
+{
+  "hidden_width": 8,
+  "qa": 127,
+  "qb": 64,
+  "output_scale": 400,
+  "k": 1.0,
+  "learning_rate": 0.01,
+  "seed": 42,
+  "steps": 5,
+  "batch_size": 4
+}

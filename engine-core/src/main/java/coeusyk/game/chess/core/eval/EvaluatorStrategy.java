@@ -29,8 +29,15 @@ public interface EvaluatorStrategy {
     default void reset(Board board) {
     }
 
-    /** Called immediately after {@code board.makeMove(move)}. {@code move} is the packed move int. */
-    default void onMake(Board board, int move) {
+    /**
+     * Called immediately after {@code board.makeMove(move)}. {@code move} is the packed
+     * move int; {@code capturedPiece} is {@code board.lastCapturedPiece()} at the same
+     * call site ({@link coeusyk.game.chess.core.models.Piece#None} if the move wasn't a
+     * capture) — the one piece of information not otherwise derivable from {@code move}
+     * plus post-move {@code board} state (en passant, promotion, and castling are all
+     * fully derivable from {@code move} alone).
+     */
+    default void onMake(Board board, int move, int capturedPiece) {
     }
 
     /** Called immediately after {@code board.unmakeMove()} undoes the corresponding move. */

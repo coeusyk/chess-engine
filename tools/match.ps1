@@ -15,7 +15,7 @@
     Time control string passed to cutechess-cli (default: 10+0.1).
 
 .EXAMPLE
-    .\tools\match.ps1 -Engine1 engine-uci\target\engine.jar -Engine2 tools\engine-uci-0.4.9.jar -Games 200
+    .\tools\match.ps1 -Engine1 engine-uci\target\engine.jar -Engine2 tools\results\some-baseline.jar -Games 200
 #>
 param(
     [Parameter(Mandatory)][string]$Engine1,
@@ -54,8 +54,8 @@ Write-Host "PGN : $PgnOut"
 Write-Host ""
 
 & $Cutechess `
-    -engine "name=Vex-new" "cmd=$Java" "arg=-jar" "arg=$($E1.Path)" proto=uci `
-    -engine "name=Vex-old" "cmd=$Java" "arg=-jar" "arg=$($E2.Path)" proto=uci `
+    -engine "name=Vex-new" "cmd=$Java" "arg=--add-modules" "arg=jdk.incubator.vector" "arg=-jar" "arg=$($E1.Path)" proto=uci `
+    -engine "name=Vex-old" "cmd=$Java" "arg=--add-modules" "arg=jdk.incubator.vector" "arg=-jar" "arg=$($E2.Path)" proto=uci `
     -each tc=$TC `
     -games $Games `
     -repeat `

@@ -115,7 +115,7 @@ After the tuner finishes:
    ```
 5. Run SPRT to confirm the new constants are statistically stronger:
    ```
-   sprt_smp.bat
+   .\tools\sprt.ps1 -New <tuned.jar> -Old <baseline.jar>
    ```
 
 The parameter index layout is documented in `EvalParams.java`.
