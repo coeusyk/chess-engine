@@ -267,6 +267,10 @@ Phases are sequential milestones with acceptance criteria; no calendar commitmen
 | **D — Training pipeline** | Modular PyTorch trainer (§3 components), text-dataset provider, mmap shards, calibrated loss + clipping, quantization validator + weight histograms, export with provenance manifest, trainer reproducibility CI; Stockfish labeling driver | First real net trains end-to-end reproducibly with a complete manifest; held-out correlation reported; eval scale verified against classical on a corpus |
 | **E — Validation & optimization** | Gauntlets, SPRT runs, profiling; Vector API optimization only if the performance gate demands it (validated against scalar); self-play data generation begins | All three §1 gates pass → NNUE becomes default. Otherwise iterate on the net (not the gates) |
 
+**Phase 15 status (self-play/Stage-3):** the seeded-diversity Stage-3 retraining line (E-9 through
+E-16, DR-M1, DR-M2) is paused after two null/inconclusive experiments. See
+`docs/architecture/research/phase15-nnue-closeout.md` for the full record.
+
 Small, focused PRs per logical step; accumulator implementation and trainer loss/quantization code get mandatory review passes. Each phase produces an ADR where a decision was made (already drafted in Appendix A).
 
 ### Technical Risks
