@@ -116,3 +116,94 @@ interleave; a real Lazy-SMP `Threads>1` SPRT/bench pass, if the team wants direc
 confirmation beyond the code-level proof, is future work outside this issue's scope (Step 2/3 of
 Phase 16, or a separate follow-up).
 
+---
+
+### [2026-09-18] Phase 16 Step 2 — Canonical 1T baseline: WSL2-side prep complete, native run blocked on tooling
+
+**Built:**
+
+- Verified `phase/16-search-execution-qualification` HEAD matched the expected `1bafcf0` and the
+  working tree was clean before starting. Verified the P16-1 XOR TT fix
+  (`derivedKey = check ^ data`) is present in `TranspositionTable.java`.
+
+- **Found the current `--bench` CLI path always runs instrumented.** `BenchRunner.run(int,
+  Supplier, String)` (the method behind the documented `--bench` flag and the in-session UCI
+  `bench` command) hardcoded `searcher.setInstrumentationEnabled(true)`. For a Classical-evaluator
+  run this only gates a `System.nanoTime()` pair around every `evaluate()` call (`Searcher#evaluate`)
+  — it doesn't touch any search decision — but P16-2 explicitly requires a production-like,
+  uninstrumented number kept separate from an instrumented attribution number, and there was no
+  existing entry point for the former. Added `BenchRunner.run(depth, evaluatorFactory, label,
+  instrumentationEnabled)` (existing overloads delegate to it with `true`, unchanged behavior) and
+  a new `--bench-raw [depth]` CLI flag that runs the same 31-position suite/protocol with
+  instrumentation off. `--bench` and the in-session `bench` command are unchanged. Added
+  `BenchRunnerTest#instrumentationFlagDoesNotChangeNodeCounts`, which runs the suite with
+  instrumentation on and off and asserts identical total node counts — proves the flag is
+  behavior-neutral rather than assuming it. `mvn -pl engine-core,engine-uci -am test`: 37 tests, 0
+  failures, 8 pre-existing skips.
+
+- Confirmed the fix is behavior-neutral at full-suite scale too, not just the unit test: WSL2
+  `--bench` (instrumented, from P16-1's own check) and `--bench-raw` (uninstrumented, this session)
+  both reported **73,089,246 total nodes** for the 31-position suite at depth 13 — identical.
+
+- Inspected `Searcher`'s existing instrumentation (issue #216) against P16-2's per-position metric
+  list: nodes, qnodes, NPS, depth reached, beta cutoffs, first-move cutoffs, TT hits, EBF, null-move
+  cutoffs, LMR applications, futility skips, and delta-pruning skips are *already* computed every
+  iteration and logged at DEBUG level (`Searcher`'s `[BENCH]` log line), just not surfaced by
+  `BenchRunner`'s stdout (which only prints nodes/depth) or enabled by the shipped `logback.xml`
+  (root level INFO). No re-search-specific counter exists. Rather than add new counters, added
+  `tools/logback-debug.xml`, a small opt-in logging override (raises only `Searcher`'s logger to
+  DEBUG) that surfaces this existing data without touching the shipped config or adding any new
+  instrumentation.
+
+- Added `tools/p16-2-native-baseline.ps1`: an end-to-end native-Windows script (matching this
+  repo's existing `sprt.ps1`/`match.ps1` convention) that verifies the tree/TT-fix, builds the JAR,
+  records the environment (with explicit evidence that the process is a genuine native PowerShell
+  run and not reached through WSL interop — process path, OS version, and a hard refusal if run
+  from a `\\wsl`-mounted path), runs a discarded warm-up plus 7 measured `--bench-raw` repetitions,
+  captures per-position debug detail via the logback override, takes a JFR attribution pass, and
+  runs a `movetime`-bounded UCI sanity check. All output lands under
+  `tools/results/p16-2/<timestamp>/`. Verified only via PowerShell's own parser (no syntax errors)
+  — not executed, since running it requires the native terminal it exists to hand off to.
+
+**Decisions Made:**
+
+- **Native-Windows steps handed off as a script, not executed from this session.** This session
+  runs inside WSL2 and has no tool to open or control a native Windows terminal. WSL interop
+  (invoking `/mnt/c/.../java.exe` directly from WSL) was available and technically launches a real
+  native Windows process, but the user explicitly ruled it out for the authoritative measurement:
+  it can't be independently verified as equivalent to an actual native PowerShell session, and this
+  project already treats native Windows and WSL2 as distinct execution contexts for performance
+  work (CLAUDE.md Section 6, `sprt.ps1`'s own "never simulate or skip" instruction). The script is
+  the natural equivalent of "output the exact command and stop" for a multi-step protocol instead
+  of a single command.
+
+- **`--bench-raw` added rather than changing `--bench`'s default.** Changing `--bench` itself to
+  default to uninstrumented would silently change the meaning of every existing script/doc that
+  already parses its (instrumented) output, including this repo's own P16-1 dev-entries note. A new
+  flag is strictly additive.
+
+**Broke / Fixed:** None. All WSL2-side changes (the `--bench-raw` flag and its test, the logging
+override, the native-run script) are additive and covered by the full `mvn -pl
+engine-core,engine-uci -am test` pass noted above.
+
+**Measurements:** WSL2 diagnostic only, single run each, **not** the canonical measurement and
+**not** comparable to the native-Windows numbers this step still needs:
+
+| Run | Nodes | Time | NPS |
+|---|---|---|---|
+| `--bench` (instrumented, from P16-1) | 73,089,246 | 233,448 ms | 313,085 |
+| `--bench-raw` (uninstrumented, this session) | 73,089,246 | 240,378 ms | 304,059 |
+
+Both single runs on a shared, noisy WSL2 VM — the uninstrumented run reporting a *lower* NPS than
+the instrumented one is expected noise at n=1, not a real signal; nothing should be concluded from
+this pair beyond "node counts match" (the behavior-neutrality confirmation above). The native script
+does 7 repetitions specifically so a real median/spread can be reported instead of a single noisy
+number.
+
+**Status:** P16-2 is NOT complete. Everything doable from WSL2 is done and committed
+(`504515d`, `38728db`) on `phase/16-search-execution-qualification`. The native-Windows measurements
+(steps 6-9 and 11 of the issue) are blocked on this session having no way to control a native
+Windows terminal; `tools/p16-2-native-baseline.ps1` is the exact, ready-to-run hand-off. Once its
+output is available, `docs/architecture/research/phase16-p16-2-canonical-1t-baseline.md` can be
+written from real numbers and this entry updated.
+
