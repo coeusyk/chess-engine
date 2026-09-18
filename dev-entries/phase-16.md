@@ -53,15 +53,20 @@
 
 **Decisions Made:**
 
-- **XOR-checksum association over "re-verify the key" or a lock.** A naive fix of re-reading the
-  key word a second time after reading data doesn't close the ABA case: the raw key word for a
-  given position is identical across repeated stores to that position, so re-reading it gives no
-  new information about which specific write the data word came from. The issue's own tasks
-  explicitly required rejecting any fix with that gap. A per-slot lock would close the race too,
-  but adds contention on the hottest path in the engine (every node probes the TT) for no benefit
-  over the checksum approach, which is branch-free and adds no synchronization. XOR-checksum
-  (Stockfish's approach) tags the association word with the data's own content, so a torn read
-  is self-detecting without extra reads, extra writes, or locking.
+- **XOR-checksum association over "re-verify the key" or a lock.** Four lock-free association
+  strategies were on the table:
+
+  | Strategy | Correctness | Replacement semantics | Memory | Hot-path reads/writes | Single-thread cost | SMP behavior |
+  |---|---|---|---|---|---|---|
+  | Do nothing (status quo) | Broken — the torn-read race this issue exists to fix | Unaffected | 2 longs/entry (unchanged) | 1 read + 1 read (probe), 2 writes (store) | Baseline | Can serve a wrong cutoff to `applyTtBound()` |
+  | Re-read the key a second time after reading data, compare | Still broken for the ABA case: `store(A)`, `store(B)` (collision), `store(A)` again — the raw key value is A both before and after the race window, so a second raw-key read can't tell "old A" from "new A" apart. Rejected outright, as the issue required. | Unaffected | 2 longs/entry (unchanged) | 1 extra read on every probe hit | Small extra read per hit | Still broken |
+  | Per-slot lock (e.g. `synchronized`/`ReentrantLock` array, or a spinlock word) | Correct | Unaffected | +1 word/entry for a lock, or an external lock array | Every probe and store now takes/releases a lock — turns the hottest path in the engine from lock-free into contended, on every node | Adds acquire/release overhead even with zero contention | Direct contention between search threads sharing a TT, which is the normal Lazy-SMP configuration this table exists to serve |
+  | XOR-checksum: check word = `key ^ data`, probe derives `key = check ^ data` and compares (selected) | Correct, including the ABA case — the check is tied to the specific data write, not just the key value | Unaffected — replacement decision derives the same `existingKey` via XOR, same logic as before | 2 longs/entry (unchanged; the check word replaces the key word, no new field) | Same read/write count as the status quo, branch-free | No additional cost — same two reads, same two writes, just XOR instead of literal compare | Torn reads degrade to a miss (already an accepted outcome per the class doc's existing "write-write races... treated as a miss" policy), no new lock, no new contention |
+
+  XOR-checksum was selected because it is the only option that closes the ABA case while adding no
+  new reads, writes, fields, or synchronization to the hot path — it changes what the check word
+  means, not how many times it's touched. This is the same scheme Stockfish uses for its own
+  lock-free TT.
 
 - **Write order (data before check word) kept, but no longer load-bearing.** The old comment
   claimed correctness depended on this order; it didn't, for the reasons above. Kept it anyway
