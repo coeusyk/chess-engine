@@ -181,17 +181,74 @@ session already measured (`DR-E16-phase-d-training-report.md` section 4: 118.9s 
 A defensible target seed count should follow from the observed paired-delta spread rather than be
 picked arbitrarily. The final-checkpoint cp-only paired deltas span +0.0015 to +0.0041, with a
 stdev of about 0.00135, across the existing three seeds. Roughly doubling the seed count, to six
-total replicates (three new seed pairs on top of 42, 43, and 44, twelve new runs, on the order of
-24 to 26 minutes of additional training wall-clock at the measured per-run rate), would be the
+total matched seed pairs, requires three additional pairs on top of 42, 43, and 44: six additional
+runs (one control and one treatment run per new seed), not twelve. At 119 to 128 seconds per run,
+that is roughly 12 to 13 minutes of additional training wall-clock, not 24 to 26. This would be the
 smallest step that plausibly sharpens the mean-delta estimate's precision without a qualitatively
 larger commitment. It would not guarantee a decisive answer: three additional points is still a
-small-n regime by this project's own standing caution about fragile point estimates. Any such
-replication would also need its own paired noise-floor characterization, an M-1-style study built
-from matched pairs sharing init and data order rather than independent single runs, to have a
-calibrated null to compare against. Without that, the gap this document identifies in section 1
-would simply recur one experiment later.
+small-n regime by this project's own standing caution about fragile point estimates.
 
-## 9. Learning log entry
+What those additional matched pairs would actually measure, and what they would not, needs stating
+precisely. Each new seed `s` produces one more draw of `D_s = metric(treatment_s) - metric(control_s)`,
+conditional on the two frozen E-16 corpora. Running more matched pairs on the same frozen corpora
+directly estimates the distribution of `D_s` itself. That is the quantity of interest, and no
+separate calibration study is needed to interpret it: unlike section 1's original error, there is
+no second, differently-shaped random variable standing between "what we can measure" and "what we
+want to know" here. A previous draft of this document called for a separate, M-1-style "paired null
+noise floor" study before six matched pairs could be interpreted. That call is withdrawn as
+unnecessary: `D_s` estimated from six real matched pairs on the frozen corpora is already the
+paired distribution, not a proxy for it.
+
+What more matched training seeds would *not* do is inform anything about corpus-generation
+variance. E-16 has exactly one frozen self-play corpus per arm (`e16-control.vspr` and
+`e16-treatment.vspr`, `DR-E16-phase-b-generation-report.md`). Every one of the six existing runs,
+and every one of six additional matched pairs on top of them, trains against that same fixed pair
+of corpora. Training-seed variance (what varying `TrainingConfig.seed` measures, holding the
+corpora fixed) and corpus-generation variance (how much a fresh self-play run of the same generator
+and selector would itself differ, even under a matched seed) are two distinct sources of
+uncertainty. Only the first is addressed by adding training seeds here. A run built from
+exact-same-data, exact-same-seed matched pairs would not measure either kind of variance in a
+useful sense: with `train()`'s data order and initialization both determined by `config.seed`,
+repeating the identical `(corpus, seed)` pair mostly tests this implementation's own numerical
+determinism (floating-point reproducibility across repeated runs of the same code, not a source of
+research signal), rather than either training-seed or corpus-generation variance. If corpus-
+generation variance ever needs characterizing, that requires generating additional self-play
+corpora under the same generator/selector configuration, which is new corpus generation and outside
+this document's scope.
+
+## 9. Phase-15 research-line disposition
+
+No standalone roadmap document tracks the self-play/Stage-3 diversity-mechanism line this
+experiment belongs to (`docs/architecture/research/nnue/phase5-roadmap.md` tracks a separate set of
+Phase 5 candidates and does not mention E-14 through E-16 or DR-M1/DR-M2). This section records the
+disposition here, in the most recent document in that specific line, since no more appropriate
+existing record exists.
+
+- **E-15** (`DR-E15-phase-e-evaluation-report.md`): null/inconclusive. Its control arm collapsed to
+  one repeated trajectory across all 58 games, a design flaw independent of the classification
+  itself.
+- **DR-M1** (`DR-M1-cp-only-noise-floor-characterization.md`): characterized raw between-seed
+  variance for cp-only correlation at this training configuration for the first time (roughly 0.001
+  to 0.008, three independent single runs).
+- **E-16** (`DR-E16-phase-e-evaluation-report.md`): null/inconclusive under a shared-opening,
+  matched-pair design that fixed E-15's degenerate control. Three seed-matched pairs, consistently
+  signed but not established as material.
+- **DR-M2** (this document): corrects the paired-versus-unpaired interpretation error in the E-16
+  Phase E report. E-16's classification is unchanged.
+- **Status**: the seeded-diversity Stage-3 line is paused. No new experiment is started by this
+  document.
+
+**Resumption order, if this line is picked back up**:
+
+1. Additional matched training seeds on the existing frozen E-16 corpora (section 8), which
+   directly estimate `D_s`'s distribution and require no new corpus generation.
+2. Corpus-level replication (a fresh self-play generation under the same generator and selector
+   configuration), only if step 1's evidence actually warrants it.
+3. No selector retuning (`SeededDiversitySelector`'s parameters, `DR-E14`'s preregistered values)
+   before that evidence exists. Retuning now would mean changing the mechanism under test before
+   its own measurement is resolved.
+
+## 10. Learning log entry
 
 ```
 ## Experiment ID: DR-M2-e16-paired-variance-interpretation
@@ -219,7 +276,12 @@ Observed outcome:      DR-M1's 0.001 to 0.008 band remains valid evidence of sub
                         better on v1-clean) is recorded as an unresolved coverage/generalization
                         hypothesis. Recommended research-line decision: pause the seeded-diversity
                         Stage-3 line rather than immediately replicate. If replication is chosen
-                        later, six total seed replicates (three new, on the existing frozen E-16
-                        corpora) is the smallest defensible next step, offered as prospective design
-                        guidance only.
+                        later, six total matched seed pairs (three new pairs, six new runs, roughly
+                        12 to 13 minutes of additional training on the existing frozen E-16 corpora)
+                        is the smallest defensible next step, offered as prospective design guidance
+                        only. Those new pairs would directly estimate the distribution of D_s
+                        (treatment minus control per seed) conditional on the frozen corpora, with
+                        no separate paired-null study required; they measure training-seed variance
+                        only, not corpus-generation variance, since both arms have exactly one
+                        frozen corpus each.
 ```
