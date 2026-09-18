@@ -1,11 +1,12 @@
 # E-16 design record: shared-opening-prefix Stage-3 retrain (preregistration)
 
-**Status: design/preregistration only. No corpus generation, no training, no SPRT executed by
-this document.** Governs issue #224, "[P15] E-16 -- Stage-3 shared-opening-prefix retrain (fixes
-E-15's degenerate control)." Downstream of #223 (E-15, closed, `DR-E15-stage3-first-retraining-
-preregistration.md` and its Phase B/C/D/E reports) and `DR-M1-cp-only-noise-floor-characterization.md`
-(the noise-floor study this document's interpretation rule is built on). Reuses `DR-E14-seeded-
-diversity-audit-and-preregistration.md`'s treatment-selector parameters unchanged.
+**Status: preregistration complete; Phase B prerequisite implementation complete (section 8); no
+corpus generation, no training, no SPRT executed yet.** Governs issue #224, "[P15] E-16 -- Stage-3
+shared-opening-prefix retrain (fixes E-15's degenerate control)." Downstream of #223 (E-15, closed,
+`DR-E15-stage3-first-retraining-preregistration.md` and its Phase B/C/D/E reports) and
+`DR-M1-cp-only-noise-floor-characterization.md` (the noise-floor study this document's
+interpretation rule is built on). Reuses `DR-E14-seeded-diversity-audit-and-preregistration.md`'s
+treatment-selector parameters unchanged.
 
 ## 1. Estimand -- reframed precisely, distinct from E-15's
 
@@ -295,34 +296,51 @@ of what E-16 eventually finds -- E-16 is a new experiment answering a narrower, 
 - **No architecture, schedule, or `wdl_lambda` change.** `NnueNet(256, 127, 64, 400)`, P3A-001's
   frozen schedule (`steps=20000, lr=0.01, cosine, warmup=200, batch=256, k=2.773456`), and
   `wdl_lambda=1.0` (`#208` stays closed) are all unchanged from E-15.
-- **No corpus generation yet.** This document is Phase A (design/preregistration) only. Phase B
-  (shared-prefix generator implementation: a `SelfPlayCli` flag to start a game from a given FEN,
-  additive, mirroring `DR-E15`'s own Phase A pattern for `BestMoveSelector`'s multiPV override) has
-  not started.
+- **No corpus generation yet.** Phase B's prerequisite implementation (the `--start-fen` seam,
+  section 8) is now closed, but **no self-play corpus has been generated** -- no VSPR file, no
+  ingestion, no decision record for either E-16 arm exists. Actual generation is a separate,
+  explicitly-authorized step, same phase-gating convention `DR-E15` used at every one of its own
+  phase boundaries.
 - **E-15's classification remains untouched.** B (null/inconclusive), `DR-E15-phase-e-evaluation-
   report.md` section 6, is not revised by this document or by any future E-16 result.
 
-## 8. Remaining blockers before Phase B can start
+## 8. Phase B prerequisites -- closed
 
-**Reduced from the prior draft**: the color-mirror utility is no longer a blocker (section 2,
-dropped), and all three real seed values are pinned above (section 4), not deferred. One genuine
-implementation gap remains:
+**Both prerequisite gaps from the prior draft are closed** (implementation, not just design):
 
-- **`SelfPlayCli` has no flag to start a game from an explicit FEN today** (verified directly:
-  no `--start-fen`/`--opening`-style flag exists in `SelfPlayCli.CliArgs`, confirmed by the same
-  grep-based check this document's section 2 traversal relied on). A small, additive flag
-  (mirroring `--control-multipv`'s own additive-only precedent, `DR-E15` section 2) is required
-  before Phase B can generate any game from a non-default starting position. Not implemented by
-  this document.
-- **`GeneratorConfig.maxPositions` being unset (`null`) as the E-16 stopping mode has not been
-  exercised end-to-end for this exact combination** (an explicit start-FEN plus a null
-  `maxPositions` plus a fixed `maxGames=58`) -- `DR-E15-stage3-first-retraining-preregistration.md`
-  section 7a's own regression test (`SelfPlayCliTest.maxPositionsStopsOnlyBetweenGamesNeverMidGame`)
-  covers `maxPositions` semantics at a small value, not the `null` case specifically. A short
-  Phase B test confirming `maxGames=58`/`maxPositions=null` produces exactly 58 complete games (no
-  early stop, no infinite generation) closes this gap; not run by this document.
-- **No other blocker identified.** The shared-opening pool itself (58 unique terminal FENs, section
-  2) and all three real generation/split/equalization seeds (section 4) are fully pinned and
-  reproducible -- re-running the same traversal against the same, already-committed book file
-  reproduces the identical pool with no further dependency. **Phase B implementation can begin as
-  soon as the FEN-start flag above is added and tested** -- this document does not add it.
+- **`SelfPlayCli --start-fen`**: an optional flag, added additively. Absent means #221's original
+  default-start behavior, byte-identical (verified by test: the default-start VSPR's first sample
+  FEN still equals `new Board().toFen()`). When given, the FEN is validated once, eagerly, at
+  `CliArgs.parse()` time -- before `EligibilitySmoke`, before the network loads, before any game is
+  attempted -- so a malformed FEN fails loudly before generation, not partway through the first
+  game (verified by test: an invalid `--start-fen` throws `IllegalArgumentException` at parse time
+  and writes neither a VSPR nor a decision-record file). Per game, the FEN is parsed fresh into a
+  new `Board` (a `Board` is mutated in place by `makeMove`, so one instance cannot be shared across
+  games) and handed to `GameLoop`'s **already-existing** `playGame(gameId, gameSeed, Board)`
+  overload -- the same entry point `GameLoopTest`'s own terminal-state fixtures
+  (`checkmatePositionTerminatesImmediatelyWithCorrectWinner` et al.) have used since #221/#222.
+  **No change was made to `GameLoop`, `Board`, or `Searcher`** -- this is a CLI-level seam onto a
+  seam that already existed.
+- **The `maxGames=58` / `maxPositions=null` combination**: proven by a new regression test
+  (`SelfPlayCliTest.exactlyMaxGamesCompleteWhenMaxPositionsIsUnset`) -- exactly 58 complete games
+  are emitted with `maxPositions` left unset (not just set to a large value), confirming no
+  position-budget stop is involved at all in this configuration.
+
+**Verified, not merely implemented**: default-start behavior unchanged; a supplied FEN is exactly
+the first searched position; side-to-move, castling rights (including a partial, per-color,
+per-side combination), the en-passant target square, the halfmove clock, and the fullmove number
+all survive intact; natural termination (checkmate) still fires correctly from a supplied
+non-default starting position, reached through the CLI, not just `GameLoop` directly; and the
+section 3 pairing rule itself is proven at the seam level (not full corpus orchestration) -- for
+two distinct opening FENs, a control-arm invocation and a treatment-arm invocation given the same
+`--start-fen` both actually start from that exact FEN. Full detail:
+`engine-core/src/test/java/coeusyk/game/chess/core/selfplay/SelfPlayCliTest.java`'s new
+`--start-fen`-prefixed test group (9 new tests, engine-core+engine-uci full suite: 380+36=416
+passed, 0 failures, unchanged skip counts, `BUILD SUCCESS`).
+
+**No other blocker identified.** The shared-opening pool (58 unique terminal FENs, section 2), all
+three real seeds (section 4: generation `20261601`, split `20261602`, equalization `20261603`,
+re-verified unchanged), and now the `--start-fen` seam are all in place. **Phase B (actual corpus
+generation) is unblocked from an implementation standpoint** -- not started by this document; still
+requires the explicit authorization this project's convention has required at every prior phase
+boundary (`DR-E15` section 16's own phase-gating precedent).

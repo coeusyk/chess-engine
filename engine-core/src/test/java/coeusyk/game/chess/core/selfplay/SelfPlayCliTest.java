@@ -1,8 +1,10 @@
 package coeusyk.game.chess.core.selfplay;
 
 import coeusyk.game.chess.core.eval.nnue.NnueNetwork;
+import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.selfplay.vspr.GameOutcome;
 import coeusyk.game.chess.core.selfplay.vspr.TerminationReason;
+import coeusyk.game.chess.core.selfplay.vspr.TrainingSample;
 import coeusyk.game.chess.core.selfplay.vspr.VsprCodec;
 import coeusyk.game.chess.core.selfplay.vspr.VsprFile;
 import org.junit.jupiter.api.Test;
@@ -378,5 +380,260 @@ class SelfPlayCliTest {
         assertNotEquals(0, exitCode);
         assertFalse(Files.exists(vsprOut));
         assertFalse(Files.exists(decisionOut));
+    }
+
+    // ---- E-16 (#224): --start-fen, the shared-opening-prefix seam. ----
+    // DR-E16-shared-opening-prefix-preregistration.md's Phase B prerequisite -- SelfPlayCli gains
+    // an optional flag onto GameLoop's already-existing playGame(gameId, gameSeed, Board) overload
+    // (used since #221/#222 by GameLoopTest's own terminal-state fixtures). No change to
+    // GameLoop/Board/Searcher: this is purely a CLI-level seam.
+
+    @Test
+    void noStartFenLeavesFieldAbsentAndDefaultStartUnchanged(@TempDir Path tmp) throws Exception {
+        String sha = sha256Of(fixturePath());
+        String uuid = NnueNetwork.load(fixturePath()).networkUuid();
+        Path vsprOut = tmp.resolve("pilot.vspr");
+        Path decisionOut = tmp.resolve("decision.json");
+        String[] args = {
+                "--network", fixturePath().toString(),
+                "--network-sha256", sha,
+                "--network-uuid", uuid,
+                "--engine-build-id", "test-commit-hash",
+                "--search-depth", "3",
+                "--max-plies", "2",
+                "--max-games", "1",
+                "--seed", "123",
+                "--output-vspr", vsprOut.toString(),
+                "--output-decision-record", decisionOut.toString(),
+        };
+
+        SelfPlayCli.CliArgs parsed = SelfPlayCli.CliArgs.parse(args);
+        assertNull(parsed.startFen(), "no --start-fen given -- field must stay absent");
+
+        assertEquals(0, SelfPlayCli.run(args));
+        VsprFile decoded;
+        try (InputStream in = Files.newInputStream(vsprOut)) {
+            decoded = VsprCodec.read(in);
+        }
+        TrainingSample first = decoded.frames().get(0).samples().get(0);
+        assertEquals(new Board().toFen(), first.fen(), "default-start behavior must be unchanged");
+    }
+
+    @Test
+    void invalidStartFenFailsLoudlyBeforeGeneration(@TempDir Path tmp) {
+        Path vsprOut = tmp.resolve("pilot.vspr");
+        Path decisionOut = tmp.resolve("decision.json");
+        String[] args = {
+                "--network", "n.nnue",
+                "--network-sha256", "a".repeat(64),
+                "--network-uuid", "u",
+                "--engine-build-id", "b",
+                "--search-depth", "3",
+                "--max-plies", "6",
+                "--max-games", "1",
+                "--seed", "1",
+                "--output-vspr", vsprOut.toString(),
+                "--output-decision-record", decisionOut.toString(),
+                "--start-fen", "not a fen",
+        };
+
+        // Fails at CliArgs.parse() itself -- before EligibilitySmoke, before the network is even
+        // loaded, so a bad FEN never reaches game generation at all.
+        assertThrows(IllegalArgumentException.class, () -> SelfPlayCli.CliArgs.parse(args));
+        assertThrows(IllegalArgumentException.class, () -> SelfPlayCli.run(args));
+        assertFalse(Files.exists(vsprOut));
+        assertFalse(Files.exists(decisionOut));
+    }
+
+    @Test
+    void suppliedStartFenIsTheFirstPositionAndEveryFieldSurvives(@TempDir Path tmp) throws Exception {
+        // Deliberately not the standard starting position: black... no, white to move (en passant
+        // capturer), partial castling rights on BOTH sides (K only for white, q only for black --
+        // distinguishes K from Q and k from q, not just "rights present/absent"), a genuine
+        // en-passant target, a nonzero halfmove clock, and a fullmove number > 1.
+        String startFen = "r3k3/8/8/3pP3/8/8/8/4K2R w Kq d6 0 8";
+        String sha = sha256Of(fixturePath());
+        String uuid = NnueNetwork.load(fixturePath()).networkUuid();
+        Path vsprOut = tmp.resolve("pilot.vspr");
+        Path decisionOut = tmp.resolve("decision.json");
+        String[] args = {
+                "--network", fixturePath().toString(),
+                "--network-sha256", sha,
+                "--network-uuid", uuid,
+                "--engine-build-id", "test-commit-hash",
+                "--search-depth", "3",
+                "--max-plies", "2",
+                "--max-games", "1",
+                "--seed", "123",
+                "--output-vspr", vsprOut.toString(),
+                "--output-decision-record", decisionOut.toString(),
+                "--start-fen", startFen,
+        };
+
+        SelfPlayCli.CliArgs parsed = SelfPlayCli.CliArgs.parse(args);
+        assertEquals(startFen, parsed.startFen());
+
+        assertEquals(0, SelfPlayCli.run(args));
+        VsprFile decoded;
+        try (InputStream in = Files.newInputStream(vsprOut)) {
+            decoded = VsprCodec.read(in);
+        }
+        TrainingSample first = decoded.frames().get(0).samples().get(0);
+        assertEquals(startFen, first.fen(), "the supplied FEN must be exactly the first searched position");
+
+        String[] fields = first.fen().split(" ");
+        assertEquals("w", fields[1], "side to move must be preserved");
+        assertEquals("Kq", fields[2], "partial castling rights (per-color, per-side) must be preserved");
+        assertEquals("d6", fields[3], "the en-passant target square must be preserved");
+        assertEquals("0", fields[4], "the halfmove clock must be preserved");
+        assertEquals("8", fields[5], "the fullmove number must be preserved");
+    }
+
+    @Test
+    void naturalTerminationStillWorksFromASuppliedNonDefaultStartFen(@TempDir Path tmp) throws Exception {
+        // Fool's Mate final position -- same fixture GameLoopTest's own
+        // checkmatePositionTerminatesImmediatelyWithCorrectWinner uses directly against GameLoop;
+        // this proves the same behavior is reachable through the CLI's new --start-fen seam.
+        String startFen = "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3";
+        String sha = sha256Of(fixturePath());
+        String uuid = NnueNetwork.load(fixturePath()).networkUuid();
+        Path vsprOut = tmp.resolve("pilot.vspr");
+        Path decisionOut = tmp.resolve("decision.json");
+        String[] args = {
+                "--network", fixturePath().toString(),
+                "--network-sha256", sha,
+                "--network-uuid", uuid,
+                "--engine-build-id", "test-commit-hash",
+                "--search-depth", "3",
+                "--max-plies", "500",
+                "--max-games", "1",
+                "--seed", "123",
+                "--output-vspr", vsprOut.toString(),
+                "--output-decision-record", decisionOut.toString(),
+                "--start-fen", startFen,
+        };
+
+        assertEquals(0, SelfPlayCli.run(args));
+        VsprFile decoded;
+        try (InputStream in = Files.newInputStream(vsprOut)) {
+            decoded = VsprCodec.read(in);
+        }
+        var frame = decoded.frames().get(0);
+        assertEquals(GameOutcome.BLACK_WIN, frame.gameOutcome());
+        assertEquals(TerminationReason.CHECKMATE, frame.terminationReason());
+        assertTrue(frame.samples().isEmpty(), "terminal on entry -- no search, no sample");
+    }
+
+    @Test
+    void exactlyMaxGamesCompleteWhenMaxPositionsIsUnset(@TempDir Path tmp) throws Exception {
+        // DR-E16 section 3's hardened pairing rule: exactly 58 complete games per arm, with no
+        // independent position-count stop involved at all (maxPositions left unset/null, not just
+        // set high) -- distinct from maxPositionsStopsOnlyBetweenGamesNeverMidGame above, which
+        // exercises a small *set* maxPositions value, not the null/unset case this design needs.
+        String sha = sha256Of(fixturePath());
+        String uuid = NnueNetwork.load(fixturePath()).networkUuid();
+        Path vsprOut = tmp.resolve("pilot.vspr");
+        Path decisionOut = tmp.resolve("decision.json");
+        String[] args = {
+                "--network", fixturePath().toString(),
+                "--network-sha256", sha,
+                "--network-uuid", uuid,
+                "--engine-build-id", "test-commit-hash",
+                "--search-depth", "3",
+                "--max-plies", "4",
+                "--max-games", "58",
+                "--seed", "123",
+                "--output-vspr", vsprOut.toString(),
+                "--output-decision-record", decisionOut.toString(),
+        };
+
+        SelfPlayCli.CliArgs parsed = SelfPlayCli.CliArgs.parse(args);
+        assertNull(parsed.toGeneratorConfig().maxPositions(), "maxPositions must be unset, not just large");
+
+        assertEquals(0, SelfPlayCli.run(args));
+        VsprFile decoded;
+        try (InputStream in = Files.newInputStream(vsprOut)) {
+            decoded = VsprCodec.read(in);
+        }
+        assertEquals(58, decoded.frames().size(),
+                "exactly maxGames=58 complete games must be emitted, with no position-budget stop involved");
+
+        String decisionJson = Files.readString(decisionOut);
+        assertTrue(decisionJson.contains("\"gamesCompleted\": 58"));
+    }
+
+    @Test
+    void pairedControlAndTreatmentReceiveIdenticalStartFenForTheSameOpeningIndex(@TempDir Path tmp)
+            throws Exception {
+        // DR-E16 section 3's pairing requirement, proven at the seam level -- not full corpus
+        // orchestration: for each of two distinct opening indices, run a control-arm invocation
+        // (--control-multipv) and a treatment-arm invocation (--diversity-*) with the identical
+        // --start-fen, and confirm both actually start from that exact FEN. One of the two openings
+        // below is a real leaf from DR-E16 section 2's own 58-entry pool traversal.
+        String[] openings = {
+                new Board().toFen(), // opening index 0
+                "rnbqk2r/pppp1ppp/4pn2/8/1bPP4/2N5/PP2PPPP/R1BQKBNR w KQkq - 2 4", // opening index 1
+        };
+        String sha = sha256Of(fixturePath());
+        String uuid = NnueNetwork.load(fixturePath()).networkUuid();
+
+        for (int openingIndex = 0; openingIndex < openings.length; openingIndex++) {
+            String opening = openings[openingIndex];
+
+            Path controlVspr = tmp.resolve("control-" + openingIndex + ".vspr");
+            Path controlDecision = tmp.resolve("control-" + openingIndex + ".json");
+            String[] controlArgs = {
+                    "--network", fixturePath().toString(),
+                    "--network-sha256", sha,
+                    "--network-uuid", uuid,
+                    "--engine-build-id", "test-commit-hash",
+                    "--search-depth", "3",
+                    "--max-plies", "2",
+                    "--max-games", "1",
+                    "--seed", "123",
+                    "--output-vspr", controlVspr.toString(),
+                    "--output-decision-record", controlDecision.toString(),
+                    "--control-multipv", "3",
+                    "--start-fen", opening,
+            };
+
+            Path treatmentVspr = tmp.resolve("treatment-" + openingIndex + ".vspr");
+            Path treatmentDecision = tmp.resolve("treatment-" + openingIndex + ".json");
+            String[] treatmentArgs = {
+                    "--network", fixturePath().toString(),
+                    "--network-sha256", sha,
+                    "--network-uuid", uuid,
+                    "--engine-build-id", "test-commit-hash",
+                    "--search-depth", "3",
+                    "--max-plies", "2",
+                    "--max-games", "1",
+                    "--seed", "123",
+                    "--output-vspr", treatmentVspr.toString(),
+                    "--output-decision-record", treatmentDecision.toString(),
+                    "--diversity-max-rank", "3",
+                    "--diversity-cp-loss-bound", "40",
+                    "--diversity-temperature", "20.0",
+                    "--start-fen", opening,
+            };
+
+            assertEquals(0, SelfPlayCli.run(controlArgs));
+            assertEquals(0, SelfPlayCli.run(treatmentArgs));
+
+            String controlFirstFen;
+            try (InputStream in = Files.newInputStream(controlVspr)) {
+                controlFirstFen = VsprCodec.read(in).frames().get(0).samples().get(0).fen();
+            }
+            String treatmentFirstFen;
+            try (InputStream in = Files.newInputStream(treatmentVspr)) {
+                treatmentFirstFen = VsprCodec.read(in).frames().get(0).samples().get(0).fen();
+            }
+
+            assertEquals(opening, controlFirstFen,
+                    "control game " + openingIndex + " must start from its assigned opening");
+            assertEquals(opening, treatmentFirstFen,
+                    "treatment game " + openingIndex + " must start from its assigned opening");
+            assertEquals(controlFirstFen, treatmentFirstFen,
+                    "control and treatment must receive the exact same FEN for the same game index");
+        }
     }
 }

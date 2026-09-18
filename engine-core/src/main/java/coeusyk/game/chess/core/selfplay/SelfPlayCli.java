@@ -2,6 +2,7 @@ package coeusyk.game.chess.core.selfplay;
 
 import coeusyk.game.chess.core.eval.nnue.NnueEvaluator;
 import coeusyk.game.chess.core.eval.nnue.NnueNetwork;
+import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.search.Searcher;
 import coeusyk.game.chess.core.selfplay.vspr.GameFrame;
 import coeusyk.game.chess.core.selfplay.vspr.OpaqueConfig;
@@ -134,7 +135,15 @@ public final class SelfPlayCli {
                 // Any SelfPlayGenerationException here propagates straight out of run(): no catch,
                 // no "skip this game and continue," no partial VSPR/decision-record write below --
                 // a hard correctness failure aborts the whole pilot (#221 section 12).
-                GameFrame frame = gameLoop.playGame(gameId, gameSeed);
+                // E-16 (#224): --start-fen, parsed fresh into a new Board for every game (a Board
+                // is mutated in place by makeMove, so it cannot be shared across games) and handed
+                // to GameLoop's existing explicit-starting-Board overload -- no new logic in
+                // GameLoop/Board/Searcher, just a different entry point already used by
+                // GameLoopTest's own terminal-state fixtures. Absent means the unmodified default
+                // start (new Board()), byte-identical to every pre-E-16 run.
+                GameFrame frame = parsed.startFen() == null
+                        ? gameLoop.playGame(gameId, gameSeed)
+                        : gameLoop.playGame(gameId, gameSeed, new Board(parsed.startFen()));
                 frames.add(frame);
                 totalSamples += frame.samples().size();
             }
@@ -270,7 +279,8 @@ public final class SelfPlayCli {
             Path outputVsprPath,
             Path outputDecisionRecordPath,
             DiversityArgs diversity,
-            Integer controlMultiPv) {
+            Integer controlMultiPv,
+            String startFen) {
 
         GeneratorConfig toGeneratorConfig() {
             return new GeneratorConfig(
@@ -314,6 +324,21 @@ public final class SelfPlayCli {
             }
             Integer controlMultiPv = controlMultiPvRaw == null ? null : Integer.parseInt(controlMultiPvRaw);
 
+            // E-16 (#224): optional explicit game-start FEN, for the shared-opening-prefix design
+            // (DR-E16-shared-opening-prefix-preregistration.md). Absent means #221's original
+            // default-start behavior, byte-identical, unchanged. Validated eagerly here -- before
+            // eligibility smoke, network load, or any game is attempted -- so a malformed FEN fails
+            // loudly before generation, not partway through the first game.
+            String startFen = opts.get("--start-fen");
+            if (startFen != null) {
+                try {
+                    new Board(startFen);
+                } catch (RuntimeException e) {
+                    throw new IllegalArgumentException(
+                            "invalid --start-fen value " + "\"" + startFen + "\": " + e.getMessage(), e);
+                }
+            }
+
             return new CliArgs(
                     Path.of(require(opts, "--network")),
                     require(opts, "--network-sha256"),
@@ -327,7 +352,8 @@ public final class SelfPlayCli {
                     Path.of(require(opts, "--output-vspr")),
                     Path.of(require(opts, "--output-decision-record")),
                     diversity,
-                    controlMultiPv);
+                    controlMultiPv,
+                    startFen);
         }
 
         private static String require(java.util.Map<String, String> opts, String key) {
