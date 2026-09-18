@@ -65,3 +65,16 @@ What: key decisions
 Out of scope: scope boundaries
 Closes #N Phase: N — name
 ```
+
+## 9. Public-Facing Writing
+
+Before writing or editing anything a person will actually read outside the terminal, docs under
+`docs/`, GitHub issue bodies and comments, PR bodies and comments, run the `human` skill (`/human`)
+on the draft first. This applies to research reports (`DR-*.md`), investigation write-ups, commit
+message bodies where feasible, and any other text meant for a human reader rather than for the
+model's own working notes.
+
+Never use a double hyphen (`--`) as a dash. When a sentence wants a dash, restructure it instead
+with a period, a comma, a parenthetical, or two sentences, so the double hyphen is never typed as
+punctuation in the first place. A double hyphen used as a literal flag token (`--verbose`) is not
+affected by this rule.
