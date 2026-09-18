@@ -636,4 +636,208 @@ class SelfPlayCliTest {
                     "control and treatment must receive the exact same FEN for the same game index");
         }
     }
+
+    // ---- E-16 (#224): --start-fen-file, the indexed per-game schedule. ----
+    // A single --start-fen applies one FEN to every game in a run; E-16's actual pairing rule
+    // needs game i (within one arm/run) to start from pool[i] for all 58 openings. This adds a
+    // schedule file, mutually exclusive with --start-fen, with the existing gameId/gameSeed
+    // derivation completely untouched.
+
+    private static final String[] THREE_OPENINGS = {
+            new Board().toFen(),
+            "rnbqkb1r/ppp2ppp/4pn2/3p4/2PP4/5N2/PP2PPPP/RNBQKB1R w KQkq d6 0 4", // E-16 pool line 0
+            "rnbqkb1r/p1pp1ppp/1p2pn2/8/2PP4/5N2/PP2PPPP/RNBQKB1R w KQkq - 0 4", // E-16 pool line 1
+    };
+
+    private static Path writeScheduleFile(Path tmp, String... fens) throws IOException {
+        Path schedule = tmp.resolve("schedule.fen");
+        Files.write(schedule, List.of(fens));
+        return schedule;
+    }
+
+    @Test
+    void gameIUsesScheduleLineIForItsFirstSample(@TempDir Path tmp) throws Exception {
+        Path scheduleFile = writeScheduleFile(tmp, THREE_OPENINGS);
+        String sha = sha256Of(fixturePath());
+        String uuid = NnueNetwork.load(fixturePath()).networkUuid();
+        Path vsprOut = tmp.resolve("pilot.vspr");
+        Path decisionOut = tmp.resolve("decision.json");
+        String[] args = {
+                "--network", fixturePath().toString(),
+                "--network-sha256", sha,
+                "--network-uuid", uuid,
+                "--engine-build-id", "test-commit-hash",
+                "--search-depth", "3",
+                "--max-plies", "2",
+                "--max-games", "3",
+                "--seed", "123",
+                "--output-vspr", vsprOut.toString(),
+                "--output-decision-record", decisionOut.toString(),
+                "--start-fen-file", scheduleFile.toString(),
+        };
+
+        assertEquals(0, SelfPlayCli.run(args));
+        VsprFile decoded;
+        try (InputStream in = Files.newInputStream(vsprOut)) {
+            decoded = VsprCodec.read(in);
+        }
+        assertEquals(3, decoded.frames().size());
+        for (int gameId = 0; gameId < 3; gameId++) {
+            var frame = decoded.frames().get(gameId);
+            assertEquals(gameId, frame.gameId(), "gameIds must remain 0..N-1 in one VSPR run");
+            assertEquals(THREE_OPENINGS[gameId], frame.samples().get(0).fen(),
+                    "game " + gameId + " must start from schedule line " + gameId);
+        }
+    }
+
+    @Test
+    void controlAndTreatmentConsumingTheSameScheduleFileGetIdenticalStartFensPerGameIndex(@TempDir Path tmp)
+            throws Exception {
+        Path scheduleFile = writeScheduleFile(tmp, THREE_OPENINGS);
+        String sha = sha256Of(fixturePath());
+        String uuid = NnueNetwork.load(fixturePath()).networkUuid();
+
+        Path controlVspr = tmp.resolve("control.vspr");
+        String[] controlArgs = {
+                "--network", fixturePath().toString(),
+                "--network-sha256", sha,
+                "--network-uuid", uuid,
+                "--engine-build-id", "test-commit-hash",
+                "--search-depth", "3",
+                "--max-plies", "2",
+                "--max-games", "3",
+                "--seed", "123",
+                "--output-vspr", controlVspr.toString(),
+                "--output-decision-record", tmp.resolve("control.json").toString(),
+                "--control-multipv", "3",
+                "--start-fen-file", scheduleFile.toString(),
+        };
+
+        Path treatmentVspr = tmp.resolve("treatment.vspr");
+        String[] treatmentArgs = {
+                "--network", fixturePath().toString(),
+                "--network-sha256", sha,
+                "--network-uuid", uuid,
+                "--engine-build-id", "test-commit-hash",
+                "--search-depth", "3",
+                "--max-plies", "2",
+                "--max-games", "3",
+                "--seed", "123",
+                "--output-vspr", treatmentVspr.toString(),
+                "--output-decision-record", tmp.resolve("treatment.json").toString(),
+                "--diversity-max-rank", "3",
+                "--diversity-cp-loss-bound", "40",
+                "--diversity-temperature", "20.0",
+                "--start-fen-file", scheduleFile.toString(),
+        };
+
+        assertEquals(0, SelfPlayCli.run(controlArgs));
+        assertEquals(0, SelfPlayCli.run(treatmentArgs));
+
+        VsprFile controlDecoded;
+        try (InputStream in = Files.newInputStream(controlVspr)) {
+            controlDecoded = VsprCodec.read(in);
+        }
+        VsprFile treatmentDecoded;
+        try (InputStream in = Files.newInputStream(treatmentVspr)) {
+            treatmentDecoded = VsprCodec.read(in);
+        }
+        for (int gameId = 0; gameId < 3; gameId++) {
+            String controlFen = controlDecoded.frames().get(gameId).samples().get(0).fen();
+            String treatmentFen = treatmentDecoded.frames().get(gameId).samples().get(0).fen();
+            assertEquals(THREE_OPENINGS[gameId], controlFen);
+            assertEquals(controlFen, treatmentFen,
+                    "control and treatment must be paired to the same opening at game index " + gameId);
+        }
+    }
+
+    @Test
+    void invalidFenAnywhereInScheduleFailsBeforeGeneration(@TempDir Path tmp) throws Exception {
+        Path scheduleFile = writeScheduleFile(tmp, THREE_OPENINGS[0], "not a fen", THREE_OPENINGS[1]);
+        Path vsprOut = tmp.resolve("pilot.vspr");
+        Path decisionOut = tmp.resolve("decision.json");
+        String[] args = {
+                "--network", "n.nnue",
+                "--network-sha256", "a".repeat(64),
+                "--network-uuid", "u",
+                "--engine-build-id", "b",
+                "--search-depth", "3",
+                "--max-plies", "6",
+                "--max-games", "3",
+                "--seed", "1",
+                "--output-vspr", vsprOut.toString(),
+                "--output-decision-record", decisionOut.toString(),
+                "--start-fen-file", scheduleFile.toString(),
+        };
+
+        assertThrows(IllegalArgumentException.class, () -> SelfPlayCli.CliArgs.parse(args));
+        assertThrows(IllegalArgumentException.class, () -> SelfPlayCli.run(args));
+        assertFalse(Files.exists(vsprOut));
+        assertFalse(Files.exists(decisionOut));
+    }
+
+    @Test
+    void tooFewScheduleEntriesFailsBeforeGeneration(@TempDir Path tmp) throws Exception {
+        Path scheduleFile = writeScheduleFile(tmp, THREE_OPENINGS[0], THREE_OPENINGS[1]); // 2 lines
+        String[] args = {
+                "--network", "n.nnue",
+                "--network-sha256", "a".repeat(64),
+                "--network-uuid", "u",
+                "--engine-build-id", "b",
+                "--search-depth", "3",
+                "--max-plies", "6",
+                "--max-games", "3", // more games than schedule lines
+                "--seed", "1",
+                "--output-vspr", "out.vspr",
+                "--output-decision-record", "out.json",
+                "--start-fen-file", scheduleFile.toString(),
+        };
+
+        assertThrows(IllegalArgumentException.class, () -> SelfPlayCli.CliArgs.parse(args));
+    }
+
+    @Test
+    void startFenAndStartFenFileCannotBeCombined(@TempDir Path tmp) throws Exception {
+        Path scheduleFile = writeScheduleFile(tmp, THREE_OPENINGS);
+        String[] args = {
+                "--network", "n.nnue",
+                "--network-sha256", "a".repeat(64),
+                "--network-uuid", "u",
+                "--engine-build-id", "b",
+                "--search-depth", "3",
+                "--max-plies", "6",
+                "--max-games", "1",
+                "--seed", "1",
+                "--output-vspr", "out.vspr",
+                "--output-decision-record", "out.json",
+                "--start-fen", THREE_OPENINGS[0],
+                "--start-fen-file", scheduleFile.toString(),
+        };
+
+        assertThrows(IllegalArgumentException.class, () -> SelfPlayCli.CliArgs.parse(args));
+    }
+
+    @Test
+    void blankLinesInScheduleFileAreSkippedNotCountedAsEntries(@TempDir Path tmp) throws Exception {
+        Path schedule = tmp.resolve("schedule.fen");
+        Files.write(schedule, List.of(THREE_OPENINGS[0], "", "  ", THREE_OPENINGS[1], THREE_OPENINGS[2]));
+
+        String[] args = {
+                "--network", "n.nnue",
+                "--network-sha256", "a".repeat(64),
+                "--network-uuid", "u",
+                "--engine-build-id", "b",
+                "--search-depth", "3",
+                "--max-plies", "6",
+                "--max-games", "3",
+                "--seed", "1",
+                "--output-vspr", "out.vspr",
+                "--output-decision-record", "out.json",
+                "--start-fen-file", schedule.toString(),
+        };
+
+        SelfPlayCli.CliArgs parsed = SelfPlayCli.CliArgs.parse(args);
+        assertEquals(3, parsed.startFenSchedule().size(), "blank/whitespace-only lines must not count as entries");
+        assertEquals(List.of(THREE_OPENINGS), parsed.startFenSchedule());
+    }
 }

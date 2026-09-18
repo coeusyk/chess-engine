@@ -135,15 +135,23 @@ public final class SelfPlayCli {
                 // Any SelfPlayGenerationException here propagates straight out of run(): no catch,
                 // no "skip this game and continue," no partial VSPR/decision-record write below --
                 // a hard correctness failure aborts the whole pilot (#221 section 12).
-                // E-16 (#224): --start-fen, parsed fresh into a new Board for every game (a Board
-                // is mutated in place by makeMove, so it cannot be shared across games) and handed
-                // to GameLoop's existing explicit-starting-Board overload -- no new logic in
+                // E-16 (#224): a per-game starting FEN -- either the same one every game
+                // (--start-fen) or an indexed schedule (--start-fen-file, game i uses schedule
+                // line i) -- parsed fresh into a new Board for every game (a Board is mutated in
+                // place by makeMove, so it cannot be shared across games) and handed to GameLoop's
+                // existing explicit-starting-Board overload -- no new logic in
                 // GameLoop/Board/Searcher, just a different entry point already used by
-                // GameLoopTest's own terminal-state fixtures. Absent means the unmodified default
-                // start (new Board()), byte-identical to every pre-E-16 run.
-                GameFrame frame = parsed.startFen() == null
-                        ? gameLoop.playGame(gameId, gameSeed)
-                        : gameLoop.playGame(gameId, gameSeed, new Board(parsed.startFen()));
+                // GameLoopTest's own terminal-state fixtures. Neither flag given means the
+                // unmodified default start (new Board()), byte-identical to every pre-E-16 run.
+                // gameId/gameSeed derivation above is completely untouched by any of this.
+                GameFrame frame;
+                if (parsed.startFenSchedule() != null) {
+                    frame = gameLoop.playGame(gameId, gameSeed, new Board(parsed.startFenSchedule().get((int) gameId)));
+                } else if (parsed.startFen() != null) {
+                    frame = gameLoop.playGame(gameId, gameSeed, new Board(parsed.startFen()));
+                } else {
+                    frame = gameLoop.playGame(gameId, gameSeed);
+                }
                 frames.add(frame);
                 totalSamples += frame.samples().size();
             }
@@ -280,7 +288,8 @@ public final class SelfPlayCli {
             Path outputDecisionRecordPath,
             DiversityArgs diversity,
             Integer controlMultiPv,
-            String startFen) {
+            String startFen,
+            List<String> startFenSchedule) {
 
         GeneratorConfig toGeneratorConfig() {
             return new GeneratorConfig(
@@ -324,6 +333,8 @@ public final class SelfPlayCli {
             }
             Integer controlMultiPv = controlMultiPvRaw == null ? null : Integer.parseInt(controlMultiPvRaw);
 
+            int maxGames = Integer.parseInt(require(opts, "--max-games"));
+
             // E-16 (#224): optional explicit game-start FEN, for the shared-opening-prefix design
             // (DR-E16-shared-opening-prefix-preregistration.md). Absent means #221's original
             // default-start behavior, byte-identical, unchanged. Validated eagerly here -- before
@@ -339,6 +350,53 @@ public final class SelfPlayCli {
                 }
             }
 
+            // E-16: --start-fen-file -- an indexed per-game schedule, for a single arm/run to play
+            // its own distinct opening for every game (section 3's pairing rule: game i uses
+            // pool[i]). Mutually exclusive with --start-fen (exactly one starting-position mode
+            // per run, same "never inferred implicitly" discipline --control-multipv/--diversity-*
+            // already established). The whole file is read and validated eagerly here -- every
+            // line parses as a legal-shaped FEN, and there are at least maxGames of them -- before
+            // eligibility smoke, network load, or any game is attempted.
+            String startFenFileRaw = opts.get("--start-fen-file");
+            List<String> startFenSchedule = null;
+            if (startFenFileRaw != null) {
+                if (startFen != null) {
+                    throw new IllegalArgumentException(
+                            "--start-fen and --start-fen-file cannot be combined -- a run is either a "
+                                    + "single fixed start position or an indexed per-game schedule, never both");
+                }
+                Path scheduleFile = Path.of(startFenFileRaw);
+                List<String> rawLines;
+                try {
+                    rawLines = Files.readAllLines(scheduleFile);
+                } catch (IOException e) {
+                    throw new IllegalArgumentException(
+                            "cannot read --start-fen-file at " + scheduleFile + ": " + e.getMessage(), e);
+                }
+                List<String> schedule = new ArrayList<>();
+                for (int lineNo = 0; lineNo < rawLines.size(); lineNo++) {
+                    String line = rawLines.get(lineNo).strip();
+                    if (line.isEmpty()) {
+                        continue; // non-empty lines only, per this flag's own contract
+                    }
+                    try {
+                        new Board(line);
+                    } catch (RuntimeException e) {
+                        throw new IllegalArgumentException(
+                                "invalid FEN at " + scheduleFile + " line " + (lineNo + 1) + " (\"" + line
+                                        + "\"): " + e.getMessage(), e);
+                    }
+                    schedule.add(line);
+                }
+                if (schedule.size() < maxGames) {
+                    throw new IllegalArgumentException(
+                            "--start-fen-file " + scheduleFile + " has only " + schedule.size()
+                                    + " non-empty FEN line(s), fewer than --max-games=" + maxGames
+                                    + " -- every game needs its own scheduled opening");
+                }
+                startFenSchedule = List.copyOf(schedule);
+            }
+
             return new CliArgs(
                     Path.of(require(opts, "--network")),
                     require(opts, "--network-sha256"),
@@ -346,14 +404,15 @@ public final class SelfPlayCli {
                     require(opts, "--engine-build-id"),
                     Long.parseLong(require(opts, "--search-depth")),
                     Integer.parseInt(require(opts, "--max-plies")),
-                    Integer.parseInt(require(opts, "--max-games")),
+                    maxGames,
                     maxPositionsRaw == null ? null : Integer.parseInt(maxPositionsRaw),
                     Long.parseLong(require(opts, "--seed")),
                     Path.of(require(opts, "--output-vspr")),
                     Path.of(require(opts, "--output-decision-record")),
                     diversity,
                     controlMultiPv,
-                    startFen);
+                    startFen,
+                    startFenSchedule);
         }
 
         private static String require(java.util.Map<String, String> opts, String key) {
