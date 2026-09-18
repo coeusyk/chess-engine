@@ -30,6 +30,36 @@ class BenchRunnerTest {
         assertTrue(output.contains("Accumulator-update time: 0.0%"));
     }
 
+    /**
+     * Phase 16 P16-2: {@code instrumentationEnabled} must be behavior-neutral for a
+     * Classical-evaluator run -- the flag only gates a nanoTime() pair around
+     * evaluate() (see Searcher#evaluate), never a search decision. Total node count
+     * across the suite is the search-determinism signal; if it ever diverges
+     * between the two runs, instrumentation has stopped being an observation-only
+     * probe and P16-2's "instrumented vs. production" distinction breaks.
+     */
+    @Test
+    void instrumentationFlagDoesNotChangeNodeCounts() {
+        String withInstrumentation = captureStdout(
+            () -> new BenchRunner().run(DEPTH, null, "Classical", true));
+        String withoutInstrumentation = captureStdout(
+            () -> new BenchRunner().run(DEPTH, null, "Classical", false));
+
+        assertTrue(withInstrumentation.contains("instrumentation on"));
+        assertTrue(withoutInstrumentation.contains("instrumentation off"));
+        assertEquals(totalNodes(withInstrumentation), totalNodes(withoutInstrumentation),
+            "instrumentation must not change search node counts");
+    }
+
+    private static long totalNodes(String benchOutput) {
+        for (String line : benchOutput.split("\n")) {
+            if (line.startsWith("Nodes searched: ")) {
+                return Long.parseLong(line.substring("Nodes searched: ".length()).trim());
+            }
+        }
+        throw new AssertionError("bench output missing 'Nodes searched:' line");
+    }
+
     @Test
     void nnueEvaluatorFactoryIsUsedAndAccumulatorTimeIsReported() {
         NnueNetwork network = syntheticNetwork(8);
