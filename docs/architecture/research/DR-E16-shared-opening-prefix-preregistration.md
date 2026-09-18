@@ -29,12 +29,30 @@ bc-corpus-generation-report.md` section 12's disclosed single-repeated-trajector
 **Source, chosen over inventing a new one**: `engine-uci/src/main/resources/books/Performance.bin`
 -- the engine's existing production Polyglot opening book, added in commit `060ad2f` (#106/#107,
 "implement Polyglot opening book ... and UCI pondering"), already read by `OpeningBook.java` and
-used for genuine UCI play (`UciApplication`'s `openingBook` field). This is real, curated opening
-theory (Polyglot books encode move weights derived from real game statistics), not synthetic data.
-**Explicitly not used**: `bench/nnue-corpus/opening.epd` -- its own file header reads "Opening
-(ply 1-15) -- fixed-seed (20260713) **random-legal** self-play," i.e. exactly the "arbitrary random
-legal prefix" this task's instruction rules out. `Performance.bin` is the only repo-native
-fixed/legal/balanced-provenance opening asset that qualifies.
+used for genuine UCI play (`UciApplication`'s `openingBook` field). **Explicitly not used**:
+`bench/nnue-corpus/opening.epd` -- its own file header reads "Opening (ply 1-15) -- fixed-seed
+(20260713) **random-legal** self-play," i.e. exactly the "arbitrary random legal prefix" this
+task's instruction rules out. `Performance.bin` is the only repo-native fixed, legal opening asset
+that isn't self-labeled as synthetic random-legal data.
+
+**Provenance, stated precisely -- no more than commit history actually supports**: `060ad2f`'s own
+commit message says only "Bundle Performance.bin (92,954 positions) as classpath resource"; it
+cites no external source, no generation method, and no game corpus it was derived from. No other
+file in this repository (`dev-entries/`, `docs/`, issue history) documents where `Performance.bin`
+originally came from. **This document does not claim it is "real, curated opening theory derived
+from real game statistics"** -- that would be an assumption about Polyglot books in general, not a
+documented fact about this specific file, and this task's instruction is explicit that only
+documented provenance should be claimed. What is verifiable and stated here instead, all checked directly against the committed file: it
+is a well-formed binary Polyglot book (16-byte fixed-width entries, `OpeningBook.java`'s own header
+comment documents the exact layout; entries are sorted ascending by key, matching the binary-search
+precondition `OpeningBook.bisectKeyLeft()` requires -- verified over the first 5,000 entries), it
+has been present in the repository and in active use for real engine self-play/UCI move selection
+since #106/#107, and its move weights are genuinely non-uniform: 700 distinct weight values across
+the file (range 1-9,426), and 11,166 of its 77,872 keys carry more than one weighted candidate move
+(e.g. one key has candidates weighted 117 and 14) -- ruling out a trivially-uniform or degenerate
+file. This distinguishes it from a synthetically generated random-legal position list in exactly
+the way that matters for this task (it encodes *some* real weighting structure, not per-position
+uniform-random legal move choice), even though its ultimate upstream source is undocumented.
 
 **File-level provenance, verified directly** (parsed the documented 16-byte big-endian entry
 format `OpeningBook.java`'s own header comment specifies, read-only, no engine code modified):
@@ -74,33 +92,56 @@ every step, matching `OpeningBook.decodeMove()`'s own existing legality gate). N
 final 58-entry pool terminates in checkmate/stalemate before depth 6 (a terminal game state would
 have produced an empty legal-move list at some intermediate depth, itself a rejection condition).
 
-**Deterministic game-to-opening assignment**: pool entries are indexed `0..57` in the traversal's
-own deterministic visitation order (a fixed DFS over `weight`-sorted candidates at each node --
-reproducible from the same book file with no RNG in the extraction step itself). Game `gameId`
-(0-indexed, both arms, matching `SelfPlayCli`'s existing sequential `gameId` convention) is
-assigned pool entry `gameId mod 58`. **Control and treatment use the identical assignment
-function against the identical pool**, so control game `i` and treatment game `i` always start
-from the exact same opening FEN -- the pairing this task requires.
+**Deterministic game-to-opening assignment -- identity mapping, no wraparound, no RNG**: pool
+entries are indexed `0..57` in the traversal's own deterministic visitation order (a fixed DFS over
+`weight`-sorted candidates at each node -- reproducible from the same book file with no RNG in the
+extraction step itself). Per section 3's hardened pairing rule (exactly 58 games/arm, one opening
+each, no reuse), game `gameId` (0-indexed, both arms) is assigned pool entry `gameId` directly --
+`pool[gameId]`, the identity permutation. Every one of the 58 openings is used exactly once per
+arm, and control game `i`/treatment game `i` always start from the identical FEN. **No random
+permutation, and no seed, is needed for this assignment** -- see section 4's removal of the
+previously-proposed "opening-assignment seed."
 
-**Color balance**: because every pool terminal FEN has White to move (an artifact of the even
-prefix length, not a deliberate choice), the *side to move next* is not a balancing lever here --
-the balancing concern is instead that an individual opening line drawn from a real, unequally-
-weighted book can itself be structurally favorable to one side, and repeating that line 8,000/58
-~= 138 times (both arms drawing from the same 58-entry pool with wraparound reuse) would bake any
-such asymmetry into the corpus twice, once per arm, in the same direction. **Mitigation,
-preregistered now, implemented in E-16 Phase A**: for odd-indexed pool entries (29 of the 58), the
-assigned FEN is replaced by its color-and-square-mirrored equivalent (ranks flipped, piece colors
-swapped, side-to-move flipped) before either arm's game starts -- a small, additive utility
-(new code, not yet written) applied identically and deterministically to both arms from the same
-58-entry base pool, so structural opening asymmetry is split evenly across the corpus rather than
-appearing only from one side. This mirrors, rather than discards, book-derived lines -- it does not
-touch `Performance.bin` itself or `OpeningBook.java`.
+**Color balance -- reconsidered, dropped**: the earlier draft of this document proposed mirroring
+half the pool to cancel any single-sided structural bias a given book line might carry. Per this
+task's explicit preference, that mitigation is **not adopted**: E-16's primary/decisive comparison
+(section 6) is a *paired* treatment-control delta, computed separately for each opening index (via
+the paired-by-training-seed design) -- if opening `i` happens to favor one side, **both** control
+game `i` and treatment game `i` inherit the identical bias in the identical direction (same FEN,
+same network, same search budget), so the bias cancels in the delta that actually matters. Mirroring
+would only change the *pooled*, un-paired corpus-level distribution, which is not this experiment's
+decisive metric, and it would add new, untested transform code and its own legality risk for no
+demonstrated benefit to the estimand. **If future evidence shows the pooled/aggregate reading is
+materially affected by per-opening side bias, a legality-preserving mirror could be added later as
+a separately-evaluated change**, specified precisely enough now to avoid re-litigating it: rank
+flip (rank 1<->8, 2<->7, ... -- vertical mirror only), piece-color swap (every White piece becomes
+the corresponding Black piece and vice versa), side-to-move swap, castling rights remapped by color
+only (`K`<->`k`, `Q`<->`q` -- kingside stays kingside, queenside stays queenside, since files are
+never touched), en-passant target square's rank transformed by the same rank flip (file unchanged),
+and **no file flip** (a file flip would not correspond to any real symmetry of a chess position,
+since queenside/kingside castling and en-passant files are file-dependent, not rank-dependent).
+Not implemented, not blocking Phase B.
 
-## 3. Pairing
+## 3. Pairing -- hardened: exact game count, not an independent position-count stop
 
-Control game `i` and treatment game `i` (`i` = 0..(gamesAttempted-1), both arms) start from
-`pool[i mod 58]` (mirrored per section 2's rule), computed identically for both arms from the
-identical assignment function -- no per-arm randomization of which opening a given `gameId` gets.
+**Original (superseded) design**: each arm ran independently to `maxPositions=8000`, with openings
+assigned by `gameId mod 58` (wraparound reuse) -- this does not guarantee every opening is used, or
+used equally, if the two arms' games end up different lengths (exactly the kind of asymmetry E-15's
+own control/treatment game-length mismatch demonstrated, 58 vs. 52 games for the same 8,000-position
+target).
+
+**Hardened design**: **exactly 58 complete games per arm** (`GeneratorConfig.maxGames = 58`,
+`GeneratorConfig.maxPositions = null` -- the existing, unmodified stop-condition logic already
+supports an unset `maxPositions`, `DR-E15-stage3-first-retraining-preregistration.md` section 7a's
+own quoted loop only checks it "if `config.maxPositions() != null`"). Game `i` in both arms starts
+from `pool[i]` (section 2's identity assignment) -- **every one of the 58 openings is used exactly
+once per arm**, and control/treatment are paired at the opening level by construction, not by
+chance alignment of independently-stopped runs. **The resulting Stage-3 position count is now an
+emergent property of how long these 58 real games actually run, not a controlled target** -- section
+5 gives an expected range, not a guarantee, and downstream row-budget equalization
+(`DR-E15-stage3-first-retraining-preregistration.md` section 7's existing seeded-truncation
+mechanism, unchanged) handles whatever count mismatch results between the two arms' *training-side*
+pools after `split_by_game`, exactly as it did for E-15's own 7,280-vs-7,155 mismatch.
 
 After the shared prefix, the two arms diverge exactly as E-15 specified and nothing else changes:
 
@@ -111,24 +152,32 @@ After the shared prefix, the two arms diverge exactly as E-15 specified and noth
 | Search depth | 6 | identical |
 | Max plies | 500 | identical |
 | Network / engine build | E-15's frozen artifacts (section 1 provenance there), re-pinned at E-16 generation time | identical |
-| Corpus size target | 8,000 positions/arm | identical |
+| Stopping rule | **exactly 58 complete games** (`maxGames=58`, `maxPositions=null`) | identical |
+| Corpus size | ~8,000 positions/arm **expected**, not a stopping criterion (section 5) | identical |
 
-## 4. Randomness sources -- separated, not conflated
+## 4. Randomness sources -- separated, not conflated, all pinned now
 
-Four independent seed roles, each pinned to its own named constant (no formula-derived values,
-per this project's `explicit named constants` convention, `DR-E15` section 14):
+**The previously-proposed "opening-assignment seed" is removed.** Section 3's hardened pairing
+rule (`pool[gameId]`, identity mapping, no wraparound, no mirroring) contains no randomness at
+all -- there is nothing for a seed to govern. Pinning a seed for a fully deterministic identity
+function would have been exactly the kind of meaningless placeholder this task's instruction warns
+against; it is deleted rather than kept as an unused constant.
 
-| Purpose | Role | Control | Treatment |
-|---|---|---|---|
-| **Opening-assignment seed** | Governs which of the 58 pool entries a given `gameId` gets mirrored/not (the odd/even mirror rule, section 2) -- deterministic function of `gameId`, but the *mirror decision* itself is pinned to one named seed value so a future revision could change the balancing rule without silently changing which lines are used | shared, one value | identical (same value -- both arms must see the same mirroring, or pairing breaks) |
-| **Treatment selector-generation seed** | `SeededDiversitySelector`'s own generation-run seed, exactly as `DR-E15` section 14's `Generation run seed` role (20261501 there) -- a new, distinct value for E-16, not reused from E-15, since this is a new corpus identity | n/a (control ignores its seed argument entirely, `BestMoveSelector` unchanged, `DR-E15` section 14's own finding) | one pinned value, new for E-16 |
-| **Stage-3 grouped-split seed** | `split_by_game`'s held-out split, same role as `DR-E15` section 14's `20261502` | new pinned value | same value |
-| **Training seeds** | `TrainingConfig.seed` -- governs model init + data-order shuffle at training time only | **42, 43, 44** (both arms, per this task's explicit instruction) | **42, 43, 44** (both arms, identical set) |
+**Three real seed roles remain, following `DR-E15` section 14's naming convention (`2026` + `16`
+experiment ordinal + purpose ordinal) -- pinned now, before any generation, not deferred to Phase B
+as the prior draft of this document proposed**:
+
+| Purpose | Role | Value | Control | Treatment |
+|---|---|---|---|---|
+| Generation run seed | `GeneratorConfig`'s own run seed, passed to both arms identically (`DR-E15` section 14's own "matched-seed rationale": costs nothing since `BestMoveSelector` ignores it, keeps both arms structurally comparable) | **20261601** | ignored (`BestMoveSelector` unchanged, deterministic regardless of seed) | drives `SeedDerivation.derive(gameSeed, ply)` per-ply seeding for `SeededDiversitySelector`, unchanged mechanism from `DR-E14`/E-15 |
+| Stage-3 grouped-split seed | `split_by_game(seed=..., held_out_fraction=0.10)` -- same role as `DR-E15`'s `20261502` | **20261602** | same value | same value |
+| Row-budget-equalization seed | Seeded sub-selection truncating whichever arm's Stage-3 training pool is larger after `split_by_game`, same role as `DR-E15`'s `20261503` -- needed here because section 3's fixed-game-count design still produces two independently-sized training pools once real game lengths differ | **20261603** | applied only to whichever arm's pool is larger (unknown until generation; symmetric rule, `DR-E15` section 7, unchanged) | same |
+| Training seeds | `TrainingConfig.seed` -- governs model init + data-order shuffle at training time only | **42, 43, 44** | all three, both arms | all three, both arms |
 
 **Control remains fully deterministic after the shared prefix** -- `BestMoveSelector` ignores its
 `seed` argument entirely (unchanged since E-15, `DR-E15` section 14), so control's *corpus content*
-does not vary with the opening-assignment or treatment-selector seeds at all; only the shared
-prefix (identical for both arms) and the resulting rank-0 continuation determine it.
+does not vary with the generation run seed at all; only the shared, fixed prefix (identical for
+both arms, section 2/3) and the resulting rank-0 continuation determine it.
 
 **Corpus generation happens once per arm, not once per training seed.** Each arm's Stage-3 corpus
 is generated a single time (frozen, hashed, and pinned, exactly as `DR-E15-phase-bc-corpus-
@@ -140,31 +189,58 @@ generation seed, producing a materially different Stage-3 dataset, is explicitly
 E-16; that would be a separate, later experiment with its own ID, per this project's "declared, not
 tuned post-hoc" convention).
 
-## 5. Resource budget
+## 5. Resource budget -- re-derived for the 58-game stopping rule, not reused blindly
 
-**Generation (one-time per arm, not per training seed)**: E-15's own measured generation
-wall-clock at matched search depth/multiPV/corpus size (`DR-E15-phase-bc-corpus-generation-report.md`
-section 2/3) was 3,047s (control, ~50.8 min) and 3,899s (treatment, ~65.0 min). The shared 6-ply
-prefix adds a fixed, small per-game overhead (6 extra searched plies at depth 6's own measured
-~394ms/position, `DR-E15-stage3-first-retraining-preregistration.md` section 5 -- roughly 2.4s of
-extra search per game, negligible against per-game wall-clock dominated by depth-6 search over the
-game's full length). **Estimated generation budget: ~51-65 minutes per arm, ~116 minutes total for
-both arms, one time** -- unchanged in order of magnitude from E-15, since neither corpus size,
-search depth, nor multiPV changed.
+**Per-game generation rate, from E-15's own measured timings**
+(`DR-E15-phase-bc-corpus-generation-report.md` section 2/3): control 3,047s / 58 games = **52.5
+s/game**; treatment 3,899s / 52 games = **75.0 s/game**. These two rates diverged in E-15 mostly
+*because* control's degenerate single-trajectory collapse (`DR-E15-phase-bc-corpus-generation-
+report.md` section 12) made every control game an identical, comparatively short 140-ply line --
+an artifact of the confound this document exists to remove, not a property of `BestMoveSelector`
+itself. **E-16's control will no longer collapse this way** (58 distinct real book openings, not
+one repeated line), so E-15's own 52.5 s/game control rate is not a safe estimate here -- it
+understates what a real, varied-length control game costs. **This document uses treatment's own
+75.0 s/game rate as the better-justified proxy for both arms**, since both now start from real,
+distinct positions and diverge only in selector policy after an identical prefix, with no
+structural reason to expect one arm's average game length to differ sharply from the other's the
+way E-15's degenerate control did. This is stated as an estimate with real uncertainty, not a
+measured fact for E-16 specifically -- the actual rate will only be known once Phase B generates.
+
+| | Control | Treatment |
+|---|---|---|
+| Games (hardened, section 3) | 58 | 58 |
+| Estimated per-game rate | 75.0 s/game (proxy, see above) | 75.0 s/game (E-15's own measured rate, unchanged mechanism) |
+| Estimated generation wall-clock | 58 x 75.0s ~= 4,350s ~= **72.5 min** | 58 x 75.0s ~= 4,350s ~= **72.5 min** |
+
+Both estimates sit under the 90-minute/arm cap (`DR-E15-stage3-first-retraining-preregistration.md`
+section 6) with ~17.5 minutes of headroom -- tighter than E-15's own margin (E-15's treatment arm
+used 65.0 of its 90 minutes), since 58 games at treatment's real per-game rate costs more than
+either arm's E-15 run did. **If actual generation time materially exceeds this estimate**, section
+6's resource cap requires the same response E-15's own preregistration specifies for its own
+projection (`DR-E15` section 6): re-scope explicitly, do not silently let a run continue past the
+cap. `GeneratorConfig.maxGames=58` is a hard, fail-closed ceiling regardless of timing (no game
+count above 58 is possible even if per-game cost is far off from this estimate).
+
+**Expected corpus size -- an outcome, not a target** (section 3): using treatment's own observed
+~154.7 samples/game (8,046 samples / 52 games, `DR-E15-phase-bc-corpus-generation-report.md`
+section 10) as the same proxy rate for 58 games in both arms: 58 x 154.7 ~= **~8,970 positions/arm
+expected** -- close to, but not pinned at, E-15's original 8,000/arm figure. **Corpus size is not
+enlarged to hit a round number**: this is what 58 real games are expected to produce, not a chosen
+target, consistent with this task's explicit "keep ~8k as an expectation, not the stopping
+criterion" instruction. The actual count, once generated, is whatever it is.
 
 **Training (6 runs: 2 arms x 3 seeds)**: `DR-E15-phase-d-training-report.md` section 4/5 measured
-142.7s (control) and 153.2s (treatment) per training run at this exact schedule and combined
-record count (43,155 = 36,000 base + ~7,155 equalized Stage-3). **Estimated training budget: 6 x
-~150s ~= 900s ~= 15 minutes total.**
+142.7s (control) and 153.2s (treatment) per training run at this exact schedule and a similarly
+sized combined record set (43,155 = 36,000 base + ~7,155 equalized Stage-3 -- E-16's own combined
+count will differ slightly given the ~8,970-per-arm expectation above, but training wall-clock is
+governed by `steps=20000` at a fixed `batch_size=256`, not dataset size, so this rate transfers).
+**Estimated training budget: 6 x ~150s ~= 900s ~= 15 minutes total.**
 
-**Total estimated wall-clock for E-16 execution (generation + all 6 training runs): ~131 minutes**,
-comfortably inside a single working session, no infrastructure change needed.
-
-**Corpus size stays at 8,000 positions/arm, unchanged from E-15.** Per this task's explicit
-instruction, this is not enlarged merely because E-15 was inconclusive -- no evidence gathered so
-far (E-15's own result, or `DR-M1`'s noise-floor measurement) implicates corpus size as the
-limiting factor; the design defect it identified was the control's degenerate opening distribution,
-which section 2's shared-prefix mechanism fixes directly, at the same corpus size.
+**Total estimated wall-clock for E-16 execution (generation + all 6 training runs): ~72.5 x 2 +
+15 ~= ~160 minutes (~2h40m)** -- revised upward from the prior draft's ~131-minute estimate, since
+that draft incorrectly reused E-15's own degenerate-control generation rate for the hardened
+design's non-degenerate control. Still a single working session's worth of compute, no
+infrastructure change needed.
 
 ## 6. Success/null/regression interpretation
 
@@ -220,13 +296,17 @@ of what E-16 eventually finds -- E-16 is a new experiment answering a narrower, 
   frozen schedule (`steps=20000, lr=0.01, cosine, warmup=200, batch=256, k=2.773456`), and
   `wdl_lambda=1.0` (`#208` stays closed) are all unchanged from E-15.
 - **No corpus generation yet.** This document is Phase A (design/preregistration) only. Phase B
-  (shared-prefix generator implementation: the new mirrored-pool utility and a `SelfPlayCli`
-  flag to start a game from a given FEN, both additive, mirroring `DR-E15`'s own Phase A pattern
-  for `BestMoveSelector`'s multiPV override) has not started.
+  (shared-prefix generator implementation: a `SelfPlayCli` flag to start a game from a given FEN,
+  additive, mirroring `DR-E15`'s own Phase A pattern for `BestMoveSelector`'s multiPV override) has
+  not started.
 - **E-15's classification remains untouched.** B (null/inconclusive), `DR-E15-phase-e-evaluation-
   report.md` section 6, is not revised by this document or by any future E-16 result.
 
 ## 8. Remaining blockers before Phase B can start
+
+**Reduced from the prior draft**: the color-mirror utility is no longer a blocker (section 2,
+dropped), and all three real seed values are pinned above (section 4), not deferred. One genuine
+implementation gap remains:
 
 - **`SelfPlayCli` has no flag to start a game from an explicit FEN today** (verified directly:
   no `--start-fen`/`--opening`-style flag exists in `SelfPlayCli.CliArgs`, confirmed by the same
@@ -234,17 +314,15 @@ of what E-16 eventually finds -- E-16 is a new experiment answering a narrower, 
   (mirroring `--control-multipv`'s own additive-only precedent, `DR-E15` section 2) is required
   before Phase B can generate any game from a non-default starting position. Not implemented by
   this document.
-- **The odd/even mirror utility (section 2's color-balancing mechanism) does not exist yet.** A
-  small, new, additive board-mirror function (rank/file flip + color swap + side-to-move flip on a
-  FEN) is required before the 58-entry pool can be mirrored per the balancing rule. Not implemented
-  by this document.
-- **The opening-assignment seed, treatment selector-generation seed, and Stage-3 split seed
-  (section 4) are named roles, not yet assigned numeric values** -- pinned at the start of Phase B,
-  following `DR-E15` section 14's own naming convention (year + experiment ordinal + purpose
-  ordinal), not before, since assigning them now (before Phase B's implementation is reviewed)
-  would risk the same kind of placeholder-then-forgotten gap `DR-E15` section 18 had to explicitly
-  resolve for its own seeds.
+- **`GeneratorConfig.maxPositions` being unset (`null`) as the E-16 stopping mode has not been
+  exercised end-to-end for this exact combination** (an explicit start-FEN plus a null
+  `maxPositions` plus a fixed `maxGames=58`) -- `DR-E15-stage3-first-retraining-preregistration.md`
+  section 7a's own regression test (`SelfPlayCliTest.maxPositionsStopsOnlyBetweenGamesNeverMidGame`)
+  covers `maxPositions` semantics at a small value, not the `null` case specifically. A short
+  Phase B test confirming `maxGames=58`/`maxPositions=null` produces exactly 58 complete games (no
+  early stop, no infinite generation) closes this gap; not run by this document.
 - **No other blocker identified.** The shared-opening pool itself (58 unique terminal FENs, section
-  2) is fully computed and reproducible from `Performance.bin` alone -- re-running the same
-  traversal against the same, already-committed book file will reproduce the identical pool with no
-  further dependency.
+  2) and all three real generation/split/equalization seeds (section 4) are fully pinned and
+  reproducible -- re-running the same traversal against the same, already-committed book file
+  reproduces the identical pool with no further dependency. **Phase B implementation can begin as
+  soon as the FEN-start flag above is added and tested** -- this document does not add it.
