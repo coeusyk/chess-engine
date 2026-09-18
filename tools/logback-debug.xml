@@ -1,0 +1,24 @@
+<configuration>
+    <!-- Enables Searcher's existing per-iteration [BENCH] debug line (nodes, qnodes,
+         nps, cutoffs, firstMoveCutoff%, tt_hits, ebf, nmp_cuts, lmr_apps, fut_skips,
+         delta_prune, eval_pct, acc_pct, pv_evals, cut_evals, time) without touching
+         the shipped engine-uci/src/main/resources/logback.xml (root stays INFO there;
+         this is a separate, opt-in override file for profiling/attribution runs).
+
+         Usage: java -Dlogback.configurationFile=<path-to-this-file> ... [bench flag] [depth]
+         (the bench-raw or bench flag, each followed by an optional depth argument)
+         All output still goes to stderr, same as the shipped config, so it never
+         pollutes UCI stdout. -->
+    <appender name="STDERR" class="ch.qos.logback.core.ConsoleAppender">
+        <target>System.err</target>
+        <encoder>
+            <pattern>%msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <logger name="coeusyk.game.chess.core.search.Searcher" level="DEBUG"/>
+
+    <root level="INFO">
+        <appender-ref ref="STDERR"/>
+    </root>
+</configuration>
