@@ -91,3 +91,85 @@ def split_by_game(
         bucket.extend(groups[gid])
 
     return training_records, held_out_records
+
+
+def select_held_out_game_ids(game_ids: Iterable[int], seed: int, held_out_count: int) -> frozenset:
+    """Deterministically selects exactly `held_out_count` distinct game IDs from `game_ids` via
+    one seeded shuffle -- computed **once**, independent of any arm's own row counts.
+
+    E-16 (`DR-E16-shared-opening-prefix-preregistration.md`): `split_by_game()` above chooses
+    held-out games by accumulating *rows* until a target row count is reached, which is exactly
+    right for Stage 1/2-style unpaired data but wrong for E-16's paired-by-opening-index corpora --
+    control game `i` and treatment game `i` share the same opening, but can (and do) have very
+    different lengths, so the same `seed` fed independently into `split_by_game()` per arm can
+    accumulate a *different* held-out game-ID set per arm even though the shuffle itself is
+    identical. This function separates "which game IDs are held out" (a pure function of the
+    shared game-ID universe and the seed, computed once) from "how many rows does that produce"
+    (an arm-specific, unconstrained consequence, per `split_by_fixed_game_ids()` below) --
+    the two arms then apply the identical resulting set via `split_by_fixed_game_ids()`, so their
+    train/held-out *opening* membership is guaranteed identical regardless of row-count drift.
+
+    Raises `ValueError` if `held_out_count` exceeds the number of distinct game IDs given.
+    """
+    unique_ids = sorted(set(game_ids))
+    if held_out_count > len(unique_ids):
+        raise ValueError(
+            f"cannot hold out {held_out_count} game IDs from only {len(unique_ids)} distinct IDs"
+        )
+    shuffled = list(unique_ids)
+    random.Random(seed).shuffle(shuffled)
+    return frozenset(shuffled[:held_out_count])
+
+
+def split_by_fixed_game_ids(
+    records: Iterable[PositionRecord], held_out_game_ids: Iterable[int]
+) -> Tuple[List[PositionRecord], List[PositionRecord]]:
+    """Partitions `records` into (training, held_out) using an **explicitly supplied** held-out
+    game-ID set, instead of `split_by_game()`'s own per-call, row-count-driven selection. Every
+    record sharing one `game_id` still lands entirely on one side -- never split across both --
+    and output order is preserved (first-appearance order within each bucket, same convention as
+    `split_by_game()`).
+
+    This is the counterpart `select_held_out_game_ids()`'s docstring describes: call
+    `select_held_out_game_ids()` once against the shared game-ID universe to get one held-out set,
+    then call this function once per arm with that identical set -- both arms' train/held-out
+    *opening* membership is then guaranteed identical by construction, independent of how many
+    rows each arm's own games happen to contain. Row counts are **not** forced equal here (E-16's
+    own row-budget equalization, a separate, later, training-side-only step, handles that).
+
+    Raises `ValueError` if any record has `metadata.game_id is None` (same requirement
+    `split_by_game()` enforces), or if `held_out_game_ids` contains an ID that does not appear in
+    `records` at all -- a missing/mistyped ID fails loudly here rather than silently holding out
+    nothing for it.
+    """
+    groups: dict = {}
+    order: List[int] = []
+    for record in records:
+        gid = record.metadata.game_id
+        if gid is None:
+            raise ValueError(
+                "split_by_fixed_game_ids() requires metadata.game_id on every record; found a "
+                "record with game_id=None -- self-play data must be ingested with game IDs "
+                "assigned (see selfplay_ingest.py) before it can be grouped-split"
+            )
+        if gid not in groups:
+            groups[gid] = []
+            order.append(gid)
+        groups[gid].append(record)
+
+    held_out_set = set(held_out_game_ids)
+    unmatched = held_out_set - set(order)
+    if unmatched:
+        raise ValueError(
+            f"held_out_game_ids contains ID(s) not present in records: {sorted(unmatched)} -- "
+            "every held-out ID must correspond to a real game in this corpus"
+        )
+
+    training_records: List[PositionRecord] = []
+    held_out_records: List[PositionRecord] = []
+    # Materialize in original group-appearance order, same convention as split_by_game().
+    for gid in order:
+        bucket = held_out_records if gid in held_out_set else training_records
+        bucket.extend(groups[gid])
+
+    return training_records, held_out_records

@@ -193,7 +193,7 @@ as the prior draft of this document proposed**:
 | Purpose | Role | Value | Control | Treatment |
 |---|---|---|---|---|
 | Generation run seed | `GeneratorConfig`'s own run seed, passed to both arms identically (`DR-E15` section 14's own "matched-seed rationale": costs nothing since `BestMoveSelector` ignores it, keeps both arms structurally comparable) | **20261601** | ignored (`BestMoveSelector` unchanged, deterministic regardless of seed) | drives `SeedDerivation.derive(gameSeed, ply)` per-ply seeding for `SeededDiversitySelector`, unchanged mechanism from `DR-E14`/E-15 |
-| Stage-3 grouped-split seed | `split_by_game(seed=..., held_out_fraction=0.10)` -- same role as `DR-E15`'s `20261502` | **20261602** | same value | same value |
+| Stage-3 grouped-split seed | Shared held-out game-ID selection (`select_held_out_game_ids(range(58), seed=..., held_out_count=6)`, section 4a below) -- same role as `DR-E15`'s `20261502`, mechanism hardened prior to Phase C execution | **20261602** | same value | same value |
 | Row-budget-equalization seed | Seeded sub-selection truncating whichever arm's Stage-3 training pool is larger after `split_by_game`, same role as `DR-E15`'s `20261503` -- needed here because section 3's fixed-game-count design still produces two independently-sized training pools once real game lengths differ | **20261603** | applied only to whichever arm's pool is larger (unknown until generation; symmetric rule, `DR-E15` section 7, unchanged) | same |
 | Training seeds | `TrainingConfig.seed` -- governs model init + data-order shuffle at training time only | **42, 43, 44** | all three, both arms | all three, both arms |
 
@@ -201,6 +201,60 @@ as the prior draft of this document proposed**:
 `seed` argument entirely (unchanged since E-15, `DR-E15` section 14), so control's *corpus content*
 does not vary with the generation run seed at all; only the shared, fixed prefix (identical for
 both arms, section 2/3) and the resulting rank-0 continuation determine it.
+
+### 4a. Phase C split hardening -- pre-execution pairing correction, not a response to results
+
+Found and fixed before Phase C was ever run, while reviewing how the pinned split seed `20261602`
+would actually be consumed: the existing `trainer.dataset.split.split_by_game(records, seed, held_out_fraction)`
+chooses held-out games by shuffling a *single arm's own* game-ID list and then accumulating whole
+games until that arm's *own row count* crosses `held_out_fraction` of its *own total*. That's the
+right rule for Stage 1/2 data (independent, unpaired rows), but wrong here: Phase B's own generation
+report (`DR-E16-phase-b-generation-report.md` section 6) already shows control and treatment game
+lengths diverge sharply for the *same* opening index (control min/median/max 43/128/483 plies,
+treatment 61/112/383) -- the row count at which the accumulation loop stops differs by arm even
+though the shuffle itself is seeded identically. Two independent `split_by_game(..., seed=20261602)`
+calls, one per arm, are not guaranteed to stop after selecting the same game IDs, so the two arms
+could silently end up with *different* held-out openings -- breaking the exact opening-level pairing
+section 3 exists to guarantee, at the one point downstream (the held-out evaluation set) where it
+matters most.
+
+**Correction**: two new, additive functions in `trainer/trainer/dataset/split.py`. `split_by_game()`
+itself is untouched -- every existing Stage 1/2 caller keeps its current behavior unchanged.
+
+- `select_held_out_game_ids(game_ids, seed, held_out_count)` -- shuffles the *shared* game-ID
+  universe (`range(58)`, identical for both arms since both ran the same 58 openings) exactly once
+  with `seed=20261602` and takes the first `held_out_count=6` (~10% of 58) IDs. This is a pure
+  function of the shared universe and the seed alone -- it has no notion of "rows" at all, so no
+  arm's own row count can perturb which IDs are chosen. For this experiment's exact inputs it
+  deterministically returns `{17, 20, 27, 31, 34, 51}`.
+- `split_by_fixed_game_ids(records, held_out_game_ids)` -- partitions one arm's records using that
+  *already-chosen* set, instead of computing its own selection. Called once per arm with the
+  identical set from above. Every record sharing one `game_id` still lands entirely on one side
+  (same no-leakage guarantee as `split_by_game()`), and raises `ValueError` if a supplied held-out ID
+  isn't present in that arm's own records (a missing/mistyped ID fails loudly rather than silently
+  holding out nothing for it) or if any record lacks `metadata.game_id`.
+
+**Resulting contract**: both arms hold out the identical 6 opening IDs (`{17, 20, 27, 31, 34, 51}`)
+and train on the identical 52 remaining opening IDs -- membership is now guaranteed by construction,
+not by chance alignment of two independent shuffles. Held-out/training *row counts* are explicitly
+not forced equal at this step (control and treatment will have different row counts for the same 6
+held-out games, exactly as Phase B's length data predicts) -- that asymmetry is left alone here and
+handled entirely by the existing, unchanged row-budget-equalization step (seed `20261603`,
+training-side only, section 4 table above).
+
+**This is a pre-Phase-C correction, found by inspecting the split mechanism before running it against
+the real corpora -- no ingestion, split, or equalization of the real E-16 data had occurred yet, and
+none of Phase C's pinned seeds (`20261601` generation, `20261602` split, `20261603` equalization) or
+training seeds (`42`/`43`/`44`) changed as a result.** Nothing here responds to a training or
+evaluation outcome, because no training or evaluation had happened yet at either arm.
+
+Tests: `trainer/tests/dataset/test_split_by_game.py` -- determinism of `select_held_out_game_ids`
+for a fixed seed, rejection when `held_out_count` exceeds the universe, identical game-ID partition
+applied to two synthetic corpora with the same 58 game IDs but wildly different per-game row counts
+(200 rows/game vs. `(gid % 7) + 1` rows/game, mirroring Phase B's real control/treatment length
+asymmetry) confirming both arms land on `{17, 20, 27, 31, 34, 51}` with differing row counts and no
+leakage, row-order preservation, and the two "fails loudly" cases (unmatched held-out ID, missing
+`game_id`). 19/19 tests pass (12 pre-existing `split_by_game` tests unchanged plus 7 new).
 
 **Corpus generation happens once per arm, not once per training seed.** Each arm's Stage-3 corpus
 is generated a single time (frozen, hashed, and pinned, exactly as `DR-E15-phase-bc-corpus-
@@ -394,9 +448,12 @@ generation is exactly one `SelfPlayCli` invocation:
 - Both invocations pass `--max-games 58`, no `--max-positions` (section 3's hardened stop rule).
 - Game `i` in both invocations starts from the identical `pool[i]` line (section 2/8's schedule
   mechanism) -- pairing is enforced by construction, not by post-hoc alignment.
-- Downstream: `split_by_game(seed=20261602, ...)` for each arm's own held-out split, then the
-  seeded row-budget equalization (`seed=20261603`) on whichever arm's training pool is larger,
-  exactly as section 4 pins -- unchanged by this pass.
+- Downstream (Phase C, hardened -- section 4a): `select_held_out_game_ids(range(58), seed=20261602,
+  held_out_count=6)` computed once against the shared game-ID universe, then
+  `split_by_fixed_game_ids(records, held_out_game_ids)` applied to each arm with that identical set
+  (`{17, 20, 27, 31, 34, 51}`), then the seeded row-budget equalization (`seed=20261603`) on
+  whichever arm's training pool is larger, exactly as section 4 pins -- seed values unchanged by
+  either pass, only the split mechanism itself was hardened.
 
 **No corpus has been generated by this document.** This section states the contract Phase B
 executes under, once explicitly authorized -- it does not run it.

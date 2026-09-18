@@ -6,7 +6,7 @@ determinism, approximation behavior, and the documented edge cases.
 import pytest
 
 from trainer.contracts import PositionLabel, PositionMetadata, PositionRecord
-from trainer.dataset.split import split_by_game
+from trainer.dataset.split import select_held_out_game_ids, split_by_fixed_game_ids, split_by_game
 
 FEN = "4k3/8/8/8/8/8/4Q3/4K3 w - - 0 1"
 
@@ -111,3 +111,81 @@ def test_missing_game_id_fails_for_grouped_mode():
 
 def test_empty_input_returns_empty_split():
     assert split_by_game([], seed=1) == ([], [])
+
+
+# ---- E-16 (#224): select_held_out_game_ids() / split_by_fixed_game_ids() ----
+# DR-E16-shared-opening-prefix-preregistration.md's hardened Phase C design -- both arms must
+# hold out the identical opening/game-ID set regardless of each arm's own row counts, which
+# split_by_game()'s per-call, row-count-driven selection cannot guarantee for paired-by-opening
+# corpora of very different game lengths.
+
+
+def test_select_held_out_game_ids_is_deterministic_for_a_fixed_seed():
+    a = select_held_out_game_ids(range(58), seed=20261602, held_out_count=6)
+    b = select_held_out_game_ids(range(58), seed=20261602, held_out_count=6)
+    assert a == b
+    assert len(a) == 6
+
+
+def test_select_held_out_game_ids_rejects_count_larger_than_universe():
+    with pytest.raises(ValueError):
+        select_held_out_game_ids(range(5), seed=1, held_out_count=6)
+
+
+def test_same_held_out_ids_applied_to_two_corpora_with_very_different_row_counts_per_game():
+    # Same 58 game IDs in both "arms," but wildly different per-game row counts -- exactly the
+    # control (long, uniform games) vs. treatment (short, varied games) asymmetry E-16 hit in
+    # practice (DR-E16-phase-b-generation-report.md section 6: control length min/median/max
+    # 43/128/483, treatment 61/112/383).
+    control_sizes = {gid: 200 for gid in range(58)}  # uniform, long games
+    treatment_sizes = {gid: (gid % 7) + 1 for gid in range(58)}  # short, wildly varied
+    control_records = _many_games(control_sizes)
+    treatment_records = _many_games(treatment_sizes)
+
+    held_out_ids = select_held_out_game_ids(range(58), seed=20261602, held_out_count=6)
+    assert held_out_ids == frozenset({17, 20, 27, 31, 34, 51})
+
+    control_train, control_held_out = split_by_fixed_game_ids(control_records, held_out_ids)
+    treatment_train, treatment_held_out = split_by_fixed_game_ids(treatment_records, held_out_ids)
+
+    # Exact same game-ID partition across both arms -- not merely the same *count*.
+    assert _game_ids(control_held_out) == held_out_ids
+    assert _game_ids(treatment_held_out) == held_out_ids
+    assert _game_ids(control_train) == set(range(58)) - held_out_ids
+    assert _game_ids(treatment_train) == set(range(58)) - held_out_ids
+
+    # Row counts are NOT forced equal -- that is a separate, later, training-side-only step.
+    assert len(control_held_out) != len(treatment_held_out)
+
+    # No leakage, either arm.
+    assert _game_ids(control_train) & _game_ids(control_held_out) == set()
+    assert _game_ids(treatment_train) & _game_ids(treatment_held_out) == set()
+
+
+def test_split_by_fixed_game_ids_preserves_original_row_order():
+    records = _records(0, 3) + _records(1, 3) + _records(2, 3)
+    train, held_out = split_by_fixed_game_ids(records, held_out_game_ids={1})
+    # Game 0 then game 2, in original first-appearance order -- game 1 removed, not reordered.
+    assert [r.metadata.game_id for r in train] == [0, 0, 0, 2, 2, 2]
+    assert [r.metadata.game_id for r in held_out] == [1, 1, 1]
+
+
+def test_split_by_fixed_game_ids_rejects_held_out_id_not_present_in_records():
+    records = _many_games({0: 5, 1: 5, 2: 5})
+    with pytest.raises(ValueError):
+        split_by_fixed_game_ids(records, held_out_game_ids={0, 99})
+
+
+def test_split_by_fixed_game_ids_requires_game_id_on_every_record():
+    records = [
+        PositionRecord(fen=FEN, label=PositionLabel(eval_cp=1), metadata=PositionMetadata(game_id=None))
+    ]
+    with pytest.raises(ValueError):
+        split_by_fixed_game_ids(records, held_out_game_ids=set())
+
+
+def test_split_by_fixed_game_ids_empty_held_out_set_holds_out_nothing():
+    records = _many_games({0: 5, 1: 5})
+    train, held_out = split_by_fixed_game_ids(records, held_out_game_ids=set())
+    assert held_out == []
+    assert len(train) == 10
