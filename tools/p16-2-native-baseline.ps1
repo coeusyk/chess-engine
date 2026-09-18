@@ -55,7 +55,6 @@ $ErrorActionPreference = "Stop"
 $repoRoot = (Get-Location).Path
 $timestamp = (Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmmss")
 $outDir = Join-Path $repoRoot "tools\results\p16-2\$timestamp"
-New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 
 function Write-Section($title) {
     Write-Host ""
@@ -64,6 +63,10 @@ function Write-Section($title) {
 
 # ---------------------------------------------------------------------------
 # 0. Evidence this is a real native PowerShell process, not WSL interop.
+#    Console-only at this point -- nothing is written to disk yet, since
+#    tools/results/ is not fully gitignored (only *.pgn/*.csv/*.txt at its
+#    top level) and this script's own output must not be what makes the
+#    step-1 clean-tree check below fail.
 # ---------------------------------------------------------------------------
 Write-Section "Process/environment evidence (native vs. WSL interop)"
 $evidence = [ordered]@{
@@ -76,7 +79,6 @@ $evidence = [ordered]@{
     "OSVersion (Environment class)"  = [System.Environment]::OSVersion.VersionString
 }
 $evidence.GetEnumerator() | ForEach-Object { Write-Host ("{0,-32}: {1}" -f $_.Key, $_.Value) }
-$evidence | ConvertTo-Json | Out-File -FilePath (Join-Path $outDir "00-process-evidence.json") -Encoding utf8
 
 if ($repoRoot -like "\\wsl*" -or $repoRoot -like "*\wsl.localhost\*") {
     Write-Host "REFUSING: current directory is a WSL-mounted path ($repoRoot)." -ForegroundColor Red
@@ -90,7 +92,7 @@ if ((Get-Process -Id $PID).Path -notlike "*\WindowsPowerShell\*" -and (Get-Proce
 }
 
 # ---------------------------------------------------------------------------
-# 1. Verify branch / HEAD / clean tree.
+# 1. Verify branch / HEAD / clean tree. Still console-only -- no $outDir yet.
 # ---------------------------------------------------------------------------
 Write-Section "Git state"
 $commitSha = (git rev-parse HEAD).Trim()
@@ -105,7 +107,6 @@ if ($status) {
     exit 1
 }
 Write-Host "Working tree clean."
-"branch=$branch`ncommit=$commitSha" | Out-File -FilePath (Join-Path $outDir "01-git-state.txt") -Encoding utf8
 
 # ---------------------------------------------------------------------------
 # 2. Verify the P16-1 XOR TT fix is present (do not proceed on a tree that
@@ -120,6 +121,14 @@ if ($ttContent -notmatch "derivedKey\s*=\s*check\s*\^\s*data") {
     exit 1
 }
 Write-Host "P16-1 XOR fix confirmed present in $ttFile."
+
+# ---------------------------------------------------------------------------
+# All pre-flight checks passed on a clean tree -- only now create the output
+# directory and persist what steps 0/1 found.
+# ---------------------------------------------------------------------------
+New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+$evidence | ConvertTo-Json | Out-File -FilePath (Join-Path $outDir "00-process-evidence.json") -Encoding utf8
+"branch=$branch`ncommit=$commitSha" | Out-File -FilePath (Join-Path $outDir "01-git-state.txt") -Encoding utf8
 
 # ---------------------------------------------------------------------------
 # 3. Build the production UCI JAR.
