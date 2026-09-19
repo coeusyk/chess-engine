@@ -28,23 +28,26 @@
 
     <dependencyManagement>
         <dependencies>
-            <!-- Explicit Tomcat override: 10.1.54 → 10.1.55 to fix 7 CVEs (3 critical: request smuggling,
-                 digest-auth bypass, HTTP/2 header validation). Must appear before spring-boot-dependencies
-                 BOM import so it takes precedence. -->
+            <!-- Explicit Tomcat override: 10.1.54 to 10.1.59, fixing 10 CVEs (6 critical: request smuggling,
+                 digest-auth bypass, HTTP/2 header validation, FORM-auth authorization, security-constraint
+                 bypass, digest-auth unknown-user authentication). Dependabot's advisory data cites the fix
+                 version as 10.1.58, but that release was never published to Maven Central; 10.1.59 is the
+                 next available 10.1.x release and carries the same fix forward. Must appear before
+                 spring-boot-dependencies BOM import so it takes precedence. -->
             <dependency>
                 <groupId>org.apache.tomcat.embed</groupId>
                 <artifactId>tomcat-embed-core</artifactId>
-                <version>10.1.55</version>
+                <version>10.1.59</version>
             </dependency>
             <dependency>
                 <groupId>org.apache.tomcat.embed</groupId>
                 <artifactId>tomcat-embed-el</artifactId>
-                <version>10.1.55</version>
+                <version>10.1.59</version>
             </dependency>
             <dependency>
                 <groupId>org.apache.tomcat.embed</groupId>
                 <artifactId>tomcat-embed-websocket</artifactId>
-                <version>10.1.55</version>
+                <version>10.1.59</version>
             </dependency>
             <dependency>
                 <groupId>org.springframework.boot</groupId>
