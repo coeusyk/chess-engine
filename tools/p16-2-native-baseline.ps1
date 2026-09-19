@@ -192,15 +192,13 @@ Write-Host "IMPORTANT: verify java_version_raw above is the JDK 21 toolchain thi
 #      uninstrumented (--bench-raw) for a production-like number.
 # ---------------------------------------------------------------------------
 Write-Section "Canonical bench: warm-up (discarded)"
-& java --add-modules jdk.incubator.vector -jar $jarPath --bench-raw $Depth 2>&1 |
-    Out-File -FilePath (Join-Path $outDir "04-warmup-discarded.txt") -Encoding utf8
+& java --add-modules jdk.incubator.vector -jar $jarPath --bench-raw $Depth *> (Join-Path $outDir "04-warmup-discarded.txt")
 Write-Host "Warm-up complete (output saved, not counted)."
 
 Write-Section "Canonical bench: $Repetitions measured repetitions"
 for ($i = 1; $i -le $Repetitions; $i++) {
     Write-Host "  Repetition $i / $Repetitions ..."
-    & java --add-modules jdk.incubator.vector -jar $jarPath --bench-raw $Depth 2>&1 |
-        Out-File -FilePath (Join-Path $outDir ("05-canonical-run-{0:D2}.txt" -f $i)) -Encoding utf8
+    & java --add-modules jdk.incubator.vector -jar $jarPath --bench-raw $Depth *> (Join-Path $outDir ("05-canonical-run-{0:D2}.txt" -f $i))
 }
 Write-Host "All $Repetitions canonical repetitions complete."
 
@@ -210,8 +208,7 @@ Write-Host "All $Repetitions canonical repetitions complete."
 # ---------------------------------------------------------------------------
 Write-Section "Per-position search-instrumentation detail"
 & java "-Dlogback.configurationFile=tools\logback-debug.xml" --add-modules jdk.incubator.vector `
-    -jar $jarPath --bench-raw $Depth 2>&1 |
-    Out-File -FilePath (Join-Path $outDir "06-per-position-debug.txt") -Encoding utf8
+    -jar $jarPath --bench-raw $Depth *> (Join-Path $outDir "06-per-position-debug.txt")
 Write-Host "Per-position debug detail saved (eval_pct/acc_pct will read 0.0 -- instrumentation is off in this run by design; see 07 for those)."
 
 # ---------------------------------------------------------------------------
@@ -222,12 +219,10 @@ Write-Section "Attribution pass (JFR + instrumented counters, NON-CANONICAL)"
 $jfrFile = Join-Path $outDir "07-attribution.jfr"
 & java "-Dlogback.configurationFile=tools\logback-debug.xml" --add-modules jdk.incubator.vector `
     "-XX:StartFlightRecording=filename=$jfrFile,settings=profile" `
-    -jar $jarPath --bench $Depth 2>&1 |
-    Out-File -FilePath (Join-Path $outDir "07-attribution-console.txt") -Encoding utf8
+    -jar $jarPath --bench $Depth *> (Join-Path $outDir "07-attribution-console.txt")
 Write-Host "JFR recording saved to $jfrFile (open in JDK Mission Control, or run 'jfr print --events jdk.ExecutionSample $jfrFile' for a text summary)."
 try {
-    & jfr print --events jdk.ExecutionSample $jfrFile 2>&1 |
-        Out-File -FilePath (Join-Path $outDir "07-attribution-jfr-print.txt") -Encoding utf8
+    & jfr print --events jdk.ExecutionSample $jfrFile *> (Join-Path $outDir "07-attribution-jfr-print.txt")
     Write-Host "jfr print output saved to 07-attribution-jfr-print.txt."
 } catch {
     Write-Host "'jfr' CLI not found on PATH -- skipped text summary, .jfr file is still saved for JMC analysis." -ForegroundColor Yellow
