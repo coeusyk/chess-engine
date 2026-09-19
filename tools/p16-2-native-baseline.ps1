@@ -233,16 +233,25 @@ try {
 #     bounded clock. Reliability check only, not Elo evidence.
 # ---------------------------------------------------------------------------
 Write-Section "Clock-bound UCI sanity check"
-$uciScript = @"
-uci
-isready
-ucinewgame
-position startpos
-go movetime 2000
-quit
-"@
+# quit must not reach the engine until the movetime budget below has elapsed.
+# UciApplication.run()'s "go" starts the search on a background thread and
+# returns immediately (correct UCI behavior; a real GUI waits for bestmove
+# before sending quit), but "quit" just breaks the read loop and exits with no
+# such wait. Piping a single static string sends every line to stdin at once,
+# so quit arrived within milliseconds of go and killed the JVM before the
+# 2000ms search could finish and print bestmove. Streaming from a generator
+# function with a real Start-Sleep between go and quit fixes that.
+function Send-UciSanityCommands {
+    "uci"
+    "isready"
+    "ucinewgame"
+    "position startpos"
+    "go movetime 2000"
+    Start-Sleep -Milliseconds 2500
+    "quit"
+}
 $sanityOut = Join-Path $outDir "08-clock-bound-sanity.txt"
-$uciScript | & java --add-modules jdk.incubator.vector -jar $jarPath 2>&1 |
+Send-UciSanityCommands | & java --add-modules jdk.incubator.vector -jar $jarPath 2>&1 |
     Tee-Object -FilePath $sanityOut
 if (Select-String -Path $sanityOut -Pattern "^bestmove " -Quiet) {
     Write-Host "PASS: a legal 'bestmove' line was emitted." -ForegroundColor Green
