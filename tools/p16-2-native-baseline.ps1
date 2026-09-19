@@ -143,7 +143,7 @@ if (-not $SkipBuild) {
 } else {
     Write-Host "Skipping build (-SkipBuild passed)."
 }
-$jar = Get-ChildItem -Path "engine-uci\target" -Filter "engine-uci-*-SNAPSHOT.jar" | Select-Object -First 1
+$jar = Get-ChildItem -Path "engine-uci\target" -Filter "engine-uci-*-SNAPSHOT.jar" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if (-not $jar) {
     Write-Host "Could not find engine-uci-*-SNAPSHOT.jar under engine-uci\target -- did the build succeed?" -ForegroundColor Red
     exit 1
