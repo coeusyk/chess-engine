@@ -247,10 +247,24 @@ Windows):
 
 - **Correctness regression:** reject. Any test suite in gate 3 failing, or the PV-legality
   invariant catching a corrupted PV line, ends the experiment without proceeding further.
-- **Pathological re-search rate, or no meaningful tree reduction:** reject before SPRT. If the new
-  full-window-re-search counter fires on most zero-window probes (defeating the purpose of the
-  narrower window), or if aggregate node count on the canonical suite does not measurably drop,
-  reject before spending SPRT time -- the mechanism gate exists precisely to catch this.
+- **Pathological re-search rate, or an unfavorable node-count outcome:** reject before SPRT. If the
+  new full-window-re-search counter fires on most zero-window probes (defeating the purpose of the
+  narrower window), reject regardless of the node-count result. Otherwise, since the mechanism gate
+  measures aggregate node count on the canonical suite exactly (P16-2's 9-execution determinism
+  means this comparison carries no measurement noise to argue away), the three possible outcomes
+  are handled as follows:
+  - Node count increases: reject. A window-narrowing change that searches more nodes at the same
+    depth has failed on its own terms.
+  - Node count is unchanged: reject. No mechanism effect occurred; there is nothing for a later
+    stage to confirm.
+  - Node count shows a small but real decrease: do not reject on magnitude alone, and do not invent
+    a post-hoc percentage threshold to decide whether the decrease is "big enough." Proceed to the
+    throughput gate (section 7, stage 2) and evaluate the change's practical wall-time effect using
+    the frozen native 7-run `--bench-raw` protocol -- a small, real node-count decrease is only
+    worth carrying to a correctness/strength gate if it produces a wall-time effect distinguishable
+    from this baseline's own ~2% run-to-run spread (section 3 of the P16-2 report); if it doesn't,
+    that in itself is a legitimate reason to stop before spending SPRT time, decided on the
+    measured wall-time result, not on an arbitrary node-count percentage.
 - **Clear throughput collapse unexplained by tree reduction:** investigate, then reject if
   unexplained. If 7-run median NPS drops by materially more than this baseline's own ~2% run-to-run
   spread and the node-count delta does not account for it (e.g. per-node cost itself got slower),
