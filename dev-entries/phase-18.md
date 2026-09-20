@@ -237,3 +237,86 @@ window sibling searches and their TT/PV side effects; both are winning KQK
 continuations. The E1 deterministic fixture was updated with that explanation.
 
 No rollback or transactional search state was added, and no P18-5 work began.
+
+---
+
+### [2026-09-20] Phase 18 — P18-5 canonical single-thread re-baseline (Issue #242)
+
+**Closure lineage:**
+
+- PR #241 merged with final develop SHA
+  `6afc523a2221ac3cd4166ea1cbe701aaeba0552d`.
+- P18-1 (`8aebdcde`), P18-2 (`36de327f`), P18-3 (`b36b6464`), and P18-4
+  (`ea9522cd`) are all ancestors of that SHA.
+- `phase/17-pvs-experiment` remains outside develop.
+
+**Environment:**
+
+- WSL2 Ubuntu 24.04.4 on AMD Ryzen 7 7700X, 8 cores / 16 logical CPUs,
+  x86_64; Ubuntu OpenJDK 21.0.12, 64-bit Server VM.
+- Threads=1, Hash=16 MB, Classical evaluator, depth 13, default search options,
+  `--add-modules jdk.incubator.vector`.
+- Corpus: `BenchRunner.BENCH_FENS`, 31 positions. BenchRunner SHA-256
+  `882f5edc5159dba94bb6faefbb456f1a12e77f2798753a6a82d58755c9b1361f`.
+- Jar SHA-256:
+  `55341e8d0b4d79c4d27a995d98447bc25ecdaaa2185c9dc8deabd9ff389f6a45`.
+- The historical Phase 16 timing reference was native Windows/Zulu Java. This
+  environment is WSL2/Ubuntu, so timing/NPS is descriptive rather than a direct
+  comparison; node counts remain the semantic reference.
+
+**Qualification checks:**
+
+- P18-1 through P18-4 focused tests: 14 passed, 0 failures.
+- `mvn -pl engine-core test`: 404 passed, 0 failures, 5 skipped.
+- Combined engine-core/engine-uci/engine-tuner reactor: successful.
+- Search regression profile: 3 passed, WAC 20/20, stability 0/20.
+
+**Five-position reference:**
+
+| Position | Move/score | Depth | Nodes | Qnodes | TT hits |
+|---|---|---:|---:|---:|---:|
+| Start | e2e4 / 25 | 8 | 14926 | 39927 | 4908 |
+| K+P vs K | e1d2 / 122 | 8 | 1226 | 1816 | 1024 |
+| Tactical middlegame | b4b2 / −63 | 8 | 34694 | 88266 | 14691 |
+| Rook/pawn | b4f4 / 14 | 8 | 6456 | 14776 | 1938 |
+| Queen/king | d7d2 / 1565 | 8 | 8902 | 16736 | 3982 |
+
+Two executions were identical, including PVs.
+
+**31-position canonical benchmark:**
+
+The Phase 16 protocol was retained: one discarded warm-up plus seven measured
+`--bench-raw` runs at depth 13. Every run searched exactly 24,780,049 nodes.
+
+| Run | Elapsed (ms) | NPS |
+|---:|---:|---:|
+| 1 | 72164 | 343385 |
+| 2 | 72312 | 342682 |
+| 3 | 73881 | 335404 |
+| 4 | 73471 | 337276 |
+| 5 | 74619 | 332087 |
+| 6 | 75972 | 326173 |
+| 7 | 72734 | 340694 |
+
+Median: 73,471 ms / 337,276 NPS. Mean: 73,593 ms / 336,814 NPS. Timing CV:
+1.72%; NPS CV: 1.70%. Historical Phase 16 values (73,089,246 nodes,
+334,861 median NPS, 218,267 ms median) are retained for context only. The
+repaired production baseline must not be judged by equality to a buggy
+baseline, and the native-Windows versus WSL2 timing difference prevents a
+direct throughput claim.
+
+**JFR:**
+
+The existing attribution pass was repeated once. Final WSL2 attribution was
+24,780,049 nodes, 75,829 ms, 326,788 NPS, with 19.6% evaluator timing. The
+largest JFR method samples were `Board.makeMove` 23.11%, move ordering 11.79%,
+`Board.unmakeMove` 9.95%, classical evaluation 6.33%, legal filtering 5.19%,
+and evaluator mobility/attack work 5.12%. No optimization followed.
+
+**Phase 18 decision:**
+
+All completion gates pass. Phase 18 is closed without games, SPRT, tuning, or
+strength testing. The valid historical comparison graph remains old production
+→ rejected Phase 17 candidate and old production → contract-repaired
+production; no direct causal Phase 17-versus-Phase 18 PVS delta is claimed.
+Phase 19 remains unchanged and deferred.
