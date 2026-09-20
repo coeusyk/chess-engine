@@ -46,6 +46,7 @@ tools/selfplay*.pgn
 tools/results/*.pgn
 tools/results/*.csv
 tools/results/*.txt
+tools/results/p16-2/
 
 ### Texel corpus (generated artifact — never commit) ###
 data/texel_corpus.csv

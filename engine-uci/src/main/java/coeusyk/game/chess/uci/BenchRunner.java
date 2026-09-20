@@ -150,6 +150,26 @@ public class BenchRunner {
      *                          "NNUE (&lt;network-uuid&gt;)").
      */
     public void run(int depth, Supplier<EvaluatorStrategy> evaluatorFactory, String evaluatorLabel) {
+        run(depth, evaluatorFactory, evaluatorLabel, true);
+    }
+
+    /**
+     * Same as {@link #run(int, Supplier, String)}, with explicit control over
+     * whether the per-node instrumentation ({@code Searcher.setInstrumentationEnabled})
+     * is on. Instrumentation adds a {@code System.nanoTime()} pair around every
+     * {@code evaluate()} call; for a Classical-evaluator run this is the only
+     * behavioral difference the flag makes (search decisions and node counts are
+     * identical either way — see {@code BenchRunnerTest}). Phase 16 P16-2 needs an
+     * uninstrumented production-like NPS number distinct from the always-on
+     * attribution numbers the existing two-arg overload reports; this parameter is
+     * what makes that possible without changing the existing overloads' behavior.
+     *
+     * @param instrumentationEnabled whether to enable per-node eval-timing
+     *                               instrumentation; {@code false} yields a
+     *                               production-like measurement.
+     */
+    public void run(int depth, Supplier<EvaluatorStrategy> evaluatorFactory, String evaluatorLabel,
+                     boolean instrumentationEnabled) {
         long totalNodes = 0L;
         long totalEvalNanos = 0L;
         long totalAccumulatorNanos = 0L;
@@ -167,8 +187,9 @@ public class BenchRunner {
         }
 
         System.out.printf(Locale.US,
-            "Bench   : depth %d | hash %d MB | %d positions | evaluator %s%n",
-            depth, BENCH_HASH_MB, BENCH_FENS.length, evaluatorLabel);
+            "Bench   : depth %d | hash %d MB | %d positions | evaluator %s | instrumentation %s%n",
+            depth, BENCH_HASH_MB, BENCH_FENS.length, evaluatorLabel,
+            instrumentationEnabled ? "on" : "off");
 
         for (int i = 0; i < BENCH_FENS.length; i++) {
             // Fresh Searcher → killers, history, correction-history all zeroed.
@@ -179,7 +200,7 @@ public class BenchRunner {
             if (evaluatorFactory != null) {
                 searcher.setEvaluatorStrategy(evaluatorFactory.get());
             }
-            searcher.setInstrumentationEnabled(true);
+            searcher.setInstrumentationEnabled(instrumentationEnabled);
 
             Board board = new Board(BENCH_FENS[i]);
             board.setSearchMode(true);

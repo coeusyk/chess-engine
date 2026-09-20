@@ -66,7 +66,22 @@ Out of scope: scope boundaries
 Closes #N Phase: N — name
 ```
 
-## 9. Public-Facing Writing
+## 9. Dev Entries (Decision Log)
+
+`dev-entries/` holds the development log, split one file per phase (`dev-entries/phase-N.md`),
+following `dev-entries/README.md`. This is where phase decisions, rationale, and measurements are
+recorded — separate from `docs/engineering/investigations/` (Section 7, standalone case studies for
+reusable methodology) and separate from GitHub issues (which track task state, not decision
+rationale).
+
+Add an entry to the active phase's file for every non-trivial decision made during that phase:
+what was built, why a particular approach was chosen over the alternatives considered, what broke
+or got fixed, and the measurements that back the decision. Follow the existing per-entry format
+(date-stamped heading, `Built:` / `Decisions Made:` / `Broke / Fixed:` / `Measurements:`) — see any
+existing `phase-N.md` file for the pattern. Create the phase's file (and add it to the list in
+`dev-entries/README.md`) the first time that phase does work, if it does not already exist.
+
+## 10. Public-Facing Writing
 
 Before writing or editing anything a person will actually read outside the terminal, docs under
 `docs/`, GitHub issue bodies and comments, PR bodies and comments, run the `human` skill (`/human`)
@@ -78,3 +93,11 @@ Never use a double hyphen (`--`) as a dash. When a sentence wants a dash, restru
 with a period, a comma, a parenthetical, or two sentences, so the double hyphen is never typed as
 punctuation in the first place. A double hyphen used as a literal flag token (`--verbose`) is not
 affected by this rule.
+
+Never cap or truncate the length of a GitHub issue body/comment, PR body/comment, or commit message
+body for its own sake. Write the complete thing: every task, every "do not," every open question,
+every decision and its rationale, in full. This mirrors the global "never cap or truncate length"
+rule but is repeated here because it applies specifically and without exception to this project's
+issue tracker and commit history, which double as the project's record of what was decided and why
+— cutting them short for brevity destroys that record. This does not license padding; state
+everything that needs stating, and nothing that doesn't.

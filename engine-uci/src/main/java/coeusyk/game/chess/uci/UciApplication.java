@@ -145,6 +145,23 @@ public class UciApplication {
             }
         }
         for (int i = 0; i < args.length; i++) {
+            // --bench-raw: same 31-position suite/protocol as --bench, with the
+            // per-node eval-timing instrumentation disabled (Phase 16 P16-2: a
+            // production-like NPS number, distinct from --bench's always-on
+            // attribution numbers). --bench itself is unchanged for compatibility
+            // with existing scripts/docs that already report its instrumented number.
+            if ("--bench-raw".equals(args[i])) {
+                int depth = DEFAULT_BENCH_DEPTH;
+                if (i + 1 < args.length) {
+                    try {
+                        depth = Integer.parseInt(args[i + 1]);
+                        depth = Math.max(1, Math.min(MAX_SEARCH_DEPTH, depth));
+                    } catch (NumberFormatException ignored) {
+                    }
+                }
+                app.runBench(depth, false);
+                return;
+            }
             if ("--bench".equals(args[i])) {
                 int depth = DEFAULT_BENCH_DEPTH;
                 if (i + 1 < args.length) {
@@ -154,7 +171,7 @@ public class UciApplication {
                     } catch (NumberFormatException ignored) {
                     }
                 }
-                app.runBench(depth);
+                app.runBench(depth, true);
                 return;
             }
         }
@@ -224,7 +241,7 @@ public class UciApplication {
                     } catch (NumberFormatException ignored) {
                     }
                 }
-                runBench(benchDepth);
+                runBench(benchDepth, true);
             } else if ("stop".equals(line)) {
                 stopRequested.set(true);
                 if (!searchRunning) {
@@ -863,18 +880,19 @@ public class UciApplication {
         }
     }
 
-    private void runBench(int depth) {
+    private void runBench(int depth, boolean instrumentationEnabled) {
         if (!"NNUE".equals(evalType)) {
-            new BenchRunner().run(depth);
+            new BenchRunner().run(depth, null, "Classical", instrumentationEnabled);
             return;
         }
         NnueNetwork network = resolveNnueNetworkForSearch();
         if (network == null) {
             // resolveNnueNetworkForSearch() already printed its own fallback info string.
-            new BenchRunner().run(depth);
+            new BenchRunner().run(depth, null, "Classical", instrumentationEnabled);
             return;
         }
-        new BenchRunner().run(depth, () -> new NnueEvaluator(network), "NNUE (" + network.networkUuid() + ")");
+        new BenchRunner().run(depth, () -> new NnueEvaluator(network),
+                "NNUE (" + network.networkUuid() + ")", instrumentationEnabled);
     }
 
     private void printInfoLine(IterationInfo info) {
