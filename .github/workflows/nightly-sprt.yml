@@ -10,7 +10,7 @@ jobs:
     runs-on: windows-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      CUTECHESS_VERSION: 'v1.4.0'
+      CUTECHESS_VERSION: 'v1.5.1'
 
     steps:
       - name: Checkout develop
@@ -73,7 +73,7 @@ jobs:
         shell: pwsh
         run: |
           # Resolve version from env
-          $version = $env:CUTECHESS_VERSION          # e.g. v1.4.0
+          $version = $env:CUTECHESS_VERSION          # e.g. v1.5.1
           $versionNum = $version.TrimStart('v')      # e.g. 1.4.0
 
           $installDir = Join-Path $env:RUNNER_TEMP 'cutechess'

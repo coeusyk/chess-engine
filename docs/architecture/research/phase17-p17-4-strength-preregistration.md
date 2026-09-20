@@ -9,21 +9,43 @@ freeze; running `tools/p17-4-sprt.ps1` against it is a separate, later action.
 
 ## 1. Candidate
 
-- Source: `phase/17-pvs-experiment`, commit `e6afbb1` (docs-only on top of the isPvNode-
-  propagation repair commit `f9b152c`; the search source at `e6afbb1` is byte-identical to
-  `f9b152c`, verified with `git diff f9b152c..e6afbb1 -- engine-core/.../search/`, empty).
+- Source identity is frozen to the isPvNode-propagation repair commit
+  `f9b152ca4f45e8e8aa5a48092b03416aba79b230`, not to `phase/17-pvs-experiment`'s moving HEAD.
+  HEAD is expected to sit above this commit on legitimate docs/tooling-only commits (`e6afbb1`,
+  `f1b40a2`, `8797512` as of this writing, and possibly more before the run); those commits
+  must remain production-source-identical to `f9b152c`, and `tools/p17-4-sprt.ps1` verifies
+  that at run time rather than trusting the commit hash alone (a docs-only commit could
+  otherwise sit on top of the repair without actually preserving it, or a local checkout could
+  simply be on the wrong ref).
+- **Verification is a source-tree diff, not a hash check or a string grep.** The script runs
+  `git diff --stat f9b152c -- <production source paths>` against the current checkout and
+  fails closed on any non-empty result. The path set is derived from the actual build, not
+  assumed:
+  - `engine-core/src/main` (no `src/main/resources` exists for this module at all).
+  - `engine-uci/src/main` (includes `src/main/resources/books/Performance.bin`, the engine's
+    built-in Polyglot opening book, loaded by `UciApplication`'s `BookFile` UCI option but
+    disabled by default via `OwnBook=false`, and `src/main/resources/logback.xml`, logging
+    configuration only).
+  - `engine-uci` is built as a shaded/fat JAR (`maven-shade-plugin`) that pulls in
+    `engine-core`'s compiled classes directly, so both modules' `src/main` trees are the
+    complete set of paths that can affect the packaged UCI engine's behavior; no other module
+    contributes to this JAR.
+  - The prior, weaker check (grepping `Searcher.java` for the repaired `childIsPvNode`
+    expression) is retained as a secondary diagnostic only, run after the source-tree check
+    already passes; it is no longer the primary or sole identity check, since it could not have
+    caught drift anywhere outside that one file.
 - This is the same candidate that passed Gate 1 (mechanism, main nodes 73,089,246 ->
   40,878,283), Gate 2 (native throughput, median elapsed 218,267 ms -> 120,860 ms), and Gate 3
   (correctness: full relevant Maven suite green, PV-node-propagation defect repaired, PV
   legality green). See `dev-entries/phase-17.md` for the full evidence trail.
-- `tools/p17-4-sprt.ps1` verifies this at run time by checking that `Searcher.java` contains
-  the repaired `boolean childIsPvNode = isPvNode;` expression, not merely by trusting a commit
-  hash (a docs-only commit could otherwise sit on top of the repair without preserving it, or a
-  local checkout could be on the wrong ref).
 
 ## 2. Baseline
 
-- Source: commit `ebe513e` (the `develop` merge commit Phase 17 itself branched from).
+- Source: commit `ebe513e`, frozen as the full resolved SHA
+  `ebe513eabd50e853a4e24a0260c64b41a5a4b224` (the `develop` merge commit Phase 17 itself
+  branched from). Pinned to the full SHA, not the short form, so an accidental short-hash
+  collision elsewhere in this repository's history could never silently resolve to a different
+  commit.
 - This is the exact pre-PVS source that produced every "pre-PVS baseline" figure already used
   throughout this phase (Gate 1's 73,089,246 nodes, Gate 2's 218,267 ms median). Confirmed
   search-source-identical to P16-2's own measured commit `31e2243`
@@ -35,6 +57,12 @@ freeze; running `tools/p17-4-sprt.ps1` against it is a separate, later action.
   `develop` against regressions release-to-release) and has no documented connection to this
   phase's frozen, same-baseline requirement. Using it here would silently substitute a
   different, undocumented baseline identity for the one every other Phase 17 gate has used.
+- **Not a command-line parameter.** `tools/p17-4-sprt.ps1` no longer exposes a `-BaselineRef`
+  override; the baseline is a frozen internal constant. Before building, the script resolves
+  the ref with `git rev-parse` and refuses to proceed unless it resolves to exactly the full
+  SHA above. A different baseline requires a preregistration amendment and a code change to
+  this script before game 1, exactly like the concurrency amendment recorded in section 4 and
+  `dev-entries/phase-17.md`.
 - Built via a disposable `git worktree`, never checked out over the candidate's own working
   tree.
 
@@ -56,9 +84,20 @@ freeze; running `tools/p17-4-sprt.ps1` against it is a separate, later action.
 
 ## 4. Match
 
-- cutechess-cli: v1.4.0 (matching `.github/workflows/nightly-sprt.yml`'s pinned version; no
-  cutechess version is currently pinned in `tools/sprt.ps1` itself, so the locally-installed
-  version must be recorded in the run's own environment evidence).
+- cutechess-cli: v1.5.1. Originally frozen at v1.4.0, matching `.github/workflows/nightly-
+  sprt.yml`'s then-pinned version; bumped to v1.5.1 during this hardening pass after checking
+  `gh api repos/cutechess/cutechess/releases/latest`. The v1.4.0 -> v1.5.1 changelog (releases
+  v1.5.0 and v1.5.1) contains only bug fixes unrelated to SPRT/game-management logic for a
+  standard-variant UCI match (a Ctrl+A GUI selection bug, an off-by-one `WesternBoard`
+  edge-case affecting non-standard variants, a Knight-Relay GUI crash, a `setoption` parsing
+  fix, XBoard PV parsing, and a Qt5 -> Qt6 build-tooling change) and v1.5.1 itself is a
+  Windows-release-build fix only, so there is no reproducibility reason to stay pinned to the
+  older release. `.github/workflows/nightly-sprt.yml`'s `CUTECHESS_VERSION` was updated to
+  match. **Verified, not merely recorded or assumed**: `tools/p17-4-sprt.ps1` runs the
+  installed `cutechess-cli --version` and fails closed if its output does not contain
+  `1.5.1`, rather than silently running whatever version happens to be on `$PATH` or
+  `$env:CUTECHESS`. The exact version-output string and the pass/fail result are both written
+  to the run's environment evidence.
 - TC: `5+0.05` (5 s base, 0.05 s increment). This project's documented standard single-change
   convention, `docs/sprt-guidelines.md` section 1.
 - Concurrency: 6 (amended from the original 2, `tools/sprt.ps1`'s and `nightly-sprt.yml`'s
@@ -70,12 +109,23 @@ freeze; running `tools/p17-4-sprt.ps1` against it is a separate, later action.
   idle side of every game all complicate that mapping in practice. 6 stays below the 8 physical
   cores, leaving roughly two physical cores of scheduling headroom for Windows, JVM/process
   overhead, cutechess-cli itself, and interactive desktop use during what may be a long run,
-  deliberately not attempting to saturate all 16 logical/SMT threads. This value affects only
-  how fast the match executes; it has no effect on the SPRT hypotheses being tested (elo0/elo1
-  are properties of the games played, not of how many run at once). It is frozen the same as
-  every other term in this document: fixed before game 1, not user-adjustable in
+  deliberately not attempting to saturate all 16 logical/SMT threads.
+  Changing concurrency does not change the formal `elo0`/`elo1`/`alpha`/`beta` hypotheses being
+  tested; those are mathematical properties of the SPRT itself. But concurrency is not for that
+  reason a free knob outside the experimental conditions: at a wall-clock time control like
+  `5+0.05`, concurrency is part of the execution environment, and CPU contention among
+  simultaneous game processes can change the effective compute available to each engine per
+  move. That can affect observed game outcomes, or a measured relative Elo, particularly if the
+  candidate and baseline have different search-efficiency characteristics (as this experiment
+  itself expects, since that is what PVS is supposed to change) and therefore respond
+  differently to a given amount of contention. For this reason concurrency is frozen the same
+  as every other experimental-conditions term in this document: 6 is fixed before game 1, an
+  operational compromise for this specific 8-core/16-thread host that leaves scheduling
+  headroom rather than a value chosen for any effect on the outcome, not user-adjustable in
   `tools/p17-4-sprt.ps1` (moved from a command-line parameter into the same frozen-constant
-  block as TC/elo0/elo1/Threads/Hash/game cap), and not changeable mid-run.
+  block as TC/elo0/elo1/Threads/Hash/game cap), and not changeable mid-run precisely because it
+  could otherwise change the measured outcome distribution between games run at different
+  concurrency levels within the same match. The choice of 6 itself is not reopened here.
   `tools/benchmark_concurrency.ps1` exists to find a throughput-optimal value empirically for a
   specific machine; this document does not use a benchmarked value because none has been run
   for this exact host, and inventing one without evidence would violate the "no post-hoc
@@ -176,6 +226,15 @@ invalidated a run):
 - 2026-09-20: concurrency changed from 2 to 6, before game 1. See section 4 for the full
   rationale (target-host physical-core capacity, not a throughput benchmark or a change to any
   SPRT hypothesis) and `dev-entries/phase-17.md` for the session record of this amendment.
+- 2026-09-20 (same day, later pass): cutechess-cli frozen version changed from v1.4.0 to
+  v1.5.1 (section 4), candidate identity verification strengthened from a single-file grep to
+  a full production-source-tree diff against `f9b152c` (section 1), baseline `-BaselineRef`
+  command-line override removed in favor of a frozen internal constant with a `git rev-parse`
+  resolve-and-verify step before building (section 2), and the concurrency rationale in
+  section 4 corrected to state that concurrency is part of the experimental conditions (able
+  to affect observed outcomes via CPU contention at a wall-clock TC) even though it does not
+  change the SPRT's mathematical hypotheses, rather than claiming it has no effect at all. All
+  before game 1; none of these invalidated a run, since none had been played.
 
 ## 8. Status
 
