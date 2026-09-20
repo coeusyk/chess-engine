@@ -566,3 +566,28 @@ Position 31's node expansion does translate into a real local wall-time regressi
 **Measurements:** N/A, no game played.
 
 **Status:** Phase 17 Step 4 remains **READY**, not started. `tools/p17-4-sprt.ps1` was not executed, even in dry-run form, in producing this change; it was reviewed only by manual read and brace/paren balance checking, consistent with every prior pass on this script in this WSL session.
+
+---
+
+### [2026-09-20] Phase 17 Step 4 execution-blocker fix: orchestration cleanliness check no longer trips on known untracked files, no game played (Issues #229, #230)
+
+**Built:**
+
+- **Fixed an actual execution blocker, not a protocol amendment.** `tools/p17-4-sprt.ps1`'s orchestration-cleanliness check used `git status --porcelain`, which includes untracked files, and refused to run on any non-empty result. This checkout has a known, pre-existing untracked directory, `.claude/agent-memory/`, that every prior session in this project has treated as unrelated and acceptable; the check as written would have refused to start on exactly the checkout this script is meant to run from, even with every tracked file clean.
+- **Split the check into tracked and full status.** `$trackedStatus = git status --porcelain --untracked-files=no` now gates the refusal: any modified or staged tracked file still fails closed, since a dirty tracked file could mean the script itself, a preregistration document, or some other reviewed file no longer matches what was committed. `$fullStatus = git status --porcelain` (unrestricted) is captured separately, written to a new evidence file, `01b-orchestration-untracked.txt`, and printed to the console as an informational note, not a failure. The error text was changed from implying the whole working tree must be spotless to "Tracked orchestration state is dirty," matching what the check now actually enforces.
+- **`.claude/agent-memory/` is recorded, not inspected.** The evidence file captures only the path-level `git status --porcelain` line for any untracked path; nothing under it is hashed or read. This lets the run's evidence show the directory existed without treating its contents as relevant to either engine.
+- **Removed the unused `$ResolveLogPrefix` parameter from `Build-FrozenEngineJar`.** It was declared as a mandatory parameter and passed at both call sites (`"candidate"`, `"baseline"`) but never referenced anywhere in the function body; the `Write-Section` title and log file names already use `$Label` and the explicit `*LogName` parameters instead. Removed the parameter and both call-site arguments; no other change to the function.
+- **`docs/architecture/research/phase17-p17-4-strength-preregistration.md`'s orchestration subsection reworded** to describe the tracked-only cleanliness requirement and the `.claude/agent-memory/` exception explicitly, instead of the prior "requires it to be clean (no uncommitted changes)" phrasing, which read as though untracked files would also block a run.
+
+**Decisions Made:**
+
+- **This is an execution-blocker correction, not a protocol amendment.** No frozen experimental parameter is affected by whether an unrelated untracked directory blocks the script from starting; nothing in the amendment log (section 7) needed a new entry.
+- **Every frozen Gate 4 parameter is unchanged**: candidate `f9b152c`, baseline `ebe513e`, cutechess-cli 1.5.1, Threads=1 per engine, Hash=16 MB per engine, TC=5+0.05, concurrency=6, opening corpus and its SHA-256, pairing via `-repeat`, SPRT bounds (elo0=0, elo1=50, alpha=0.05, beta=0.05), existing adjudication settings, and the 20,000-game cap.
+- **No PVS/search behavior was changed.** This pass touches only `tools/p17-4-sprt.ps1` and its governing preregistration document; no file under `engine-core/src/main` or `engine-uci/src/main` was edited.
+- **No game was played.** The blocker was identified and fixed by reading the script against this checkout's actual known state (`.claude/agent-memory/` untracked, everything tracked clean), not by running the script.
+
+**Broke / Fixed:** Fixed: the orchestration-cleanliness check would have refused to run on the actual intended checkout because of a known, unrelated untracked directory. No search/PVS source touched.
+
+**Measurements:** N/A, no game played.
+
+**Status:** Phase 17 Step 4 remains **READY**, not started. `tools/p17-4-sprt.ps1` was not executed, even in dry-run form; reviewed only by manual read and a brace/paren balance check, since no PowerShell interpreter is available in this WSL session.

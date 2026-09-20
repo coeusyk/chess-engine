@@ -166,7 +166,6 @@ function Build-FrozenEngineJar {
         [Parameter(Mandatory)][string]$Label,
         [Parameter(Mandatory)][string]$FrozenSha,
         [Parameter(Mandatory)][string]$OutDir,
-        [Parameter(Mandatory)][string]$ResolveLogPrefix,
         [Parameter(Mandatory)][string]$BuildLogName,
         [Parameter(Mandatory)][string]$WorktreeAddLogName
     )
@@ -282,16 +281,27 @@ if ($repoRoot -like "\\wsl*" -or $repoRoot -like "*\wsl.localhost\*") {
 Write-Section "Orchestration checkout state (not an engine under test)"
 $orchestrationSha = (git rev-parse HEAD).Trim()
 $orchestrationBranch = (git rev-parse --abbrev-ref HEAD).Trim()
-$status = git status --porcelain
+# Tracked state only: modified or staged tracked files would mean this script itself, the
+# preregistration documents, or some other tracked file differs from what was reviewed and
+# committed, which is worth refusing on. Untracked files are not: this checkout has a known,
+# pre-existing untracked directory (.claude/agent-memory/) that is unrelated to either engine
+# under test, and this checkout's production source is never built or diffed here anyway
+# (section header above), so an untracked file here cannot silently change either engine.
+$trackedStatus = git status --porcelain --untracked-files=no
+$fullStatus = git status --porcelain
 Write-Host "Branch: $orchestrationBranch"
 Write-Host "HEAD:   $orchestrationSha"
-if ($status) {
-    Write-Host "Working tree is NOT clean:" -ForegroundColor Red
-    Write-Host $status
-    Write-Host "Refusing to run from a dirty orchestration checkout. Commit or stash first." -ForegroundColor Red
+if ($trackedStatus) {
+    Write-Host "Tracked orchestration state is dirty:" -ForegroundColor Red
+    Write-Host $trackedStatus
+    Write-Host "Refusing to run with modified or staged tracked files. Commit or stash first." -ForegroundColor Red
     exit 1
 }
-Write-Host "Clean. This HEAD may legitimately be later than either frozen engine commit (docs/tooling commits are expected)."
+Write-Host "Tracked state clean. This HEAD may legitimately be later than either frozen engine commit (docs/tooling commits are expected)."
+if ($fullStatus) {
+    Write-Host "Untracked paths present (allowed, recorded as evidence only, not built or diffed):"
+    Write-Host $fullStatus
+}
 
 # ---------------------------------------------------------------------------
 # 3. Verify the opening corpus by content, not just presence.
@@ -320,6 +330,13 @@ New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 $evidence | ConvertTo-Json | Out-File -FilePath (Join-Path $outDir "00-process-evidence.json") -Encoding utf8
 "orchestration_branch=$orchestrationBranch`norchestration_head=$orchestrationSha`ncandidate_frozen_commit=$CandidateRef`nbaseline_frozen_commit=$BaselineRef" |
     Out-File -FilePath (Join-Path $outDir "01-git-state.txt") -Encoding utf8
+# Untracked paths (e.g. .claude/agent-memory/) are allowed and recorded here for auditability
+# only; they are never hashed, inspected, or treated as part of either engine's source.
+if ($fullStatus) {
+    $fullStatus | Out-File -FilePath (Join-Path $outDir "01b-orchestration-untracked.txt") -Encoding utf8
+} else {
+    "(no untracked or modified paths)" | Out-File -FilePath (Join-Path $outDir "01b-orchestration-untracked.txt") -Encoding utf8
+}
 
 # ---------------------------------------------------------------------------
 # 4. Build the candidate JAR from its exact frozen commit.
@@ -328,7 +345,6 @@ $candidateBuild = Build-FrozenEngineJar `
     -Label "candidate" `
     -FrozenSha $CandidateRef `
     -OutDir $outDir `
-    -ResolveLogPrefix "candidate" `
     -BuildLogName "02-build-candidate.log" `
     -WorktreeAddLogName "02a-worktree-add-candidate.log"
 $candidateJarPath = $candidateBuild.JarPath
@@ -343,7 +359,6 @@ $baselineBuild = Build-FrozenEngineJar `
     -Label "baseline" `
     -FrozenSha $BaselineRef `
     -OutDir $outDir `
-    -ResolveLogPrefix "baseline" `
     -BuildLogName "03-build-baseline.log" `
     -WorktreeAddLogName "03a-worktree-add-baseline.log"
 $baselineJarPath = $baselineBuild.JarPath

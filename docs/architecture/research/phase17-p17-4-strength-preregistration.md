@@ -12,8 +12,11 @@ freeze; running `tools/p17-4-sprt.ps1` against it is a separate, later action.
 `tools/p17-4-sprt.ps1` runs from a checkout of `phase/17-pvs-experiment` (the "orchestration
 checkout"), but that checkout's own HEAD is never built as either engine under test. It
 supplies only the script itself, the preregistration documents, and the location run evidence
-is written to; the script requires it to be clean (no uncommitted changes) but does not
-identify, diff, or otherwise check its production source at all. Its HEAD may legitimately
+is written to; the script requires its tracked files to have no modified or staged changes, but
+does not require an empty set of untracked files (a known, pre-existing untracked directory,
+`.claude/agent-memory/`, is unrelated to either engine and is recorded as evidence rather than
+treated as a failure), and does not identify, diff, or otherwise check its production source at
+all. Its HEAD may legitimately
 carry later documentation/tooling commits without changing either engine, since that is exactly
 what happened between the candidate commit and the orchestration checkout's actual HEAD when
 this document was written (`e6afbb1`, `f1b40a2`, `8797512`, and possibly more by the time a run
