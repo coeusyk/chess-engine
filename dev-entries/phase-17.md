@@ -204,3 +204,64 @@ A bounded diagnostic, not tuning: no PVS behavior, move ordering, LMR parameters
 **Measurements:** None yet -- this is the hand-off, not the result.
 
 **Status:** Phase 17 Step 2 (throughput) is NOT complete. Everything doable from WSL2 is done: the branch/commit state is verified, #230's Step 1 is marked complete, and `tools/p17-2-native-throughput.ps1` is the exact, ready-to-run hand-off, matching the P16-2 precedent. Once its output is available, this entry can be finished with the real 7-run elapsed/NPS/node data, the position 30 vs. 31 timing comparison, and the throughput-gate PASS/REJECT interpretation, and #229/#230 can be updated accordingly.
+
+---
+
+### [2026-09-20] Phase 17 Step 2 — Throughput gate: native run complete, PASS
+
+**Built:**
+
+- Read the native run at `tools/results/p17-2/20260920-065141/` (native Windows, RENEGADE, AMD Ryzen 7 7700X, JDK 21 Zulu, `phase/17-pvs-experiment` at commit `5fdd08b`). No benchmark was re-run; the captured artifacts were valid on inspection.
+- Found and fast-forwarded to a new commit on `origin` (`5fdd08b`, "ignore Phase 17 throughput artifacts" -- adds `tools/results/p17-2/` to `.gitignore`, mirroring the existing `tools/results/p16-2/` convention) that had landed since this branch's previous commit (`debe3b1`) and was the commit the native run recorded. Confirmed it changes only `.gitignore`; `Searcher.java`/`SearchResult.java` remain identical to the `25d3453` implementation commit, so the native run measured exactly the PVS implementation the mechanism gate and diagnostic already characterized.
+- **Environment validated as comparable to the frozen P16-2 baseline**: native Windows (`Win32NT`, `pwsh.exe` process path, not WSL interop), same machine (AMD Ryzen 7 7700X, 8c/16t), same JDK (Zulu OpenJDK 21.0.10), `Threads=1`, `Hash=16MB` (hardcoded), Classical evaluator, depth 13, identical bench-corpus SHA-256 (`02630596...b1`, matching P16-2's own recorded value exactly), fresh JAR built from the recorded commit.
+- **Node-count determinism confirmed**: all 7 canonical runs and the discarded warm-up report exactly 48,892,339 main nodes -- matching the WSL mechanism-gate result to the node, and cross-validating WSL and native execution the same way P16-2 originally did for the pre-PVS baseline.
+- Extracted all 7 elapsed/NPS pairs and computed statistics; extracted position 30 and 31's native elapsed time from the existing per-position `[BENCH]` debug line (no new instrumentation) in `06-per-position-debug.txt`.
+
+**Measurements:**
+
+| Run | Elapsed (ms) | NPS |
+|---|---|---|
+| 1 | 134,055 | 364,718 |
+| 2 | 140,781 | 347,293 |
+| 3 | 143,728 | 340,172 |
+| 4 | 138,553 | 352,878 |
+| 5 | 132,771 | 368,245 |
+| 6 | 136,139 | 359,135 |
+| 7 | 137,644 | 355,208 |
+
+Elapsed: median 137,644 ms, mean 137,667 ms, sample stdev 3,798 ms, CV 2.76%, min 132,771 ms, max 143,728 ms (range 7.96% of the median).
+NPS: median 355,208, mean 355,378, sample stdev 9,745, CV 2.74%, min 340,172, max 368,245 (range 7.90% of the median).
+
+Both CVs (2.76%/2.74%) are meaningfully wider than the pre-PVS baseline's own 0.84% NPS CV (P16-2 section 3). This is expected, not a red flag: the pre-PVS baseline's 7-run spread reflected only ordinary wall-clock noise on a fixed, unchanged search shape, while this run's spread reflects that same noise on top of a search shape carrying substantially more re-search/verification branching (per the mechanism gate's counters) whose own timing is not perfectly uniform across otherwise-identical repetitions. The spread does not affect the gate decision, which rests on the median, not the CV.
+
+Baseline vs. PVS deltas:
+
+| Metric | Pre-PVS (P16-2) | PVS (this run) | Delta |
+|---|---|---|---|
+| Main nodes | 73,089,246 | 48,892,339 | -33.11% |
+| Qnodes | 226,653,985 | 133,023,392 | -41.31% |
+| Combined (main+qnodes) | 299,743,231 | 181,915,731 | -39.31% |
+| Median elapsed | 218,267 ms | 137,644 ms | **-36.94%** |
+| Median reported NPS | 334,861 | 355,208 | +6.08% |
+
+The median-reported-NPS delta is reported for completeness but is explicitly not the primary criterion: `nps` is main-nodes-per-elapsed-millisecond, and PVS changed the main/qnode work mix substantially (qnodes now 2.72x main nodes, versus 3.10x pre-PVS), so a change in that ratio alone can move the NPS number independent of whether the engine is actually faster. **Median elapsed wall-clock time, the primary criterion, improved by 36.94%.**
+
+Position 30 vs. 31, native timing (matching the node counts already established in the mechanism-gate entry above):
+
+| | Baseline (native) | PVS (native) | Delta |
+|---|---|---|---|
+| Position 30 nodes | 22,030,846 | 6,969,853 | -68.36% |
+| Position 30 time | 69,483 ms | 19,316 ms | -72.20% |
+| Position 31 nodes | 4,138,610 | 12,332,161 | +197.98% |
+| Position 31 time | 9,928 ms | 34,933 ms | +251.86% |
+
+Position 31's node expansion does translate into a real local wall-time regression (+25,005 ms), proportionally somewhat larger than the node increase alone (+197.98% nodes vs. +251.86% time), consistent with the elevated qnodes/main-node ratio already found for this position. No cause beyond what's measured here is claimed; this only answers the local-vs-aggregate magnitude question, not why position 31 behaves this way. That magnitude question has a clear answer: position 30 alone saves 50,167 ms, more than double what position 31 costs, and the full-suite median saving (80,623 ms) is about 3.2x position 31's added cost. Aggregate savings comfortably dominate.
+
+**Decisions Made:**
+
+- **Gate decision: PASS**, against the preregistered rule with no invented threshold. All three PASS conditions hold without qualification: the deterministic native node count matches the mechanism gate exactly (48,892,339), the environment is fully comparable to P16-2 (same machine, JDK, and configuration), and the aggregate fixed-depth wall-clock time materially improves (-36.94%, not a marginal or ambiguous figure). None of the INVESTIGATE/REJECT conditions apply: node counts are deterministic and matching, the environment is comparable, wall time improved rather than worsened, and no per-node overhead erased the tree-reduction benefit -- if anything, the benefit came through more than proportionally (NPS itself rose slightly rather than falling, despite the substantially different main/qnode mix).
+- **#230's Step 3 description corrected** so the PV-node-propagation question found in Step 1's diagnostic is an explicit Gate 3 (correctness) prerequisite, not merely a pre-SPRT/Gate 4 item, per this step's instruction. That question is not resolved here.
+
+**Broke / Fixed:** None. No source file changed; only the tracker (#229, #230) and this dev-entry.
+
+**Status:** Phase 17 Step 2 (throughput) is complete and passed. Steps 1 and 2 of Phase 17 are both done. Step 3 (formal correctness gate, now explicitly including the PV-node-propagation question) and Step 4 (strength/SPRT, blocked separately on #231's nightly-SPRT wording cleanup) remain open. #229 and #230 stay open; #231 untouched.
