@@ -7,45 +7,53 @@ Elo expectation is predeclared") and section 8's stop rule ("proceed to exactly 
 SPRT with frozen terms"). No game has been played under this protocol. This document is the
 freeze; running `tools/p17-4-sprt.ps1` against it is a separate, later action.
 
+## Orchestration checkout vs. the two engines under test
+
+`tools/p17-4-sprt.ps1` runs from a checkout of `phase/17-pvs-experiment` (the "orchestration
+checkout"), but that checkout's own HEAD is never built as either engine under test. It
+supplies only the script itself, the preregistration documents, and the location run evidence
+is written to; the script requires it to be clean (no uncommitted changes) but does not
+identify, diff, or otherwise check its production source at all. Its HEAD may legitimately
+carry later documentation/tooling commits without changing either engine, since that is exactly
+what happened between the candidate commit and the orchestration checkout's actual HEAD when
+this document was written (`e6afbb1`, `f1b40a2`, `8797512`, and possibly more by the time a run
+happens).
+
+Both engines are instead built from their own exact, frozen commit, each via its own disposable
+detached `git worktree`, using the same code path (`Build-FrozenEngineJar` in
+`tools/p17-4-sprt.ps1`) for both. Before building either, the script resolves the frozen SHA
+with `git rev-parse` and refuses to proceed unless it resolves to exactly itself; after `git
+worktree add --detach`, it independently re-checks the worktree's own `HEAD` against that same
+SHA before invoking Maven. This closes a gap an earlier version of this script had: checking
+only whether `engine-core/src/main`/`engine-uci/src/main` differed from the frozen candidate
+commit could not see a change to `pom.xml`, a build-plugin configuration, the shade
+configuration, a compiler setting, or any other build input outside `src/main` that could still
+produce a different JAR while that diff stayed empty. Building from the exact commit makes that
+class of gap structurally impossible rather than merely checked for, so the prior source-tree
+diff and the still-earlier `Searcher.java` grep for the repaired `childIsPvNode` expression are
+both removed rather than kept alongside the exact-commit build: once both engines are actually
+built from git-rev-parse-verified commits, a second, weaker identity mechanism would only risk
+disagreeing with the strong one later, not add real assurance.
+
 ## 1. Candidate
 
-- Source identity is frozen to the isPvNode-propagation repair commit
-  `f9b152ca4f45e8e8aa5a48092b03416aba79b230`, not to `phase/17-pvs-experiment`'s moving HEAD.
-  HEAD is expected to sit above this commit on legitimate docs/tooling-only commits (`e6afbb1`,
-  `f1b40a2`, `8797512` as of this writing, and possibly more before the run); those commits
-  must remain production-source-identical to `f9b152c`, and `tools/p17-4-sprt.ps1` verifies
-  that at run time rather than trusting the commit hash alone (a docs-only commit could
-  otherwise sit on top of the repair without actually preserving it, or a local checkout could
-  simply be on the wrong ref).
-- **Verification is a source-tree diff, not a hash check or a string grep.** The script runs
-  `git diff --stat f9b152c -- <production source paths>` against the current checkout and
-  fails closed on any non-empty result. The path set is derived from the actual build, not
-  assumed:
-  - `engine-core/src/main` (no `src/main/resources` exists for this module at all).
-  - `engine-uci/src/main` (includes `src/main/resources/books/Performance.bin`, the engine's
-    built-in Polyglot opening book, loaded by `UciApplication`'s `BookFile` UCI option but
-    disabled by default via `OwnBook=false`, and `src/main/resources/logback.xml`, logging
-    configuration only).
-  - `engine-uci` is built as a shaded/fat JAR (`maven-shade-plugin`) that pulls in
-    `engine-core`'s compiled classes directly, so both modules' `src/main` trees are the
-    complete set of paths that can affect the packaged UCI engine's behavior; no other module
-    contributes to this JAR.
-  - The prior, weaker check (grepping `Searcher.java` for the repaired `childIsPvNode`
-    expression) is retained as a secondary diagnostic only, run after the source-tree check
-    already passes; it is no longer the primary or sole identity check, since it could not have
-    caught drift anywhere outside that one file.
+- Source: commit `f9b152ca4f45e8e8aa5a48092b03416aba79b230` (the isPvNode-propagation repair),
+  built from its own disposable worktree as described above, never from the orchestration
+  checkout's HEAD.
 - This is the same candidate that passed Gate 1 (mechanism, main nodes 73,089,246 ->
   40,878,283), Gate 2 (native throughput, median elapsed 218,267 ms -> 120,860 ms), and Gate 3
   (correctness: full relevant Maven suite green, PV-node-propagation defect repaired, PV
   legality green). See `dev-entries/phase-17.md` for the full evidence trail.
+- Not a command-line parameter. A different candidate commit requires a preregistration
+  amendment and a code change to this script before game 1.
 
 ## 2. Baseline
 
-- Source: commit `ebe513e`, frozen as the full resolved SHA
-  `ebe513eabd50e853a4e24a0260c64b41a5a4b224` (the `develop` merge commit Phase 17 itself
-  branched from). Pinned to the full SHA, not the short form, so an accidental short-hash
-  collision elsewhere in this repository's history could never silently resolve to a different
-  commit.
+- Source: commit `ebe513eabd50e853a4e24a0260c64b41a5a4b224` (the `develop` merge commit Phase
+  17 itself branched from), also built from its own disposable worktree, using the identical
+  build procedure as the candidate. Pinned to the full SHA, not the short form, so an accidental
+  short-hash collision elsewhere in this repository's history could never silently resolve to a
+  different commit.
 - This is the exact pre-PVS source that produced every "pre-PVS baseline" figure already used
   throughout this phase (Gate 1's 73,089,246 nodes, Gate 2's 218,267 ms median). Confirmed
   search-source-identical to P16-2's own measured commit `31e2243`
@@ -57,14 +65,9 @@ freeze; running `tools/p17-4-sprt.ps1` against it is a separate, later action.
   `develop` against regressions release-to-release) and has no documented connection to this
   phase's frozen, same-baseline requirement. Using it here would silently substitute a
   different, undocumented baseline identity for the one every other Phase 17 gate has used.
-- **Not a command-line parameter.** `tools/p17-4-sprt.ps1` no longer exposes a `-BaselineRef`
-  override; the baseline is a frozen internal constant. Before building, the script resolves
-  the ref with `git rev-parse` and refuses to proceed unless it resolves to exactly the full
-  SHA above. A different baseline requires a preregistration amendment and a code change to
-  this script before game 1, exactly like the concurrency amendment recorded in section 4 and
-  `dev-entries/phase-17.md`.
-- Built via a disposable `git worktree`, never checked out over the candidate's own working
-  tree.
+- Not a command-line parameter. A different baseline commit requires a preregistration
+  amendment and a code change to this script before game 1, exactly like the candidate and the
+  concurrency amendment recorded in section 4 and `dev-entries/phase-17.md`.
 
 ## 3. Engine settings
 
@@ -234,6 +237,18 @@ invalidated a run):
   section 4 corrected to state that concurrency is part of the experimental conditions (able
   to affect observed outcomes via CPU contention at a wall-clock TC) even though it does not
   change the SPRT's mathematical hypotheses, rather than claiming it has no effect at all. All
+  before game 1; none of these invalidated a run, since none had been played.
+- 2026-09-20 (same day, final pre-run pass): candidate identity verification replaced again,
+  this time architecturally rather than by strengthening the check in place. The prior pass's
+  production-source-tree diff against `f9b152c`, and the still-earlier grep for the repaired
+  `childIsPvNode` expression, could not see a change to `pom.xml`, the shade plugin
+  configuration, compiler settings, or any other build input outside `src/main` that still
+  produces a different JAR while both checks stayed green. Both engines are now built from
+  their own exact, `git rev-parse`-verified frozen commit via a disposable detached worktree
+  (sections 1 and 2), and the diff and grep checks are removed rather than kept alongside the
+  exact-commit build, since a second, weaker identity mechanism only risks disagreeing with the
+  strong one later. The orchestration checkout (`phase/17-pvs-experiment`) is no longer treated
+  as either engine's source; it supplies the script, docs, and evidence location only. All
   before game 1; none of these invalidated a run, since none had been played.
 
 ## 8. Status

@@ -15,28 +15,45 @@
     explicitly stops before any SPRT game is played; this switch exists so the script
     cannot be sourced or dry-run accidentally into actually spending games.
 
-    Candidate: built fresh from the current checkout's HEAD. Candidate *source identity* is
-    verified against the frozen candidate commit f9b152c (the isPvNode-propagation repair),
-    not against HEAD itself, since legitimate docs/tooling-only commits (e6afbb1, f1b40a2,
-    8797512) sit above f9b152c and must remain source-identical to it for production engine
-    code. The check is a `git diff --quiet f9b152c -- <production source paths>` against every
-    path that can affect engine behavior (see $ProductionSourcePaths below and its rationale);
-    it fails closed on any non-empty diff, not merely on a commit-hash mismatch. The prior,
-    weaker check (grepping Searcher.java for the repaired expression) is retained only as a
-    secondary, more specific diagnostic when the source-tree check already fails; it is no
-    longer the primary or sole identity check.
+    Both engines under test, candidate and baseline, are built from exact, frozen
+    commits via disposable detached git worktrees. Neither is ever built from whatever
+    happens to be checked out in the directory this script runs from. That checkout (the
+    "orchestration checkout") supplies only this script itself, the preregistration
+    documents, and the location evidence gets written to; its HEAD may legitimately carry
+    later documentation/tooling commits without changing either engine under test, and
+    this script does not try to identify or diff its production source at all. Building
+    each engine from its own frozen commit, rather than diffing a moving checkout's
+    src/main against a frozen commit, closes a gap the previous version of this script
+    had: a src/main-only diff cannot see a change to pom.xml, a build-plugin
+    configuration, the shade configuration, a compiler setting, or any other build input
+    outside src/main that could still produce a different JAR. Building from the exact
+    commit makes that class of gap structurally impossible rather than merely checked
+    for. This also means the prior "does Searcher.java contain the repaired expression"
+    grep and the prior "diff src/main against f9b152c" check are both removed: they were
+    partial substitutes for exact-commit builds, and once both engines are actually built
+    from exact, git-rev-parse-verified commits, keeping a second, weaker identity
+    mechanism alongside the strong one would only risk the two disagreeing later, not add
+    real assurance.
 
-    Baseline: built fresh from commit ebe513e, frozen as the full resolved SHA
-    ebe513eabd50e853a4e24a0260c64b41a5a4b224 (the develop merge commit Phase 17 itself branched
-    from, and the same pre-PVS source that produced every "pre-PVS baseline" figure in this
-    phase's Gate 1/Gate 2 evidence; see dev-entries/phase-17.md and
-    docs/architecture/research/phase16-p16-3-intervention-preregistration.md section 8, "one
-    isolated, same-baseline SPRT against the current Threads=1 build"). This is a frozen
-    internal constant, not a command-line parameter: before building, the script resolves the
-    baseline ref and refuses to proceed unless it resolves to exactly this full SHA. Built via
-    a disposable git worktree so the current checkout is never disturbed. A different baseline
-    requires a preregistration amendment and a code change to this script before game 1,
-    exactly like concurrency (see the Gate 4 concurrency-amendment dev-entry for the precedent).
+    Candidate: commit f9b152ca4f45e8e8aa5a48092b03416aba79b230 (the isPvNode-propagation
+    repair). Built via a disposable detached worktree, exactly like the baseline; the
+    orchestration checkout's own HEAD is never built.
+
+    Baseline: commit ebe513eabd50e853a4e24a0260c64b41a5a4b224 (the develop merge commit
+    Phase 17 itself branched from, and the same pre-PVS source that produced every
+    "pre-PVS baseline" figure in this phase's Gate 1/Gate 2 evidence; see
+    dev-entries/phase-17.md and
+    docs/architecture/research/phase16-p16-3-intervention-preregistration.md section 8,
+    "one isolated, same-baseline SPRT against the current Threads=1 build").
+
+    Both commit SHAs are frozen internal constants, not command-line parameters. Before
+    building either engine, the script resolves the ref with `git rev-parse` and refuses
+    to proceed unless it resolves to exactly the full frozen SHA; after `git worktree add
+    --detach`, it independently re-checks the worktree's own HEAD against that same SHA.
+    A different candidate or baseline commit requires a preregistration amendment and a
+    code change to this script before game 1, exactly like the concurrency and
+    cutechess-cli version amendments recorded in the preregistration document's amendment
+    log.
 
     Frozen terms (do not override at the command line; if a term must change, that is a
     new experiment, not this one):
@@ -57,32 +74,36 @@
                                         colors from the same opening)
       Max games       20000           (docs/sprt-guidelines.md section 4's own worked
                                         example for this exact H0=0/H1=50 convention)
-      Concurrency     6               (target host: AMD Ryzen 7 7700X, 8 physical cores /
-                                        16 logical threads. Each engine instance is
-                                        Threads=1, so 6 simultaneous games is an
-                                        operational capacity choice, not a claim that one
-                                        game maps exactly to one physical core, since engine
-                                        processes, OS scheduling, SMT, and the idle side
-                                        of each game all complicate that mapping. 6 stays
-                                        below the 8 physical cores, leaving roughly two
-                                        physical cores of scheduling headroom for
-                                        Windows, JVM/process overhead, cutechess-cli
-                                        itself, and interactive desktop use during a
-                                        potentially long run, deliberately not attempting
-                                        to saturate all 16 logical/SMT threads. It does not
-                                        change the mathematical elo0/elo1/alpha/beta SPRT
-                                        bounds, but it is still part of the experimental
-                                        conditions, not a free knob: at a wall-clock TC like
-                                        5+0.05, CPU contention under a given concurrency can
-                                        change effective compute available per move, which
-                                        can affect observed game outcomes, particularly if
-                                        the two candidates being compared have different
-                                        search-efficiency characteristics. It is frozen the
-                                        same as every other term below precisely because of
-                                        that: fixed before game 1, not overridable at the
-                                        command line, not changeable mid-run.)
-      cutechess-cli   see $CutechessVersion below (verified against the installed binary
-                                        before any game runs; see section 6a)
+      Concurrency     6               (amended 2 -> 6 before game 1; target host: AMD
+                                        Ryzen 7 7700X, 8 physical cores / 16 logical
+                                        threads. Each engine instance is Threads=1, so 6
+                                        simultaneous games is an operational capacity
+                                        choice, not a claim that one game maps exactly to
+                                        one physical core, since engine processes, OS
+                                        scheduling, SMT, and the idle side of each game
+                                        all complicate that mapping. 6 stays below the 8
+                                        physical cores, leaving roughly two physical
+                                        cores of scheduling headroom for Windows,
+                                        JVM/process overhead, cutechess-cli itself, and
+                                        interactive desktop use during a potentially long
+                                        run, deliberately not attempting to saturate all
+                                        16 logical/SMT threads. It does not change the
+                                        mathematical elo0/elo1/alpha/beta SPRT bounds,
+                                        but it is still part of the experimental
+                                        conditions, not a free knob: at a wall-clock TC
+                                        like 5+0.05, CPU contention under a given
+                                        concurrency can change effective compute
+                                        available per move, which can affect observed
+                                        game outcomes, particularly since the candidate
+                                        and baseline are expected to have different
+                                        search-efficiency characteristics. It is frozen
+                                        the same as every other term below precisely
+                                        because of that: fixed before game 1, not
+                                        overridable at the command line, not changeable
+                                        mid-run.)
+      cutechess-cli   1.5.1 (amended from the originally-frozen v1.4.0 before game 1;
+                                        verified against the installed binary before any
+                                        game runs, see the version-check section below)
 
 .PARAMETER IReallyMeanIt
     Required. Without this switch the script prints what it would do and exits 0
@@ -104,8 +125,7 @@ $repoRoot = (Get-Location).Path
 $timestamp = (Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmmss")
 $outDir = Join-Path $repoRoot "tools\results\p17-4\$timestamp"
 
-# Frozen protocol constants. Not parameters (BaselineRef was removed as a command-line
-# override; see section 5 below): changing any of these is a new experiment.
+# Frozen protocol constants. Not parameters: changing any of these is a new experiment.
 $TC             = "5+0.05"
 $Elo0           = 0
 $Elo1           = 50
@@ -118,28 +138,15 @@ $Concurrency    = 6
 $OpeningsFile   = Join-Path $repoRoot "tools\noob_3moves.epd"
 $ExpectedOpeningsSha256 = "2011193B4854E9A8CFDC05312CA2DBAFFA6CEAE3ABBDEE20E2EAD2A18A603347"
 
-# Frozen candidate source identity: the isPvNode-propagation repair commit. HEAD may sit
-# above this on legitimate docs/tooling-only commits; production source must not.
+# Frozen candidate: the isPvNode-propagation repair commit, built from an exact worktree,
+# never from the orchestration checkout's own (possibly later) HEAD.
 $CandidateRef = "f9b152ca4f45e8e8aa5a48092b03416aba79b230"
 
-# Frozen baseline: the develop merge commit this phase branched from, pinned to its full
-# resolved SHA (not the short form) so an accidental short-hash collision elsewhere in
-# history cannot silently resolve to the wrong commit.
+# Frozen baseline: the develop merge commit this phase branched from, also built from an
+# exact worktree.
 $BaselineRef = "ebe513eabd50e853a4e24a0260c64b41a5a4b224"
 
-# Production source paths that can affect the packaged UCI engine's behavior, derived from
-# the actual build rather than assumed: engine-core has no src/main/resources at all;
-# engine-uci/src/main/resources contains books/Performance.bin (the built-in opening book,
-# loaded by UciApplication's BookFile option, default OwnBook=false so unused unless
-# explicitly enabled) and logback.xml (logging config only). engine-uci is built as a
-# shaded/fat jar (maven-shade-plugin) pulling in engine-core's compiled classes, so both
-# modules' src/main trees are in scope; no other module contributes to this jar.
-$ProductionSourcePaths = @(
-    "engine-core/src/main",
-    "engine-uci/src/main"
-)
-
-# Frozen cutechess-cli version. Bumped from the originally-frozen v1.4.0 to the latest
+# Frozen cutechess-cli version. Amended from the originally-frozen v1.4.0 to the latest
 # release (checked 2026-09-20 via `gh api repos/cutechess/cutechess/releases/latest`); the
 # v1.4.0 -> v1.5.1 changelog contains only bug fixes and a Qt 5 -> Qt 6 build-tooling change,
 # nothing affecting SPRT/game-management logic for a standard-variant UCI match, so there is
@@ -151,12 +158,92 @@ function Write-Section($title) {
     Write-Host "==== $title ====" -ForegroundColor Cyan
 }
 
+# Builds one engine JAR from an exact, verified commit, via a disposable detached worktree.
+# Used identically for both the candidate and the baseline, so there is exactly one code
+# path that can build an experimental JAR, not two that could quietly drift apart.
+function Build-FrozenEngineJar {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$FrozenSha,
+        [Parameter(Mandatory)][string]$OutDir,
+        [Parameter(Mandatory)][string]$ResolveLogPrefix,
+        [Parameter(Mandatory)][string]$BuildLogName,
+        [Parameter(Mandatory)][string]$WorktreeAddLogName
+    )
+
+    Write-Section "Resolve and build $Label ($FrozenSha, disposable worktree)"
+
+    $resolved = (git rev-parse $FrozenSha 2>&1)
+    if ($LASTEXITCODE -ne 0 -or $resolved.Trim() -ne $FrozenSha) {
+        Write-Host "REFUSING: $Label ref $FrozenSha did not resolve to itself as a full SHA." -ForegroundColor Red
+        Write-Host "git rev-parse output: $resolved" -ForegroundColor Red
+        Write-Host "The frozen $Label commit is not present in this checkout's history (fetch it" -ForegroundColor Red
+        Write-Host "first) or the frozen constant no longer names a real commit." -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "$Label ref resolved and verified: $resolved"
+
+    $worktreeDir = Join-Path $env:TEMP "p17-4-$Label-$timestamp"
+    git worktree add --detach $worktreeDir $FrozenSha 2>&1 |
+        Tee-Object -FilePath (Join-Path $OutDir $WorktreeAddLogName)
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "git worktree add failed for $Label, see $WorktreeAddLogName. Stopping." -ForegroundColor Red
+        exit 1
+    }
+
+    try {
+        $actualSha = (git -C $worktreeDir rev-parse HEAD).Trim()
+        if ($actualSha -ne $FrozenSha) {
+            # Should be unreachable given `git worktree add --detach $FrozenSha` above, but
+            # checked independently anyway: this is the one fact this whole script exists
+            # to guarantee, so it is never assumed from how the worktree was created.
+            Write-Host "REFUSING: $Label worktree's actual HEAD ($actualSha) does not match the frozen ref ($FrozenSha)." -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "$Label worktree HEAD confirmed: $actualSha"
+
+        Push-Location $worktreeDir
+        try {
+            mvn -pl engine-core,engine-uci -am package -DskipTests 2>&1 |
+                Tee-Object -FilePath (Join-Path $OutDir $BuildLogName)
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "$Label build failed, see $BuildLogName. Stopping." -ForegroundColor Red
+                exit 1
+            }
+            $jarSrc = Get-ChildItem -Path "engine-uci\target" -Filter "engine-uci-*-SNAPSHOT.jar" |
+                Where-Object { $_.Name -notlike "original-*" } | Sort-Object LastWriteTime -Descending |
+                Select-Object -First 1
+            if (-not $jarSrc) {
+                Write-Host "Could not find the $Label JAR under $worktreeDir\engine-uci\target." -ForegroundColor Red
+                exit 1
+            }
+        } finally {
+            Pop-Location
+        }
+
+        $jarPath = Join-Path $OutDir "$Label-$actualSha.jar"
+        Copy-Item -Path $jarSrc.FullName -Destination $jarPath -Force
+        $jarSha256 = (Get-FileHash -Path $jarPath -Algorithm SHA256).Hash
+        Write-Host "$Label JAR: $jarPath"
+        Write-Host "SHA-256:  $jarSha256"
+
+        return [ordered]@{
+            FrozenSha = $FrozenSha
+            ActualSha = $actualSha
+            JarPath   = $jarPath
+            JarSha256 = $jarSha256
+        }
+    } finally {
+        git worktree remove --force $worktreeDir 2>&1 | Out-Null
+    }
+}
+
 # ---------------------------------------------------------------------------
 # 0. Refuse anything but an explicit, deliberate invocation.
 # ---------------------------------------------------------------------------
 Write-Section "Phase 17 Step 4: frozen SPRT protocol (see this file's header comment)"
-Write-Host "Candidate: current checkout HEAD (production source must be identical to $CandidateRef)"
-Write-Host "Baseline:  fresh build from $BaselineRef (frozen full SHA, disposable worktree)"
+Write-Host "Candidate: exact frozen commit $CandidateRef (disposable worktree, never the orchestration checkout's HEAD)"
+Write-Host "Baseline:  exact frozen commit $BaselineRef (disposable worktree)"
 Write-Host "TC=$TC  elo0=$Elo0 elo1=$Elo1 alpha=$Alpha beta=$Beta  Threads=$EngineThreads  Hash=$HashMb  MaxGames=$MaxGames  Concurrency=$Concurrency  cutechess-cli=$CutechessVersion"
 Write-Host "Openings: $OpeningsFile (expected SHA-256 $ExpectedOpeningsSha256)"
 
@@ -187,43 +274,24 @@ if ($repoRoot -like "\\wsl*" -or $repoRoot -like "*\wsl.localhost\*") {
 }
 
 # ---------------------------------------------------------------------------
-# 2. Verify candidate source and clean tree. Refuse dirty/mismatched state.
+# 2. Orchestration checkout state. This checkout supplies this script, the
+#    preregistration documents, and the evidence output location only. It is never
+#    built as either engine under test, so its production source is not diffed or
+#    otherwise checked for candidate/baseline identity here.
 # ---------------------------------------------------------------------------
-Write-Section "Candidate git state"
-$candidateSha = (git rev-parse HEAD).Trim()
-$candidateBranch = (git rev-parse --abbrev-ref HEAD).Trim()
+Write-Section "Orchestration checkout state (not an engine under test)"
+$orchestrationSha = (git rev-parse HEAD).Trim()
+$orchestrationBranch = (git rev-parse --abbrev-ref HEAD).Trim()
 $status = git status --porcelain
-Write-Host "Branch: $candidateBranch"
-Write-Host "HEAD:   $candidateSha"
+Write-Host "Branch: $orchestrationBranch"
+Write-Host "HEAD:   $orchestrationSha"
 if ($status) {
     Write-Host "Working tree is NOT clean:" -ForegroundColor Red
     Write-Host $status
-    Write-Host "Refusing to build the candidate from a dirty tree. Commit or stash first." -ForegroundColor Red
+    Write-Host "Refusing to run from a dirty orchestration checkout. Commit or stash first." -ForegroundColor Red
     exit 1
 }
-
-$candidateSourceDiff = git diff --stat "$CandidateRef" -- $ProductionSourcePaths
-$candidateSourceIdentical = ($LASTEXITCODE -eq 0) -and (-not $candidateSourceDiff)
-if (-not $candidateSourceIdentical) {
-    Write-Host "REFUSING: production source has drifted from the frozen candidate $CandidateRef." -ForegroundColor Red
-    Write-Host "Diff (git diff --stat $CandidateRef -- $($ProductionSourcePaths -join ' ')):" -ForegroundColor Red
-    Write-Host $candidateSourceDiff -ForegroundColor Red
-    Write-Host "This SPRT must measure exactly the frozen candidate's production source, not a" -ForegroundColor Red
-    Write-Host "checkout that has drifted from it (even a legitimate later commit). Stopping." -ForegroundColor Red
-    exit 1
-}
-Write-Host "Production source confirmed identical to frozen candidate $CandidateRef (checked: $($ProductionSourcePaths -join ', '))."
-
-# Secondary, more specific diagnostic: only meaningful once the source-tree check above has
-# already passed. Not the primary identity check (see the header comment for why).
-$searcherFile = "engine-core\src\main\java\coeusyk\game\chess\core\search\Searcher.java"
-$searcherContent = Get-Content $searcherFile -Raw
-if ($searcherContent -notmatch "boolean childIsPvNode = isPvNode;") {
-    Write-Host "REFUSING: $searcherFile does not contain the repaired childIsPvNode expression (``boolean childIsPvNode = isPvNode;``), despite the source-tree check above passing." -ForegroundColor Red
-    Write-Host "This should not be reachable if the source-tree check is correct; treat it as a bug in this script's path list, not as evidence the candidate is fine. Stopping." -ForegroundColor Red
-    exit 1
-}
-Write-Host "Repaired isPvNode expression confirmed present in $searcherFile (secondary diagnostic)."
+Write-Host "Clean. This HEAD may legitimately be later than either frozen engine commit (docs/tooling commits are expected)."
 
 # ---------------------------------------------------------------------------
 # 3. Verify the opening corpus by content, not just presence.
@@ -250,83 +318,38 @@ Write-Host "Opening corpus SHA-256 verified: $actualOpeningsSha256"
 # All pre-flight checks passed. Only now create the output directory.
 New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 $evidence | ConvertTo-Json | Out-File -FilePath (Join-Path $outDir "00-process-evidence.json") -Encoding utf8
-"candidate_branch=$candidateBranch`ncandidate_commit=$candidateSha`ncandidate_frozen_ref=$CandidateRef`ncandidate_source_identical_to_frozen_ref=$candidateSourceIdentical`nbaseline_frozen_ref=$BaselineRef" |
+"orchestration_branch=$orchestrationBranch`norchestration_head=$orchestrationSha`ncandidate_frozen_commit=$CandidateRef`nbaseline_frozen_commit=$BaselineRef" |
     Out-File -FilePath (Join-Path $outDir "01-git-state.txt") -Encoding utf8
 
 # ---------------------------------------------------------------------------
-# 4. Build the candidate JAR from the current checkout.
+# 4. Build the candidate JAR from its exact frozen commit.
 # ---------------------------------------------------------------------------
-Write-Section "Build candidate (current checkout)"
-mvn -pl engine-core,engine-uci -am package -DskipTests 2>&1 |
-    Tee-Object -FilePath (Join-Path $outDir "02-build-candidate.log")
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "Candidate build failed, see 02-build-candidate.log. Stopping." -ForegroundColor Red
-    exit 1
-}
-$candidateJar = Get-ChildItem -Path "engine-uci\target" -Filter "engine-uci-*-SNAPSHOT.jar" |
-    Where-Object { $_.Name -notlike "original-*" } | Sort-Object LastWriteTime -Descending |
-    Select-Object -First 1
-if (-not $candidateJar) {
-    Write-Host "Could not find the candidate JAR under engine-uci\target." -ForegroundColor Red
-    exit 1
-}
-$candidateJarPath = $candidateJar.FullName
-$candidateJarSha256 = (Get-FileHash -Path $candidateJarPath -Algorithm SHA256).Hash
-Write-Host "Candidate JAR: $candidateJarPath"
-Write-Host "SHA-256:       $candidateJarSha256"
+$candidateBuild = Build-FrozenEngineJar `
+    -Label "candidate" `
+    -FrozenSha $CandidateRef `
+    -OutDir $outDir `
+    -ResolveLogPrefix "candidate" `
+    -BuildLogName "02-build-candidate.log" `
+    -WorktreeAddLogName "02a-worktree-add-candidate.log"
+$candidateJarPath = $candidateBuild.JarPath
+$candidateJarSha256 = $candidateBuild.JarSha256
+"candidate_actual_commit=$($candidateBuild.ActualSha)`ncandidate_jar_sha256=$candidateJarSha256" |
+    Out-File -FilePath (Join-Path $outDir "01-git-state.txt") -Append -Encoding utf8
 
 # ---------------------------------------------------------------------------
-# 5. Build the baseline JAR from $BaselineRef via a disposable worktree, so the
-#    current checkout (and its candidate JAR) is never touched.
+# 5. Build the baseline JAR from its exact frozen commit.
 # ---------------------------------------------------------------------------
-Write-Section "Build baseline ($BaselineRef, disposable worktree)"
-$resolvedBaselineSha = (git rev-parse $BaselineRef 2>&1)
-if ($LASTEXITCODE -ne 0 -or $resolvedBaselineSha.Trim() -ne $BaselineRef) {
-    Write-Host "REFUSING: baseline ref $BaselineRef did not resolve to itself as a full SHA." -ForegroundColor Red
-    Write-Host "git rev-parse output: $resolvedBaselineSha" -ForegroundColor Red
-    Write-Host "This means the frozen baseline commit is not present in this checkout's history" -ForegroundColor Red
-    Write-Host "(fetch it first) or the frozen constant above no longer names a real commit." -ForegroundColor Red
-    exit 1
-}
-Write-Host "Baseline ref resolved and verified: $resolvedBaselineSha"
-
-$worktreeDir = Join-Path $env:TEMP "p17-4-baseline-$timestamp"
-git worktree add --detach $worktreeDir $BaselineRef 2>&1 | Tee-Object -FilePath (Join-Path $outDir "03-worktree-add.log")
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "git worktree add failed, see 03-worktree-add.log. Stopping." -ForegroundColor Red
-    exit 1
-}
-try {
-    $baselineActualSha = (git -C $worktreeDir rev-parse HEAD).Trim()
-    "baseline_actual_commit=$baselineActualSha" | Out-File -FilePath (Join-Path $outDir "01-git-state.txt") -Append -Encoding utf8
-
-    Push-Location $worktreeDir
-    try {
-        mvn -pl engine-core,engine-uci -am package -DskipTests 2>&1 |
-            Tee-Object -FilePath (Join-Path $outDir "04-build-baseline.log")
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "Baseline build failed, see 04-build-baseline.log. Stopping." -ForegroundColor Red
-            exit 1
-        }
-        $baselineJarSrc = Get-ChildItem -Path "engine-uci\target" -Filter "engine-uci-*-SNAPSHOT.jar" |
-            Where-Object { $_.Name -notlike "original-*" } | Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
-        if (-not $baselineJarSrc) {
-            Write-Host "Could not find the baseline JAR under $worktreeDir\engine-uci\target." -ForegroundColor Red
-            exit 1
-        }
-    } finally {
-        Pop-Location
-    }
-
-    $baselineJarPath = Join-Path $outDir "baseline-$baselineActualSha.jar"
-    Copy-Item -Path $baselineJarSrc.FullName -Destination $baselineJarPath -Force
-    $baselineJarSha256 = (Get-FileHash -Path $baselineJarPath -Algorithm SHA256).Hash
-    Write-Host "Baseline JAR: $baselineJarPath"
-    Write-Host "SHA-256:      $baselineJarSha256"
-} finally {
-    git worktree remove --force $worktreeDir 2>&1 | Out-Null
-}
+$baselineBuild = Build-FrozenEngineJar `
+    -Label "baseline" `
+    -FrozenSha $BaselineRef `
+    -OutDir $outDir `
+    -ResolveLogPrefix "baseline" `
+    -BuildLogName "03-build-baseline.log" `
+    -WorktreeAddLogName "03a-worktree-add-baseline.log"
+$baselineJarPath = $baselineBuild.JarPath
+$baselineJarSha256 = $baselineBuild.JarSha256
+"baseline_actual_commit=$($baselineBuild.ActualSha)`nbaseline_jar_sha256=$baselineJarSha256" |
+    Out-File -FilePath (Join-Path $outDir "01-git-state.txt") -Append -Encoding utf8
 
 # ---------------------------------------------------------------------------
 # 6a. Verify the installed cutechess-cli matches the frozen version. Fail closed: this
@@ -360,7 +383,11 @@ if ($cutechessVersionOutput -match [regex]::Escape($CutechessVersion)) {
 }
 
 # ---------------------------------------------------------------------------
-# 6b. Environment record (mirrors tools/p17-2-native-throughput.ps1).
+# 6b. Environment record (mirrors tools/p17-2-native-throughput.ps1). Field names make
+#     the orchestration/candidate/baseline relationship explicit and unambiguous: the
+#     orchestration_* fields describe the checkout this script ran from; candidate_* and
+#     baseline_* describe the two chess engines actually being compared, each built from
+#     its own exact commit regardless of what orchestration_head happens to be.
 # ---------------------------------------------------------------------------
 Write-Section "Environment"
 $javaVersionOutput = & java -version 2>&1 | Out-String
@@ -368,33 +395,33 @@ Write-Host $javaVersionOutput
 $cpu = Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1
 $os  = Get-CimInstance -ClassName Win32_OperatingSystem
 $env_record = [ordered]@{
-    candidate_commit                    = $candidateSha
-    candidate_branch                    = $candidateBranch
-    candidate_frozen_ref                = $CandidateRef
-    candidate_source_identical_to_frozen_ref = $candidateSourceIdentical
-    candidate_jar_sha256                = $candidateJarSha256
-    baseline_frozen_ref                 = $BaselineRef
-    baseline_actual_commit              = $baselineActualSha
-    baseline_jar_sha256                 = $baselineJarSha256
-    openings_file                       = $OpeningsFile
-    openings_sha256                     = $actualOpeningsSha256
-    cutechess_path                      = $cutechessPath
-    cutechess_version_expected          = $CutechessVersion
-    cutechess_version_output            = $cutechessVersionOutput
-    cutechess_version_verified          = $cutechessVersionVerified
-    java_version_raw                    = $javaVersionOutput.Trim()
-    os_caption                          = $os.Caption
-    cpu_name                            = $cpu.Name
-    tc                                  = $TC
-    elo0                                = $Elo0
-    elo1                                = $Elo1
-    alpha                               = $Alpha
-    beta                                = $Beta
-    threads_per_engine                  = $EngineThreads
-    hash_mb_per_engine                  = $HashMb
-    max_games                           = $MaxGames
-    concurrency                         = $Concurrency
-    timestamp_utc                       = $timestamp
+    orchestration_head          = $orchestrationSha
+    orchestration_branch        = $orchestrationBranch
+    candidate_frozen_commit     = $CandidateRef
+    candidate_actual_commit     = $candidateBuild.ActualSha
+    candidate_jar_sha256        = $candidateJarSha256
+    baseline_frozen_commit      = $BaselineRef
+    baseline_actual_commit      = $baselineBuild.ActualSha
+    baseline_jar_sha256         = $baselineJarSha256
+    openings_file               = $OpeningsFile
+    openings_sha256             = $actualOpeningsSha256
+    cutechess_path              = $cutechessPath
+    cutechess_version_expected  = $CutechessVersion
+    cutechess_version_output    = $cutechessVersionOutput
+    cutechess_version_verified  = $cutechessVersionVerified
+    java_version_raw            = $javaVersionOutput.Trim()
+    os_caption                  = $os.Caption
+    cpu_name                    = $cpu.Name
+    tc                          = $TC
+    elo0                        = $Elo0
+    elo1                        = $Elo1
+    alpha                       = $Alpha
+    beta                        = $Beta
+    threads_per_engine          = $EngineThreads
+    hash_mb_per_engine          = $HashMb
+    max_games                   = $MaxGames
+    concurrency                 = $Concurrency
+    timestamp_utc               = $timestamp
 }
 $env_record | ConvertTo-Json | Out-File -FilePath (Join-Path $outDir "05-environment.json") -Encoding utf8
 Write-Host "IMPORTANT: verify java_version_raw above is the JDK 21 toolchain this project expects." -ForegroundColor Yellow
