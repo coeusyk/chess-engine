@@ -183,3 +183,24 @@ A bounded diagnostic, not tuning: no PVS behavior, move ordering, LMR parameters
 `mvn -pl engine-core -am test -Dtest=PvsExperimentTest,SearchRegressionTest,NodeCountRegressionTest,SearcherTest,PerftHarnessTest`: 83 run, 5 failures (the same, already-known and already-explained `SearchRegressionTest`/`NodeCountRegressionTest` set), 0 errors -- unchanged from before this diagnostic, as expected, since no code changed.
 
 **Status:** Diagnostic complete. No PVS correctness/control-flow bug was found that explains the four observed regressions -- they are demonstrated, isolated, legitimate consequences of selective-search (LMR and aspiration-window) tie-break sensitivity in positions this exact test suite's own multi-year history already documents as sensitive to unrelated changes for the same reason. One separate, real, and unresolved architectural risk was found and flagged (PV-node propagation during full-window re-searches, task step 6) but was not shown to cause any observed regression and does not block this step. Mechanism evidence from the prior entry stands as originally measured; it did not need to be rerun. **The implementation is declared ready for the native-Windows throughput gate** (issue #229 step 2), with the PV-propagation question carried forward as a named item to revisit before the strength (SPRT) gate specifically. Per the task's explicit instruction, execution stops here, before running that throughput gate.
+
+---
+
+### [2026-09-20] Phase 17 Step 2 — Throughput gate: WSL-side prep complete, native run blocked on tooling
+
+**Built:**
+
+- Verified `phase/17-pvs-experiment` HEAD matched the expected `2949db9`, local/origin in sync, working tree clean. Confirmed the diagnostic commit `2949db9` touched only `dev-entries/phase-17.md` and that `Searcher.java`/`SearchResult.java` have zero diff against the `25d3453` implementation commit -- the PVS source measured by the mechanism gate is exactly what a native run would measure now.
+- Updated #230's checklist to mark Step 1 (mechanism) complete, with a summary of the passed result and the diagnostic's outcome.
+- Added `tools/p17-2-native-throughput.ps1`: the native-Windows script for this step, following `tools/p16-2-native-baseline.ps1`'s exact protocol (process/environment evidence, git/build/environment record, one discarded `--bench-raw` warm-up, 7 measured repetitions, a per-position debug-logged run for position-level elapsed time) with two changes: it writes under `tools/results/p17-2/<timestamp>/` instead of `p16-2/`, and its presence check looks for the Phase 17 PVS counters (`pvsZeroWindowProbes`, `pvsFullDepthVerifications`) instead of the P16-1 TT fix, so it refuses to run on a tree that's lost the PVS implementation. The JFR attribution pass and clock-bound UCI sanity check from the P16-2 script were left out -- this narrower gate's own scope (issue #229 step 2's explicit ask list) doesn't call for either, and per the task's own instruction not to add instrumentation beyond what's needed, there was no reason to carry them over. Verified only via manual bracket-balance and structural review against the already-executed, already-verified P16-2 script it's derived from (no `pwsh` available in this session to parse-check directly) -- not executed, since running it requires the native terminal it exists to hand off to.
+
+**Decisions Made:**
+
+- **Native-Windows execution handed off as a script, not attempted from this session, for the same reason as P16-2.** This session runs inside WSL2 and has no way to control a native Windows terminal. WSL interop remains explicitly not accepted as a substitute for this project's authoritative wall-clock measurements (this project's own established convention, first stated in P16-2's dev-entries and unchanged since), so no attempt was made to approximate it via `powershell.exe` from WSL.
+- **No throughput numbers reported or estimated in this entry.** Reporting a plausible-sounding number without having actually run the measurement would misrepresent evidence that doesn't exist yet.
+
+**Broke / Fixed:** None. `tools/p17-2-native-throughput.ps1` is new and additive; no other file changed except #230's tracker state and this entry.
+
+**Measurements:** None yet -- this is the hand-off, not the result.
+
+**Status:** Phase 17 Step 2 (throughput) is NOT complete. Everything doable from WSL2 is done: the branch/commit state is verified, #230's Step 1 is marked complete, and `tools/p17-2-native-throughput.ps1` is the exact, ready-to-run hand-off, matching the P16-2 precedent. Once its output is available, this entry can be finished with the real 7-run elapsed/NPS/node data, the position 30 vs. 31 timing comparison, and the throughput-gate PASS/REJECT interpretation, and #229/#230 can be updated accordingly.
