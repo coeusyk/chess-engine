@@ -53,6 +53,14 @@
 
 .PARAMETER OldOptions
     Extra UCI options for the Old engine only, as "Name=Value" strings. Default: none.
+
+.PARAMETER LogPath
+    Optional exact path for the authoritative log. Must be supplied together with PgnPath.
+    When omitted, the existing timestamped tools/results path is used.
+
+.PARAMETER PgnPath
+    Optional exact path for the authoritative PGN. Must be supplied together with LogPath.
+    When omitted, the existing timestamped tools/results path is used.
 #>
 param(
     [Parameter(Mandatory)][string]$New,
@@ -70,7 +78,9 @@ param(
     [int]   $MaxGames     = 0,
     [string]$OpeningsFile = "",
     [string[]]$NewOptions = @(),
-    [string[]]$OldOptions = @()
+    [string[]]$OldOptions = @(),
+    [string]$LogPath = "",
+    [string]$PgnPath = ""
 )
 
 # ─── Color-balance warning thresholds (issue #213) ───────────────────────────
@@ -125,11 +135,28 @@ if ($OpeningsFile -ne "" -and (Test-Path $OpeningsFile)) {
 
 # ─── Output paths ────────────────────────────────────────────────────────────
 $ResultsDir = Join-Path $PSScriptRoot 'results'
-if (-not (Test-Path $ResultsDir)) { New-Item -ItemType Directory -Path $ResultsDir | Out-Null }
+$hasLogPath = -not [string]::IsNullOrWhiteSpace($LogPath)
+$hasPgnPath = -not [string]::IsNullOrWhiteSpace($PgnPath)
+if ($hasLogPath -xor $hasPgnPath) {
+    throw "-LogPath and -PgnPath must be supplied together."
+}
 
-$TS     = Get-Date -Format 'yyyyMMdd_HHmmss'
-$PgnOut = Join-Path $ResultsDir "sprt_${Tag}_${TS}.pgn"
-$LogOut = Join-Path $ResultsDir "sprt_${Tag}_${TS}.log"
+if ($hasLogPath) {
+    $PgnOut = [System.IO.Path]::GetFullPath($PgnPath)
+    $LogOut = [System.IO.Path]::GetFullPath($LogPath)
+    if ($PgnOut -eq $LogOut) { throw "-LogPath and -PgnPath must be different files." }
+    foreach ($outputPath in @($PgnOut, $LogOut)) {
+        $parent = Split-Path -Parent $outputPath
+        if ($parent -and -not (Test-Path $parent)) {
+            New-Item -ItemType Directory -Path $parent -Force | Out-Null
+        }
+    }
+} else {
+    if (-not (Test-Path $ResultsDir)) { New-Item -ItemType Directory -Path $ResultsDir | Out-Null }
+    $TS     = Get-Date -Format 'yyyyMMdd_HHmmss'
+    $PgnOut = Join-Path $ResultsDir "sprt_${Tag}_${TS}.pgn"
+    $LogOut = Join-Path $ResultsDir "sprt_${Tag}_${TS}.log"
+}
 
 # ─── Summary header ──────────────────────────────────────────────────────────
 Write-Host "SPRT: new vs old  ELO0=$Elo0 ELO1=$Elo1 alpha=$alpha beta=$beta  TC=$TC  concurrency=$Concurrency  threads/engine=$EngineThreads$(if ($MaxGames -gt 0) { "  maxGames=$MaxGames" })"

@@ -137,6 +137,11 @@ tools\sprt.bat engine-uci\target\engine-uci-0.2.0-SNAPSHOT.jar path\to\baseline.
 SPRT parameters (elo0=0, elo1=50, alpha=0.05, beta=0.05) are set in the scripts.
 Results are saved to `tools/results/sprt_<timestamp>.pgn`.
 
+The PowerShell runner also accepts optional `-LogPath <path>` and
+`-PgnPath <path>` arguments. Supply both to write authoritative artifacts to
+exact paths; omit both to retain the timestamped defaults above. Callers must
+not identify authoritative artifacts by selecting the newest matching file.
+
 **Verifying the actual Concurrency/Threads used for a run:** `tools/sprt.ps1` prints them as
 the first line of both its console output and the run's own `.log` file
 (`SPRT: new vs old ... concurrency=... threads/engine=...`) — check there rather than assuming
