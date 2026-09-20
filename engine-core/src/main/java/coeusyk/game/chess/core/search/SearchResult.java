@@ -22,6 +22,15 @@ public record SearchResult(
         long lmrApplications,
         long futilitySkips,
         long deltaPruningSkips,
+        // Phase 17 PVS experiment (docs/architecture/research/phase16-p16-3-intervention-preregistration.md
+        // section 6). pvsZeroWindowProbes is only the new ordinary-later-PV-sibling null-window
+        // probe, kept distinct from lmrApplications (the existing reduced-depth-probe counter) per
+        // that document's naming caution. pvsFullDepthVerifications is the full-depth null-window
+        // verification step taken after an LMR-reduced probe fails high inside (alpha, beta).
+        // pvsFullWindowResearches is the final full-window re-search from either path.
+        long pvsZeroWindowProbes,
+        long pvsFullDepthVerifications,
+        long pvsFullWindowResearches,
         // Issue #216: search-time instrumentation, needed to distinguish
         // whether NNUE changes search behavior (not just evaluator accuracy).
         // evalNanos/accumulatorNanos are 0 unless Searcher.setInstrumentationEnabled(true)

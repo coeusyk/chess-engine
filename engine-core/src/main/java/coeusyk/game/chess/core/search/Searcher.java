@@ -98,6 +98,16 @@ public class Searcher {
     private long lmrApplications;
     private long futilitySkips;
     private long deltaPruningSkips;
+    // Phase 17 (PVS experiment, docs/architecture/research/phase16-p16-3-intervention-preregistration.md
+    // section 6): kept distinct from lmrApplications (the existing reduced-depth-probe counter) per
+    // that document's naming caution, so a mixed "zero-window" total can't obscure which mechanism
+    // fired. pvsZeroWindowProbes counts only the new ordinary-later-PV-sibling null-window probe
+    // (never an LMR-reduced one); pvsFullDepthVerifications counts the full-depth null-window
+    // verification step taken after an LMR-reduced probe fails high inside (alpha, beta);
+    // pvsFullWindowResearches counts the final full-window re-search from either path.
+    private long pvsZeroWindowProbes;
+    private long pvsFullDepthVerifications;
+    private long pvsFullWindowResearches;
     // Issue #216: search-time instrumentation. pvNodeEvals/cutNodeEvals are cheap
     // increments (always on, like the counters above). evalNanos is gated behind
     // instrumentationEnabled -- a nanoTime() pair around every evaluate() call is
@@ -444,6 +454,9 @@ public class Searcher {
         long totalLmrApplications = 0;
         long totalFutilitySkips = 0;
         long totalDeltaPruningSkips = 0;
+        long totalPvsZeroWindowProbes = 0;
+        long totalPvsFullDepthVerifications = 0;
+        long totalPvsFullWindowResearches = 0;
         long totalEvalNanos = 0;
         long totalPvNodeEvals = 0;
         long totalCutNodeEvals = 0;
@@ -496,6 +509,9 @@ public class Searcher {
                 lmrApplications = 0;
                 futilitySkips = 0;
                 deltaPruningSkips = 0;
+                pvsZeroWindowProbes = 0;
+                pvsFullDepthVerifications = 0;
+                pvsFullWindowResearches = 0;
                 evalNanos = 0;
                 pvNodeEvals = 0;
                 cutNodeEvals = 0;
@@ -518,6 +534,9 @@ public class Searcher {
                 totalLmrApplications += lmrApplications;
                 totalFutilitySkips += futilitySkips;
                 totalDeltaPruningSkips += deltaPruningSkips;
+                totalPvsZeroWindowProbes += pvsZeroWindowProbes;
+                totalPvsFullDepthVerifications += pvsFullDepthVerifications;
+                totalPvsFullWindowResearches += pvsFullWindowResearches;
                 totalEvalNanos += evalNanos;
                 totalPvNodeEvals += pvNodeEvals;
                 totalCutNodeEvals += cutNodeEvals;
@@ -622,10 +641,11 @@ public class Searcher {
             double elapsedNanos = elapsedMs * 1_000_000.0;
             double evalPct = elapsedNanos > 0 ? 100.0 * totalEvalNanos / elapsedNanos : 0.0;
             double accPct = elapsedNanos > 0 ? 100.0 * accumulatorNanosNow / elapsedNanos : 0.0;
-            LOG.debug(String.format("[BENCH] depth=%d nodes=%d qnodes=%d nps=%d cutoffs=%d firstMoveCutoff%%=%.1f tt_hits=%d ebf=%.2f nmp_cuts=%d lmr_apps=%d fut_skips=%d delta_prune=%d eval_pct=%.1f acc_pct=%.1f pv_evals=%d cut_evals=%d time=%dms",
+            LOG.debug(String.format("[BENCH] depth=%d nodes=%d qnodes=%d nps=%d cutoffs=%d firstMoveCutoff%%=%.1f tt_hits=%d ebf=%.2f nmp_cuts=%d lmr_apps=%d fut_skips=%d delta_prune=%d pvs_zw_probes=%d pvs_full_verif=%d pvs_full_resrch=%d eval_pct=%.1f acc_pct=%.1f pv_evals=%d cut_evals=%d time=%dms",
                     depth, totalNodes, totalQuiescenceNodes, nps,
                     totalBetaCutoffs, fmcPct, totalTtHits, ebfNow,
                     totalNullMoveCutoffs, totalLmrApplications, totalFutilitySkips, totalDeltaPruningSkips,
+                    totalPvsZeroWindowProbes, totalPvsFullDepthVerifications, totalPvsFullWindowResearches,
                     evalPct, accPct, totalPvNodeEvals, totalCutNodeEvals, elapsedMs));
         }
 
@@ -654,6 +674,9 @@ public class Searcher {
             totalLmrApplications,
             totalFutilitySkips,
             totalDeltaPruningSkips,
+            totalPvsZeroWindowProbes,
+            totalPvsFullDepthVerifications,
+            totalPvsFullWindowResearches,
             totalEvalNanos,
             accumulatorNanos,
             totalPvNodeEvals,
@@ -775,19 +798,57 @@ public class Searcher {
             board.makeMove(move);
             evaluator.onMake(board, move.pack(), board.lastCapturedPiece());
             boolean childIsPvNode = rootMoveIndex == 0;
-                int score = -alphaBeta(
-                    board,
-                    childDepth,
-                    1,
-                    -beta,
-                    -alpha,
-                    shouldStopHard,
-                    false,
-                    childIsPvNode,
-                    rootExtensionsUsed,
-                    maxCheckExtensions,
-                    false
+            int score;
+            if (rootMoveIndex == 0) {
+                score = -alphaBeta(
+                        board,
+                        childDepth,
+                        1,
+                        -beta,
+                        -alpha,
+                        shouldStopHard,
+                        false,
+                        childIsPvNode,
+                        rootExtensionsUsed,
+                        maxCheckExtensions,
+                        false
                 );
+            } else {
+                // Root is always the PV node, so every later root move gets the same PVS
+                // treatment as a later sibling of an internal PV node: null-window probe first,
+                // full-window re-search only on a genuine improvement. Root has no LMR of its own,
+                // so this is a single-stage probe, matching the internal ordinary-sibling case.
+                pvsZeroWindowProbes++;
+                score = -alphaBeta(
+                        board,
+                        childDepth,
+                        1,
+                        -(alpha + 1),
+                        -alpha,
+                        shouldStopHard,
+                        false,
+                        false,
+                        rootExtensionsUsed,
+                        maxCheckExtensions,
+                        false
+                );
+                if (!aborted && score > alpha && score < beta) {
+                    pvsFullWindowResearches++;
+                    score = -alphaBeta(
+                            board,
+                            childDepth,
+                            1,
+                            -beta,
+                            -alpha,
+                            shouldStopHard,
+                            false,
+                            childIsPvNode,
+                            rootExtensionsUsed,
+                            maxCheckExtensions,
+                            false
+                    );
+                }
+            }
             evaluator.onUnmake();
             board.unmakeMove();
             rootMoveIndex++;
@@ -1073,6 +1134,7 @@ public class Searcher {
                 if (!improving) { reduction++; }
                 int reducedDepth = Math.max(1, childDepth - reduction);
 
+                // Stage 1: reduced-depth null-window probe (unchanged from pre-PVS behavior).
                 score = -alphaBeta(
                         board,
                         reducedDepth,
@@ -1086,7 +1148,68 @@ public class Searcher {
                         maxExtensions,
                         false
                 );
-                if (!aborted && score > alpha) {
+                if (!aborted && score > alpha && score < beta) {
+                    // Stage 2 (new): the reduction's fail-high is verified at full depth before
+                    // paying for a full-window search, still under a null window. A score <= alpha
+                    // here means the reduction was misleading but the move still isn't good enough;
+                    // a score >= beta is already a conclusive cutoff. Only a score strictly inside
+                    // (alpha, beta) means this move might really beat alpha and needs stage 3's
+                    // exact score. See phase16-p16-3-intervention-preregistration.md section 6.
+                    pvsFullDepthVerifications++;
+                    score = -alphaBeta(
+                            board,
+                            childDepth,
+                            ply + 1,
+                            -(alpha + 1),
+                            -alpha,
+                            shouldStopHard,
+                            false,
+                            false,
+                            childExtensionsUsed,
+                            maxExtensions,
+                            false
+                    );
+                    if (!aborted && score > alpha && score < beta) {
+                        // Stage 3: full-window re-search, only on a genuine PV improvement.
+                        pvsFullWindowResearches++;
+                        boolean childIsPvNode = isPvNode && moveIndex == 0;
+                        score = -alphaBeta(
+                                board,
+                                childDepth,
+                                ply + 1,
+                                -beta,
+                                -alpha,
+                                shouldStopHard,
+                                false,
+                                childIsPvNode,
+                                childExtensionsUsed,
+                                maxExtensions,
+                                false
+                        );
+                    }
+                }
+            } else if (isPvNode && moveIndex > 0) {
+                // General PVS for an ordinary (non-LMR-eligible) later sibling at a PV node: probe
+                // with a null window at full depth first (no reduction applies to these moves), and
+                // only re-search with the full window when the probe lands strictly inside
+                // (alpha, beta). At a non-PV node this branch is never taken (isPvNode is false),
+                // so behavior there is unchanged from before this experiment by construction.
+                pvsZeroWindowProbes++;
+                score = -alphaBeta(
+                        board,
+                        childDepth,
+                        ply + 1,
+                        -(alpha + 1),
+                        -alpha,
+                        shouldStopHard,
+                        false,
+                        false,
+                        childExtensionsUsed,
+                        maxExtensions,
+                        false
+                );
+                if (!aborted && score > alpha && score < beta) {
+                    pvsFullWindowResearches++;
                     boolean childIsPvNode = isPvNode && moveIndex == 0;
                     score = -alphaBeta(
                             board,
@@ -1103,6 +1226,8 @@ public class Searcher {
                     );
                 }
             } else {
+                // First searched move at any node, or any move at a non-PV node (where the
+                // inherited window is already null-width, so a full window costs nothing extra).
                 boolean childIsPvNode = isPvNode && moveIndex == 0;
                 score = -alphaBeta(
                         board,
