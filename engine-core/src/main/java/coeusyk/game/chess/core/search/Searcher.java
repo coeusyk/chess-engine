@@ -963,8 +963,8 @@ public class Searcher {
         int[] moves = moveListPool[poolIdx];
         int moveCount = MovesGenerator.generate(board, moves);
         int ttMoveInt = ttEntry != null ? ttEntry.bestMove() : Move.NONE;
+        int orderPly = Math.min(ply, MAX_PLY - 1);
         if (moveOrderingEnabled) {
-            int orderPly = Math.min(ply, MAX_PLY - 1);
             moveOrderer.orderMoves(board, moves, moveCount, orderPly, ttMoveInt, killerMoves, historyHeuristic);
         }
 
@@ -1010,12 +1010,12 @@ public class Searcher {
             boolean isCapture = moveOrderer.isCapture(board, move);
             boolean isKiller = isKillerMove(ply, move);
             boolean isTtMove = ttMoveInt != Move.NONE && move == ttMoveInt;
-            // Read ordering score before makeMove (before recursion can overwrite scoringBuffer).
+            // Read ordering score before makeMove. Metadata is owned by this DFS ply,
+            // so child ordering cannot overwrite the parent's score vector.
             // Losing captures have score < 0 (LOSING_CAPTURE_BASE + seeScore, where seeScore < 0).
             // This avoids recomputing SEE here — it was already computed during orderMoves.
             boolean isLosingCapture = isCapture && seeEnabled && moveOrderingEnabled
-                    && moveOrderer.scoringBuffer[mi] < 0;
-
+                    && moveOrderer.scoringBufferForPly(orderPly)[mi] < 0;
             board.makeMove(move);
             evaluator.onMake(board, move, board.lastCapturedPiece());
 
