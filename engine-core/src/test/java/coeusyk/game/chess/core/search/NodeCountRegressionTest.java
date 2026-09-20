@@ -25,11 +25,11 @@ class NodeCountRegressionTest {
     };
 
     private static final long[] EXPECTED_NODES = {
-        14989,
+        14926,
         1192,
-        36802,
-        6491,
-        8903,
+        34694,
+        6456,
+        8902,
     };
 
     @Test

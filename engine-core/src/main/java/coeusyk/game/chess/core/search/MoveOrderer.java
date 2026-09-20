@@ -7,6 +7,8 @@ import coeusyk.game.chess.core.models.Piece;
 import java.util.List;
 
 public class MoveOrderer {
+    private static final int MAX_SEARCH_PLY = 128;
+    private static final int MOVE_BUFFER_SIZE = 256;
     private static final int TT_MOVE_BONUS = 2_000_000;
     private static final int CAPTURE_BASE = 1_000_000;
     private static final int LOSING_CAPTURE_BASE = -100_000;
@@ -27,8 +29,14 @@ public class MoveOrderer {
 
     // Per-instance scoring buffer avoids allocating ScoredMove objects per orderMoves call.
     // Each Searcher owns exactly one MoveOrderer and never shares it across threads.
-    // Package-private so Searcher can snapshot the scores after ordering to avoid recomputing SEE.
-    final int[] scoringBuffer = new int[256];
+    // Package-private so Searcher can read the ordering metadata for its active ply.
+    // One score vector per active DFS ply. A child order must not overwrite the
+    // parent's metadata before the parent reaches its next move.
+    private final int[][] scoringBuffers = new int[MAX_SEARCH_PLY][MOVE_BUFFER_SIZE];
+
+    int[] scoringBufferForPly(int ply) {
+        return scoringBuffers[Math.max(0, Math.min(ply, MAX_SEARCH_PLY - 1))];
+    }
 
     public List<Move> orderMoves(
             Board board,
@@ -40,6 +48,8 @@ public class MoveOrderer {
     ) {
         int n = moves.size();
         if (n <= 1) return moves;
+
+        int[] scoringBuffer = scoringBufferForPly(ply);
 
         // Score all moves into the pre-allocated buffer.
         for (int i = 0; i < n; i++) {
@@ -154,6 +164,8 @@ public class MoveOrderer {
     ) {
         if (moveCount <= 1) return;
 
+        int[] scoringBuffer = scoringBufferForPly(ply);
+
         for (int i = 0; i < moveCount; i++) {
             scoringBuffer[i] = scoreMove(board, moves[i], ply, ttMoveInt, killerMoves, historyHeuristic);
         }
@@ -188,6 +200,8 @@ public class MoveOrderer {
     ) {
         int n = moves.size();
         if (n <= 1) return moves;
+
+        int[] scoringBuffer = scoringBufferForPly(ply);
 
         for (int i = 0; i < n; i++) {
             scoringBuffer[i] = scoreMove(board, moves.get(i), ply, ttMove, killerMovesInt, historyHeuristic);
