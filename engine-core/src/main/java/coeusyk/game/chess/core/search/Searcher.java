@@ -975,7 +975,7 @@ public class Searcher {
 
         int singularMoveToExtend = Move.NONE;
         if (canAttemptSingularity(effectiveDepth, ttEntry, inSingularitySearch, sideToMoveInCheck, alpha, beta)) {
-            SingularityOutcome singularity = runSingularitySearch(
+            SingularityResult singularity = runSingularitySearch(
                     board,
                     moves,
                     moveCount,
@@ -992,11 +992,11 @@ public class Searcher {
                 return alpha;
             }
 
-            if (singularity.failHigh()) {
-                return beta;
+            if (singularity == SingularityResult.ABORTED || aborted) {
+                return alpha;
             }
 
-            if (singularity.failLow()) {
+            if (singularity == SingularityResult.SINGULAR) {
                 singularMoveToExtend = ttEntry.bestMove();
             }
         }
@@ -1311,7 +1311,7 @@ public class Searcher {
         return ttEntry.bound() == TTBound.EXACT || ttEntry.bound() == TTBound.LOWER_BOUND;
     }
 
-    private SingularityOutcome runSingularitySearch(
+    private SingularityResult runSingularitySearch(
             Board board,
             int[] moves,
             int moveCount,
@@ -1324,7 +1324,7 @@ public class Searcher {
             int maxExtensions
     ) {
         if (ttMoveInt == Move.NONE) {
-            return new SingularityOutcome(false, false);
+            return SingularityResult.NOT_SINGULAR;
         }
 
         int singularAlpha = ttScore - getSingularMargin(depth);
@@ -1358,15 +1358,15 @@ public class Searcher {
             board.unmakeMove();
 
             if (aborted) {
-                return new SingularityOutcome(false, false);
+                return SingularityResult.ABORTED;
             }
 
             if (score >= singularBeta) {
-                return new SingularityOutcome(false, true);
+                return SingularityResult.NOT_SINGULAR;
             }
         }
 
-        return new SingularityOutcome(searchedAlternative, false);
+        return searchedAlternative ? SingularityResult.SINGULAR : SingularityResult.NOT_SINGULAR;
     }
 
     private int[][] precomputeLmrReductions() {
@@ -1934,6 +1934,12 @@ public class Searcher {
     private record RootResult(Move bestMove, int bestScore, List<Move> principalVariation, boolean aborted) {
     }
 
-    private record SingularityOutcome(boolean failLow, boolean failHigh) {
+    private enum SingularityResult {
+        /** Every searched alternative stayed below singularBeta; the TT move is singular. */
+        SINGULAR,
+        /** An alternative reached singularBeta, or no alternative was searched. */
+        NOT_SINGULAR,
+        /** Verification stopped before it established either result. */
+        ABORTED
     }
 }

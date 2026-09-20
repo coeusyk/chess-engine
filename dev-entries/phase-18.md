@@ -123,3 +123,59 @@ key used by null-subtree TT probes/stores. No unrelated source path changed.
   score delta remains unexplained.
 - No P18-1, singular-search, root-window, SMP, evaluator, PVS, or search
   constant behavior was modified.
+
+---
+
+### [2026-09-20] Phase 18 — P18-3 singular-search bound semantics (Issue #238)
+
+**Lineage and source check:**
+
+- PR #237 passed CI and merged into `develop` as
+  `0dd3cd89c7f9bbd5c80e737544e825518736939d`. The rejected Phase 17 branch
+  remains outside the production ancestry.
+- On that source, singular verification is eligible only for a sufficiently
+  deep exact/lower-bound TT entry with a best move, outside singular search,
+  check, and mate windows. The caller window is independent of the diagnostic
+  window. Verification uses `singularAlpha = ttScore - margin`,
+  `singularBeta = singularAlpha + 1`, reduced depth `depth / 2`, and searches
+  alternatives with `[-singularBeta, -singularAlpha]`.
+- The old `SingularityOutcome.failHigh` meant only that an alternative reached
+  `singularBeta`; the caller incorrectly returned its own `beta` from that
+  diagnostic result.
+
+**Red regression:**
+
+- The controlled position uses caller `alpha=0`, `beta=100`, TT score `50` at
+  depth 8, and the existing margin of 54, giving `singularBeta=-3`. A scripted
+  alternative returns `-2`, so it disproves singularity while remaining below
+  caller beta. Before repair the actual `alphaBeta` path returned `100` and the
+  test failed: `expected: not equal but was: <100>`.
+
+**Repair:**
+
+- Replaced the ambiguous boolean pair with `SingularityResult.SINGULAR`,
+  `NOT_SINGULAR`, and `ABORTED`.
+- `SINGULAR` is returned only when every searched alternative stays below the
+  diagnostic threshold and continues to schedule the existing TT-move
+  extension. `NOT_SINGULAR` continues the ordinary caller move loop. It never
+  returns caller beta. `ABORTED` preserves the existing enclosing abort return
+  and cannot be treated as proof of singularity.
+- No singular margin, depth threshold, extension amount, TT eligibility rule,
+  or other search constant changed.
+
+**Validation:**
+
+- Focused singular tests: 4 run, 0 failures, covering disproved singularity,
+  verified singularity, and abort classification.
+- Cross-slice focused tests: 49 run, 0 failures, including P18-1 and P18-2.
+- `mvn -pl engine-core test`: 400 run, 0 failures, 5 skipped.
+- `mvn -pl engine-core,engine-uci,engine-tuner -am test`: all reactor modules
+  successful.
+- Search regression profile: 3 run, 0 failures; WAC 20/20 and stability 0/20
+  flips in this run. No fixture or threshold was changed.
+- Against the exact post-P18-2 parent, all five depth-8 moves, scores, PVs, and
+  completed depths were unchanged. Nodes/qnodes/TT were unchanged as well:
+  `14926/39927/4908`, `1192/1998/736`, `34694/88266/14691`,
+  `6456/14776/1938`, and `8902/16736/3982` respectively. No singular-specific
+  counters existed, so no broad telemetry was added.
+- P18-4 root fail-high behavior remains untouched.
