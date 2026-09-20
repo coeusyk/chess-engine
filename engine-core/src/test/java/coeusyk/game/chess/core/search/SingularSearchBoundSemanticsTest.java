@@ -57,6 +57,22 @@ class SingularSearchBoundSemanticsTest {
     }
 
     @Test
+    void verifiedSingularMoveStillGetsTheExistingExtension() throws Exception {
+        Board extendedBoard = new Board(POSITION);
+        extendedBoard.setSearchMode(true);
+        Searcher extended = configuredSearcher(extendedBoard, TT_MOVE);
+        invokeAlphaBeta(extended, extendedBoard);
+
+        Board ordinaryBoard = new Board(POSITION);
+        ordinaryBoard.setSearchMode(true);
+        Searcher ordinary = configuredSearcher(ordinaryBoard, Move.NONE);
+        invokeAlphaBeta(ordinary, ordinaryBoard);
+
+        assertTrue(nodesVisited(extended) > nodesVisited(ordinary),
+                "a proven singular TT move must retain its extra search ply");
+    }
+
+    @Test
     void abortedVerificationIsNotClassifiedAsSingular() throws Exception {
         Board board = new Board(POSITION);
         board.setSearchMode(true);
@@ -138,6 +154,21 @@ class SingularSearchBoundSemanticsTest {
                 0,
                 0
         );
+    }
+
+    private static Searcher configuredSearcher(Board board, int bestMove) {
+        Searcher searcher = new Searcher(false, false, false, false, false, false);
+        searcher.setEvaluatorStrategy(new ConstantEvaluator(-4));
+        TranspositionTable table = new TranspositionTable(1);
+        table.store(board.getZobristHash(), bestMove, DEPTH, TT_SCORE, TTBound.LOWER_BOUND);
+        searcher.setSharedTranspositionTable(table);
+        return searcher;
+    }
+
+    private static long nodesVisited(Searcher searcher) throws Exception {
+        var field = Searcher.class.getDeclaredField("nodesVisited");
+        field.setAccessible(true);
+        return field.getLong(searcher);
     }
 
     private record ConstantEvaluator(int score) implements EvaluatorStrategy {

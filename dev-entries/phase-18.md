@@ -165,10 +165,10 @@ key used by null-subtree TT probes/stores. No unrelated source path changed.
 
 **Validation:**
 
-- Focused singular tests: 3 run, 0 failures, covering disproved singularity,
+- Focused singular tests: 4 run, 0 failures, covering disproved singularity,
   verified singularity, and abort classification.
-- Cross-slice focused tests: 48 run, 0 failures, including P18-1 and P18-2.
-- `mvn -pl engine-core test`: 399 run, 0 failures, 5 skipped.
+- Cross-slice focused tests: 49 run, 0 failures, including P18-1 and P18-2.
+- `mvn -pl engine-core test`: 400 run, 0 failures, 5 skipped.
 - `mvn -pl engine-core,engine-uci,engine-tuner -am test`: all reactor modules
   successful.
 - Search regression profile: 3 run, 0 failures; WAC 20/20 and stability 0/20
