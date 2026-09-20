@@ -203,11 +203,11 @@ jobs:
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```'
 
           if ($verdict -eq 'H1_ACCEPTED') {
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '> H1 accepted - patch improves strength. Safe to merge.'
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '> H1 accepted: the evidence favors the elo1=50 hypothesis over the elo0=0 hypothesis under this SPRT. Meets this project''s bar (a demonstrated +50 Elo gain) to merge.'
           } elseif ($verdict -eq 'H0_ACCEPTED') {
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '> H0 accepted - regression detected. Do NOT merge.'
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '> H0 accepted: the evidence favors the elo0=0 hypothesis over the elo1=50 hypothesis under this SPRT. This does not establish that the candidate is weaker than baseline, only that a +50 Elo gain was not demonstrated; a genuinely neutral, 0 Elo candidate accepts H0 under these bounds just as reliably as an actual regression would. Per project policy a demonstrated +50 Elo gain is required to merge, so this build does not meet that bar. Investigate before merging; do not read this as a confirmed regression.'
           } else {
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '> Inconclusive - game limit reached without SPRT decision.'
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '> Inconclusive: neither the elo0 nor the elo1 boundary was reached before the game cap.'
           }
 
       - name: Post skipped summary
@@ -220,8 +220,8 @@ jobs:
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ""
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "See ``tools/README.md`` for tagging instructions."
 
-      - name: Fail on regression
+      - name: Fail on unmet merge bar (H0 accepted)
         if: steps.baseline.outputs.skip != 'true' && steps.sprt.outputs.verdict == 'H0_ACCEPTED'
         shell: pwsh
         run: |
-          Write-Error "SPRT H0 accepted — regression confirmed against ${{ steps.baseline.outputs.tag }}. Investigate before merging."
+          Write-Error "SPRT H0 accepted for ${{ steps.baseline.outputs.tag }}: evidence favors elo0=0 over elo1=50 under this SPRT. This does not confirm a regression, only that a +50 Elo gain was not demonstrated. Per project policy a demonstrated +50 Elo gain is required to merge, so this build does not meet that bar. Investigate before merging."
