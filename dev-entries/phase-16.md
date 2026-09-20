@@ -207,3 +207,73 @@ Windows terminal; `tools/p16-2-native-baseline.ps1` is the exact, ready-to-run h
 output is available, `docs/architecture/research/phase16-p16-2-canonical-1t-baseline.md` can be
 written from real numbers and this entry updated.
 
+---
+
+### [2026-09-19] Phase 16 Step 2 — Canonical 1T baseline: native run complete, P16-2 closed
+
+**Built:**
+
+- Native Windows execution of `tools/p16-2-native-baseline.ps1` on branch tip `bc64c2a` surfaced a
+  real bug rather than just producing numbers: the clock-bound UCI sanity check sent `quit` to the
+  engine immediately after `go`, without waiting for `bestmove` first, leaving the process blocked
+  on a stdin read that would never resolve. This showed up first as two empty result directories
+  and an aborted run, then a thread dump (`tools/results/p16-2/20260919-063641/diagnostic-thread-dump.txt`)
+  showing the `main` thread parked in `BufferedReader.readLine`. Four fixes landed across separate
+  commits from this investigation: the self-poisoning clean-tree check, `java` stalling to 0% CPU
+  under `2>&1|Out-File`, selection of the oldest rather than newest SNAPSHOT jar, and finally the
+  stdin-ordering bug itself (`bc64c2a`, "UCI sanity check sent quit before bestmove").
+- A full 7-run canonical set was captured once at `bc64c2a` minus the last fix
+  (`tools/results/p16-2/20260919-070626/`, commit `63f1903`), and its own clock-bound sanity file
+  confirms the same stall (cuts off after `readyok`, no `bestmove`). That run is superseded, not
+  used as evidence. The authoritative run, `tools/results/p16-2/20260919-075505/`, is at `bc64c2a`
+  and its sanity check completes cleanly with a `bestmove` line.
+- Read and validated the full authoritative run: process/environment evidence, git/build state,
+  discarded warm-up, all 7 canonical `--bench-raw` repetitions, the debug-logged per-position run,
+  the JFR attribution capture (converted via `jfr print` to 13,086 `ExecutionSample` stack traces),
+  and the clock-bound sanity output. Full findings, statistics, and JFR attribution are in
+  `docs/architecture/research/phase16-p16-2-canonical-1t-baseline.md`.
+
+**Decisions Made:**
+
+- The `20260919-070626` run set (pre-stall-fix commit) is documented but excluded as evidence,
+  rather than quietly discarded or silently substituted for the post-fix run, since it's the direct
+  proof the stall bug was real and now fixed.
+- Canonical baseline is now: median 334,861 NPS (7 runs, CV 0.84%), 73,089,246 nodes, fully
+  deterministic across all 9 executions taken (warm-up, 7 canonical runs, 1 debug run). This
+  replaces the old native-Windows baseline (316,964 NPS / 301,116 floor) referenced in CLAUDE.md
+  Section 4; the new median is 5.65% above it, not a regression.
+- JFR hot-path attribution (`Board.makeMove`/`unmakeMove` 37.6% of leaf samples, evaluation 18.5%,
+  move ordering 14.5%, move generation 14.2%) is recorded as a descriptive baseline for future
+  interventions to compare against, not as a basis for selecting one — that's explicitly Step 3's
+  job, out of scope here per issue #226.
+
+**Broke / Fixed:**
+
+- Fixed: the P16-2 native-run script's clock-bound UCI sanity check (stdin-ordering stall),
+  self-poisoning clean-tree check, `java` I/O redirection stalling to 0% CPU, and oldest-vs-newest
+  SNAPSHOT jar selection. All four are tooling-only; no `Searcher`/`MoveGenerator`/`Evaluator`
+  behavior changed. `mvn -pl engine-core,engine-uci -am test` unaffected by these PowerShell-only
+  changes (verified at the earlier P16-1/P16-2 tooling commits; no Java source touched since).
+
+**Measurements:**
+
+| Check | Result |
+|---|---|
+| 7-run canonical `--bench-raw` NPS | median 334,861, min 328,674, max 335,719, CV 0.84% |
+| Node determinism | 73,089,246 nodes, identical across all 9 executions (warm-up + 7 canonical + 1 debug run) |
+| Elapsed time (7 runs) | median 218,267 ms, range 4,667 ms (2.14% of median) |
+| Instrumented `--bench` total | 324,660 NPS (not compared to raw as a regression signal; overhead only) |
+| WSL2 diagnostic (`--bench-raw`, single run, non-authoritative) | 304,059 NPS, 9.20% below native canonical median |
+| WSL2 diagnostic (`--bench`, single run, non-authoritative) | 313,085 NPS, 6.50% below native canonical median |
+| Clock-bound sanity | passed post-fix; completes with `bestmove e2e4 ponder e7e5` |
+| CLAUDE.md NPS gate | new median (334,861) is 5.65% above the prior baseline (316,964), well above the 301,116 floor |
+
+Full per-position search-counter findings (position 4's high qnodes/nodes ratio and its effect on
+the `nps` field, first-move cutoff rates, pruning counter sanity) and the full JFR attribution
+breakdown are in `docs/architecture/research/phase16-p16-2-canonical-1t-baseline.md` sections 4-5.
+
+**Status:** P16-2 is complete. Canonical single-threaded baseline established, documented, and
+committed. `docs/architecture/research/phase16-p16-2-canonical-1t-baseline.md` is the authoritative
+reference for all future Phase 16 search-intervention comparisons. Step 3 of issue #226 (evidence
+review and preregistration of one intervention) has not started.
+
