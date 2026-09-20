@@ -216,7 +216,13 @@ class SearchRegressionTest {
             //     Updated Phase 14 A-4: ASPIRATION_INITIAL_DELTA_CP 50→25 shifts TT ordering;
             //     depth-8 preference returns to c1d2 (king activation). All of c1c2, c1d2,
             //     c1b2, c4c5, b4b5 win; choice is eval-dependent.
-            Arguments.of("P5",  P5_FEN,  "c1d2"),
+            //     Updated Phase 17 Step 3: the isPvNode-propagation correctness repair (later-PV-
+            //     sibling and LMR-verified full-window re-searches now recurse with isPvNode =
+            //     isPvNode, not isPvNode && moveIndex == 0) shifts the search shape at this depth;
+            //     depth-8 preference moves to b4b5 (pawn push). Direct-API depth probes to 10/12/14
+            //     converge to c4c5 from depth 12 on. All of c1c2, c1d2, c1b2, c4c5, b4b5 are
+            //     already-established equivalent winning continuations for this position.
+            Arguments.of("P5",  P5_FEN,  "b4b5"),
             Arguments.of("P6",  P6_FEN,  "f4f5"),
             // P7: 8/3P4/8/8/8/8/8/3K1k2 — Kd1+Pd7 vs Kf1. d7d8q (immediate promotion)
             //     and d1d2 (king advance toward f1 before promoting) both win. d7d8q gains
@@ -258,7 +264,10 @@ class SearchRegressionTest {
             //      depth-8 reduction pattern; e3f3 becomes preferred. Provably equivalent to e3d3.
             //     Reverted to v0.5.4 eval baseline: depth-8 preference returns to e3f3.
             //     Both e3d3 and e3f3 are provably equivalent king moves.
-            Arguments.of("P10", P10_FEN, "e3f3"),
+            //     Updated Phase 17 Step 3: the isPvNode-propagation correctness repair shifts
+            //     depth-8 preference to e3d3, stable through depth 14 in direct-API probes. Both
+            //     e3d3 and e3f3 remain provably equivalent (mirror-symmetric) king moves.
+            Arguments.of("P10", P10_FEN, "e3d3"),
             // Endgame
             // E1: 4k3/8/8/8/8/8/8/4KQ2 — KQ vs K. f1f6 (queen to 6th rank, restricts
             //     BK to ranks 7-8) is a textbook technique; f1b5 also wins. Tuned eval
@@ -280,7 +289,14 @@ class SearchRegressionTest {
             //     Updated Phase 14 A-4: ASPIRATION_INITIAL_DELTA_CP 50→25 shifts TT ordering;
             //     depth-8 preference shifts to f1b5 (queen to bishop-5 diagonal — restricts BK
             //     from d7/e6). Both f1f6 and f1b5 are winning KQK continuations; equivalent.
-            Arguments.of("E1",  E1_FEN,  "f1b5"),
+            //     Updated Phase 17 Step 3: the isPvNode-propagation correctness repair shifts
+            //     depth-8 preference to e1d2 (king centralisation, standard KQK mating technique).
+            //     Direct-API depth probes to 10/12/14 do not stabilize on one move (f1f6, f1b5,
+            //     f1f6) -- expected for a trivially won KQK position where nearly every reasonable
+            //     move wins and deep search has no single "true" answer to converge to. e1d2 is a
+            //     legal, winning king-approach move, consistent with this position's established
+            //     eval-dependent-choice history.
+            Arguments.of("E1",  E1_FEN,  "e1d2"),
             // E2: 4k3/8/8/8/8/8/8/4KR2 — KR vs K.  f1f6 (rook-to-6th restriction) and
             //     e1d2 (king activation toward centre) both win; known theoretical equivalence.
             //     Updated 2026-04-03: cheap bitboard hanging-penalty (replacing SEE-based form)
@@ -317,7 +333,16 @@ class SearchRegressionTest {
             //     Updated 2026-04-12: final two-phase CLOP baked in (Q=0,K=6,B=2,R=12,H=40,T=17).
             //     e4f4 preference confirmed preserved under final production params.
             Arguments.of("E4",  E4_FEN,  "e4f4"),
-            Arguments.of("E5",  E5_FEN,  "a2e2"),
+            // E5: rook + king + connected passer vs lone king; a2e2 (rook to king's file) and
+            //     a2a6 (rook to 6th rank, cutting the black king off) both keep a comfortably
+            //     winning position -- the rook is never en prise and the pawn's promotion path
+            //     is not obstructed either way.
+            //     Updated Phase 17 Step 3: the isPvNode-propagation correctness repair shifts
+            //     depth-8 preference to a2a6. Direct-API depth probes to 10/12 revert to a2e2,
+            //     so a2a6's advantage over a2e2, if any, does not hold up at greater depth; both
+            //     remain legal, winning moves and the depth-8 choice between them is eval/search-
+            //     shape-dependent, the same pattern already established for P5/P10/E1 above.
+            Arguments.of("E5",  E5_FEN,  "a2a6"),
             // E6: 8/8/8/5k2/1PP5/8/2K5/8 — Kc2+Pb4c4 vs Kf5. Both b4b5 and c4c5 advance
             //     connected pawns; BK on f5 is far from both.
             //     Updated 2026-04-03: SEE-based hanging-piece penalty (gain/4) causes a small

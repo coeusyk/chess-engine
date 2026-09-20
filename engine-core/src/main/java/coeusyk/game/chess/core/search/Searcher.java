@@ -833,6 +833,9 @@ public class Searcher {
                         false
                 );
                 if (!aborted && score > alpha && score < beta) {
+                    // Root is always the PV node (see comment above), so this full-window
+                    // re-search of a later root move gets PV semantics regardless of
+                    // rootMoveIndex -- matching the internal later-PV-sibling fix.
                     pvsFullWindowResearches++;
                     score = -alphaBeta(
                             board,
@@ -842,7 +845,7 @@ public class Searcher {
                             -alpha,
                             shouldStopHard,
                             false,
-                            childIsPvNode,
+                            true,
                             rootExtensionsUsed,
                             maxCheckExtensions,
                             false
@@ -1170,9 +1173,14 @@ public class Searcher {
                             false
                     );
                     if (!aborted && score > alpha && score < beta) {
-                        // Stage 3: full-window re-search, only on a genuine PV improvement.
+                        // Stage 3: full-window re-search, only on a genuine PV improvement. This
+                        // recursion is asked for the exact value of a move that is about to become
+                        // (or update) the principal variation at this node, so it gets PV semantics
+                        // whenever the enclosing node itself is a PV node -- this branch only ever
+                        // triggers with moveIndex >= 4 (canApplyLmr's own gate), so a "first move"
+                        // qualifier here would be vacuous; the correct child flag is simply isPvNode.
                         pvsFullWindowResearches++;
-                        boolean childIsPvNode = isPvNode && moveIndex == 0;
+                        boolean childIsPvNode = isPvNode;
                         score = -alphaBeta(
                                 board,
                                 childDepth,
@@ -1209,8 +1217,11 @@ public class Searcher {
                         false
                 );
                 if (!aborted && score > alpha && score < beta) {
+                    // This branch only runs when isPvNode && moveIndex > 0 (the enclosing else-if
+                    // condition), so the correct child flag for the exact re-search is simply
+                    // isPvNode -- see the identical reasoning at the LMR stage 3 re-search above.
                     pvsFullWindowResearches++;
-                    boolean childIsPvNode = isPvNode && moveIndex == 0;
+                    boolean childIsPvNode = isPvNode;
                     score = -alphaBeta(
                             board,
                             childDepth,

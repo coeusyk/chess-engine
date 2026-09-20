@@ -104,6 +104,37 @@ class PvsExperimentTest {
     }
 
     @Test
+    void laterPvSiblingFullWindowResearchGetsPvNodeSemantics() {
+        // Phase 17 Step 3 correctness repair: a later PV sibling's full-window re-search (the
+        // "childIsPvNode = isPvNode && moveIndex == 0" sites in both the ordinary-sibling and
+        // LMR-verification branches) must recurse with isPvNode = isPvNode, not
+        // isPvNode && moveIndex == 0 -- moveIndex is always > 0 at those two call sites by
+        // construction, so the old expression always passed isPvNode = false, letting razoring,
+        // futility pruning, and losing-capture pruning fire inside a recursion that is being
+        // asked for an exact PV value. pvNodeEvals is a direct, hard-to-fake witness of this:
+        // it only increments when a node is entered with isPvNode = true (Searcher line ~960).
+        //
+        // Measured directly against this exact position/depth by temporarily reverting the fix
+        // (git stash on Searcher.java only, same JVM/JDK, same build): pvNodeEvals was 15 before
+        // the repair and 33 after it; at depth 8, 28 before and 101 after. The thresholds below
+        // sit strictly between the two, so this test fails under the pre-repair expression and
+        // passes under the corrected one.
+        Searcher searcher = new Searcher();
+        SearchResult depth6 = searcher.searchDepth(new Board(MIDDLEGAME_FEN), 6);
+        assertTrue(depth6.pvNodeEvals() >= 20,
+                "pvNodeEvals=" + depth6.pvNodeEvals() + " is too low for the corrected PV "
+                        + "propagation (was 15 under the pre-repair childIsPvNode expression, "
+                        + "33 under the corrected one)");
+
+        Searcher searcher8 = new Searcher();
+        SearchResult depth8 = searcher8.searchDepth(new Board(MIDDLEGAME_FEN), 8);
+        assertTrue(depth8.pvNodeEvals() >= 60,
+                "pvNodeEvals=" + depth8.pvNodeEvals() + " is too low for the corrected PV "
+                        + "propagation (was 28 under the pre-repair childIsPvNode expression, "
+                        + "101 under the corrected one)");
+    }
+
+    @Test
     void disablingLmrEliminatesFullDepthVerificationsButKeepsOrdinaryProbes() {
         // moveOrderingEnabled, aspirationWindowsEnabled, nullMovePruningEnabled, lmrEnabled=false.
         Searcher searcher = new Searcher(true, true, true, false);

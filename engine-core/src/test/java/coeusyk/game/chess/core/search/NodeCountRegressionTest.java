@@ -26,11 +26,23 @@ class NodeCountRegressionTest {
     };
 
     private static final long[] EXPECTED_NODES = {
-        15362,
-        1192,
-        43425,
-        9938,
-        8393,
+        // All five goldens are updated for Phase 17 Step 3's isPvNode-propagation correctness
+        // repair (see docs/architecture/research/phase16-p16-3-intervention-preregistration.md
+        // section 6 and dev-entries/phase-17.md). The loop below asserts in FEN order and stops
+        // at the first failure, so FEN[1..4]'s drift was masked by an earlier index's until each
+        // was fixed in turn -- confirmed real, not a single find, by re-running after each fix.
+        // The direction of each delta (decrease for FEN[0]/FEN[1]/FEN[3], increase for
+        // FEN[2]/FEN[4]) is position-dependent, matching the mixed per-position node-count deltas
+        // already seen in the Gate 1 mechanism-gate rerun (dev-entries/phase-17.md): suppressing
+        // the previously-incorrect isPvNode=false pruning removes pruning at some subtrees (more
+        // nodes) while the resulting tighter bounds improve alpha earlier and prune harder
+        // elsewhere (fewer nodes), and the aggregate over the full 31-position suite is a net
+        // decrease.
+        15349,
+        1242,
+        57103,
+        7592,
+        13798,
     };
 
     @Test
