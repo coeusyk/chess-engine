@@ -179,3 +179,61 @@ key used by null-subtree TT probes/stores. No unrelated source path changed.
   `6456/14776/1938`, and `8902/16736/3982` respectively. No singular-specific
   counters existed, so no broad telemetry was added.
 - P18-4 root fail-high behavior remains untouched.
+
+---
+
+### [2026-09-20] Phase 18 — P18-4 root fail-high termination and window validity (Issue #240)
+
+**Lineage and source check:**
+
+- PR #239 passed CI and merged into `develop` as
+  `72284330c904f24b0015180e3eb99369a0f82874`.
+- `searchRoot` constructs each child window as `[-beta, -alpha]`. It updates
+  the root best score, best move, and PV before updating alpha, but previously
+  continued to the next sibling after `alpha >= beta`. The next child could
+  therefore receive a closed or inverted window. The aspiration wrapper already
+  recognized the returned root score as fail-high and retained its widening and
+  full-window fallback logic.
+
+**Red regression:**
+
+- `RootFailHighWindowTest` uses a controlled K+P position and a scripted
+  evaluator. The first root child returns 20 against root `[0,10]`; before the
+  repair, the actual `searchRoot` path evaluated the second sibling once. The
+  focused assertion failed with:
+  `root must not invoke another sibling after alpha reaches beta ==> expected: <0> but was: <1>`.
+
+**Repair:**
+
+- After the existing best-score/best-move/PV update and alpha update,
+  `searchRoot` now breaks when `alpha >= beta`.
+- The aspiration wrapper, retry widths, retry count, full-window fallback,
+  abort handling, MultiPV exclusions, and Syzygy root path are unchanged.
+
+**Validation:**
+
+- Focused root/aspiration/abort tests: 4 run, 0 failures.
+- Cross-slice focused tests: 53 run, 0 failures, including P18-1 through P18-3.
+- `mvn -pl engine-core test`: 404 run, 0 failures, 5 skipped.
+- `mvn -pl engine-core,engine-uci,engine-tuner -am test`: all reactor modules
+  successful.
+- Search regression profile: 3 run, 0 failures; WAC 20/20 and stability 0/20.
+
+Fixed-depth depth-8 comparison against the exact post-P18-3 parent:
+
+| Position | Parent move/score | Repaired move/score | Parent nodes/qnodes/TT | Repaired nodes/qnodes/TT |
+|---|---|---|---:|---:|
+| Start | e2e4 / 25 | e2e4 / 25 | 14926 / 39927 / 4908 | 14926 / 39927 / 4908 |
+| K+P vs K | e2e4 / 122 | e1d2 / 122 | 1192 / 1998 / 736 | 1226 / 1816 / 1024 |
+| Tactical middlegame | b4b2 / −63 | b4b2 / −63 | 34694 / 88266 / 14691 | 34694 / 88266 / 14691 |
+| Rook/pawn | b4f4 / 14 | b4f4 / 14 | 6456 / 14776 / 1938 | 6456 / 14776 / 1938 |
+| Queen/king | d7d2 / 1565 | d7d2 / 1565 | 8902 / 16736 / 3982 | 8902 / 16736 / 3982 |
+
+The K+P divergence begins at depth 6 after an aspiration fail-high; depths 1–5
+match, and the final score remains identical. E1 also diverges through a depth-4
+fail-high: parent `f1c4 / 1308` with 38887 nodes becomes repaired
+`f1f6 / 1303` with 27978 nodes. These are explained by removing the old invalid
+window sibling searches and their TT/PV side effects; both are winning KQK
+continuations. The E1 deterministic fixture was updated with that explanation.
+
+No rollback or transactional search state was added, and no P18-5 work began.
