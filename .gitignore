@@ -84,3 +84,5 @@ graphify-out/
 # under ~/.local/share/token-savior, outside the repo.
 .token-savior-cache.json
 .token-savior/
+
+tools/results/p17-2/
