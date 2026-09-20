@@ -277,3 +277,80 @@ committed. `docs/architecture/research/phase16-p16-2-canonical-1t-baseline.md` i
 reference for all future Phase 16 search-intervention comparisons. Step 3 of issue #226 (evidence
 review and preregistration of one intervention) has not started.
 
+---
+
+### [2026-09-20] Phase 16 Step 3 — Evidence review and intervention preregistration: PVS selected, closing #226
+
+**Built:**
+
+- Reconciled tracker state before starting analysis: verified #227's exit criteria against landed
+  code and tests (XOR-checksum fix present and correctly documented, both torn-read and ABA
+  regression tests present, concurrent stress test present, full Maven suite green on re-run) and
+  closed it. Updated #226's checklist to mark Step 1 and Step 2 complete.
+- Reviewed `Searcher.alphaBeta()`'s move loop (line 1007 onward) and `Searcher.searchRoot()`'s move
+  loop (line 703 onward) directly against source, not from memory of how the engine is supposed to
+  work. Found that general PVS does not exist: every move other than the first, at every ply and
+  every node including root, is searched with the same full window inherited from the parent,
+  except late quiet moves that separately qualify for LMR's own null-window verification
+  (`canApplyLmr`, unconditional on `isPvNode`). The `isPvNode`/`childIsPvNode` bookkeeping needed to
+  drive a real PVS scheme already exists and is correctly threaded through the whole call tree; it
+  is only used today for eval-node accounting and for gating razoring/futility, never for window
+  selection.
+- Found, while checking project history for prior PVS attempts, that `dev-entries/phase-3.md`
+  recorded "implement principal variation search behavior refinements" as the planned next step
+  twice (after issue #38 and again after issue #40), and both times the next issue landed something
+  else instead (futility/razoring, then check extensions). General PVS was never implemented.
+  Separately found `docs/ccrl-submission.md` currently lists the architecture as including "PVS,"
+  which is inaccurate per the above; flagged, not fixed, since it's a documentation issue outside
+  this step's scope.
+- Compared four candidates (general PVS, `Board.makeMove`/`unmakeMove` hot-path optimization, move
+  ordering/history refinement, TT/SMP follow-up) across concrete evidence, expected mechanism,
+  likely strength/throughput impact, implementation risk, LMR/TT/extension interaction risk,
+  measurement quality, and rollback clarity. Full table in
+  `docs/architecture/research/phase16-p16-3-intervention-preregistration.md` section 4.
+- Selected general PVS. Preregistered a minimal experiment (first move full window unchanged, later
+  PV-node siblings get a null-window probe, full-window re-search only on a fail-high strictly
+  inside `(alpha, beta)`, LMR logic preserved unless a precise interaction is found and documented,
+  new zero-window/re-search counters since none exist today, no move-ordering changes in the same
+  experiment) and a four-stage measurement plan (mechanism, throughput, correctness, strength) with
+  predeclared stop rules. No code was written for the intervention itself.
+- Reviewed `nightly-sprt.yml`'s H0/H1 verdict wording per the issue's own "related, not in scope"
+  note from #227: confirmed the workflow reports `H0_ACCEPTED` (at `elo0=0 elo1=50`) as "regression
+  detected," which overstates what accepting `elo0=0` actually shows (a neutral, 0-Elo patch is
+  expected to accept H0 under these bounds too, not only a true regression). Recorded as
+  measurement-infrastructure cleanup to do before the future PVS strength experiment, not as part
+  of the PVS intervention itself.
+
+**Decisions Made:**
+
+- **PVS selected on control-flow evidence, not JFR share or throughput.** The instructions for this
+  step were explicit that a high JFR share (`Board.makeMove`/`unmakeMove` at 37.6%, section 5 of the
+  P16-2 report) is not itself a reason to optimize, and that NPS gains are not a strength claim.
+  PVS was chosen because direct code inspection found a specific, present inefficiency (full-window
+  search of ordinary later siblings at PV nodes) with a mechanism measurable in node count alone,
+  before any Elo claim — not inferred merely from PVS's absence, and not because it topped a
+  throughput ranking.
+- **make/unmake optimization, move-ordering refinement, and TT/SMP follow-up all deferred, not
+  rejected.** Each remains a legitimate future candidate; none had a comparably specific,
+  falsifiable mechanism ready to test right now (see comparison table).
+- **Do not implement in this step**, per explicit instruction; this document freezes scope for a
+  future implementation session, and any deviation from the frozen scope during implementation
+  should be recorded as a documented deviation, not a silent substitution.
+
+**Broke / Fixed:** None. This step is evidence review, tracker reconciliation, and documentation
+only; no source file was changed.
+
+**Measurements:**
+
+| Check | Result |
+|---|---|
+| #227 AC verification | All exit criteria confirmed against landed code/tests; closed |
+| `mvn -pl engine-core,engine-tuner -am test` (re-verified at HEAD) | Green, exit 0 |
+| Candidates compared | 4 (general PVS, make/unmake, move ordering, TT/SMP), full table in the P16-3 report |
+| Selected intervention | A — general PVS / zero-window sibling search |
+| Existing zero-window/re-search counters | None found; new counters required, specified in the preregistration |
+
+**Status:** P16-3 complete. Phase 16 is complete: all three planned steps (P16-1 TT correctness,
+P16-2 canonical baseline, P16-3 evidence review + preregistration) are done. Issue #226 closed.
+Phase 17 has not been created or started. The PVS intervention itself has not been implemented.
+
