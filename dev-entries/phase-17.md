@@ -376,3 +376,66 @@ Position 31's node expansion does translate into a real local wall-time regressi
 **Measurements:** See the Gate 1 rerun table, per-position delta table, and `pvNodeEvals` before/after figures above.
 
 **Status:** Gate 3 correctness evidence is complete and passes for the repaired candidate: the PV-node-propagation question is resolved (was a defect, is now repaired), Gate 1 is revalidated and passes on the repaired candidate, the full relevant test suite is green, all nine stale expected values (five `NodeCountRegressionTest` parameter goldens, four `SearchRegressionTest` expected moves) are re-verified and updated with evidence, and PV legality holds. Phase progression is blocked, not Gate 3 itself: what remains is exactly one native-Windows action, rerunning `tools/p17-2-native-throughput.ps1` (or the equivalent canonical protocol) against this branch's current HEAD, to produce a throughput number that actually characterizes the repaired candidate. The previously-recorded native result (48,892,339 nodes, 137,644 ms median) measured the pre-repair candidate and does not apply here. Step 3 is not marked complete on the tracker until that rerun confirms Gate 2 for this exact candidate, and Step 4 (SPRT, also separately blocked on #231) does not start before that. Do not run SPRT before that rerun.
+
+---
+
+### [2026-09-20] Phase 17 Step 2 rerun, native throughput on the repaired candidate: PASS (Issues #229, #230)
+
+**Built:**
+
+- **Native run executed** at `tools/results/p17-2/20260920-082614/` against HEAD `b50d72d` (docs-only on top of the repair commit `f9b152c`; source identical to `f9b152c`). Same protocol as the prior throughput gate and P16-2: `tools/p17-2-native-throughput.ps1`, native PowerShell 7 (`C:\Program Files\PowerShell\7\pwsh.exe`, not a WSL-mounted path), AMD Ryzen 7 7700X, JDK Zulu 21.0.10, `Threads=1`, `Hash=16MB` (hardcoded in `BenchRunner`), Classical evaluator, depth 13, the same 31-position `BenchRunner.BENCH_FENS` corpus (source SHA-256 unchanged from prior runs since `BenchRunner.java` was not touched), 1 discarded warm-up plus 7 measured `--bench-raw` repetitions, plus one per-position debug-logged run.
+
+- **Determinism confirmed**: warm-up and all 7 measured runs report exactly `40878283` main nodes, matching the repaired candidate's WSL mechanism-gate result exactly. The per-position debug run's summed node total (`40878283`) and summed qnodes (`100113245`) also match the WSL mechanism-gate rerun's aggregates exactly, cross-validating WSL and native for the repaired candidate the same way P16-2 originally did for the pre-PVS baseline.
+
+- **Seven measured runs:**
+
+  | Run | Elapsed (ms) | NPS |
+  |---|---|---|
+  | 1 | 115,150 | 355,000 |
+  | 2 | 120,275 | 339,873 |
+  | 3 | 120,162 | 340,193 |
+  | 4 | 122,249 | 334,385 |
+  | 5 | 121,176 | 337,346 |
+  | 6 | 121,101 | 337,555 |
+  | 7 | 120,860 | 338,228 |
+
+  Elapsed: median 120,860 ms, mean 120,139 ms, sample stdev 2,305 ms, CV 1.92%, min 115,150 ms, max 122,249 ms.
+  NPS: median 338,228, mean 340,369, sample stdev 6,730, CV 1.98%, min 334,385, max 355,000.
+
+- **Three-candidate comparison** (fixed-depth elapsed remains the primary criterion; NPS is descriptive only, since the main/qnode work mix differs across all three candidates):
+
+  | Metric | Pre-PVS baseline | Pre-repair PVS | Repaired PVS | Repaired vs. pre-PVS | Repaired vs. pre-repair PVS |
+  |---|---|---|---|---|---|
+  | Main nodes | 73,089,246 | 48,892,339 | 40,878,283 | -44.07% | -16.39% |
+  | Quiescence nodes | 226,653,985 | 133,023,392 | 100,113,245 | -55.83% | -24.74% |
+  | Median elapsed | 218,267 ms | 137,644 ms | 120,860 ms | -44.63% | -12.19% |
+  | Median NPS (descriptive) | 334,861 | 355,208 | 338,228 | +1.01% | -4.78% |
+
+  Qnodes for the repaired candidate come from the per-position debug run's own summed counters (not invented): 100,113,245, identical to the WSL mechanism-gate rerun's figure for the same candidate.
+
+- **Position 30/31, native timing, all three candidates:**
+
+  | Metric | Pre-PVS | Pre-repair PVS | Repaired PVS | Repaired vs. pre-PVS | Repaired vs. pre-repair PVS |
+  |---|---|---|---|---|---|
+  | Position 30 nodes | 22,030,846 | 6,969,853 | 7,507,078 | -65.93% | +7.71% |
+  | Position 30 time | 69,483 ms | 19,316 ms | 22,279 ms | -67.94% | +15.34% |
+  | Position 31 nodes | 4,138,610 | 12,332,161 | 4,049,243 | -2.16% | -67.17% |
+  | Position 31 time | 9,928 ms | 34,933 ms | 10,127 ms | +2.00% | -71.01% |
+
+  **Position 31, the former pathological outlier, is no longer an outlier at all under the repaired candidate.** Its node count and wall time both land within about 2% of the pre-PVS baseline itself, a position this candidate had never regressed relative to before Phase 17 touched it. This is a materially different result from "shrinks": relative to the pre-PVS baseline, the elevation the pre-repair PVS candidate showed here (+197.98% nodes, +251.86% time) is gone. No claim is made that the isPvNode repair was the sole cause of this specific position's behavior; what the native data establishes is that the repaired candidate's position 31 numbers are close to the pre-PVS baseline's own numbers, which the pre-repair candidate's were not.
+
+  Position 30 moved in the other direction, a small real increase relative to the pre-repair PVS candidate (+7.71% nodes, +15.34% time), consistent with the WSL mechanism-gate rerun already having shown mixed per-position deltas under the repair (some subtrees see less pruning and more nodes as a direct, expected consequence of the fix). Position 30 remains dramatically better than the pre-PVS baseline either way (-65.93% nodes, -67.94% time).
+
+- **Gate 2 decision: PASS.** Deterministic node count is exactly 40,878,283 across the warm-up and all 7 measured runs. The environment is fully comparable to every prior gate in this phase (same machine, same JDK, same protocol). Aggregate fixed-depth wall time shows no regression at all, let alone an unexplained one: median elapsed improves against both the pre-PVS baseline (-44.63%) and the pre-repair PVS candidate (-12.19%). No percentage threshold was invented; the result does not require one, since it improves against both prior candidates rather than sitting in an ambiguous zone.
+
+**Decisions Made:**
+
+- **Gate 2 now passes for the same candidate that Gate 1 and Gate 3 already passed for (`f9b152c`/`b50d72d`).** Per the framing carried over from the prior two entries, Step 3 (correctness) can now be marked complete on the tracker, since its only blocker was exactly this rerun.
+- **#230 updated**: Step 1's wording is corrected so the authoritative repaired-candidate mechanism result (73,089,246 -> 40,878,283, -44.07%) is what the checklist states, with the original pre-repair figure (73,089,246 -> 48,892,339, -33.11%) kept only as historical context inside the entry, not as the current claim. Steps 1, 2, and 3 are all marked complete. Step 4 (strength/SPRT) remains open, still separately blocked on #231's nightly-SPRT wording cleanup, and is not started here.
+- **#229 updated** with the full native evidence above.
+
+**Broke / Fixed:** None. No source file changed; only the tracker (#229, #230) and this dev-entry.
+
+**Measurements:** See the seven-run table, three-candidate comparison, and position 30/31 table above.
+
+**Status:** Phase 17 Steps 1, 2, and 3 are all complete and passed for the repaired candidate (`f9b152c`/`b50d72d`). Step 4 (strength/SPRT) remains open, blocked on #231. No SPRT has been run.
