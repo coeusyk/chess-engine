@@ -444,9 +444,25 @@ Write-Host "IMPORTANT: verify java_version_raw above is the JDK 21 toolchain thi
 # ---------------------------------------------------------------------------
 # 7. Hand off to the existing, already-tested match runner with frozen terms.
 #    This is the only step that spends games. Everything above is prep/evidence.
+#
+#    tools/sprt.ps1 accepts no output-path parameter: it always generates its own
+#    log/pgn filenames from -Tag and a Get-Date timestamp captured when IT starts
+#    (not this script's own $timestamp), under tools/results/ directly, never under
+#    this run's own $outDir. Two things follow from that:
+#      - "2>&1 | Tee-Object" alone does not reliably capture sprt.ps1's own console
+#        messaging, since nearly all of it goes through Write-Host, which writes to
+#        PowerShell's information stream (6), not the error stream (2) that 2>&1
+#        merges. "*>&1" (all streams) is required to route Write-Host output into
+#        this pipe at all.
+#      - Even with *>&1 fixed, the transcript this produces is a secondary copy of
+#        console output, not the authoritative record. tools/sprt.ps1's own log/pgn
+#        (written via its internal StreamWriter and cutechess-cli's -pgnout) are the
+#        authoritative artifacts, and this script locates and copies them into its
+#        own evidence directory rather than assuming a path it invented.
 # ---------------------------------------------------------------------------
 Write-Section "Invoking tools\sprt.ps1 with frozen Phase 17 Step 4 terms"
 $sprtLog = Join-Path $outDir "06-sprt-console.log"
+$sprtResultsDir = Join-Path $repoRoot "tools\results"
 & (Join-Path $repoRoot "tools\sprt.ps1") `
     -New $candidateJarPath `
     -Old $baselineJarPath `
@@ -459,9 +475,30 @@ $sprtLog = Join-Path $outDir "06-sprt-console.log"
     -OpeningsFile $OpeningsFile `
     -NewOptions "Hash=$HashMb" `
     -OldOptions "Hash=$HashMb" `
-    2>&1 | Tee-Object -FilePath $sprtLog
+    *>&1 | Tee-Object -FilePath $sprtLog
 
-$sprtOutputText = Get-Content -Path $sprtLog -Raw
+# Locate the authoritative log/pgn tools/sprt.ps1 itself wrote for this call: the newest
+# files matching this run's -Tag under tools/results/. This does not invoke cutechess or
+# sprt.ps1 again; it only looks at what the call above already produced.
+$sprtAuthoritativeLog = Get-ChildItem -Path $sprtResultsDir -Filter "sprt_phase17-pvs_*.log" -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$sprtAuthoritativePgn = Get-ChildItem -Path $sprtResultsDir -Filter "sprt_phase17-pvs_*.pgn" -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if ($sprtAuthoritativeLog) {
+    Copy-Item -Path $sprtAuthoritativeLog.FullName -Destination (Join-Path $outDir "06a-sprt-authoritative.log") -Force
+}
+if ($sprtAuthoritativePgn) {
+    Copy-Item -Path $sprtAuthoritativePgn.FullName -Destination (Join-Path $outDir "06b-sprt-authoritative.pgn") -Force
+}
+
+# Read the verdict from the authoritative log when it was found; fall back to the console
+# transcript only if tools/sprt.ps1's own log could not be located (it should always be
+# found in practice, since -pgnout/its internal log are unconditional).
+$sprtOutputText = if ($sprtAuthoritativeLog) {
+    Get-Content -Path $sprtAuthoritativeLog.FullName -Raw
+} else {
+    Get-Content -Path $sprtLog -Raw
+}
 if ($sprtOutputText -match 'H1 was accepted') {
     $verdict = 'H1_ACCEPTED'
 } elseif ($sprtOutputText -match 'H0 was accepted') {

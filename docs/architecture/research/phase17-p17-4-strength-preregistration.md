@@ -256,8 +256,119 @@ invalidated a run):
 
 ## 8. Status
 
-**Preparation only. No game has been played under this protocol.** `tools/p17-4-sprt.ps1`
-implements sections 1-6 above and refuses to run without an explicit `-IReallyMeanIt` switch;
-it has not been executed. See `dev-entries/phase-17.md` for the preparation session's full
-audit of existing SPRT infrastructure (`.github/workflows/nightly-sprt.yml`, `tools/sprt.ps1`)
-and why neither was used as-is for this gate.
+**Run complete, 2026-09-20.** `tools/p17-4-sprt.ps1` executed on the target native host
+(RENEGADE, AMD Ryzen 7 7700X) under `-IReallyMeanIt`. Both engine JARs were built from their
+exact frozen commits and verified against the SHA-256 values recorded in the run's own
+evidence (`tools/results/p17-4/20260920-103500/`, `candidate_jar_sha256` and
+`baseline_jar_sha256` in `05-environment.json`, matching the JAR files themselves
+byte-for-byte). See section 9 below for the result and section 10 for the audit of a
+post-run evidence-plumbing bug found while collecting this evidence (the bug is in
+`tools/p17-4-sprt.ps1`'s own log-path handling after the match already finished; it does not
+affect the match itself).
+
+## 9. Result
+
+- **Score: NEW (candidate) 0, OLD (baseline) 13, draws 1, from 14 scored games** (of 19
+  started; the remaining 5 were in-flight games cancelled once the SPRT boundary was crossed,
+  see section 10's audit, not additional losses or failures). NEW White: 0-6-1. NEW Black:
+  0-7-0.
+- **SPRT: LLR -3.10, lower bound -2.94, upper bound +2.94. H0 accepted.**
+- **Per section 6's verdict semantics: this means the evidence favors elo0=0 over elo1=+50
+  under this preregistered SPRT. It does not mean a -572 Elo regression is proven, that PVS is
+  proven weaker in some absolute sense, or that the candidate's true Elo is zero.** The
+  cutechess-reported point estimate (-572.5 +/- nan from 14 games) is not a usable effect-size
+  estimate; a `+/- nan` confidence interval means the interval itself could not be computed
+  from this few games, and 14 games is far too small a sample for any Elo point estimate to be
+  reliable regardless. What the SPRT decision does establish, under the preregistered bounds,
+  is that this run does not meet the project's frozen +50 Elo gate for promoting the candidate.
+- **This does not revise Gates 1-3.** Mechanism (Gate 1, PASS, main nodes 73,089,246 ->
+  40,878,283, -44.07%), throughput (Gate 2, PASS, median fixed-depth elapsed 218,267 ms ->
+  120,860 ms, -44.63%), and correctness (Gate 3, PASS) all measured search efficiency and
+  correctness properties that remain true regardless of this gate's outcome. An efficiency
+  improvement (fewer nodes, less wall-clock time to a fixed depth) does not imply a
+  playing-strength improvement; Gate 4 tests playing strength directly and specifically, and
+  this run's evidence, once validated (section 10), is what settles that question for this
+  candidate under this protocol.
+
+## 10. Run-validity audit (post-run, evidence-only, no new game played)
+
+Performed strictly from the existing run's own artifacts: `tools/results/p17-4/20260920-103500/`
+(build/environment evidence, both JARs), and `tools/results/sprt_phase17-pvs_20260920_160513.log`
+/ `.pgn` (the log and PGN `tools/sprt.ps1` itself wrote for this call, copied into the run's own
+evidence directory as `06a-sprt-authoritative.log` / `06b-sprt-authoritative.pgn`, with SHA-256
+confirmed identical to the originals before and after copying). No game was replayed to produce
+any of the following.
+
+- **Candidate/baseline identity confirmed.** `05-environment.json`'s `candidate_actual_commit`
+  and `baseline_actual_commit` both equal their respective `*_frozen_commit` values
+  (`f9b152ca4f45e8e8aa5a48092b03416aba79b230`, `ebe513eabd50e853a4e24a0260c64b41a5a4b224`), and
+  `candidate_jar_sha256` / `baseline_jar_sha256` match the actual JAR files in that directory
+  byte-for-byte (independently recomputed, not merely re-read from the JSON). Neither JAR could
+  have been silently swapped or rebuilt from a different commit.
+- **NEW/OLD configuration symmetry confirmed** from `tools/sprt.ps1`'s own argument
+  construction (read from source, not assumed): both engines are launched with the identical
+  `cmd=$Java`, `arg=--add-modules jdk.incubator.vector`, `proto=uci`, `option.Threads=1`, and
+  identical `-NewOptions "Hash=16"` / `-OldOptions "Hash=16"`, so both receive `Hash=16` with no
+  asymmetric UCI option on either side. `-each tc=5+0.05` applies the same time control to both
+  engines (there is no per-engine TC override in `tools/sprt.ps1`). `-repeat` pairs each opening
+  twice with colors swapped, confirmed directly in the PGN (games 1/2, 3/4, ... 17/18 each share
+  an identical starting FEN with White/Black reversed); NEW played White in every odd-numbered
+  game and Black in every even-numbered game, exactly the alternation `-repeat` produces, and
+  the per-color score split reported by cutechess (White 0-6-1, Black 0-7-0) is internally
+  consistent with that alternation over the 14 scored games. Candidate and baseline were not
+  reversed: `-New $candidateJarPath` and `-Old $baselineJarPath` map directly to the JAR paths
+  `Build-FrozenEngineJar` returned for the candidate and baseline commits respectively, and the
+  PGN's `[White "NEW"]` / `[White "OLD"]` tags track the same `-engine name=NEW` / `name=OLD`
+  labels cutechess was given for those same two JAR paths.
+- **No engine or protocol failure signature found.** Grepped both the authoritative log and PGN
+  for `illegal`, `disconnect`, `timeout`, `crash`, `stall`, `error`, `communication`, and
+  `forfeit` (case-insensitive): zero matches in either file. All 13 decisive games and the one
+  draw carry `[Termination "adjudication"]` or ended by 3-fold repetition; none carry a
+  crash/timeout/illegal-move termination tag.
+- **The five "No result" games (cutechess's games 15-19) are ordinary post-SPRT cancellation,
+  not engine failures.** Their PGN `[Termination]` tag is `"unterminated"` (cutechess's tag for
+  a game cut short while in progress), not any error-specific tag, and their ply counts are
+  short and varied (31, 26, 16, 9, 5), consistent with mid-game snapshots at whatever point each
+  one happened to be when the match stopped, not a uniform failure signature. Chronologically,
+  the log's `SPRT: llr -3.1 ... H0 was accepted` line and the five `{No result}` lines for games
+  15-19 both appear immediately after the 14th scored game (game 12) finishes, in the same log
+  block, with no further `Started game` lines afterward and `Finished match` as the log's last
+  line: this is cutechess's standard behavior under `-concurrency 6` with an active `-sprt`. 14
+  games had already been scored when game 12 (the game whose completion pushed the running LLR
+  past the lower bound) finished, and the 5 games still running at that moment under the
+  concurrency-6 scheduling were cancelled rather than played to completion, since the SPRT
+  decision no longer depended on them. This is not a validity failure.
+- **No pathological or self-contradictory evaluation found in the completed games.** Where both
+  engines' move comments could be compared near a game's end, NEW's and OLD's self-reported
+  scores agree in sign and rough magnitude from each side's own perspective (for example, game
+  1's final comments run `+7.85/+7.60/+8.09` for one side against `-7.59/-7.84/-8.34` for the
+  other), i.e. both engines recognized the same side was winning by comparable amounts, rather
+  than NEW reporting itself ahead while actually losing. This is the pattern expected from a
+  real, mutually-recognized decisive advantage, not from a broken or inverted candidate
+  evaluation.
+- **Validity decision: VALID.** The frozen protocol executed with the correct candidate and
+  baseline JARs, symmetric engine settings, correctly paired openings, no engine or protocol
+  failure in any of the 14 scored games, and the five uncompleted games are explained in full by
+  ordinary post-SPRT-decision cancellation under concurrency. The 0-13-1 score and the H0
+  verdict are surprising, but surprise alone is not a basis for invalidation, and nothing found
+  in this audit constitutes a concrete execution or configuration failure.
+
+## 11. Post-run evidence-plumbing bug (does not affect match validity)
+
+`tools/p17-4-sprt.ps1`'s own post-processing step failed after this match had already finished
+and cutechess had already written its full SPRT decision: it tried to read
+`tools/results/p17-4/20260920-103500/06-sprt-console.log` via `Get-Content`, which did not
+exist, because `tools/sprt.ps1` accepts no output-path parameter and writes its own log/pgn
+under `tools/results/` directly using a timestamp it generates internally when it starts, not
+under this run's `$outDir`. The wrapper's own transcript file was meant to be populated by
+piping `tools/sprt.ps1`'s console output through `Tee-Object`, but the pipe used `2>&1`, which
+merges only the error stream into the success stream; `tools/sprt.ps1` reports nearly everything
+via `Write-Host`, which writes to PowerShell's information stream and is not carried by `2>&1`.
+This is a defect in the wrapper's own evidence-capture code, occurring entirely after cutechess
+had already completed the match and printed its decision (`Finished match`, the per-player
+termination summary, and the `H0 was accepted` SPRT line are all present, complete, and correct
+in `tools/sprt.ps1`'s own authoritative log). It is fixed in `tools/p17-4-sprt.ps1` (switched to
+`*>&1`, and the script now locates and copies `tools/sprt.ps1`'s own authoritative log/pgn into
+the run's evidence directory instead of relying solely on a console transcript); see
+`dev-entries/phase-17.md` for the fix's full record. This bug did not run any additional games,
+alter any experimental parameter, or affect the result reported in section 9.
