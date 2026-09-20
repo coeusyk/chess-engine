@@ -46,10 +46,24 @@
                                         colors from the same opening)
       Max games       20000           (docs/sprt-guidelines.md section 4's own worked
                                         example for this exact H0=0/H1=50 convention)
-      Concurrency     2               (this project's existing sprt.ps1/nightly default;
-                                        override only via -Concurrency if this machine's
-                                        own throughput has been separately benchmarked
-                                        with tools/benchmark_concurrency.ps1)
+      Concurrency     6               (target host: AMD Ryzen 7 7700X, 8 physical cores /
+                                        16 logical threads. Each engine instance is
+                                        Threads=1, so 6 simultaneous games is an
+                                        operational capacity choice, not a claim that one
+                                        game maps exactly to one physical core, since engine
+                                        processes, OS scheduling, SMT, and the idle side
+                                        of each game all complicate that mapping. 6 stays
+                                        below the 8 physical cores, leaving roughly two
+                                        physical cores of scheduling headroom for
+                                        Windows, JVM/process overhead, cutechess-cli
+                                        itself, and interactive desktop use during a
+                                        potentially long run, deliberately not attempting
+                                        to saturate all 16 logical/SMT threads. This
+                                        value affects execution throughput only, not the
+                                        SPRT hypotheses being tested, and is frozen the
+                                        same as every other term below: fixed before game
+                                        1, not overridable at the command line, not
+                                        changeable mid-run)
 
 .PARAMETER IReallyMeanIt
     Required. Without this switch the script prints what it would do and exits 0
@@ -60,10 +74,6 @@
     only if this exact Gate 4 protocol document has been amended to name a different
     frozen baseline before any game is played.
 
-.PARAMETER Concurrency
-    Cutechess -concurrency value. Default 2, matching this project's existing
-    sprt.ps1/nightly-sprt.yml default. See DESCRIPTION.
-
 .EXAMPLE
     cd C:\path\to\chess-engine
     git checkout phase/17-pvs-experiment
@@ -72,8 +82,7 @@
 #>
 param(
     [switch]$IReallyMeanIt,
-    [string]$BaselineRef = "ebe513e",
-    [int]$Concurrency = 2
+    [string]$BaselineRef = "ebe513e"
 )
 
 $ErrorActionPreference = "Stop"
@@ -91,6 +100,7 @@ $Beta           = 0.05
 $EngineThreads  = 1
 $HashMb         = 16
 $MaxGames       = 20000
+$Concurrency    = 6
 $OpeningsFile   = Join-Path $repoRoot "tools\noob_3moves.epd"
 $ExpectedOpeningsSha256 = "2011193B4854E9A8CFDC05312CA2DBAFFA6CEAE3ABBDEE20E2EAD2A18A603347"
 

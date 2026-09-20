@@ -61,13 +61,29 @@ freeze; running `tools/p17-4-sprt.ps1` against it is a separate, later action.
   version must be recorded in the run's own environment evidence).
 - TC: `5+0.05` (5 s base, 0.05 s increment). This project's documented standard single-change
   convention, `docs/sprt-guidelines.md` section 1.
-- Concurrency: 2, matching `tools/sprt.ps1`'s and `nightly-sprt.yml`'s existing default.
-  `tools/benchmark_concurrency.ps1` exists to find a better value empirically for a specific
-  machine; this document does not preregister a benchmarked value because none has been run for
-  this exact host, and inventing one without evidence would violate the "no post-hoc parameter
-  selection" requirement just as much as inventing an Elo bound would. If a benchmarked value
-  becomes available before the run, that is a legitimate protocol amendment (a measured fact
-  about the host, not a tuned expectation about PVS), and should update this document first.
+- Concurrency: 6 (amended from the original 2, `tools/sprt.ps1`'s and `nightly-sprt.yml`'s
+  shared default, before any game was played; see the Gate 4 concurrency-amendment dev-entry
+  for the full record of that change). Target host: AMD Ryzen 7 7700X, 8 physical cores / 16
+  logical (SMT) threads. Each engine instance runs with `Threads=1` (section 3 above), so 6
+  simultaneous games is an operational capacity choice for this specific host, not a claim that
+  one game maps exactly to one physical core; engine processes, OS scheduling, SMT, and the
+  idle side of every game all complicate that mapping in practice. 6 stays below the 8 physical
+  cores, leaving roughly two physical cores of scheduling headroom for Windows, JVM/process
+  overhead, cutechess-cli itself, and interactive desktop use during what may be a long run,
+  deliberately not attempting to saturate all 16 logical/SMT threads. This value affects only
+  how fast the match executes; it has no effect on the SPRT hypotheses being tested (elo0/elo1
+  are properties of the games played, not of how many run at once). It is frozen the same as
+  every other term in this document: fixed before game 1, not user-adjustable in
+  `tools/p17-4-sprt.ps1` (moved from a command-line parameter into the same frozen-constant
+  block as TC/elo0/elo1/Threads/Hash/game cap), and not changeable mid-run.
+  `tools/benchmark_concurrency.ps1` exists to find a throughput-optimal value empirically for a
+  specific machine; this document does not use a benchmarked value because none has been run
+  for this exact host, and inventing one without evidence would violate the "no post-hoc
+  parameter selection" requirement just as much as inventing an Elo bound would. 6 was chosen
+  as a capacity heuristic from the host's own known core count, not from a throughput
+  benchmark; if a benchmarked value becomes available before the run, updating this document to
+  match would be a legitimate protocol amendment (a measured fact about the host, not a tuned
+  expectation about PVS).
 - Opening corpus: `tools/noob_3moves.epd`, SHA-256
   `2011193b4854e9a8cfdc05312ca2dbaffa6ceae3abbdee20e2ead2a18a603347`, 150,932 lines, one FEN per
   line at ply depth up to the position's own recorded ply (this is a set of already-diversified
@@ -153,6 +169,13 @@ No parameter in sections 1-6 may change after the first game of this protocol's 
 invalidating that run and restarting under a newly-frozen document. This includes the
 candidate/baseline commit identity, engine settings, TC, concurrency, opening corpus and its
 SHA-256, adjudication settings, game cap, and SPRT bounds.
+
+**Amendment log** (pre-run amendments only; no game has been played, so none of these
+invalidated a run):
+
+- 2026-09-20: concurrency changed from 2 to 6, before game 1. See section 4 for the full
+  rationale (target-host physical-core capacity, not a throughput benchmark or a change to any
+  SPRT hypothesis) and `dev-entries/phase-17.md` for the session record of this amendment.
 
 ## 8. Status
 

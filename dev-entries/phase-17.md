@@ -488,3 +488,29 @@ Position 31's node expansion does translate into a real local wall-time regressi
 **Measurements:** N/A, no game played. See the frozen protocol document for every parameter this eventual measurement will use.
 
 **Status:** Phase 17 Step 4 (strength) is **READY**: candidate, baseline, engine settings, match parameters, and SPRT bounds are all explicitly frozen and justified from existing project evidence; #231 is fixed; `tools/p17-4-sprt.ps1` is prepared and reviewed. Step 4 itself remains **not started** on #229/#230 (this is preparation, not the gate); no SPRT game has been played, and none should be until `tools/p17-4-sprt.ps1 -IReallyMeanIt` is run deliberately on a native Windows host.
+
+---
+
+### [2026-09-20] Phase 17 Step 4 protocol amendment, concurrency frozen at 6, still no game played (Issues #229, #230)
+
+**Built:**
+
+- **Pre-run amendment, not a mid-experiment change.** Verified before touching anything: `tools/results/p17-4/` does not exist on this checkout, confirming `tools/p17-4-sprt.ps1` has never been run and no game has been played under the frozen protocol. This amendment changes a parameter before game 1, which the protocol document's own amendment rule explicitly allows (only a change *after* game 1 would invalidate a run).
+
+- **Frozen concurrency changed from 2 to 6**, for the target native host: an AMD Ryzen 7 7700X, 8 physical cores / 16 logical (SMT) threads. Both engines remain `Threads=1` per instance (unchanged); 6 simultaneous games is an operational capacity choice sized to that specific host's physical core count, not a claim that one game maps exactly to one physical core (engine processes, OS scheduling, SMT, and the idle side of every game all complicate that mapping in practice, so the document states it only as a heuristic). 6 stays below 8, leaving roughly two physical cores of headroom for Windows, JVM/process overhead, cutechess-cli itself, and interactive desktop use during what may be a long-running match, deliberately short of saturating all 16 logical/SMT threads. This changes only how fast the match executes; the SPRT hypotheses being tested (elo0=0, elo1=50) are properties of the games played, not of how many run concurrently, so this amendment does not touch the statistical test itself.
+
+- **`tools/p17-4-sprt.ps1` no longer accepts concurrency as a command-line override.** Previously `-Concurrency` was a parameter with a default of 2 (the only frozen protocol value that had been left adjustable, inconsistent with every other term in the script, which is a hardcoded constant). Moved into the same "frozen protocol constants" block as `$TC`/`$Elo0`/`$Elo1`/`$EngineThreads`/`$HashMb`/`$MaxGames`, now `$Concurrency = 6` with no way to override it short of editing the script itself, matching how every other frozen term already behaves. The environment-evidence record (`05-environment.json`) still captures `concurrency` explicitly, now always `6`.
+
+- **`docs/architecture/research/phase17-p17-4-strength-preregistration.md` section 4 (Match) updated** with the new value and full rationale, and a new "Amendment log" added under section 7 (Amendment rule) recording this specific pre-run change with its date and reasoning, so the document's own history of what changed before game 1 is self-contained rather than requiring a cross-reference to this dev-entry to reconstruct.
+
+**Decisions Made:**
+
+- **Every other frozen Gate 4 parameter is unchanged**: candidate (`e6afbb1`/`f9b152c`), baseline (`ebe513e`), Threads (1 per engine), Hash (16 MB per engine), TC (`5+0.05`), opening corpus (`tools/noob_3moves.epd`, same SHA-256 `2011193b4854e9a8cfdc05312ca2dbaffa6ceae3abbdee20e2ead2a18a603347`), pairing (`-repeat`), SPRT bounds (elo0=0, elo1=50, alpha=0.05, beta=0.05), adjudication (`-resign movecount=5 score=400`, `-draw movenumber=40 movecount=8 score=10`, both `tools/sprt.ps1` hardcoded defaults, not touched), and game cap (20,000) all remain exactly as frozen in the prior preparation entry.
+- **No game was played to make or validate this change.** The amendment is justified purely from the target host's known physical-core count, not from any observed match behavior, consistent with the "no post-hoc parameter selection" requirement this whole protocol has followed throughout.
+- **Step 4 is still not started.** This amendment does not advance Step 4's status on #229/#230 beyond READY; it only updates what "READY" now means.
+
+**Broke / Fixed:** None. No search/PVS source touched.
+
+**Measurements:** N/A, no game played.
+
+**Status:** Phase 17 Step 4 remains **READY**, not started, with concurrency now frozen at 6 (previously 2) before any game has been played. No SPRT game has been run under either value.
