@@ -280,7 +280,10 @@ class SearchRegressionTest {
             //     Updated Phase 14 A-4: ASPIRATION_INITIAL_DELTA_CP 50→25 shifts TT ordering;
             //     depth-8 preference shifts to f1b5 (queen to bishop-5 diagonal — restricts BK
             //     from d7/e6). Both f1f6 and f1b5 are winning KQK continuations; equivalent.
-            Arguments.of("E1",  E1_FEN,  "f1b5"),
+            //     Updated P18-1: repairing null-subtree current-hash restoration changes the
+            //     deterministic TT path and selects f1c4. The score remains 1308 cp; both moves
+            //     are winning KQK continuations.
+            Arguments.of("E1",  E1_FEN,  "f1c4"),
             // E2: 4k3/8/8/8/8/8/8/4KR2 — KR vs K.  f1f6 (rook-to-6th restriction) and
             //     e1d2 (king activation toward centre) both win; known theoretical equivalence.
             //     Updated 2026-04-03: cheap bitboard hanging-penalty (replacing SEE-based form)

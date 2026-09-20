@@ -7,11 +7,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
  * Pins exact node counts at a fixed depth over a small, diverse position
- * subset (drawn from {@code BenchRunner}'s 31-position suite). This is the
- * automated behavior-neutrality gate for the NNUE Phase A evaluator-seam
- * refactor: golden values were captured on classical pre-refactor code, so
- * any change to Searcher/Evaluator wiring that alters search shape trips
- * this test immediately, instead of relying on a manual bench diff.
+ * subset (drawn from {@code BenchRunner}'s 31-position suite). The values are
+ * the current deterministic search-shape reference. Contract repairs may
+ * legitimately change them; recapture only after the repair's focused tests
+ * pass and the resulting deltas have been explained.
  */
 class NodeCountRegressionTest {
 
@@ -26,11 +25,11 @@ class NodeCountRegressionTest {
     };
 
     private static final long[] EXPECTED_NODES = {
-        15362,
+        14989,
         1192,
-        43425,
-        9938,
-        8393,
+        36802,
+        6491,
+        8903,
     };
 
     @Test
