@@ -113,6 +113,6 @@ no match is required.
 ## Next phase
 
 The bounded explanatory diagnostic is specified separately in
-[`phase18-pvs-diagnostic-preregistration.md`](phase18-pvs-diagnostic-preregistration.md).
+[`phase19-pvs-diagnostic-preregistration.md`](phase19-pvs-diagnostic-preregistration.md).
 It is not a rescue attempt, a new strength gate, or a retroactive change to
 the Phase 17 decision.

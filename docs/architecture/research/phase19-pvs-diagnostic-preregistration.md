@@ -1,7 +1,12 @@
-# Phase 18 diagnostic preregistration: PVS fixed-depth versus strength divergence
+# Phase 19 diagnostic preregistration: PVS fixed-depth versus strength divergence
 
-Status: design only; do not execute as part of Phase 17 closure.
+Status: design only; do not execute as part of Phase 17 closure or before
+Phase 18 Production Search-Contract Qualification has completed.
 Purpose: explain the observed divergence, not reopen the promotion decision.
+
+Phase 18 is the prerequisite production search-contract qualification. It
+repairs and qualifies the four independently confirmed production contracts
+before this candidate-only diagnostic is considered.
 
 ## Research question
 
@@ -11,7 +16,16 @@ valid frozen Gate 4 test produced 0 wins, 13 losses, and 1 draw over 14 scored
 games against baseline `ebe513eabd50e853a4e24a0260c64b41a5a4b224`?
 
 The Phase 17 result remains final regardless of the diagnostic outcome. This
-phase runs no new games and no SPRT.
+phase runs no new games and no SPRT. Phase 17 remains closed and rejected; no
+rejected candidate code is promoted.
+
+Source verification confirmed one candidate-only LMR/PVS finding relevant to
+this diagnostic. At an enclosing integer null window, `beta = alpha + 1`, so
+the strict condition `alpha < score < beta` cannot be satisfied by an integer
+search score. The candidate's reduced fail-high therefore does not receive its
+intended full-depth verification on that path. This remains a diagnostic
+hypothesis about effective verified depth and tree coverage, not proof that it
+caused the 0-13-1 result.
 
 ## Inputs and invariants
 
