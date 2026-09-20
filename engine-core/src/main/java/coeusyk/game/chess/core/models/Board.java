@@ -23,6 +23,7 @@ public class Board {
         final boolean[] previousCastlingRights = new boolean[4]; // pre-allocated, filled via arraycopy
         int previousHalfmoveClock;      // Halfmove clock before the move
         int previousFullMoves;          // Full move counter before the move
+        long previousZobristHash;       // Current-position hash before the move
         int packedMove;                 // The move encoded as a packed int (Move.of)
         int previousMgScore;            // Incremental material+PST MG score before the move
         int previousEgScore;            // Incremental material+PST EG score before the move
@@ -31,7 +32,8 @@ public class Board {
         UnmakeInfo() {}
 
         void set(int packed, int capturedPiece, int capturedEPPiece, int prevEP,
-                 boolean[] prevCastling, int prevHalf, int prevFull, int prevMg, int prevEg) {
+                 boolean[] prevCastling, int prevHalf, int prevFull, long prevZobrist,
+                 int prevMg, int prevEg) {
             this.packedMove = packed;
             this.capturedPiece = capturedPiece;
             this.capturedEPPiece = capturedEPPiece;
@@ -39,6 +41,7 @@ public class Board {
             System.arraycopy(prevCastling, 0, this.previousCastlingRights, 0, 4);
             this.previousHalfmoveClock = prevHalf;
             this.previousFullMoves = prevFull;
+            this.previousZobristHash = prevZobrist;
             this.previousMgScore = prevMg;
             this.previousEgScore = prevEg;
         }
@@ -721,6 +724,7 @@ public class Board {
         UnmakeInfo unmakeInfo = unmakePool[unmakeSP++];
         unmakeInfo.set(packed, capturedPiece, capturedEPPiece,
                 epTargetSquare, castlingAvailability, halfmoveClock, fullMoves,
+                zobristHash,
                 incMgScore, incEgScore);
 
         // Update Zobrist hash for side-to-move
@@ -900,14 +904,10 @@ public class Board {
         recomputeOccupancies();
         attackedSquaresValid = false;
 
-        // Restore Zobrist hash in O(1) from history instead of full recomputation.
-        // zobristStack[zobristSP-1] is the hash we just popped; [zobristSP-2] is the prior position.
-        if (zobristSP >= 2) {
-            zobristHash = zobristStack[zobristSP - 2];
-        } else {
-            // Edge case (unmaking the very first move): fall back to full recomputation.
-            zobristHash = recomputeZobristHash();
-        }
+        // Restore the exact current-position hash from the ordinary move's undo record.
+        // The preceding position may have been created by makeNullMove(), which deliberately
+        // does not add a null position to repetition history or advance zobristSP.
+        zobristHash = undoInfo.previousZobristHash;
         
         if (!searchMode) {
             movesPlayed.remove(movesPlayed.size() - 1);
