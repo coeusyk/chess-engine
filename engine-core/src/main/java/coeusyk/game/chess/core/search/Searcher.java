@@ -811,6 +811,10 @@ public class Searcher {
             if (score > alpha) {
                 alpha = score;
             }
+
+            if (alpha >= beta) {
+                break;
+            }
         }
 
         return new RootResult(bestMove, bestScore, buildPrincipalVariation(), false);

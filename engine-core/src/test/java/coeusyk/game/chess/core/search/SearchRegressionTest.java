@@ -283,7 +283,10 @@ class SearchRegressionTest {
             //     Updated P18-1: repairing null-subtree current-hash restoration changes the
             //     deterministic TT path and selects f1c4. The score remains 1308 cp; both moves
             //     are winning KQK continuations.
-            Arguments.of("E1",  E1_FEN,  "f1c4"),
+            //     Updated P18-4: stopping root search at a valid fail-high removes the old
+            //     invalid-window sibling work. The deterministic path returns to f1f6 at
+            //     1303 cp; f1f6 and f1c4 are both winning KQK continuations.
+            Arguments.of("E1",  E1_FEN,  "f1f6"),
             // E2: 4k3/8/8/8/8/8/8/4KR2 — KR vs K.  f1f6 (rook-to-6th restriction) and
             //     e1d2 (king activation toward centre) both win; known theoretical equivalence.
             //     Updated 2026-04-03: cheap bitboard hanging-penalty (replacing SEE-based form)
