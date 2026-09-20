@@ -620,3 +620,22 @@ Position 31's node expansion does translate into a real local wall-time regressi
 **Measurements:** Gate 4: 0 wins, 13 losses, 1 draw for the candidate over 14 scored games (5 additional games cancelled, not scored, after the SPRT boundary was crossed). SPRT: LLR -3.10 against bounds [-2.94, +2.94]; H0 accepted. See the preregistration document's new sections 9-11 for the full result, audit, and plumbing-bug record.
 
 **Status:** Phase 17 Step 4 is **complete**: the frozen SPRT executed once, was audited and found valid, and returned H0 accepted (does not meet the project's +50 Elo promotion criterion). Gates 1-3 remain PASS. Phase 17 has not been merged; no follow-up experiment has been started.
+
+---
+
+### [2026-09-20] Phase 17 closure record (Issues #229, #230)
+
+Phase 17 is closed as a completed experiment. Candidate
+`f9b152ca4f45e8e8aa5a48092b03416aba79b230` was compared with baseline
+`ebe513eabd50e853a4e24a0260c64b41a5a4b224`.
+
+- Gate 1: PASS, main nodes `73,089,246 -> 40,878,283` (`-44.07%`).
+- Gate 2: PASS, median fixed-depth elapsed `218,267 ms -> 120,860 ms` (`-44.63%`).
+- Gate 3: PASS, including the PV-node propagation repair and regression coverage.
+- Gate 4: VALID, NEW `0-13-1` over 14 scored games, LLR `-3.10`, bounds `[-2.94,+2.94]`, H0 accepted.
+
+H0 acceptance means the evidence favored `elo0=0` over `elo1=+50` under the frozen test. It does not prove a negative Elo, `-572` Elo, or any regression magnitude. The candidate did not meet the project's `+50` Elo promotion criterion and will not be merged into `develop`. The experimental branch remains immutable lineage for audit and diagnosis.
+
+Authoritative evidence is recorded at `tools/results/p17-4/20260920-103500/`, including `05-environment.json`, `06a-sprt-authoritative.log`, and `06b-sprt-authoritative.pgn`, with the originals at `tools/results/sprt_phase17-pvs_20260920_160513.log/.pgn`. The opening corpus is `tools/noob_3moves.epd`, SHA-256 `2011193b4854e9a8cfdc05312ca2dbaffa6ceae3abbdee20e2ead2a18a603347`. Generated evidence is not tracked.
+
+The full closure and salvage classification are in `docs/architecture/research/phase17-closure.md`. The bounded explanatory diagnostic, which is not a continuation or rescue attempt, is separately preregistered in `docs/architecture/research/phase18-pvs-diagnostic-preregistration.md`.
