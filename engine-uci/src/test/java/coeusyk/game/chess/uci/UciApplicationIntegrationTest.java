@@ -490,8 +490,19 @@ class UciApplicationIntegrationTest {
         harness.send("setoption name Hash value " + newHashMb);
         harness.send("isready");
         assertNotNull(harness.awaitLine("readyok", Duration.ofSeconds(5)), "Missing readyok after active resize");
+        List<String> beforeNextGo = new java.util.ArrayList<>(harness.outputHistory.subList(
+                beforeResize, harness.outputHistory.size()));
+        int readyBeforeGo = beforeNextGo.indexOf("readyok");
+        String bestmoveBeforeReady = null;
+        for (int i = 0; i < readyBeforeGo; i++) {
+            if (beforeNextGo.get(i).startsWith("bestmove ")) {
+                bestmoveBeforeReady = beforeNextGo.get(i);
+                break;
+            }
+        }
         harness.send("go depth 6");
-        String firstBestmove = harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(5));
+        String firstBestmove = bestmoveBeforeReady != null ? bestmoveBeforeReady
+                : harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(5));
         String secondBestmove = harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(15));
 
         assertNotNull(firstBestmove, "Missing bestmove for interrupted search");
