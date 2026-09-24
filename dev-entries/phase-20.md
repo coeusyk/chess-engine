@@ -162,3 +162,18 @@ At the close of this requalification, Stage 2 had not started. No SMP timing/sca
 - The reviewed interpretation amendment was committed and pushed before any Stage 3 measurement: `edd406a9243fcb53c341599d8c04e3fa7f34cab7` (`docs(phase20): amend Stage 2 interpretation for Stage 3`). Stage 3 resumes under that post-Stage-2 amendment; its acceptance does not rewrite the original Stage 2 record.
 - The amendment clarifies that main-thread node counts remove direct clock/NPS normalization but are not scheduler-independent: helper timing changes TT visibility and can change the main-thread tree, so pass-to-pass main-node variation is mechanism evidence.
 - It also clarifies that aggregate-throughput loss versus the Stage 2 same-JVM ceiling establishes additional production-SMP execution overhead only. TT contention requires the frozen H3 retention evidence or later Stage 4 evidence.
+
+### [2026-09-24] Phase 20 — Stage 3 native attempt stopped at helper drain (Issue #246)
+
+**Run identity and frozen environment:**
+
+- Branch `phase/20-smp-qualification`, run commit `55ca1171d3ecaf2891d4ee6e38229557c0640438`; shaded JAR SHA-256 `B7743D6C0EA9EA30F4734933D8091959710D7915F5B27CA431AF41A2301D84A5`.
+- Native Windows 11 Pro `10.0.26200`, build `26200`; AMD Ryzen 7 7700X, 8 cores / 16 logical processors; Azul Zulu OpenJDK `21.0.10+7-LTS`.
+- JVM flags: `-Xms512m -Xmx512m -XX:+UseG1GC --add-modules jdk.incubator.vector`. Balanced power plan, no affinity, normal Windows scheduling. The runner recorded its five-second background-load sample before starting the harness.
+- The Maven package and the harness corpus/parser self-check passed. No Stage 2 rerun or environment change was made.
+
+**Stop evidence:**
+
+- During a Threads>1 depth-13 UCI search, the driver received the main-thread `bestmove`, then waited for the expected helper `event=exit` records. It timed out in `Phase20Stage3Harness.search` at the helper-exit wait after 10 minutes. This 10-minute watchdog was a runner execution guard, not a preregistered Stage 3 acceptance threshold.
+- The partial artifact directory is `tools/results/phase20-stage3/20260924-152702/` on the native checkout. `workers.csv`, `helpers.csv` and `events.csv` contain headers only. The precise thread count, position and whether this was warm-up or a measured pass were not retained. The run cannot establish whether helpers remained active or exit diagnostics were lost; helper drainage was not verified.
+- **Stage 3 stopped at the helper-drain lifecycle gate.** No complete Stage 3 sample exists, so no search-work factor, NPS retention, aggregate throughput, time-to-depth, factorization, H3, or production-SMP overhead classification is available. Stage 3 has no PASS classification. No retry, production fix, Stage 4/5, or later stage was started.
