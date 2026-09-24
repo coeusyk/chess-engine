@@ -20,7 +20,10 @@ try {
 
     $branch = (& git rev-parse --abbrev-ref HEAD).Trim()
     $head = (& git rev-parse HEAD).Trim()
-    $status = (& git status --porcelain).Trim()
+    # Clean git status emits no objects, so keep it as an array before joining.
+    $statusLines = @(& git status --porcelain)
+    if ($LASTEXITCODE -ne 0) { throw 'git status failed; cannot verify the working tree.' }
+    $status = $statusLines -join "`n"
     if ($branch -ne 'phase/20-smp-qualification') { throw "Expected phase/20-smp-qualification, found $branch" }
     if ($status) { throw "Working tree must be clean before Stage 2:`n$status" }
     $stage2Base = 'b0f02bd79f8fbe9bff45037cdd307a9636978c91'
