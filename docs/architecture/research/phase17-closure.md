@@ -40,8 +40,8 @@ itself remains valid.
 
 ## Evidence locations
 
-Generated evidence is intentionally not copied into Git. The authoritative
-paths recorded by the run are:
+The run evidence is retained in Git under the paths below for audit. The
+authoritative paths recorded by the run are:
 
 - Run evidence directory: `tools/results/p17-4/20260920-103500/`.
 - Environment and identity evidence: `05-environment.json`, including
@@ -55,7 +55,8 @@ paths recorded by the run are:
   `tools/results/sprt_phase17-pvs_20260920_160513.pgn`.
 - The copied artifacts were independently hash-checked against the originals;
   the JAR hashes were independently checked against the JAR files in the run
-  directory. These generated files are not tracked here.
+  directory. The result directories listed above are now tracked as archival
+  evidence; the original top-level run artifacts remain generated local files.
 
 The full preregistration and validity audit remain in
 [`phase17-p17-4-strength-preregistration.md`](phase17-p17-4-strength-preregistration.md).
