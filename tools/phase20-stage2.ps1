@@ -1,0 +1,124 @@
+<#
+.SYNOPSIS
+    Run the preregistered Phase 20 Stage 2 independent-searcher ceiling on native Windows.
+.DESCRIPTION
+    Builds the current clean Phase 20 branch, records the exact artifact and
+    Windows/JVM environment, then runs separate-process and same-JVM private-TT
+    arms at N=1,2,4. Do not invoke from WSL or a WSL-mounted checkout.
+#>
+$ErrorActionPreference = 'Stop'
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+Push-Location $repoRoot
+try {
+    $processPath = (Get-Process -Id $PID).Path
+    if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT -or
+        $env:WSL_INTEROP -or $env:WSL_DISTRO_NAME -or $env:WSLENV -or
+        $repoRoot -notmatch '^[A-Za-z]:\\' -or $repoRoot.StartsWith('\\') -or
+        $processPath -notmatch '(?i)\\(powershell|pwsh)(\.exe)?$') {
+        throw 'Refusing to run: use PowerShell directly on native Windows in a local C:\... checkout, not WSL interop or a mounted path.'
+    }
+
+    $branch = (& git rev-parse --abbrev-ref HEAD).Trim()
+    $head = (& git rev-parse HEAD).Trim()
+    $status = (& git status --porcelain).Trim()
+    if ($branch -ne 'phase/20-smp-qualification') { throw "Expected phase/20-smp-qualification, found $branch" }
+    if ($status) { throw "Working tree must be clean before Stage 2:`n$status" }
+    $stage2Base = 'b0f02bd79f8fbe9bff45037cdd307a9636978c91'
+    & git merge-base --is-ancestor $stage2Base $head
+    if ($LASTEXITCODE -ne 0) { throw "HEAD $head does not descend from merged #247 develop $stage2Base" }
+
+    $timestamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss')
+    $resultRoot = Join-Path $repoRoot 'tools\results\phase20-stage2'
+    $outDir = Join-Path $resultRoot $timestamp
+    New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+
+    $mvnw = Join-Path $repoRoot 'mvnw.cmd'
+    & $mvnw -pl engine-core,engine-uci -am clean package -DskipTests 2>&1 |
+        Tee-Object -FilePath (Join-Path $outDir 'build.log')
+    if ($LASTEXITCODE -ne 0) { throw 'Maven build failed; see build.log.' }
+
+    $jar = Get-ChildItem (Join-Path $repoRoot 'engine-uci\target') -Filter 'engine-uci-*.jar' |
+        Where-Object { $_.Name -notlike 'original-*' } |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if (-not $jar) { throw 'Could not find the shaded engine-uci JAR.' }
+    $jarHash = (Get-FileHash $jar.FullName -Algorithm SHA256).Hash
+    if ($env:JAVA_HOME) {
+        $jdkBin = Join-Path $env:JAVA_HOME 'bin'
+        $javaExe = Join-Path $jdkBin 'java.exe'
+    } else {
+        $javaExe = (Get-Command java -ErrorAction Stop).Source
+        $jdkBin = Split-Path $javaExe -Parent
+    }
+    $javacExe = Join-Path $jdkBin 'javac.exe'
+    if (-not (Test-Path $javaExe) -or -not (Test-Path $javacExe)) {
+        throw "A full JDK is required; expected java.exe and javac.exe under $jdkBin."
+    }
+    $javaVersion = (& $javaExe -XshowSettings:properties -version 2>&1 | Out-String).Trim()
+    $javacVersion = (& $javacExe -version 2>&1 | Out-String).Trim()
+
+    $os = Get-CimInstance Win32_OperatingSystem
+    $processors = @(Get-CimInstance Win32_Processor | ForEach-Object {
+        [ordered]@{
+            name = $_.Name.Trim(); manufacturer = $_.Manufacturer
+            cores = $_.NumberOfCores; logical_processors = $_.NumberOfLogicalProcessors
+            max_clock_mhz = $_.MaxClockSpeed; current_clock_mhz = $_.CurrentClockSpeed
+        }
+    })
+    $logicalCount = [Math]::Max(1, (($processors | ForEach-Object { $_.logical_processors } |
+        Measure-Object -Sum).Sum))
+    $before = @{}
+    Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
+        if ($null -ne $_.CPU) { $before[$_.Id] = @{ name = $_.ProcessName; cpu = [double]$_.CPU } }
+    }
+    Start-Sleep -Seconds 5
+    $background = @(Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
+        if ($before.ContainsKey($_.Id) -and $null -ne $_.CPU) {
+            $delta = [Math]::Max(0, ([double]$_.CPU - $before[$_.Id].cpu))
+            [pscustomobject]@{
+                name = $_.ProcessName; pid = $_.Id
+                machine_cpu_percent = [Math]::Round(100 * $delta / 5 / $logicalCount, 3)
+            }
+        }
+    } | Sort-Object machine_cpu_percent -Descending | Select-Object -First 10)
+    $powerPlan = (& powercfg /getactivescheme 2>&1 | Out-String).Trim()
+    $flags = @('-Xms512m', '-Xmx512m', '-XX:+UseG1GC', '--add-modules', 'jdk.incubator.vector')
+    $environment = [ordered]@{
+        branch = $branch; commit_sha = $head; post_247_develop_base = $stage2Base
+        jar_path = $jar.FullName; jar_sha256 = $jarHash
+        windows_caption = $os.Caption; windows_version = $os.Version; windows_build = $os.BuildNumber
+        processors = $processors; logical_processors = $logicalCount
+        total_physical_memory_bytes = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory
+        available_physical_memory_kb = $os.FreePhysicalMemory
+        java_exe = $javaExe; javac_exe = $javacExe; java_version_and_properties = $javaVersion
+        javac_version = $javacVersion; jvm_flags = $flags
+        active_power_plan = $powerPlan; cpu_affinity = 'None; native Windows scheduler used for every arm'
+        background_load_condition = '5-second per-process CPU sample immediately before measurement; close unrelated workloads'
+        background_load_sample_seconds = 5; background_load_top_processes = $background
+        timing_os = 'Native Windows'; depth = 13; positions = 31; tt_mb_per_searcher = 16
+        pawn_hash_mb = 1; evaluation = 'Classical'; instrumentation = 'off'
+        worker_counts = @(1, 2, 4); arms = @('separate-process', 'same-JVM')
+        own_book = $false; syzygy = $false; multipv = 1; ponder = $false; contempt_cp = 0
+        protocol = 'one discarded warm-up and seven measured passes per configuration; configurations interleaved'
+    }
+    $environment | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $outDir 'environment.json') -Encoding UTF8
+
+    $classes = Join-Path $outDir 'classes'
+    New-Item -ItemType Directory -Path $classes | Out-Null
+    & $javacExe -cp $jar.FullName -d $classes (Join-Path $repoRoot 'tools\Phase20Stage2Harness.java') 2>&1 |
+        Tee-Object -FilePath (Join-Path $outDir 'harness-build.log')
+    if ($LASTEXITCODE -ne 0) { throw 'Stage 2 harness compilation failed; see harness-build.log.' }
+
+    $classpath = "$($jar.FullName);$classes"
+    & $javaExe @flags -cp $classpath Phase20Stage2Harness --validate-only 2>&1 |
+        Tee-Object -FilePath (Join-Path $outDir 'harness-selfcheck.log')
+    if ($LASTEXITCODE -ne 0) { throw 'Stage 2 harness self-check failed; see harness-selfcheck.log.' }
+    & $javaExe @flags -cp $classpath Phase20Stage2Harness --run $outDir $jar.FullName $classes $javaExe
+    if ($LASTEXITCODE -ne 0) { throw 'Stage 2 harness failed; inspect worker stderr logs in the result directory.' }
+
+    $zip = Join-Path $resultRoot "$timestamp.zip"
+    Compress-Archive -Path (Join-Path $outDir '*') -DestinationPath $zip -Force
+    Write-Host "Results: $outDir"
+    Write-Host "Archive: $zip"
+} finally {
+    Pop-Location
+}
