@@ -442,6 +442,39 @@ class UciApplicationIntegrationTest {
         );
     }
 
+    @Test
+    void helperExitDiagnosticsExposeWorkAndElapsedTime() throws Exception {
+        harness = UciHarness.startWithDiagnostics();
+        harness.send("setoption name Threads value 2");
+        harness.send("setoption name OwnBook value false");
+        harness.send("ucinewgame");
+        harness.send("position startpos");
+        harness.send("go depth 6");
+
+        String begin = harness.awaitDiagnostic(line -> line.contains("event=begin"), Duration.ofSeconds(5));
+        assertNotNull(begin, "No search begin diagnostic");
+        long searchId = diagnosticLong(begin, "search");
+        assertNotNull(harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(10)));
+        String bestmove = harness.awaitDiagnostic(line -> isDiagnostic(line, searchId, "bestmove"),
+                Duration.ofSeconds(5));
+        String exit = harness.awaitDiagnostic(line -> isDiagnostic(line, searchId, "exit"), Duration.ofSeconds(10));
+        String drained = harness.awaitDiagnostic(line -> isDiagnostic(line, searchId, "drained"), Duration.ofSeconds(10));
+
+        assertNotNull(bestmove, "Bestmove diagnostic missing");
+        assertNotNull(exit, "Helper did not exit");
+        assertNotNull(drained, "Search drain diagnostic missing");
+        assertTrue(exit.contains("helper_nodes="), "Helper node count missing: " + exit);
+        assertTrue(exit.contains("helper_elapsed_ns="), "Helper elapsed time missing: " + exit);
+        assertTrue(exit.contains("search_elapsed_ns="), "Search elapsed time missing at helper exit: " + exit);
+        assertTrue(bestmove.contains("search_elapsed_ns="), "Search elapsed time missing at bestmove: " + bestmove);
+        assertTrue(diagnosticLong(exit, "helper_nodes") >= 0);
+        assertTrue(diagnosticLong(exit, "helper_elapsed_ns") > 0);
+        assertTrue(diagnosticLong(exit, "search_elapsed_ns") > 0);
+        assertTrue(diagnosticLong(bestmove, "search_elapsed_ns") > 0);
+        assertEquals(0, diagnosticInt(drained, "helper_pending"));
+        assertTrue(drained.contains("hashfull="), "Post-drain TT fullness missing: " + drained);
+    }
+
     static Stream<Arguments> activeHashResizeArms() {
         return Stream.of(
                 Arguments.of(2, 16, 32),

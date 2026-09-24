@@ -821,6 +821,9 @@ public class UciApplication {
                                         + " exit_ms=" + elapsedMillis(searchStartedNanos, exitedNanos)
                                         + " abort_ms=" + elapsedMillisOrPending(searchStartedNanos, abortNanos)
                                         + " bestmove_ms=" + elapsedMillisOrPending(searchStartedNanos, emittedNanos)
+                                        + " helper_elapsed_ns=" + (exitedNanos - helperStartedNanos)
+                                        + " helper_nodes=" + (helperResult == null ? 0 : helperResult.nodesVisited())
+                                        + " search_elapsed_ns=" + (exitedNanos - searchStartedNanos)
                                         + " exit_cause=" + exitCause
                                         + " completed_depth=" + (helperResult == null ? 0 : helperResult.depthReached())
                                         + " bestmove=" + (helperResult == null || helperResult.bestMove() == null
@@ -986,7 +989,8 @@ public class UciApplication {
                         + " helper_pending=" + (helperSubmissions.get() - helperExits.get())
                         + " helper_exceptions=" + helperExceptions.get()
                         + " abort_ms=" + elapsedMillis(searchStartedNanos, helperAbortNanos.get())
-                        + " bestmove_ms=" + elapsedMillis(searchStartedNanos, bestmoveNanos.get()));
+                        + " bestmove_ms=" + elapsedMillis(searchStartedNanos, bestmoveNanos.get())
+                        + " search_elapsed_ns=" + (bestmoveNanos.get() - searchStartedNanos));
             }
             for (Future<?> helperFuture : helperFutures) {
                 try {
@@ -997,6 +1001,17 @@ public class UciApplication {
                 } catch (ExecutionException e) {
                     LOG.error("SMP helper execution failure search={}", searchId, e.getCause());
                 }
+            }
+            if (SMP_DIAGNOSTICS) {
+                long drainedNanos = System.nanoTime();
+                smpDiagnostic("search=" + searchId + " event=drained"
+                        + " helper_submitted=" + helperSubmissions.get()
+                        + " helper_started=" + helperStarts.get()
+                        + " helper_exited=" + helperExits.get()
+                        + " helper_pending=" + (helperSubmissions.get() - helperExits.get())
+                        + " helper_exceptions=" + helperExceptions.get()
+                        + " drain_elapsed_ns=" + (drainedNanos - searchStartedNanos)
+                        + " hashfull=" + sharedTT.hashfull());
             }
             searchRunning = false;
         }
