@@ -6,8 +6,12 @@ import coeusyk.game.chess.core.models.Move;
 import coeusyk.game.chess.core.models.Piece;
 import coeusyk.game.chess.core.movegen.MovesGenerator;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -23,10 +27,12 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -436,6 +442,147 @@ class UciApplicationIntegrationTest {
         );
     }
 
+    static Stream<Arguments> activeHashResizeArms() {
+        return Stream.of(
+                Arguments.of(2, 16, 32),
+                Arguments.of(2, 32, 16),
+                Arguments.of(4, 16, 32),
+                Arguments.of(4, 32, 16));
+    }
+
+    @ParameterizedTest(name = "active Hash resize Threads={0}, {1}MB to {2}MB")
+    @MethodSource("activeHashResizeArms")
+    void activeHashResizeWaitsForSearchQuiescence(int threads, int oldHashMb, int newHashMb) throws Exception {
+        Assumptions.assumeTrue(Runtime.getRuntime().availableProcessors() >= threads,
+                "The SMP arm requires at least " + threads + " available processors");
+        harness = UciHarness.startWithDiagnostics();
+        harness.send("uci");
+        assertNotNull(harness.awaitLine("uciok", Duration.ofSeconds(5)));
+        harness.send("setoption name Threads value " + threads);
+        harness.send("setoption name Hash value " + oldHashMb);
+        harness.send("setoption name EvalType value Classical");
+        harness.send("setoption name OwnBook value false");
+        harness.send("setoption name SyzygyOnline value false");
+        harness.send("setoption name MultiPV value 1");
+        harness.send("setoption name Contempt value 0");
+        harness.send("setoption name PawnHashSize value 1");
+        harness.send("isready");
+        assertNotNull(harness.awaitLine("readyok", Duration.ofSeconds(5)));
+        harness.send("ucinewgame");
+        harness.send("isready");
+        assertNotNull(harness.awaitLine("readyok", Duration.ofSeconds(5)));
+        harness.send("position startpos");
+        harness.send("go depth 127");
+
+        String begin = harness.awaitDiagnostic(line -> line.contains("event=begin"), Duration.ofSeconds(5));
+        assertNotNull(begin, "No diagnostic begin event");
+        long searchId = diagnosticLong(begin, "search");
+        assertEquals(threads - 1, diagnosticInt(begin, "helpers"));
+        for (int helper = 1; helper < threads; helper++) {
+            int helperId = helper;
+            assertNotNull(harness.awaitDiagnostic(line -> isDiagnostic(line, searchId, "start")
+                            && diagnosticInt(line, "helper") == helperId,
+                    Duration.ofSeconds(5)), "Helper did not start: " + helper);
+        }
+        assertNotNull(harness.awaitLine(line -> line.startsWith("info depth "), Duration.ofSeconds(5)));
+
+        int beforeResize = harness.outputHistory.size();
+        harness.send("setoption name Hash value " + newHashMb);
+        harness.send("isready");
+        assertNotNull(harness.awaitLine("readyok", Duration.ofSeconds(5)), "Missing readyok after active resize");
+        List<String> beforeNextGo = new java.util.ArrayList<>(harness.outputHistory.subList(
+                beforeResize, harness.outputHistory.size()));
+        int readyBeforeGo = beforeNextGo.indexOf("readyok");
+        String bestmoveBeforeReady = null;
+        for (int i = 0; i < readyBeforeGo; i++) {
+            if (beforeNextGo.get(i).startsWith("bestmove ")) {
+                bestmoveBeforeReady = beforeNextGo.get(i);
+                break;
+            }
+        }
+        harness.send("go depth 6");
+        String firstBestmove = bestmoveBeforeReady != null ? bestmoveBeforeReady
+                : harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(5));
+        String secondBestmove = harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(15));
+
+        assertNotNull(firstBestmove, "Missing bestmove for interrupted search");
+        assertNotNull(secondBestmove, "Missing bestmove for post-resize search");
+        String bestmoveEvent = harness.awaitDiagnostic(line -> isDiagnostic(line, searchId, "bestmove"),
+                Duration.ofSeconds(5));
+        assertNotNull(bestmoveEvent, "Missing interrupted-search bestmove diagnostics");
+        for (int helper = 1; helper < threads; helper++) {
+            int helperId = helper;
+            assertNotNull(harness.awaitDiagnostic(line -> isDiagnostic(line, searchId, "exit")
+                            && diagnosticInt(line, "helper") == helperId,
+                    Duration.ofSeconds(5)), "Helper did not exit: " + helper);
+        }
+
+        List<String> outputSinceResize = harness.outputHistory.subList(beforeResize, harness.outputHistory.size());
+        int readyIndex = outputSinceResize.indexOf("readyok");
+        int bestmoveIndex = -1;
+        for (int i = 0; i < outputSinceResize.size(); i++) {
+            if (outputSinceResize.get(i).startsWith("bestmove ")) {
+                bestmoveIndex = i;
+                break;
+            }
+        }
+        List<String> exits = harness.diagnosticHistory.stream()
+                .filter(line -> isDiagnostic(line, searchId, "exit"))
+                .toList();
+        int afterResize = exits.stream().mapToInt(line -> diagnosticInt(line, "after_resize")).sum();
+        long helperExceptions = exits.stream().filter(line -> !"-".equals(diagnosticField(line, "exception"))).count();
+        long submitCount = harness.diagnosticHistory.stream()
+                .filter(line -> isDiagnostic(line, searchId, "submit")).count();
+        boolean uncaughtMainException = harness.diagnosticHistory.stream()
+                .anyMatch(line -> line.contains("Exception in thread \"uci-search-thread\""));
+
+        List<String> failures = new java.util.ArrayList<>();
+        if (!(bestmoveIndex >= 0 && readyIndex >= 0 && bestmoveIndex < readyIndex)) {
+            failures.add("A: bestmove was not before readyok");
+        }
+        if (!isLegalStartBestmove(firstBestmove) || !isLegalStartBestmove(secondBestmove)) {
+            failures.add("B: bestmove illegal");
+        }
+        if (afterResize != 0) failures.add("C: after_resize=" + afterResize);
+        if (helperExceptions != 0 || diagnosticInt(bestmoveEvent, "helper_exceptions") != 0) {
+            failures.add("D: helper exception observed");
+        }
+        if (exits.size() != submitCount) failures.add("E: submits=" + submitCount + " exits=" + exits.size());
+        if (uncaughtMainException) failures.add("F: uncaught main-search exception");
+
+        assertTrue(failures.isEmpty(), "Resize arm Threads=" + threads + " " + oldHashMb + "->" + newHashMb
+                + "MB failed " + failures + "; diagnostics=" + exits + "; ready_index=" + readyIndex
+                + "; bestmove_index=" + bestmoveIndex);
+    }
+
+    private static boolean isDiagnostic(String line, long searchId, String event) {
+        return line.startsWith("SMPDIAG search=" + searchId + " event=" + event + " ");
+    }
+
+    private static String diagnosticField(String line, String key) {
+        if (line == null) return "";
+        for (String part : line.split("\\s+")) {
+            if (part.startsWith(key + "=")) return part.substring(key.length() + 1);
+        }
+        return "";
+    }
+
+    private static int diagnosticInt(String line, String key) {
+        return Integer.parseInt(diagnosticField(line, key));
+    }
+
+    private static long diagnosticLong(String line, String key) {
+        return Long.parseLong(diagnosticField(line, key));
+    }
+
+    private boolean isLegalStartBestmove(String line) {
+        if (line == null || !line.startsWith("bestmove ")) return false;
+        String move = line.substring("bestmove ".length()).split("\\s+")[0];
+        Board board = new Board();
+        return new MovesGenerator(board).getActiveMoves(board.getActiveColor()).stream()
+                .anyMatch(legal -> toUci(legal).equals(move));
+    }
+
     @Test
     void stopReturnsBestMovePromptly() throws Exception {
         harness = UciHarness.start();
@@ -566,43 +713,64 @@ class UciApplicationIntegrationTest {
         private final Process process;
         private final BufferedWriter in;
         private final BlockingQueue<String> lines;
+        private final BlockingQueue<String> diagnostics;
+        private final List<String> outputHistory;
+        private final List<String> diagnosticHistory;
 
-        private UciHarness(Process process, BufferedWriter in, BlockingQueue<String> lines) {
+        private UciHarness(Process process, BufferedWriter in, BlockingQueue<String> lines,
+                           BlockingQueue<String> diagnostics, List<String> outputHistory,
+                           List<String> diagnosticHistory) {
             this.process = process;
             this.in = in;
             this.lines = lines;
+            this.diagnostics = diagnostics;
+            this.outputHistory = outputHistory;
+            this.diagnosticHistory = diagnosticHistory;
         }
 
         static UciHarness start() throws IOException {
+            return start(false);
+        }
+
+        static UciHarness startWithDiagnostics() throws IOException {
+            return start(true);
+        }
+
+        private static UciHarness start(boolean withDiagnostics) throws IOException {
             String javaBinary = System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win")
                     ? "java.exe"
                     : "java";
             String javaExec = Path.of(System.getProperty("java.home"), "bin", javaBinary).toString();
             String classpath = System.getProperty("java.class.path");
 
-            ProcessBuilder builder = new ProcessBuilder(
-                    javaExec,
-                    "-cp",
-                    classpath,
-                    "coeusyk.game.chess.uci.UciApplication"
-            );
+            List<String> command = new java.util.ArrayList<>();
+            command.add(javaExec);
+            if (withDiagnostics) command.add("-Dvex.smp.diagnostics=true");
+            command.add("-cp");
+            command.add(classpath);
+            command.add("coeusyk.game.chess.uci.UciApplication");
+            ProcessBuilder builder = new ProcessBuilder(command);
             // Redirect stderr to INHERIT (Maven console) so that [BENCH] depth-stats
             // written to System.err by iterativeDeepening do NOT pollute the stdout
             // pipe that this harness reads bestmove lines from.  Merging the streams
             // via redirectErrorStream(true) could fill the 64 KB OS pipe buffer when
             // many depths are searched in rapid succession, blocking the engine's
             // emitBestMove write and causing the awaitLine timeout to fire.
-            builder.redirectError(ProcessBuilder.Redirect.INHERIT);
+            if (!withDiagnostics) builder.redirectError(ProcessBuilder.Redirect.INHERIT);
             Process process = builder.start();
 
             BufferedWriter in = new BufferedWriter(new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8));
             BufferedReader out = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
             BlockingQueue<String> lines = new LinkedBlockingQueue<>();
+            BlockingQueue<String> diagnostics = new LinkedBlockingQueue<>();
+            List<String> outputHistory = new CopyOnWriteArrayList<>();
+            List<String> diagnosticHistory = new CopyOnWriteArrayList<>();
 
             Thread reader = new Thread(() -> {
                 try {
                     String line;
                     while ((line = out.readLine()) != null) {
+                        outputHistory.add(line.trim());
                         lines.offer(line.trim());
                     }
                 } catch (IOException ignored) {
@@ -612,7 +780,24 @@ class UciApplicationIntegrationTest {
             reader.setDaemon(true);
             reader.start();
 
-            return new UciHarness(process, in, lines);
+            if (withDiagnostics) {
+                BufferedReader err = new BufferedReader(new InputStreamReader(process.getErrorStream(), StandardCharsets.UTF_8));
+                Thread errorReader = new Thread(() -> {
+                    try {
+                        String line;
+                        while ((line = err.readLine()) != null) {
+                            diagnosticHistory.add(line.trim());
+                            diagnostics.offer(line.trim());
+                        }
+                    } catch (IOException ignored) {
+                        // Process exit closes stream and ends this reader naturally.
+                    }
+                }, "uci-harness-diagnostic-reader");
+                errorReader.setDaemon(true);
+                errorReader.start();
+            }
+
+            return new UciHarness(process, in, lines, diagnostics, outputHistory, diagnosticHistory);
         }
 
         void send(String command) throws IOException {
@@ -640,6 +825,22 @@ class UciApplicationIntegrationTest {
                 if (predicate.test(line)) {
                     return line;
                 }
+            }
+            return null;
+        }
+
+        String awaitDiagnostic(java.util.function.Predicate<String> predicate, Duration timeout) throws InterruptedException {
+            long deadlineNanos = System.nanoTime() + timeout.toNanos();
+            while (System.nanoTime() < deadlineNanos) {
+                for (String line : diagnosticHistory) {
+                    if (predicate.test(line)) return line;
+                }
+                long remainingNanos = deadlineNanos - System.nanoTime();
+                if (remainingNanos <= 0) break;
+                diagnostics.poll(Math.max(1, remainingNanos / 1_000_000L), TimeUnit.MILLISECONDS);
+            }
+            for (String line : diagnosticHistory) {
+                if (predicate.test(line)) return line;
             }
             return null;
         }

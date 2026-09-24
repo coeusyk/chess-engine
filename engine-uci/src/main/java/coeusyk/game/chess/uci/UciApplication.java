@@ -22,14 +22,19 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class UciApplication {
     private static final Logger LOG = LoggerFactory.getLogger(UciApplication.class);
+    private static final boolean SMP_DIAGNOSTICS = Boolean.getBoolean("vex.smp.diagnostics");
     private static final String ENGINE_NAME = "Vex";
     private static final String ENGINE_AUTHOR = "coeusyk";
     private static final int MATE_SCORE = 100_000;
@@ -77,7 +82,8 @@ public class UciApplication {
 
     // Shared transposition table — a single instance sized by Hash setoption,
     // cleared on ucinewgame, and injected into every Searcher (main + helpers).
-    private final TranspositionTable sharedTT = new TranspositionTable(64);
+    private final TranspositionTable sharedTT = new TranspositionTable(64, SMP_DIAGNOSTICS);
+    private final AtomicLong searchSequence = new AtomicLong();
 
     // Number of physical (logical) processors available to this JVM.
     // Helpers are only spawned when there is at least one spare core beyond what
@@ -102,7 +108,6 @@ public class UciApplication {
     private final AtomicBoolean stopRequested = new AtomicBoolean(false);
     private volatile boolean searchRunning = false;
     private volatile Move latestIterativeBestMove;
-    @SuppressWarnings("unused") // assigned for future stop-command interrupt support
     private volatile Thread searchThread;
 
     private static final int DEFAULT_BENCH_DEPTH = BenchRunner.DEFAULT_DEPTH;
@@ -213,17 +218,17 @@ public class UciApplication {
             } else if ("isready".equals(line)) {
                 System.out.println("readyok");
             } else if ("ucinewgame".equals(line)) {
-                stopRequested.set(true);
-                board = new Board();
-                // Full TT clear (not just age-bump) ensures no stale entries from
-                // the previous game are visible to the next game's search.
-                sharedTT.clear();
-                // History heuristic, killer moves, and correction-history tables
-                // live inside Searcher, which is re-created on every "go" command.
-                // They are therefore automatically zeroed between games with no
-                // explicit reset needed here.
-                openingBook.close();
-                activePonderTimeManager = null;
+                if (stopAndJoinSearch()) {
+                    board = new Board();
+                    // Full TT clear (not just age-bump) ensures no stale entries from
+                    // the previous game are visible to the next game's search.
+                    sharedTT.clear();
+                    // Searcher history is reset by constructing a new Searcher per go.
+                    openingBook.close();
+                    activePonderTimeManager = null;
+                } else {
+                    System.out.println("info string ucinewgame skipped: search did not stop within 2000 ms");
+                }
             } else if (line.startsWith("position")) {
                 stopRequested.set(true);
                 handlePosition(line);
@@ -465,8 +470,13 @@ public class UciApplication {
         if ("hash".equals(optionNameLower)) {
             try {
                 int value = Integer.parseInt(valuePart);
-                hashSizeMb = Math.max(1, Math.min(65536, value));
-                sharedTT.resize(hashSizeMb); // apply immediately to the shared TT
+                int newHashSizeMb = Math.max(1, Math.min(65536, value));
+                if (stopAndJoinSearch()) {
+                    sharedTT.resize(newHashSizeMb);
+                    hashSizeMb = newHashSizeMb;
+                } else {
+                    System.out.println("info string Hash resize skipped: search did not stop within 2000 ms");
+                }
             } catch (NumberFormatException ignored) {
             }
         } else if ("multipv".equals(optionNameLower)) {
@@ -643,26 +653,9 @@ public class UciApplication {
     }
 
     private void handleGo(String command) {
-        // If a search is already running, signal it to stop and wait for the worker
-        // thread to finish (up to 2 s). This prevents the silent-drop race where
-        // the worker's finally block hasn't cleared searchRunning yet by the time
-        // the next "go" arrives, which would cause no bestmove to ever be emitted.
-        if (searchRunning) {
-            stopRequested.set(true);
-            Thread current = searchThread;
-            if (current != null) {
-                try {
-                    current.join(2000);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-            // If the search is somehow still running after 2 s, bail out.
-            if (searchRunning) {
-                return;
-            }
-        }
+        if (!stopAndJoinSearch()) return;
 
+        long searchId = SMP_DIAGNOSTICS ? searchSequence.incrementAndGet() : 0L;
         stopRequested.set(false);
         latestIterativeBestMove = null;
 
@@ -688,8 +681,13 @@ public class UciApplication {
         // Skip in ponder mode — the ponder position needs a full search.
         List<Move> legalMoves = new MovesGenerator(searchBoard).getActiveMoves(searchBoard.getActiveColor());
         if (!isGoPonder && legalMoves.size() == 1) {
-            emitBestMove(legalMoves.get(0));
+            Move forcedMove = legalMoves.get(0);
+            emitBestMove(forcedMove);
             System.out.flush();
+            if (SMP_DIAGNOSTICS) {
+                smpDiagnostic("search=" + searchId + " event=bestmove source=forced move="
+                        + moveToUci(forcedMove) + " legal=true helpers_submitted=0");
+            }
             return;
         }
         if (legalMoves.isEmpty()) {
@@ -697,25 +695,32 @@ public class UciApplication {
             LOG.warn("warn: handleGo called with 0 legal moves");
             emitBestMove(null);
             System.out.flush();
+            if (SMP_DIAGNOSTICS) {
+                smpDiagnostic("search=" + searchId + " event=bestmove source=terminal move=0000 legal=true helpers_submitted=0");
+            }
             return;
         }
 
         searchRunning = true;
-        Thread worker = new Thread(() -> runSearch(command, searchBoard), "uci-search-thread");
+        Thread worker = new Thread(() -> runSearch(command, searchBoard, searchId, legalMoves), "uci-search-thread");
         worker.setDaemon(true);
         searchThread = worker;
         worker.start();
     }
 
-    private void runSearch(String command, Board searchBoard) {
+    private void runSearch(String command, Board searchBoard, long searchId, List<Move> rootLegalMoves) {
         // Per-search abort flag for Lazy SMP helper threads.
         // Separate from the global stopRequested so setting it to true at the end
         // of this search does not bleed into the next search cycle.
         AtomicBoolean helperAbort = new AtomicBoolean(false);
-        // Declared outside try so the finally block can emit it after clearing
-        // searchRunning. This is critical: emitting bestmove BEFORE setting
-        // searchRunning=false causes a race where the GUI sends the next "go"
-        // before handleGo sees searchRunning=false, silently dropping the command.
+        long searchStartedNanos = SMP_DIAGNOSTICS ? System.nanoTime() : 0L;
+        AtomicLong helperAbortNanos = SMP_DIAGNOSTICS ? new AtomicLong() : null;
+        AtomicLong bestmoveNanos = SMP_DIAGNOSTICS ? new AtomicLong() : null;
+        AtomicInteger helperSubmissions = SMP_DIAGNOSTICS ? new AtomicInteger() : null;
+        AtomicInteger helperStarts = SMP_DIAGNOSTICS ? new AtomicInteger() : null;
+        AtomicInteger helperExits = SMP_DIAGNOSTICS ? new AtomicInteger() : null;
+        AtomicInteger helperExceptions = SMP_DIAGNOSTICS ? new AtomicInteger() : null;
+        List<Future<?>> helperFutures = new ArrayList<>();
         Move bestMoveToEmit = null;
         SearchResult result = null;
         try {
@@ -733,6 +738,12 @@ public class UciApplication {
             // already be running at generation N while the main thread bumps to N+1,
             // immediately evicting any shallow entries deposited by the helpers.
             sharedTT.incrementGeneration();
+            TranspositionTable.DiagnosticSnapshot helperSearchStart = SMP_DIAGNOSTICS
+                    ? sharedTT.diagnosticSnapshot() : null;
+            if (SMP_DIAGNOSTICS) {
+                smpDiagnostic("search=" + searchId + " event=begin threads=" + threads
+                        + " helpers=" + effectiveHelpers + " available_cores=" + AVAILABLE_CORES);
+            }
             // Resolved once per go (not once per thread) so any fallback info string
             // prints exactly once; each thread below still gets its own NnueEvaluator
             // instance — never the same instance shared across threads.
@@ -748,7 +759,25 @@ public class UciApplication {
                     // This reduces redundant shallow-depth work and helps threads
                     // diverge earlier, improving TT utilisation.
                     final int startDepth = (i % 2 == 1) ? (i / 2) + 2 : 1;
-                    smpExecutor.submit(() -> {
+                    final int helperId = i;
+                    long submittedNanos = SMP_DIAGNOSTICS ? System.nanoTime() : 0L;
+                    if (SMP_DIAGNOSTICS) {
+                        helperSubmissions.incrementAndGet();
+                        smpDiagnostic("search=" + searchId + " event=submit helper=" + helperId
+                                + " ms=" + elapsedMillis(searchStartedNanos, submittedNanos)
+                                + " start_depth=" + startDepth);
+                    }
+                    Future<?> helperFuture = smpExecutor.submit(() -> {
+                        long helperStartedNanos = SMP_DIAGNOSTICS ? System.nanoTime() : 0L;
+                        SearchResult helperResult = null;
+                        Exception helperFailure = null;
+                        if (SMP_DIAGNOSTICS) {
+                            helperStarts.incrementAndGet();
+                            sharedTT.beginHelperDiagnostics(searchId, helperId, helperSearchStart,
+                                    () -> helperAbort.get() || stopRequested.get());
+                            smpDiagnostic("search=" + searchId + " event=start helper=" + helperId
+                                    + " ms=" + elapsedMillis(searchStartedNanos, helperStartedNanos));
+                        }
                         try {
                             Searcher helper = new Searcher();
                             helper.setSharedTranspositionTable(sharedTT);
@@ -759,7 +788,7 @@ public class UciApplication {
                             }
                             Board helperBoard = new Board(positionFen);
                             helperBoard.setSearchMode(true);
-                            helper.iterativeDeepening(
+                            helperResult = helper.iterativeDeepening(
                                     helperBoard,
                                     MAX_SEARCH_DEPTH,
                                     startDepth,
@@ -767,10 +796,58 @@ public class UciApplication {
                                     () -> helperAbort.get() || stopRequested.get(),
                                     null
                             );
-                        } catch (Exception ignored) {
+                        } catch (Exception e) {
                             // Helper failures are swallowed; only the main thread result matters.
+                            helperFailure = e;
+                            if (SMP_DIAGNOSTICS) {
+                                helperExceptions.incrementAndGet();
+                                LOG.error("SMP helper exception search={} helper={}", searchId, helperId, e);
+                            }
+                        } finally {
+                            if (SMP_DIAGNOSTICS) {
+                                long exitedNanos = System.nanoTime();
+                                TranspositionTable.HelperActivity activity = sharedTT.endHelperDiagnostics();
+                                helperExits.incrementAndGet();
+                                long abortNanos = helperAbortNanos.get();
+                                long emittedNanos = bestmoveNanos.get();
+                                String exitCause = helperFailure != null ? "exception"
+                                        : helperResult == null ? "no-result"
+                                        : !helperResult.aborted() ? "completed"
+                                        : stopRequested.get() && !helperAbort.get() ? "stop-requested"
+                                        : "helper-abort";
+                                smpDiagnostic("search=" + searchId + " event=exit helper=" + helperId
+                                        + " submit_ms=" + elapsedMillis(searchStartedNanos, submittedNanos)
+                                        + " start_ms=" + elapsedMillis(searchStartedNanos, helperStartedNanos)
+                                        + " exit_ms=" + elapsedMillis(searchStartedNanos, exitedNanos)
+                                        + " abort_ms=" + elapsedMillisOrPending(searchStartedNanos, abortNanos)
+                                        + " bestmove_ms=" + elapsedMillisOrPending(searchStartedNanos, emittedNanos)
+                                        + " exit_cause=" + exitCause
+                                        + " completed_depth=" + (helperResult == null ? 0 : helperResult.depthReached())
+                                        + " bestmove=" + (helperResult == null || helperResult.bestMove() == null
+                                                ? "-" : moveToUci(helperResult.bestMove()))
+                                        + " exception=" + (helperFailure == null ? "-" : helperFailure.getClass().getName())
+                                        + " tt_reads=" + activity.reads() + " tt_writes=" + activity.writes()
+                                        + " tt_other=" + activity.other()
+                                        + " after_abort=" + activity.afterAbort()
+                                        + " after_generation=" + activity.afterGeneration()
+                                        + " after_clear=" + activity.afterClear()
+                                        + " after_resize=" + activity.afterResize()
+                                        + " reads_after_abort=" + activity.readsAfterAbort()
+                                        + " writes_after_abort=" + activity.writesAfterAbort()
+                                        + " other_after_abort=" + activity.otherAfterAbort()
+                                        + " reads_after_generation=" + activity.readsAfterGeneration()
+                                        + " writes_after_generation=" + activity.writesAfterGeneration()
+                                        + " other_after_generation=" + activity.otherAfterGeneration()
+                                        + " reads_after_clear=" + activity.readsAfterClear()
+                                        + " writes_after_clear=" + activity.writesAfterClear()
+                                        + " other_after_clear=" + activity.otherAfterClear()
+                                        + " reads_after_resize=" + activity.readsAfterResize()
+                                        + " writes_after_resize=" + activity.writesAfterResize()
+                                        + " other_after_resize=" + activity.otherAfterResize());
+                            }
                         }
                     });
+                    helperFutures.add(helperFuture);
                 }
             }
 
@@ -864,20 +941,89 @@ public class UciApplication {
 
             bestMoveToEmit = result.bestMove() != null ? result.bestMove() : latestIterativeBestMove;
         } finally {
-            // Signal helpers to stop BEFORE clearing searchRunning.
+            // Emit the main-thread result promptly, then drain owned helpers before
+            // marking this search idle. UCI mutations join this thread as the
+            // quiescence boundary for all of its workers.
+            if (SMP_DIAGNOSTICS) {
+                helperAbortNanos.compareAndSet(0L, System.nanoTime());
+            }
             helperAbort.set(true);
-            // Clear searchRunning BEFORE emitting bestmove so handleGo never
-            // sees a go command while searchRunning is still true due to the
-            // output latency between emitBestMove and the flag flip.
-            searchRunning = false;
-            searchThread = null;
             activePonderTimeManager = null;
-            // Emit bestmove only after the flag is cleared.
             Move ponderMove = result != null ? result.ponderMove() : null;
             Move toEmit = bestMoveToEmit != null ? bestMoveToEmit : latestIterativeBestMove;
+            if (SMP_DIAGNOSTICS) {
+                bestmoveNanos.set(System.nanoTime());
+            }
             emitBestMove(toEmit, ponderMove);
             System.out.flush();
+            if (SMP_DIAGNOSTICS) {
+                String source = result != null && result.bestMove() != null ? "main-result"
+                        : result == null && bestMoveToEmit != null ? "book"
+                        : toEmit != null ? "latest-iterative" : "none";
+                boolean legal = toEmit == null
+                        ? rootLegalMoves.isEmpty()
+                        : rootLegalMoves.stream().anyMatch(move -> moveToUci(move).equals(moveToUci(toEmit)));
+                String mainPv = result == null || result.principalVariation().isEmpty() ? "-"
+                        : result.principalVariation().stream().map(this::moveToUci)
+                                .collect(java.util.stream.Collectors.joining(","));
+                smpDiagnostic("search=" + searchId + " event=bestmove source=" + source
+                        + " move=" + (toEmit == null ? "0000" : moveToUci(toEmit))
+                        + " legal=" + legal
+                        + " main_depth=" + (result == null ? 0 : result.depthReached())
+                        + " main_move=" + (result == null || result.bestMove() == null
+                                ? "-" : moveToUci(result.bestMove()))
+                        + " latest_move=" + (latestIterativeBestMove == null
+                                ? "-" : moveToUci(latestIterativeBestMove))
+                        + " main_score_cp=" + (result == null ? 0 : result.scoreCp())
+                        + " main_nodes=" + (result == null ? 0 : result.nodesVisited())
+                        + " main_qnodes=" + (result == null ? 0 : result.quiescenceNodes())
+                        + " main_tt_hits=" + (result == null ? 0 : result.ttHits())
+                        + " main_pv=" + mainPv
+                        + " aborted=" + (result != null && result.aborted())
+                        + " helper_submitted=" + helperSubmissions.get()
+                        + " helper_started=" + helperStarts.get()
+                        + " helper_exited=" + helperExits.get()
+                        + " helper_pending=" + (helperSubmissions.get() - helperExits.get())
+                        + " helper_exceptions=" + helperExceptions.get()
+                        + " abort_ms=" + elapsedMillis(searchStartedNanos, helperAbortNanos.get())
+                        + " bestmove_ms=" + elapsedMillis(searchStartedNanos, bestmoveNanos.get()));
+            }
+            for (Future<?> helperFuture : helperFutures) {
+                try {
+                    helperFuture.get();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                } catch (ExecutionException e) {
+                    LOG.error("SMP helper execution failure search={}", searchId, e.getCause());
+                }
+            }
+            searchRunning = false;
         }
+    }
+
+    private boolean stopAndJoinSearch() {
+        Thread current = searchThread;
+        if (current == null) return true;
+        stopRequested.set(true);
+        try {
+            current.join(2000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        return !current.isAlive();
+    }
+
+    private static void smpDiagnostic(String event) {
+        System.err.println("SMPDIAG " + event);
+    }
+
+    private static long elapsedMillis(long startNanos, long eventNanos) {
+        return (eventNanos - startNanos) / 1_000_000L;
+    }
+
+    private static String elapsedMillisOrPending(long startNanos, long eventNanos) {
+        return eventNanos == 0L ? "pending" : Long.toString(elapsedMillis(startNanos, eventNanos));
     }
 
     private void runBench(int depth, boolean instrumentationEnabled) {

@@ -2,6 +2,7 @@ package coeusyk.game.chess.core.search;
 
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongArray;
+import java.util.function.BooleanSupplier;
 
 import coeusyk.game.chess.core.models.Move;
 
@@ -86,18 +87,33 @@ public class TranspositionTable {
     // Per-search generation counter.  Incremented once at the start of each
     // new move's search.
     private volatile byte currentGeneration = 0;
+    private final boolean helperDiagnosticsEnabled;
+    private final ThreadLocal<HelperTrace> helperTrace;
+    private volatile long generationEpoch;
+    private volatile long clearEpoch;
+    private volatile long resizeEpoch;
 
     public TranspositionTable() {
         this(DEFAULT_SIZE_MB);
     }
 
     public TranspositionTable(int sizeMb) {
+        this(sizeMb, false);
+    }
+
+    public TranspositionTable(int sizeMb, boolean helperDiagnosticsEnabled) {
+        this.helperDiagnosticsEnabled = helperDiagnosticsEnabled;
+        this.helperTrace = helperDiagnosticsEnabled ? new ThreadLocal<>() : null;
         resize(sizeMb);
     }
 
     public void resize(int sizeMb) {
+        // Caller must ensure no search thread or helper can access this table.
         if (sizeMb <= 0) {
             throw new IllegalArgumentException("table size must be > 0 MB");
+        }
+        if (helperDiagnosticsEnabled) {
+            resizeEpoch++;
         }
 
         long bytes = (long) sizeMb * 1024L * 1024L;
@@ -112,10 +128,13 @@ public class TranspositionTable {
         entryCount = ec;
         table = new AtomicLongArray(ec * 2);
         mask = ec - 1;
-        resetStats();
+        resetStatsInternal();
     }
 
     public Entry probe(long key) {
+        if (helperDiagnosticsEnabled) {
+            recordHelperActivity(false);
+        }
         int idx = indexFor(key);
         long check = table.get(idx * 2);
         long data = table.get(idx * 2 + 1);
@@ -183,6 +202,9 @@ public class TranspositionTable {
      * current search.
      */
     public void incrementGeneration() {
+        if (helperDiagnosticsEnabled) {
+            generationEpoch++;
+        }
         currentGeneration = (byte) (currentGeneration + 1);
     }
 
@@ -204,6 +226,9 @@ public class TranspositionTable {
      * deep results from adjacent positions in the game tree.
      */
     public void store(long key, int bestMove, int depth, int score, TTBound bound) {
+        if (helperDiagnosticsEnabled) {
+            recordHelperActivity(true);
+        }
         int idx = indexFor(key);
         long existingCheck = table.get(idx * 2);
         long existingData  = table.get(idx * 2 + 1);
@@ -237,6 +262,9 @@ public class TranspositionTable {
      * which is accurate enough for a GUI progress bar.
      */
     public int hashfull() {
+        if (helperDiagnosticsEnabled) {
+            recordHelperActivity(false);
+        }
         int len = entryCount;
         if (len == 0) {
             return 0;
@@ -263,15 +291,24 @@ public class TranspositionTable {
     }
 
     public double getHitRate() {
+        if (helperDiagnosticsEnabled) {
+            recordOtherHelperActivity();
+        }
         long p = probes.get();
         return p == 0 ? 0.0 : (double) hits.get() / p;
     }
 
     public long getProbes() {
+        if (helperDiagnosticsEnabled) {
+            recordOtherHelperActivity();
+        }
         return probes.get();
     }
 
     public long getHits() {
+        if (helperDiagnosticsEnabled) {
+            recordOtherHelperActivity();
+        }
         return hits.get();
     }
 
@@ -280,16 +317,147 @@ public class TranspositionTable {
      * {@code ucinewgame} or explicit resize.
      */
     public void clear() {
+        if (helperDiagnosticsEnabled) {
+            clearEpoch++;
+        }
         int len = table.length();
         for (int i = 0; i < len; i++) {
             table.set(i, 0L);
         }
-        resetStats();
+        resetStatsInternal();
     }
 
     public void resetStats() {
+        if (helperDiagnosticsEnabled) {
+            recordOtherHelperActivity();
+        }
+        resetStatsInternal();
+    }
+
+    private void resetStatsInternal() {
         probes.set(0);
         hits.set(0);
+    }
+
+    public DiagnosticSnapshot diagnosticSnapshot() {
+        return helperDiagnosticsEnabled
+                ? new DiagnosticSnapshot(generationEpoch, clearEpoch, resizeEpoch)
+                : null;
+    }
+
+    public void beginHelperDiagnostics(
+            long searchId,
+            int helperId,
+            DiagnosticSnapshot searchStart,
+            BooleanSupplier aborted
+    ) {
+        if (helperDiagnosticsEnabled && searchStart != null) {
+            helperTrace.set(new HelperTrace(searchId, helperId, searchStart, aborted));
+        }
+    }
+
+    public HelperActivity endHelperDiagnostics() {
+        if (!helperDiagnosticsEnabled) {
+            return null;
+        }
+        HelperTrace trace = helperTrace.get();
+        helperTrace.remove();
+        return trace == null ? null : trace.snapshot();
+    }
+
+    private void recordHelperActivity(boolean write) {
+        HelperTrace trace = helperTrace.get();
+        if (trace != null) {
+            trace.record(write, generationEpoch, clearEpoch, resizeEpoch);
+        }
+    }
+
+    private void recordOtherHelperActivity() {
+        HelperTrace trace = helperTrace.get();
+        if (trace != null) {
+            trace.recordOther(generationEpoch, clearEpoch, resizeEpoch);
+        }
+    }
+
+    public record DiagnosticSnapshot(long generation, long clear, long resize) {
+    }
+
+    public record HelperActivity(
+            long searchId,
+            int helperId,
+            long reads,
+            long writes,
+            long other,
+            long readsAfterAbort,
+            long writesAfterAbort,
+            long otherAfterAbort,
+            long readsAfterGeneration,
+            long writesAfterGeneration,
+            long otherAfterGeneration,
+            long readsAfterClear,
+            long writesAfterClear,
+            long otherAfterClear,
+            long readsAfterResize,
+            long writesAfterResize,
+            long otherAfterResize
+    ) {
+        public long afterAbort() { return readsAfterAbort + writesAfterAbort + otherAfterAbort; }
+        public long afterGeneration() { return readsAfterGeneration + writesAfterGeneration + otherAfterGeneration; }
+        public long afterClear() { return readsAfterClear + writesAfterClear + otherAfterClear; }
+        public long afterResize() { return readsAfterResize + writesAfterResize + otherAfterResize; }
+    }
+
+    private static final class HelperTrace {
+        private final long searchId;
+        private final int helperId;
+        private final DiagnosticSnapshot searchStart;
+        private final BooleanSupplier aborted;
+        private long reads, writes, other;
+        private long readsAfterAbort, writesAfterAbort, otherAfterAbort;
+        private long readsAfterGeneration, writesAfterGeneration, otherAfterGeneration;
+        private long readsAfterClear, writesAfterClear, otherAfterClear;
+        private long readsAfterResize, writesAfterResize, otherAfterResize;
+
+        private HelperTrace(long searchId, int helperId, DiagnosticSnapshot searchStart, BooleanSupplier aborted) {
+            this.searchId = searchId;
+            this.helperId = helperId;
+            this.searchStart = searchStart;
+            this.aborted = aborted;
+        }
+
+        private void record(boolean write, long generation, long clear, long resize) {
+            boolean wasAborted = aborted.getAsBoolean();
+            if (write) writes++; else reads++;
+            if (wasAborted) {
+                if (write) writesAfterAbort++; else readsAfterAbort++;
+            }
+            if (generation != searchStart.generation()) {
+                if (write) writesAfterGeneration++; else readsAfterGeneration++;
+            }
+            if (clear != searchStart.clear()) {
+                if (write) writesAfterClear++; else readsAfterClear++;
+            }
+            if (resize != searchStart.resize()) {
+                if (write) writesAfterResize++; else readsAfterResize++;
+            }
+        }
+
+        private void recordOther(long generation, long clear, long resize) {
+            boolean wasAborted = aborted.getAsBoolean();
+            other++;
+            if (wasAborted) otherAfterAbort++;
+            if (generation != searchStart.generation()) otherAfterGeneration++;
+            if (clear != searchStart.clear()) otherAfterClear++;
+            if (resize != searchStart.resize()) otherAfterResize++;
+        }
+
+        private HelperActivity snapshot() {
+            return new HelperActivity(searchId, helperId, reads, writes, other,
+                    readsAfterAbort, writesAfterAbort, otherAfterAbort,
+                    readsAfterGeneration, writesAfterGeneration, otherAfterGeneration,
+                    readsAfterClear, writesAfterClear, otherAfterClear,
+                    readsAfterResize, writesAfterResize, otherAfterResize);
+        }
     }
 
     private int indexFor(long key) {

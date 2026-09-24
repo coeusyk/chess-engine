@@ -4,10 +4,51 @@ import coeusyk.game.chess.core.models.Move;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Field;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class TranspositionTableTest {
+
+    @Test
+    void helperDiagnosticsTrackActivityAfterAbortAndLifecycleBoundaries() {
+        TranspositionTable table = new TranspositionTable(1, true);
+        AtomicBoolean aborted = new AtomicBoolean();
+        table.incrementGeneration();
+        TranspositionTable.DiagnosticSnapshot searchStart = table.diagnosticSnapshot();
+        table.beginHelperDiagnostics(7, 1, searchStart, aborted::get);
+
+        table.probe(11L);
+        aborted.set(true);
+        table.store(11L, Move.NONE, 1, 0, TTBound.EXACT);
+        table.resetStats();
+        table.incrementGeneration();
+        table.probe(22L);
+        table.clear();
+        table.store(33L, Move.NONE, 1, 0, TTBound.EXACT);
+        table.resize(1);
+        table.probe(44L);
+
+        TranspositionTable.HelperActivity activity = table.endHelperDiagnostics();
+        assertEquals(7, activity.searchId());
+        assertEquals(1, activity.helperId());
+        assertEquals(3, activity.reads());
+        assertEquals(2, activity.writes());
+        assertEquals(1, activity.other());
+        assertEquals(2, activity.readsAfterAbort());
+        assertEquals(2, activity.writesAfterAbort());
+        assertEquals(1, activity.otherAfterAbort());
+        assertEquals(2, activity.readsAfterGeneration());
+        assertEquals(1, activity.writesAfterGeneration());
+        assertEquals(3, activity.afterGeneration());
+        assertEquals(1, activity.readsAfterClear());
+        assertEquals(1, activity.writesAfterClear());
+        assertEquals(2, activity.afterClear());
+        assertEquals(1, activity.readsAfterResize());
+        assertEquals(0, activity.writesAfterResize());
+        assertEquals(1, activity.afterResize());
+        assertEquals(5, activity.afterAbort());
+    }
 
     @Test
     void storesAndRetrievesByZobristKey() {
