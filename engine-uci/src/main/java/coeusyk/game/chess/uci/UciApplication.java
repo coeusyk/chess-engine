@@ -22,7 +22,9 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -106,7 +108,6 @@ public class UciApplication {
     private final AtomicBoolean stopRequested = new AtomicBoolean(false);
     private volatile boolean searchRunning = false;
     private volatile Move latestIterativeBestMove;
-    @SuppressWarnings("unused") // assigned for future stop-command interrupt support
     private volatile Thread searchThread;
 
     private static final int DEFAULT_BENCH_DEPTH = BenchRunner.DEFAULT_DEPTH;
@@ -217,17 +218,17 @@ public class UciApplication {
             } else if ("isready".equals(line)) {
                 System.out.println("readyok");
             } else if ("ucinewgame".equals(line)) {
-                stopRequested.set(true);
-                board = new Board();
-                // Full TT clear (not just age-bump) ensures no stale entries from
-                // the previous game are visible to the next game's search.
-                sharedTT.clear();
-                // History heuristic, killer moves, and correction-history tables
-                // live inside Searcher, which is re-created on every "go" command.
-                // They are therefore automatically zeroed between games with no
-                // explicit reset needed here.
-                openingBook.close();
-                activePonderTimeManager = null;
+                if (stopAndJoinSearch()) {
+                    board = new Board();
+                    // Full TT clear (not just age-bump) ensures no stale entries from
+                    // the previous game are visible to the next game's search.
+                    sharedTT.clear();
+                    // Searcher history is reset by constructing a new Searcher per go.
+                    openingBook.close();
+                    activePonderTimeManager = null;
+                } else {
+                    System.out.println("info string ucinewgame skipped: search did not stop within 2000 ms");
+                }
             } else if (line.startsWith("position")) {
                 stopRequested.set(true);
                 handlePosition(line);
@@ -469,8 +470,13 @@ public class UciApplication {
         if ("hash".equals(optionNameLower)) {
             try {
                 int value = Integer.parseInt(valuePart);
-                hashSizeMb = Math.max(1, Math.min(65536, value));
-                sharedTT.resize(hashSizeMb); // apply immediately to the shared TT
+                int newHashSizeMb = Math.max(1, Math.min(65536, value));
+                if (stopAndJoinSearch()) {
+                    sharedTT.resize(newHashSizeMb);
+                    hashSizeMb = newHashSizeMb;
+                } else {
+                    System.out.println("info string Hash resize skipped: search did not stop within 2000 ms");
+                }
             } catch (NumberFormatException ignored) {
             }
         } else if ("multipv".equals(optionNameLower)) {
@@ -647,25 +653,7 @@ public class UciApplication {
     }
 
     private void handleGo(String command) {
-        // If a search is already running, signal it to stop and wait for the worker
-        // thread to finish (up to 2 s). This prevents the silent-drop race where
-        // the worker's finally block hasn't cleared searchRunning yet by the time
-        // the next "go" arrives, which would cause no bestmove to ever be emitted.
-        if (searchRunning) {
-            stopRequested.set(true);
-            Thread current = searchThread;
-            if (current != null) {
-                try {
-                    current.join(2000);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-            // If the search is somehow still running after 2 s, bail out.
-            if (searchRunning) {
-                return;
-            }
-        }
+        if (!stopAndJoinSearch()) return;
 
         long searchId = SMP_DIAGNOSTICS ? searchSequence.incrementAndGet() : 0L;
         stopRequested.set(false);
@@ -732,10 +720,7 @@ public class UciApplication {
         AtomicInteger helperStarts = SMP_DIAGNOSTICS ? new AtomicInteger() : null;
         AtomicInteger helperExits = SMP_DIAGNOSTICS ? new AtomicInteger() : null;
         AtomicInteger helperExceptions = SMP_DIAGNOSTICS ? new AtomicInteger() : null;
-        // Declared outside try so the finally block can emit it after clearing
-        // searchRunning. This is critical: emitting bestmove BEFORE setting
-        // searchRunning=false causes a race where the GUI sends the next "go"
-        // before handleGo sees searchRunning=false, silently dropping the command.
+        List<Future<?>> helperFutures = new ArrayList<>();
         Move bestMoveToEmit = null;
         SearchResult result = null;
         try {
@@ -782,7 +767,7 @@ public class UciApplication {
                                 + " ms=" + elapsedMillis(searchStartedNanos, submittedNanos)
                                 + " start_depth=" + startDepth);
                     }
-                    smpExecutor.submit(() -> {
+                    Future<?> helperFuture = smpExecutor.submit(() -> {
                         long helperStartedNanos = SMP_DIAGNOSTICS ? System.nanoTime() : 0L;
                         SearchResult helperResult = null;
                         Exception helperFailure = null;
@@ -862,6 +847,7 @@ public class UciApplication {
                             }
                         }
                     });
+                    helperFutures.add(helperFuture);
                 }
             }
 
@@ -955,18 +941,14 @@ public class UciApplication {
 
             bestMoveToEmit = result.bestMove() != null ? result.bestMove() : latestIterativeBestMove;
         } finally {
-            // Signal helpers to stop BEFORE clearing searchRunning.
+            // Emit the main-thread result promptly, then drain owned helpers before
+            // marking this search idle. UCI mutations join this thread as the
+            // quiescence boundary for all of its workers.
             if (SMP_DIAGNOSTICS) {
                 helperAbortNanos.compareAndSet(0L, System.nanoTime());
             }
             helperAbort.set(true);
-            // Clear searchRunning BEFORE emitting bestmove so handleGo never
-            // sees a go command while searchRunning is still true due to the
-            // output latency between emitBestMove and the flag flip.
-            searchRunning = false;
-            searchThread = null;
             activePonderTimeManager = null;
-            // Emit bestmove only after the flag is cleared.
             Move ponderMove = result != null ? result.ponderMove() : null;
             Move toEmit = bestMoveToEmit != null ? bestMoveToEmit : latestIterativeBestMove;
             if (SMP_DIAGNOSTICS) {
@@ -1006,7 +988,30 @@ public class UciApplication {
                         + " abort_ms=" + elapsedMillis(searchStartedNanos, helperAbortNanos.get())
                         + " bestmove_ms=" + elapsedMillis(searchStartedNanos, bestmoveNanos.get()));
             }
+            for (Future<?> helperFuture : helperFutures) {
+                try {
+                    helperFuture.get();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                } catch (ExecutionException e) {
+                    LOG.error("SMP helper execution failure search={}", searchId, e.getCause());
+                }
+            }
+            searchRunning = false;
         }
+    }
+
+    private boolean stopAndJoinSearch() {
+        Thread current = searchThread;
+        if (current == null) return true;
+        stopRequested.set(true);
+        try {
+            current.join(2000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        return !current.isAlive();
     }
 
     private static void smpDiagnostic(String event) {

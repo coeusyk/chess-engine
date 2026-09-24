@@ -108,6 +108,7 @@ public class TranspositionTable {
     }
 
     public void resize(int sizeMb) {
+        // Caller must ensure no search thread or helper can access this table.
         if (sizeMb <= 0) {
             throw new IllegalArgumentException("table size must be > 0 MB");
         }

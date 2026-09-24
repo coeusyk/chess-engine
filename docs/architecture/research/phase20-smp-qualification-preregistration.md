@@ -2,7 +2,7 @@
 
 ## 0. Status and scope
 
-This is a preregistration only. No code, instrumentation, benchmarks, games or SPRT runs have been produced for it. The production search source is unchanged since the Phase 18 frozen reference: `git diff 6afc523 HEAD -- engine-core/src/main engine-uci/src/main` is empty. The Phase 20 base is still the post-#245 `develop` head, and its commit SHA and jar SHA-256 must be recorded at Stage 0.
+This was the preregistration for Phase 20. Stage 0 and the full Stage 1 requalification passed on 2026-09-24 after the separately preregistered lifecycle repair; Stage 2 and all later stages remain unstarted. The repair and requalification evidence is in `docs/architecture/research/phase20-smp-lifecycle-repair-preregistration.md` and `dev-entries/phase-20.md`. `Searcher` remains unchanged; the UCI layer retains opt-in lifecycle diagnostics and the bounded quiescence repair. The Phase 20 base is the post-#245 `develop` head `85b201a2a38f23df09ef2aa758ead77fd6d859ee`.
 
 ## 1. Corrections to the planning brief
 
@@ -239,6 +239,6 @@ The test itself would then be a same-jar `Threads=2` vs `Threads=1` SPRT on nati
 
 ## 16. Assumptions to review before execution
 
-1. Clean positions depend on the harness waiting out helpers that production itself never waits for. Stage 3 is only valid if no old helper overlaps the next position, and production doesn't join helpers. If the harness waits for helper exit, it measures a lifecycle production doesn't have. If it doesn't wait, the measurements are contaminated. The review has to decide whether a lingering helper is a defect to fix first (which makes Stage 1 a hard blocker for any timing) or a production property to measure as it is.
+1. Resolved by the lifecycle repair executed 2026-09-24: a search thread owns and joins its helpers after emitting bestmove, and the UCI thread joins that search thread before the next generation, TT clear or resize. A helper may outlive bestmove during this drain; it may not perform shared-state activity across a later lifecycle boundary. The Stage 1 requalification passed, so a Stage 3 harness can rely on production quiescence without adding a separate helper wait.
 2. Native-Windows timing with a fixed thread-placement policy is available and representative. Phase 18 had no native Windows run. SMT placement, what `NORM_PRIORITY - 1` means on Windows, and turbo behavior at 1 vs 4 busy cores can each move `r(N)` more than any SMP mechanism does. If native Windows isn't available, only Stages 0, 1 and 5 can run.
 3. Main-thread time to depth is the right mechanism metric at Hash=16 MB. In Lazy SMP, deeper helper TT entries can make a nominal depth-N main search effectively deeper, so TTD undercounts the benefit and fixed-depth move differences look like noise when they are really quality. On top of that, 16 MB was picked for 1T comparability, not because it represents SMP use. Stage 4 might show that the headline Stage 3 number is mostly a capacity artifact.

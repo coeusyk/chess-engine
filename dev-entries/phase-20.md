@@ -35,7 +35,7 @@
 
 **Next:**
 
-- Stage 0 and Stage 1 execution is recorded below. Stage 1 failed at the Hash resize gate; Stage 2 and later stages were not run.
+- The original Stage 1 run failed at the Hash resize gate. The separately preregistered lifecycle repair and full Stage 0/Stage 1 requalification are recorded below; Stage 2 and later stages remain unstarted.
 
 ---
 
@@ -79,3 +79,40 @@
 - No Threads=4 resize arm was run after the Threads=2 hard failure. Stage 2 and all later stages were not started.
 
 **Retained changes:** opt-in UCI/TT diagnostics, the focused TT diagnostics test, and the Hash-resize reproducer. No SMP redesign, search change, timing claim, game or SPRT work.
+
+---
+
+### [2026-09-24] Phase 20 — SMP lifecycle repair and Stage 0/1 requalification (Issue #246)
+
+**Starting point and red-first evidence:**
+
+- Repair started at `a8c15627f45b6a7c9403fd8a75c06d0818520ecc`, branch `phase/20-smp-qualification`, base `origin/develop` `85b201a2a38f23df09ef2aa758ead77fd6d859ee`.
+- Test-only commits `b56dfdf` and `ad23201` added the active-resize regression before production edits. Against the unchanged `a8c15627` production path, assertion A failed in all four active Hash arms: `readyok` arrived before bestmove.
+- Red helper TT activity after resize: T2 grow 4; T2 shrink 2; T4 grow 5 (helpers 3/0/2); T4 shrink 3 (helpers 1/0/2). No helper exceptions, no uncaught main-search exceptions, and no shrink exception. The preregistered expectation for a shrink exception was not observed.
+- The preregistration's literal `go infinite` does not hold this implementation open; the parser falls through to its default depth 4. The regression uses `go depth 127`, the already-used production path for the intended active-search boundary.
+
+**Selected repair:**
+
+- `runSearch` now retains its helper Futures and owns their joins. Ordering is helper abort, exactly one bestmove, helper Future joins, `searchRunning=false`, then search-thread return. `searchThread` remains available for a UCI-thread join after bestmove.
+- One bounded `stopAndJoinSearch()` is used for Hash resize, `ucinewgame`, and previous-search quiescence in `handleGo`. A timed-out `ucinewgame` leaves board, TT, book and new-game state unchanged and reports the timeout. Hash size changes only after join and successful resize. No timeout occurred.
+- `TranspositionTable.resize()` gained only its caller-quiescence contract comment. The Hash reproducer now accepts `--threads 2|4` and `--direction grow|shrink`; it fails on post-resize helper TT activity, a missing bestmove before `readyok`, exceptions, or an illegal/duplicate result. Diagnostics remain opt-in.
+- `BookFile`/`BookVariance` mutation remains a separate follow-up risk; neither option was changed.
+
+**Stage 0 on the repaired jar — PASS:**
+
+- Jar SHA-256: `2be9571d8c8852d654e0551ad75f270619ed5a4ce1bbc294027b11c3b95e36cb`. WSL2 Ubuntu 24.04.4, OpenJDK 21.0.12, 16 processors; JVM flags `-Xms512m -Xmx512m -XX:+UseG1GC --add-modules jdk.incubator.vector`.
+- Diagnostics off and on each completed all 31 depth-13 positions and totaled exactly 24,780,049 main nodes. The full move/score/nodes/PV vector SHA-256 was identical in both modes: `f289ff4f316dfd25e2d60eaef9e9e8339335ee8b25147da0899c353576468477`.
+- The five depth-8 move/score/nodes/PV vector was identical in both modes (SHA-256 `99d6ea0f9f6b5e0c50c573edc038e1cc5c805aed7b9161568ade76008f5a646b`). The diagnostics-on qnodes/TT hits matched P18-5 exactly: `(14926,39927,4908)`, `(1226,1816,1024)`, `(34694,88266,14691)`, `(6456,14776,1938)`, `(8902,16736,3982)`.
+- Diagnostics-off UCI `info` lines do not expose qnodes or TT hits; those fields were directly measured in diagnostics-on result summaries and matched the frozen reference. The instrumentation-off run emitted no `SMPDIAG` events; diagnostics-on reported 36 searches with zero helpers and exceptions.
+- The jar `--bench` entry also completed at 24,780,049 nodes. No timing or scaling claim was drawn from WSL2.
+
+**Stage 1 requalification — PASS:**
+
+- Active Hash grow/shrink at Threads=2/4: three runs per arm, 12/12 passed. Every active resize emitted bestmove before `readyok`; every helper reported `after_resize=0`; each sequence then completed one legal bestmove for the next `go`.
+- Immediate resize→go passed at Threads=2/4. Active `ucinewgame`→go and stop→go passed at Threads=2/4 with no old-helper activity after clear or generation bump. Idle resize passed at T1/T2/T4, including book searches with one pending T2 helper and three pending T4 helpers at bestmove; those helpers had `after_resize=0` and no extra bestmove was emitted. T1 active resize and resize before any search passed with zero helper work.
+- Repeated searches, 75 ms movetime abort then go, book hit, book hit then immediate go, searchmoves `{e2e4,d2d4}` with MultiPV=2, forced move `h8h7`, and terminal `bestmove 0000` all passed. Each `go` had exactly one legal bestmove; emitted search results matched main-thread ownership. Helper exceptions and uncaught main-search exceptions were zero. No join timeout occurred.
+- All helper exits had zero activity after a later generation bump, TT clear, or Hash resize. Activity after helper abort was observed (25 TT operations in the Stage 1 diagnostic matrix) but none crossed a later lifecycle boundary.
+- Bestmove-to-helper-exit latency from diagnostic timestamps: the 64-exit Stage 1 matrix had median 0 ms and maximum 3 ms; the dedicated idle-resize runs with helpers pending at bestmove had 7 exits, median 6 ms and maximum 9 ms. These are lifecycle observations, not performance claims or pass thresholds.
+- `mvn -pl engine-core,engine-uci -am test` passed, including `lazySmpNoDeadlockOver1000Searches` (UCI integration class: 28 passed). `mvn -pl engine-core,engine-tuner -am test` passed. The focused active-resize regression passed all four arms after repair.
+
+Stage 2 was not started. No SMP timing/scaling conclusions, games, SPRT, PVS or tuning work was done.
