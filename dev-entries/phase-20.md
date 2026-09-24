@@ -115,4 +115,43 @@
 - Bestmove-to-helper-exit latency from diagnostic timestamps: the 64-exit Stage 1 matrix had median 0 ms and maximum 3 ms; the dedicated idle-resize runs with helpers pending at bestmove had 7 exits, median 6 ms and maximum 9 ms. These are lifecycle observations, not performance claims or pass thresholds.
 - `mvn -pl engine-core,engine-uci -am test` passed, including `lazySmpNoDeadlockOver1000Searches` (UCI integration class: 28 passed). `mvn -pl engine-core,engine-tuner -am test` passed. The focused active-resize regression passed all four arms after repair.
 
-Stage 2 was not started. No SMP timing/scaling conclusions, games, SPRT, PVS or tuning work was done.
+At the close of this requalification, Stage 2 had not started. No SMP timing/scaling conclusions, games, SPRT, PVS or tuning work had been done at that point.
+
+### [2026-09-24] Phase 20 — Stage 2 native Windows environment/JVM ceiling (Issue #246)
+
+**Run identity and controls:**
+
+- Continuation branch `phase/20-smp-qualification`; Stage 2 code commit `0691176d68c7f091d01c342a598c78477106812a`, based on post-#247 `develop` merge `b0f02bd79f8fbe9bff45037cdd307a9636978c91`.
+- Shaded JAR SHA-256: `8D00237762376FB03040B4C0D76C101A1AE7A9B6C6B6C74EEEB81B3EB02EEA53`.
+- Native Windows 11 Pro, version `10.0.26200`, build `26200`; AMD Ryzen 7 7700X, 8 cores / 16 logical processors. Azul Zulu OpenJDK `21.0.10+7-LTS`. JVM flags were `-Xms512m -Xmx512m -XX:+UseG1GC --add-modules jdk.incubator.vector` for every measured JVM. Active power plan: Balanced. No CPU affinity was set; normal Windows scheduling was used. The five-second pre-run process CPU sample recorded 0.0% machine CPU for its listed top processes.
+- Classical, depth 13, 31 canonical `BenchRunner.BENCH_FENS`, private 16 MB TT per Searcher, PawnHash=1 MB, instrumentation off; no book, Syzygy, ponder or shared search state; MultiPV=1 and contempt=0.
+- One discarded warm-up and seven interleaved measured passes per configuration. The harness recorded 98 worker samples and 42 aggregate samples. Every worker reproduced exactly 24,780,049 nodes over the 31 positions. Maximum process-arm start skew was 2 ms at N=2 and 4 ms at N=4; same-JVM skew was at most 0.026 ms and 0.049 ms respectively.
+- Native Maven package and harness self-check succeeded. The check confirmed all 31 corpus FENs, depth 13 and the expected node total. Worker logs contained only the expected incubator-module warning; no worker exception occurred. Raw run files are in `tools/results/phase20-stage2/20260924-095910/` on the native checkout.
+
+**Per-worker throughput:**
+
+| Arm | N | Median NPS / worker | `r(N)` | Worker sample range | Pass-median range |
+|---|---:|---:|---:|---:|---:|
+| Separate processes | 1 | 338,811 | 1.0000 | 325,047–341,570 | 325,047–341,570 |
+| Separate processes | 2 | 260,831 | 0.7698 | 219,206–358,533 | 220,039–355,522 |
+| Separate processes | 4 | 286,903 | 0.8468 | 244,294–347,079 | 246,884–342,427 |
+| Same JVM | 1 | 343,634 | 1.0000 | 328,472–367,148 | 328,472–367,148 |
+| Same JVM | 2 | 272,137 | 0.7919 | 239,382–360,494 | 239,397–359,801 |
+| Same JVM | 4 | 274,010 | 0.7974 | 247,045–336,115 | 247,979–334,254 |
+
+**Aggregate throughput:**
+
+| Arm | N | Median aggregate NPS | Pass range | Maximum start skew |
+|---|---:|---:|---:|---:|
+| Separate processes | 1 | 338,811 | 325,047–341,570 | 0 ms |
+| Separate processes | 2 | 517,169 | 438,413–705,001 | 2 ms |
+| Separate processes | 4 | 1,146,129 | 977,176–1,359,439 | 4 ms |
+| Same JVM | 1 | 343,634 | 328,472–367,148 | 0 ms |
+| Same JVM | 2 | 543,676 | 478,764–718,218 | 0.026 ms |
+| Same JVM | 4 | 1,085,166 | 988,178–1,327,235 | 0.049 ms |
+
+**Classification and stop:**
+
+- The separate-process 1T NPS range was 325,047–341,570. The N=2 median per-worker NPS (260,831; `r(2)=0.7698`) and N=4 median (286,903; `r(4)=0.8468`) were both below that observed 1T range. This meets the preregistered environment-ceiling classification; no fixed percentage cutoff was applied.
+- Same-JVM retention ranges overlapped the separate-process ranges at both N=2 and N=4. The seven-run evidence does not separate an additional JVM-level gap, so no JFR/GC diagnostic was triggered.
+- **Stage 2 outcome: environment-limited; stop before Stage 3.** No shared-TT SMP measurement, Stage 3 work, games, SPRT, tuning or WSL2 timing claim was made.
