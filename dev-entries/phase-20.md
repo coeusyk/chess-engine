@@ -155,3 +155,10 @@ At the close of this requalification, Stage 2 had not started. No SMP timing/sca
 - The separate-process 1T NPS range was 325,047–341,570. The N=2 median per-worker NPS (260,831; `r(2)=0.7698`) and N=4 median (286,903; `r(4)=0.8468`) were both below that observed 1T range. This meets the preregistered environment-ceiling classification; no fixed percentage cutoff was applied.
 - Same-JVM retention ranges overlapped the separate-process ranges at both N=2 and N=4. The seven-run evidence does not separate an additional JVM-level gap, so no JFR/GC diagnostic was triggered.
 - **Stage 2 outcome: environment-limited; stop before Stage 3.** No shared-TT SMP measurement, Stage 3 work, games, SPRT, tuning or WSL2 timing claim was made.
+
+### [2026-09-24] Phase 20 — Post-Stage-2 interpretation amendment accepted before Stage 3
+
+- The Stage 2 run remains historically recorded as stopped under the original preregistered rule and environment-limited. It was not rerun.
+- The reviewed interpretation amendment was committed and pushed before any Stage 3 measurement: `edd406a9243fcb53c341599d8c04e3fa7f34cab7` (`docs(phase20): amend Stage 2 interpretation for Stage 3`). Stage 3 resumes under that post-Stage-2 amendment; its acceptance does not rewrite the original Stage 2 record.
+- The amendment clarifies that main-thread node counts remove direct clock/NPS normalization but are not scheduler-independent: helper timing changes TT visibility and can change the main-thread tree, so pass-to-pass main-node variation is mechanism evidence.
+- It also clarifies that aggregate-throughput loss versus the Stage 2 same-JVM ceiling establishes additional production-SMP execution overhead only. TT contention requires the frozen H3 retention evidence or later Stage 4 evidence.
