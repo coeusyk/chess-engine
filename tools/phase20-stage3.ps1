@@ -34,9 +34,15 @@ try {
     }
     $statusLines = @(& git status --porcelain)
     if ($LASTEXITCODE -ne 0) { throw 'git status failed; cannot verify the working tree.' }
-    $status = $statusLines -join "`n"
+    $blockingStatus = @($statusLines)
+    if ($LifecycleSmoke) {
+        $smokeArtifacts = @('?? tools/results/phase20-stage3/', '?? tools/results/phase20-stage3-smoke/')
+        $blockingStatus = @($statusLines | Where-Object { $_ -notin $smokeArtifacts })
+    }
     if ($branch -ne 'phase/20-smp-qualification') { throw "Expected phase/20-smp-qualification, found $branch" }
-    if ($status) { throw "Working tree must be clean before Stage 3:`n$status" }
+    if ($blockingStatus.Count -gt 0) {
+        throw "Working tree must be clean before Stage 3:`n$($blockingStatus -join "`n")"
+    }
 
     $stage2Base = 'b0f02bd79f8fbe9bff45037cdd307a9636978c91'
     $amendmentCommit = 'edd406a9243fcb53c341599d8c04e3fa7f34cab7'
