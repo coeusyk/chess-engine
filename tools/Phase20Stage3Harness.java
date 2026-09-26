@@ -431,38 +431,12 @@ public final class Phase20Stage3Harness {
     private static List<Map<String, String>> collectHelperExits(UciEngine engine, List<String> lines,
                                                                  long searchId, int expectedHelpers,
                                                                  long deadline) throws Exception {
-        Map<Integer, Map<String, String>> exits = new LinkedHashMap<>();
-        for (String line : lines) {
-            Map<String, String> diag = parseEvent(line, searchId, "exit");
-            if (diag != null) addHelperExit(exits, diag, searchId);
-        }
-        while (exits.size() < expectedHelpers) {
-            String line = engine.nextLine(deadline);
-            lines.add(line);
-            failOnMainException(line);
-            if (line.startsWith("bestmove ")) throw new IllegalStateException("Duplicate bestmove for search " + searchId);
-            Map<String, String> diag = parseEvent(line, searchId, "exit");
-            if (diag != null) addHelperExit(exits, diag, searchId);
-        }
-        return new ArrayList<>(exits.values());
-    }
-
-    private static void addHelperExit(Map<Integer, Map<String, String>> exits,
-                                      Map<String, String> diag, long searchId) {
-        int helperId = integer(diag, "helper");
-        require(exits.putIfAbsent(helperId, diag) == null,
-                "Duplicate helper exit search=" + searchId + " helper=" + helperId);
+        return Phase20UciEvents.collectHelperExits(lines, searchId, expectedHelpers,
+                () -> engine.nextLine(deadline));
     }
 
     private static void validateObservedHelperExits(List<String> lines, long searchId, int expectedHelpers) {
-        Map<Integer, Map<String, String>> exits = new LinkedHashMap<>();
-        for (String line : lines) {
-            Map<String, String> diag = parseEvent(line, searchId, "exit");
-            if (diag != null) addHelperExit(exits, diag, searchId);
-        }
-        require(exits.size() == expectedHelpers,
-                "Helper exit transcript count mismatch search=" + searchId + " expected="
-                        + expectedHelpers + " got=" + exits.size());
+        Phase20UciEvents.validateObservedHelperExits(lines, searchId, expectedHelpers);
     }
 
     private static void validateSample(SearchSample sample, int threads, int position) {
@@ -473,63 +447,32 @@ public final class Phase20Stage3Harness {
     }
 
     private static void failOnMainException(String line) {
-        require(!line.contains("Exception in thread \"uci-search-thread\""), "Uncaught main-search exception: " + line);
-        require(!line.contains("SMP helper exception"), "Logged SMP helper exception: " + line);
-        require(!line.contains("SMP helper execution failure"), "Uncaught helper failure: " + line);
+        Phase20UciEvents.failOnMainException(line);
     }
 
     private static Map<String, String> awaitEvent(UciEngine engine, List<String> lines, long searchId,
                                                    String name, long deadline) throws Exception {
-        Map<String, String> found = event(lines, searchId, name);
-        while (found == null) {
-            String line = engine.nextLine(deadline);
-            lines.add(line);
-            failOnMainException(line);
-            if (line.startsWith("bestmove ")) throw new IllegalStateException("Duplicate bestmove for search " + searchId);
-            found = parseEvent(line, searchId, name);
-        }
-        return found;
+        return Phase20UciEvents.awaitEvent(lines, searchId, name, () -> engine.nextLine(deadline));
     }
 
     private static Map<String, String> event(List<String> lines, long searchId, String name) {
-        for (String line : lines) {
-            Map<String, String> event = parseEvent(line, searchId, name);
-            if (event != null) return event;
-        }
-        return null;
+        return Phase20UciEvents.event(lines, searchId, name);
     }
 
     private static Map<String, String> parseEvent(String line, long searchId, String name) {
-        if (!line.startsWith("SMPDIAG ")) return null;
-        Map<String, String> fields = fields(line);
-        if (!name.equals(fields.get("event"))) return null;
-        if (searchId >= 0 && number(fields, "search") != searchId) return null;
-        return fields;
+        return Phase20UciEvents.parseEvent(line, searchId, name);
     }
 
     private static int countEvents(List<String> lines, long searchId, String name) {
-        return (int) lines.stream().filter(line -> parseEvent(line, searchId, name) != null).count();
+        return Phase20UciEvents.countEvents(lines, searchId, name);
     }
 
     private static Map<String, String> fields(String line) {
-        Map<String, String> fields = new HashMap<>();
-        for (String part : line.split("\\s+")) {
-            int equals = part.indexOf('=');
-            if (equals > 0 && equals < part.length() - 1) fields.put(part.substring(0, equals), part.substring(equals + 1));
-        }
-        String[] parts = line.split("\\s+");
-        for (int i = 0; i + 1 < parts.length; i++) {
-            if (List.of("depth", "time", "nodes", "nps", "hashfull").contains(parts[i])) {
-                fields.put(parts[i], parts[i + 1]);
-            }
-        }
-        return fields;
+        return Phase20UciEvents.fields(line);
     }
 
     private static long number(Map<String, String> fields, String key) {
-        String value = fields.get(key);
-        if (value == null) throw new IllegalStateException("Missing " + key + " in " + fields);
-        return Long.parseLong(value);
+        return Phase20UciEvents.number(fields, key);
     }
 
     private static int integer(Map<String, String> fields, String key) {

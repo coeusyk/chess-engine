@@ -126,7 +126,7 @@ try {
 
     $classes = Join-Path $outDir 'classes'
     New-Item -ItemType Directory -Path $classes | Out-Null
-    & $javacExe -cp $jar.FullName -d $classes (Join-Path $repoRoot 'tools\Phase20Stage3Harness.java') 2>&1 |
+    & $javacExe -cp $jar.FullName -d $classes (Join-Path $repoRoot 'tools\Phase20UciEvents.java') (Join-Path $repoRoot 'tools\Phase20Stage3Harness.java') 2>&1 |
         Tee-Object -FilePath (Join-Path $outDir 'harness-build.log')
     if ($LASTEXITCODE -ne 0) { throw 'Stage 3 harness compilation failed; see harness-build.log.' }
 
