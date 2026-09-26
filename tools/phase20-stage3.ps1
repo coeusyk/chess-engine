@@ -3,8 +3,11 @@
     Run the preregistered Phase 20 Stage 3 production Lazy SMP measurement.
 .DESCRIPTION
     Builds this clean Phase 20 commit and drives its real UCI engine on native
-    Windows. It refuses WSL, a changed Stage 2 environment, or a dirty branch.
+    Windows. -LifecycleSmoke runs only one 2T and one 4T lifecycle search.
+    It refuses WSL, a changed Stage 2 environment, or a dirty branch.
 #>
+param([switch]$LifecycleSmoke)
+
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Push-Location $repoRoot
@@ -77,7 +80,8 @@ try {
     }
 
     $timestamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss')
-    $outDir = Join-Path $repoRoot "tools\results\phase20-stage3\$timestamp"
+    $resultKind = if ($LifecycleSmoke) { 'phase20-stage3-smoke' } else { 'phase20-stage3' }
+    $outDir = Join-Path $repoRoot "tools\results\$resultKind\$timestamp"
     New-Item -ItemType Directory -Path $outDir -Force | Out-Null
     $flags = @('-Xms512m', '-Xmx512m', '-XX:+UseG1GC', '--add-modules', 'jdk.incubator.vector')
 
@@ -97,6 +101,9 @@ try {
         own_book = $false; syzygy = $false; multipv = 1; ponder = $false; contempt_cp = 0
         instrumentation = 'SMP diagnostics on; helper node/time and post-drain hashfull counters opt-in'
         protocol = 'one discarded interleaved warm-up corpus; seven measured interleaved passes'
+    }
+    if ($LifecycleSmoke) {
+        $environment.protocol = 'one depth-13 lifecycle smoke at 2T and 4T; no performance measurement'
     }
 
     $mvnw = Join-Path $repoRoot 'mvnw.cmd'
@@ -121,6 +128,17 @@ try {
     & $javaExe @flags -cp $classpath Phase20Stage3Harness --validate-only 2>&1 |
         Tee-Object -FilePath (Join-Path $outDir 'harness-selfcheck.log')
     if ($LASTEXITCODE -ne 0) { throw 'Stage 3 harness self-check failed; see harness-selfcheck.log.' }
+
+    if ($LifecycleSmoke) {
+        $environment | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $outDir 'environment.json') -Encoding UTF8
+        & $javaExe @flags -cp $classpath Phase20Stage3Harness --lifecycle-smoke $outDir $jar.FullName $javaExe 2>&1 |
+            Tee-Object -FilePath (Join-Path $outDir 'lifecycle-smoke.log')
+        if ($LASTEXITCODE -ne 0) { throw "Lifecycle smoke failed; inspect artifacts under $outDir." }
+        Write-Host "Lifecycle smoke evidence: $outDir"
+        Write-Host "Run commit: $head"
+        Write-Host "JAR SHA-256: $($environment.jar_sha256)"
+        return
+    }
 
     $before = @{}
     Get-Process -ErrorAction SilentlyContinue | ForEach-Object {

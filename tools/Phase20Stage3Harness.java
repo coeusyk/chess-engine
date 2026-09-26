@@ -3,8 +3,12 @@ import coeusyk.game.chess.uci.BenchRunner;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
@@ -12,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -24,6 +29,7 @@ public final class Phase20Stage3Harness {
     private static final int DEPTH = 13;
     private static final int HASH_MB = 16;
     private static final int PAWN_HASH_MB = 1;
+    private static final long LIFECYCLE_SMOKE_TIMEOUT_NANOS = TimeUnit.MINUTES.toNanos(2);
     private static final int[] THREADS = {1, 2, 4};
     private static final int MEASURED_PASSES = 7;
     private static final long EXPECTED_1T_NODES = 24_780_049L;
@@ -40,8 +46,13 @@ public final class Phase20Stage3Harness {
             validateOnly();
             return;
         }
+        if (args.length == 4 && args[0].equals("--lifecycle-smoke")) {
+            lifecycleSmoke(Path.of(args[1]), Path.of(args[2]), Path.of(args[3]));
+            return;
+        }
         if (args.length != 4 || !args[0].equals("--run")) {
-            throw new IllegalArgumentException("usage: --run output-dir jar java-exe | --validate-only");
+            throw new IllegalArgumentException(
+                    "usage: --run output-dir jar java-exe | --lifecycle-smoke output-dir jar java-exe | --validate-only");
         }
         run(Path.of(args[1]), Path.of(args[2]), Path.of(args[3]));
     }
@@ -58,7 +69,7 @@ public final class Phase20Stage3Harness {
         }
     }
 
-    private static void validateOnly() {
+    private static void validateOnly() throws Exception {
         for (int i = 0; i < FENS.length; i++) {
             if (!Board.isLegalFen(FENS[i])) throw new IllegalStateException("Illegal BenchRunner FEN at index " + i);
         }
@@ -73,8 +84,107 @@ public final class Phase20Stage3Harness {
                 && "1000".equals(helper.get("helper_elapsed_ns")), "SMP diagnostic parser self-check failed");
         require("0".equals(drained.get("helper_pending")) && "3000".equals(drained.get("drain_elapsed_ns"))
                 && "17".equals(drained.get("hashfull")), "Drain diagnostic parser self-check failed");
+        syntheticExitBeforeBestmoveSelfCheck();
+        syntheticDuplicateExitSelfCheck();
+        syntheticDuplicateAfterCollectionSelfCheck();
+        failureArtifactSelfCheck();
         System.out.printf(Locale.ROOT, "corpus=%d depth=%d expected_1t_nodes=%d hash_mb=%d pawn_hash_mb=%d threads=1,2,4%n",
                 FENS.length, DEPTH, EXPECTED_1T_NODES, HASH_MB, PAWN_HASH_MB);
+    }
+
+    private static void syntheticExitBeforeBestmoveSelfCheck() throws Exception {
+        List<String> transcript = syntheticSearchTranscript(false);
+        try (UciEngine engine = new UciEngine(new TranscriptProcess(String.join("\n", transcript) + "\n"))) {
+            FailureCapture capture = new FailureCapture(null);
+            capture.begin("synthetic", 0, 0, 4);
+            SearchSample sample = search(engine, 0, FENS[0], 4, capture);
+            require(sample.exitedHelpers == 3, "Synthetic transcript lost an exit before bestmove");
+            require(sample.lines.stream().filter(line -> line.startsWith("bestmove ")).count() == 1,
+                    "Synthetic transcript consumed beyond the single search bestmove");
+            require(engine.nextLine(System.nanoTime() + TimeUnit.SECONDS.toNanos(1)).startsWith("bestmove "),
+                    "Synthetic exit collector consumed the post-drain sentinel");
+        }
+        System.out.println("synthetic_pre_bestmove_exit=pass");
+    }
+
+    private static List<String> syntheticSearchTranscript(boolean duplicateAfterCollection) {
+        List<String> transcript = new ArrayList<>();
+        transcript.add("SMPDIAG search=9 event=begin helpers=3");
+        for (int helper = 0; helper < 3; helper++) {
+            transcript.add("SMPDIAG search=9 event=submit helper=" + helper);
+            transcript.add("SMPDIAG search=9 event=start helper=" + helper);
+        }
+        transcript.add("info depth 13 seldepth 13 score cp 0 nodes 100 nps 10 time 10 hashfull 0 pv e2e4");
+        transcript.add(syntheticExit(0));
+        transcript.add("bestmove e2e4");
+        transcript.add("SMPDIAG search=9 event=bestmove source=main-result move=e2e4 legal=true main_depth=13"
+                + " main_move=e2e4 main_nodes=100 main_qnodes=50 main_tt_hits=1 helper_submitted=3"
+                + " helper_exceptions=0 helper_pending=2");
+        transcript.add(syntheticExit(1));
+        transcript.add(syntheticExit(2));
+        if (duplicateAfterCollection) transcript.add(syntheticExit(2));
+        transcript.add("SMPDIAG search=9 event=drained helper_submitted=3 helper_started=3 helper_exited=3"
+                + " helper_pending=0 helper_exceptions=0 drain_elapsed_ns=3000 hashfull=0");
+        transcript.add("bestmove e2e4"); // Sentinel: the exit collector must stop before this line.
+        return transcript;
+    }
+
+    private static void syntheticDuplicateAfterCollectionSelfCheck() throws Exception {
+        List<String> transcript = syntheticSearchTranscript(true);
+        try (UciEngine engine = new UciEngine(new TranscriptProcess(String.join("\n", transcript) + "\n"))) {
+            FailureCapture capture = new FailureCapture(null);
+            capture.begin("synthetic", 0, 0, 4);
+            try {
+                search(engine, 0, FENS[0], 4, capture);
+                throw new IllegalStateException("Synthetic late duplicate helper exit was accepted");
+            } catch (IllegalStateException e) {
+                require(e.getMessage().contains("Duplicate helper exit"),
+                        "Unexpected synthetic late duplicate failure: " + e.getMessage());
+            }
+        }
+        System.out.println("synthetic_late_duplicate_exit=pass");
+    }
+
+    private static String syntheticExit(int helper) {
+        return "SMPDIAG search=9 event=exit helper=" + helper
+                + " exception=- helper_nodes=5 helper_elapsed_ns=1000"
+                + " after_generation=0 after_clear=0 after_resize=0"
+                + " reads_after_generation=0 writes_after_generation=0 other_after_generation=0"
+                + " reads_after_clear=0 writes_after_clear=0 other_after_clear=0"
+                + " reads_after_resize=0 writes_after_resize=0 other_after_resize=0";
+    }
+
+    private static void syntheticDuplicateExitSelfCheck() throws Exception {
+        List<String> lines = List.of(syntheticExit(0), syntheticExit(0));
+        try (UciEngine engine = new UciEngine(new TranscriptProcess(""))) {
+            try {
+                collectHelperExits(engine, lines, 9, 2, System.nanoTime());
+                throw new IllegalStateException("Synthetic duplicate helper exit was accepted");
+            } catch (IllegalStateException e) {
+                require(e.getMessage().contains("Duplicate helper exit"),
+                        "Unexpected synthetic duplicate exit failure: " + e.getMessage());
+            }
+        }
+        System.out.println("synthetic_duplicate_exit=pass");
+    }
+
+    private static void failureArtifactSelfCheck() throws Exception {
+        Path artifact = Files.createTempFile("phase20-failure-selfcheck-", ".txt");
+        try {
+            FailureCapture capture = new FailureCapture(artifact);
+            capture.begin("measured", 3, 5, 4);
+            capture.searchStarted(9);
+            capture.lines.add("SMPDIAG search=9 event=begin helpers=3");
+            capture.writeFailure(new IOException("synthetic timeout"));
+            String saved = Files.readString(artifact, StandardCharsets.UTF_8);
+            require(saved.contains("run_type=measured\n") && saved.contains("pass=3\n")
+                            && saved.contains("position=5\n") && saved.contains("threads=4\n")
+                            && saved.contains("search=9\n") && saved.contains("SMPDIAG search=9 event=begin"),
+                    "Failure artifact omitted run identity or transcript");
+        } finally {
+            Files.deleteIfExists(artifact);
+        }
+        System.out.println("failure_artifact_identity=pass");
     }
 
     private static void run(Path output, Path jar, Path javaExe) throws Exception {
@@ -82,72 +192,128 @@ public final class Phase20Stage3Harness {
         Path workersFile = output.resolve("workers.csv");
         Path helpersFile = output.resolve("helpers.csv");
         Path eventsFile = output.resolve("events.csv");
+        FailureCapture failure = new FailureCapture(output.resolve("failure.txt"));
+        failure.installShutdownHook();
         int completedMeasured = 0;
         long warmupOneThreadNodes = 0;
-        try (Csv workers = new Csv(workersFile,
-                     "run_type", "pass", "position", "fen", "threads", "search", "main_depth", "main_nodes",
-                     "main_qnodes", "main_tt_hits", "main_ttd_ms", "main_nps_uci", "hashfull_depth13",
-                     "final_hashfull", "main_move",
-                     "bestmove", "bestmove_source", "legal", "total_nodes", "total_nps", "drain_elapsed_ns",
-                     "helpers_submitted", "helpers_started", "helpers_exited", "helper_exceptions", "info_line",
-                     "bestmove_diagnostic");
-             Csv helpers = new Csv(helpersFile,
-                     "run_type", "pass", "position", "threads", "search", "helper", "exit_cause",
-                     "completed_depth", "bestmove", "helper_nodes", "helper_elapsed_ns", "helper_nps",
-                     "tt_reads", "tt_writes", "tt_other", "after_abort", "after_generation", "after_clear",
-                     "after_resize", "reads_after_abort", "writes_after_abort", "other_after_abort",
-                     "reads_after_generation", "writes_after_generation", "other_after_generation",
-                     "reads_after_clear", "writes_after_clear", "other_after_clear", "reads_after_resize",
-                     "writes_after_resize", "other_after_resize", "diagnostic");
-             Csv events = new Csv(eventsFile,
-                     "run_type", "pass", "position", "threads", "search", "event", "helper", "diagnostic")) {
-            try (UciEngine engine = UciEngine.start(javaExe, jar)) {
-                engine.send("uci");
-                engine.await("uciok", new ArrayList<>(), 30);
-                configure(engine);
+        try {
+            failure.begin("setup", -1, -1, 0);
+            try (Csv workers = new Csv(workersFile,
+                         "run_type", "pass", "position", "fen", "threads", "search", "main_depth", "main_nodes",
+                         "main_qnodes", "main_tt_hits", "main_ttd_ms", "main_nps_uci", "hashfull_depth13",
+                         "final_hashfull", "main_move",
+                         "bestmove", "bestmove_source", "legal", "total_nodes", "total_nps", "drain_elapsed_ns",
+                         "helpers_submitted", "helpers_started", "helpers_exited", "helper_exceptions", "info_line",
+                         "bestmove_diagnostic");
+                 Csv helpers = new Csv(helpersFile,
+                         "run_type", "pass", "position", "threads", "search", "helper", "exit_cause",
+                         "completed_depth", "bestmove", "helper_nodes", "helper_elapsed_ns", "helper_nps",
+                         "tt_reads", "tt_writes", "tt_other", "after_abort", "after_generation", "after_clear",
+                         "after_resize", "reads_after_abort", "writes_after_abort", "other_after_abort",
+                         "reads_after_generation", "writes_after_generation", "other_after_generation",
+                         "reads_after_clear", "writes_after_clear", "other_after_clear", "reads_after_resize",
+                         "writes_after_resize", "other_after_resize", "diagnostic");
+                 Csv events = new Csv(eventsFile,
+                         "run_type", "pass", "position", "threads", "search", "event", "helper", "diagnostic")) {
+                try (UciEngine engine = UciEngine.start(javaExe, jar)) {
+                    engine.send("uci");
+                    engine.await("uciok", failure.lines, 30);
+                    failure.lines.clear();
+                    configure(engine, failure.lines);
+                    failure.lines.clear();
 
-                for (int position = 0; position < FENS.length; position++) {
-                    for (int offset = 0; offset < THREADS.length; offset++) {
-                        int n = THREADS[(position + offset) % THREADS.length];
-                        prepare(engine, n);
-                        SearchSample sample = search(engine, position, FENS[position], n);
-                        validateSample(sample, n, position);
-                        if (n == 1) warmupOneThreadNodes += sample.mainNodes;
-                    }
-                }
-                require(warmupOneThreadNodes == EXPECTED_1T_NODES,
-                        "Discarded 1T warm-up did not reproduce the frozen depth-13 corpus node total: "
-                                + warmupOneThreadNodes);
-
-                for (int pass = 1; pass <= MEASURED_PASSES; pass++) {
-                    long oneThreadNodes = 0;
                     for (int position = 0; position < FENS.length; position++) {
                         for (int offset = 0; offset < THREADS.length; offset++) {
-                            int order = (position + pass - 1 + offset) % THREADS.length;
-                            int n = THREADS[order];
-                            prepare(engine, n);
-                            SearchSample sample = search(engine, position, FENS[position], n);
+                            int n = THREADS[(position + offset) % THREADS.length];
+                            failure.begin("warm-up", 0, position, n);
+                            prepare(engine, n, failure.lines);
+                            failure.lines.clear();
+                            SearchSample sample = search(engine, position, FENS[position], n, failure);
                             validateSample(sample, n, position);
-                            sample.write(workers, helpers, events, "measured", pass);
-                            if (n == 1) oneThreadNodes += sample.mainNodes;
-                            completedMeasured++;
+                            if (n == 1) warmupOneThreadNodes += sample.mainNodes;
                         }
                     }
-                    require(oneThreadNodes == EXPECTED_1T_NODES,
-                            "Measured 1T pass " + pass + " did not reproduce the frozen depth-13 corpus total: "
-                                    + oneThreadNodes);
-                    System.out.printf(Locale.ROOT, "pass=%d complete; measured samples=%d%n", pass, completedMeasured);
-                }
+                    require(warmupOneThreadNodes == EXPECTED_1T_NODES,
+                            "Discarded 1T warm-up did not reproduce the frozen depth-13 corpus node total: "
+                                    + warmupOneThreadNodes);
 
-                prepare(engine, 1); // final ucinewgame/isready barrier joins the last search before shutdown
+                    for (int pass = 1; pass <= MEASURED_PASSES; pass++) {
+                        long oneThreadNodes = 0;
+                        for (int position = 0; position < FENS.length; position++) {
+                            for (int offset = 0; offset < THREADS.length; offset++) {
+                                int order = (position + pass - 1 + offset) % THREADS.length;
+                                int n = THREADS[order];
+                                failure.begin("measured", pass, position, n);
+                                prepare(engine, n, failure.lines);
+                                failure.lines.clear();
+                                SearchSample sample = search(engine, position, FENS[position], n, failure);
+                                validateSample(sample, n, position);
+                                sample.write(workers, helpers, events, "measured", pass);
+                                if (n == 1) oneThreadNodes += sample.mainNodes;
+                                completedMeasured++;
+                            }
+                        }
+                        require(oneThreadNodes == EXPECTED_1T_NODES,
+                                "Measured 1T pass " + pass + " did not reproduce the frozen depth-13 corpus total: "
+                                        + oneThreadNodes);
+                        System.out.printf(Locale.ROOT, "pass=%d complete; measured samples=%d%n", pass, completedMeasured);
+                    }
+
+                    failure.begin("shutdown", -1, -1, 1);
+                    prepare(engine, 1, failure.lines); // Final barrier joins the last search before shutdown.
+                }
             }
-        }
-        if (completedMeasured != THREADS.length * MEASURED_PASSES * FENS.length) {
-            throw new IllegalStateException("Incomplete measured schedule: " + completedMeasured);
+            if (completedMeasured != THREADS.length * MEASURED_PASSES * FENS.length) {
+                throw new IllegalStateException("Incomplete measured schedule: " + completedMeasured);
+            }
+            failure.complete();
+        } catch (Exception e) {
+            failure.writeFailure(e);
+            throw e;
         }
     }
 
-    private static void configure(UciEngine engine) throws Exception {
+    private static void lifecycleSmoke(Path output, Path jar, Path javaExe) throws Exception {
+        Files.createDirectories(output);
+        FailureCapture failure = new FailureCapture(output.resolve("failure.txt"));
+        failure.installShutdownHook();
+        try {
+            failure.begin("setup", -1, -1, 0);
+            try (UciEngine engine = UciEngine.start(javaExe, jar)) {
+                engine.send("uci");
+                engine.await("uciok", failure.lines, 30);
+                failure.lines.clear();
+                configure(engine, failure.lines);
+                failure.lines.clear();
+
+                for (int threads : new int[]{2, 4}) {
+                    failure.begin("lifecycle-smoke", 0, 0, threads);
+                    prepare(engine, threads, failure.lines);
+                    failure.lines.clear();
+                    SearchSample sample = search(engine, 0, FENS[0], threads, failure,
+                            LIFECYCLE_SMOKE_TIMEOUT_NANOS);
+                    long bestmoves = sample.lines.stream().filter(line -> line.startsWith("bestmove ")).count();
+                    boolean drained = sample.lines.stream()
+                            .anyMatch(line -> parseEvent(line, sample.searchId, "drained") != null);
+                    require(sample.exitedHelpers == threads - 1 && sample.helperExceptions == 0 && drained
+                                    && sample.legal && bestmoves == 1,
+                            "Lifecycle smoke failed Threads=" + threads + " search=" + sample.searchId);
+                    System.out.printf(Locale.ROOT,
+                            "lifecycle-smoke threads=%d search=%d exits=%d drained=true helper_exceptions=0 legal=true bestmoves=1%n",
+                            threads, sample.searchId, sample.exitedHelpers);
+                }
+                failure.begin("shutdown", -1, -1, 1);
+                prepare(engine, 1, failure.lines);
+            }
+            failure.complete();
+            System.out.println("lifecycle-smoke completed; no performance data collected");
+        } catch (Exception e) {
+            failure.writeFailure(e);
+            throw e;
+        }
+    }
+
+    private static void configure(UciEngine engine, List<String> capture) throws Exception {
         engine.send("setoption name EvalType value Classical");
         engine.send("setoption name OwnBook value false");
         engine.send("setoption name SyzygyOnline value false");
@@ -156,25 +322,31 @@ public final class Phase20Stage3Harness {
         engine.send("setoption name Hash value " + HASH_MB);
         engine.send("setoption name PawnHashSize value " + PAWN_HASH_MB);
         engine.send("isready");
-        engine.await("readyok", new ArrayList<>(), 30);
+        engine.await("readyok", capture, 30);
     }
 
-    private static void prepare(UciEngine engine, int threads) throws Exception {
+    private static void prepare(UciEngine engine, int threads, List<String> capture) throws Exception {
         engine.send("ucinewgame");
         engine.send("setoption name Threads value " + threads);
-        List<String> lines = new ArrayList<>();
         engine.send("isready");
-        engine.await("readyok", lines, 30);
-        require(lines.stream().noneMatch(line -> line.startsWith("bestmove ")),
+        engine.await("readyok", capture, 30);
+        require(capture.stream().noneMatch(line -> line.startsWith("bestmove ")),
                 "Unexpected extra bestmove while quiescing before Threads=" + threads);
     }
 
-    private static SearchSample search(UciEngine engine, int position, String fen, int threads) throws Exception {
+    private static SearchSample search(UciEngine engine, int position, String fen, int threads,
+                                       FailureCapture failure) throws Exception {
+        return search(engine, position, fen, threads, failure,
+                TimeUnit.MINUTES.toNanos(SEARCH_TIMEOUT_MINUTES));
+    }
+
+    private static SearchSample search(UciEngine engine, int position, String fen, int threads,
+                                       FailureCapture failure, long timeoutNanos) throws Exception {
         engine.send("position fen " + fen);
         engine.send("go depth " + DEPTH);
-        List<String> lines = new ArrayList<>();
+        List<String> lines = failure.lines;
         String bestmoveLine = null;
-        long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(SEARCH_TIMEOUT_MINUTES);
+        long deadline = System.nanoTime() + timeoutNanos;
         while (bestmoveLine == null) {
             String line = engine.nextLine(deadline);
             lines.add(line);
@@ -185,24 +357,18 @@ public final class Phase20Stage3Harness {
         Map<String, String> begin = event(lines, -1, "begin");
         require(begin != null, "Missing SMP begin diagnostic at position " + position);
         long searchId = number(begin, "search");
+        failure.searchStarted(searchId);
         int submittedHelpers = integer(begin, "helpers");
         Map<String, String> bestmove = awaitEvent(engine, lines, searchId, "bestmove", deadline);
         int expectedHelpers = threads - 1;
         require(submittedHelpers == expectedHelpers,
                 "Threads=" + threads + " expected " + expectedHelpers + " helpers, got " + submittedHelpers);
 
-        List<Map<String, String>> exits = new ArrayList<>();
-        while (exits.size() < expectedHelpers) {
-            String line = engine.nextLine(deadline);
-            lines.add(line);
-            failOnMainException(line);
-            if (line.startsWith("bestmove ")) throw new IllegalStateException("Duplicate bestmove for search " + searchId);
-            Map<String, String> diag = parseEvent(line, searchId, "exit");
-            if (diag != null) exits.add(diag);
-        }
+        List<Map<String, String>> exits = collectHelperExits(engine, lines, searchId, expectedHelpers, deadline);
         require(exits.stream().map(exit -> exit.get("helper")).distinct().count() == expectedHelpers,
                 "Helper exit IDs were not unique for search " + searchId);
         Map<String, String> drained = awaitEvent(engine, lines, searchId, "drained", deadline);
+        validateObservedHelperExits(lines, searchId, expectedHelpers);
 
         int submits = countEvents(lines, searchId, "submit");
         int starts = countEvents(lines, searchId, "start");
@@ -260,6 +426,43 @@ public final class Phase20Stage3Harness {
                 bestmove.get("source"), Boolean.parseBoolean(bestmove.get("legal")), totalNodes,
                 totalNodes * 1_000_000_000.0 / drainElapsedNs, drainElapsedNs, submittedHelpers, starts,
                 exits.size(), integer(bestmove, "helper_exceptions"), depthLines.get(0), bestmove, exits, lines);
+    }
+
+    private static List<Map<String, String>> collectHelperExits(UciEngine engine, List<String> lines,
+                                                                 long searchId, int expectedHelpers,
+                                                                 long deadline) throws Exception {
+        Map<Integer, Map<String, String>> exits = new LinkedHashMap<>();
+        for (String line : lines) {
+            Map<String, String> diag = parseEvent(line, searchId, "exit");
+            if (diag != null) addHelperExit(exits, diag, searchId);
+        }
+        while (exits.size() < expectedHelpers) {
+            String line = engine.nextLine(deadline);
+            lines.add(line);
+            failOnMainException(line);
+            if (line.startsWith("bestmove ")) throw new IllegalStateException("Duplicate bestmove for search " + searchId);
+            Map<String, String> diag = parseEvent(line, searchId, "exit");
+            if (diag != null) addHelperExit(exits, diag, searchId);
+        }
+        return new ArrayList<>(exits.values());
+    }
+
+    private static void addHelperExit(Map<Integer, Map<String, String>> exits,
+                                      Map<String, String> diag, long searchId) {
+        int helperId = integer(diag, "helper");
+        require(exits.putIfAbsent(helperId, diag) == null,
+                "Duplicate helper exit search=" + searchId + " helper=" + helperId);
+    }
+
+    private static void validateObservedHelperExits(List<String> lines, long searchId, int expectedHelpers) {
+        Map<Integer, Map<String, String>> exits = new LinkedHashMap<>();
+        for (String line : lines) {
+            Map<String, String> diag = parseEvent(line, searchId, "exit");
+            if (diag != null) addHelperExit(exits, diag, searchId);
+        }
+        require(exits.size() == expectedHelpers,
+                "Helper exit transcript count mismatch search=" + searchId + " expected="
+                        + expectedHelpers + " got=" + exits.size());
     }
 
     private static void validateSample(SearchSample sample, int threads, int position) {
@@ -398,6 +601,96 @@ public final class Phase20Stage3Harness {
         }
 
         @Override public void close() throws IOException { writer.close(); }
+    }
+
+    private static final class TranscriptProcess extends Process {
+        private final InputStream stdout;
+        private final ByteArrayOutputStream stdin = new ByteArrayOutputStream();
+
+        TranscriptProcess(String transcript) {
+            stdout = new ByteArrayInputStream(transcript.getBytes(StandardCharsets.UTF_8));
+        }
+
+        @Override public OutputStream getOutputStream() { return stdin; }
+        @Override public InputStream getInputStream() { return stdout; }
+        @Override public InputStream getErrorStream() { return InputStream.nullInputStream(); }
+        @Override public int waitFor() { return 0; }
+        @Override public int exitValue() { return 0; }
+        @Override public void destroy() { }
+        @Override public boolean isAlive() { return false; }
+    }
+
+    private static final class FailureCapture {
+        private final Path artifact;
+        private final List<String> lines = java.util.Collections.synchronizedList(new ArrayList<>());
+        private volatile String runType = "setup";
+        private volatile int pass = -1;
+        private volatile int position = -1;
+        private volatile int threads;
+        private volatile long searchId = -1;
+        private volatile boolean finished;
+
+        FailureCapture(Path artifact) { this.artifact = artifact; }
+
+        void installShutdownHook() {
+            if (artifact != null) {
+                Runtime.getRuntime().addShutdownHook(new Thread(this::writeInterrupted, "phase20-failure-capture"));
+            }
+        }
+
+        synchronized void begin(String runType, int pass, int position, int threads) throws IOException {
+            this.runType = runType;
+            this.pass = pass;
+            this.position = position;
+            this.threads = threads;
+            searchId = -1;
+            lines.clear();
+            if (artifact != null) Files.writeString(artifact, format("in-progress", null), StandardCharsets.UTF_8);
+        }
+
+        synchronized void searchStarted(long searchId) { this.searchId = searchId; }
+
+        synchronized void complete() throws IOException {
+            finished = true;
+            if (artifact != null) Files.deleteIfExists(artifact);
+        }
+
+        synchronized void writeFailure(Exception cause) {
+            if (artifact == null) return;
+            try {
+                Files.writeString(artifact, format("failed", cause), StandardCharsets.UTF_8);
+                finished = true;
+            } catch (IOException writeFailure) {
+                cause.addSuppressed(writeFailure);
+            }
+        }
+
+        private synchronized void writeInterrupted() {
+            if (artifact == null || finished) return;
+            try {
+                Files.writeString(artifact, format("interrupted", null), StandardCharsets.UTF_8);
+                finished = true;
+            } catch (IOException ignored) { }
+        }
+
+        private String format(String status, Exception cause) {
+            StringBuilder output = new StringBuilder()
+                    .append("run_type=").append(runType).append('\n')
+                    .append("pass=").append(pass < 0 ? "n/a" : pass).append('\n')
+                    .append("position=").append(position < 0 ? "n/a" : position).append('\n')
+                    .append("threads=").append(threads <= 0 ? "n/a" : threads).append('\n')
+                    .append("search=").append(searchId < 0 ? "unknown" : searchId).append('\n')
+                    .append("status=").append(status).append('\n');
+            if (cause != null) {
+                output.append("error=").append(cause.getClass().getName()).append(": ")
+                        .append(cause.getMessage()).append('\n');
+            }
+            output.append("transcript:\n");
+            synchronized (lines) {
+                for (String line : lines) output.append(line).append('\n');
+            }
+            return output.toString();
+        }
     }
 
     private static final class UciEngine implements AutoCloseable {
