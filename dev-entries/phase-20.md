@@ -186,4 +186,39 @@ The harness defect is confirmed. Production helper `finally` blocks emit `SMPDIA
 
 The harness also checkpoints run type, pass, position, Threads and known search ID, then writes the captured UCI/SMP transcript to `failure.txt` on failure or JVM shutdown. This prevents a stopped run from leaving only unidentified CSV headers. No `Searcher`, UCI lifecycle, or TT code changed.
 
-Local `--validate-only` passes, including the synthetic ordering, duplicate-ID, and failure-artifact checks. A separate `-LifecycleSmoke` path runs one depth-13 search at 2T and one at 4T, validates exits/drain/exceptions/boundaries/legal bestmove, and emits no performance CSVs. The smoke must still be run manually on the Stage 2 Windows host with `.\tools\phase20-stage3.ps1 -LifecycleSmoke`; Stage 3 performance measurement remains stopped pending that result.
+Local `--validate-only` passes, including the synthetic ordering, duplicate-ID, and failure-artifact checks. A separate `-LifecycleSmoke` path runs one depth-13 search at 2T and one at 4T, validates exits/drain/exceptions/boundaries/legal bestmove, and emits no performance CSVs. The native smoke later passed; the performance run and its results are recorded below.
+
+### [2026-09-26] Phase 20 — Stage 3 fixed-depth qualification completed (Issue #246)
+
+**Run:** Native Windows 11 Pro build 26200; Ryzen 7 7700X, 8 cores/16 logical processors; Azul Zulu JDK 21.0.10+7-LTS; Balanced, no affinity. Classical, Hash=16 MB, PawnHashSize=1 MB, depth 13, canonical 31-position corpus; frozen JVM flags. Run commit `78d72c52fa24e455356f816aea26fb040f1450b5`; JAR SHA-256 `2871341887E480E2E2E8760DC3FD7331A7B6527106D190DCF9301858C89519E0`.
+
+Raw artifacts are committed under `tools/results/phase20-stage3/20260926-071358/`. Maven packaging succeeded; unit tests were skipped as specified by the runner. The harness self-check passed.
+
+**Schedule and validity:** One discarded warm-up and seven interleaved passes completed: 651 measured searches (217 per arm; 31 positions × 7 passes at 1T/2T/4T). The warm-up 1T check and each measured 1T pass matched 24,780,049 nodes; every 1T position repeated the same node count across all seven passes. Every search reached depth 13. The CSVs contain 651 each of begin/bestmove/drained events and 868 each of helper submit/start/exit events; helper IDs are unique per search. Every go had one legal main-result bestmove. Helper and main exceptions were zero; drained records had no pending helpers. All helper TT counters after generation, clear and resize were zero. No failure artifact was produced.
+
+Per-search distributions cover 217 position/pass observations per arm. Values are median (P10–P90; full range). Corpus main NPS is summed main nodes divided by summed depth-13 main TTD per pass; total NPS is summed total nodes divided by summed drain elapsed time.
+
+| Threads | Main nodes/search | Main TTD ms/search | UCI main NPS/search | Hashfull at depth 13 |
+|---:|---:|---:|---:|---:|
+| 1 | 581,587 (57,130–1,825,906; 7,568–3,475,078) | 1,623 (84.6–4,904.4; 6–11,781) | 398,061 (317,235–786,403; 269,035–1,261,333) | 372 (38–771; 2–925) |
+| 2 | 427,971 (46,466–1,385,665; 6,532–14,119,997) | 1,158 (69.6–3,828.4; 6–50,917) | 383,991 (319,514–757,539; 258,600–1,127,166) | 410 (33–845; 2–1,000) |
+| 4 | 314,927 (41,453–1,066,534; 3,730–7,861,316) | 888 (64.4–3,251; 3–30,557) | 362,383 (292,634–695,027; 242,476–1,243,333) | 514 (47–933; 2–1,000) |
+
+The seven 1T corpus NPS values were 361,341; 361,536; 361,209; 363,216; 361,879; 363,195; and 348,858. Median 361,536 (range 348,858–363,216) is inside the Stage 2 same-JVM range 328,472–367,148, so the Stage 2 ceiling transfers.
+
+| Threads | Main-node work factor, paired | Main-NPS retention, paired | `r_shared` from corpus-pass medians | TTD speedup, paired | Corpus TTD speedup, pass median (range) |
+|---:|---:|---:|---:|---:|---:|
+| 2 | 1.305 (0.865–1.804; 0.246–2.745) | 0.972 (0.922–1.024; 0.739–1.154) | 0.9560 (pass range 0.887–0.988) | 1.259 (0.819–1.782; 0.230–2.824) | 1.132 (0.729–1.362) |
+| 4 | 1.656 (0.976–2.545; 0.322–4.869) | 0.926 (0.872–0.993; 0.656–1.150) | 0.9024 (pass range 0.856–0.927) | 1.537 (0.893–2.459; 0.280–4.756) | 1.448 (1.058–1.574) |
+
+Corpus-pass work factors were 1.184 (0.822–1.378) at 2T and 1.562 (1.236–1.773) at 4T. Pass-by-pass, `TTD_1 / TTD_N = (mainNodes_1 / mainNodes_N) × (mainNPS_N / mainNPS_1)` matched to the recorded precision (maximum absolute difference 0). Work-factor variation is not scheduler-independent.
+
+| Threads | Helper NPS per exit (median; P10–P90; range) | Corpus total NPS/pass (median; range) | Total NPS / same-session 1T NPS (median; range) |
+|---:|---:|---:|---:|
+| 1 | — | 361,318 (348,685–363,029) | 1.000 |
+| 2 | 381,693 (314,546–728,275; 264,174–998,947) | 687,408 (621,151–714,347) | 1.902 (1.781–1.967) |
+| 4 | 360,868 (294,772–706,710; 236,871–978,985) | 1,317,484 (1,232,626–1,329,952) | 3.638 (3.447–3.682) |
+
+Stage 2 same-JVM aggregate NPS was 543,676 (478,764–718,218) at 2T and 1,085,166 (988,178–1,327,235) at 4T. Stage 3 throughput did not fall below either range's lower bound, so no additional production-SMP overhead is detected by aggregate throughput. Hashfull reached 1,000 in 3/217 2T searches and 2/217 4T searches. Median helper TT reads/writes were 658,285/431,133 at 2T and 493,920/309,054 at 4T; these counters are descriptive and do not establish contention.
+
+**Classification:** Stage 3 fixed-depth PASS; structurally sound under the frozen criteria. Median TTD speedup is outside the 1T spread at both thread counts and greater at 4T. `r_shared(2)=0.9560` is above H3 bound 0.652; `r_shared(4)=0.9024` is above 0.673: **H3 not detected at this power**. Mandatory Stage 4/5 triggers did not fire. Five searches reached full hashfull, making Stage 4 optional capacity characterization only; Stage 5 is not indicated by the positive work-factor/TTD result. Stage 6 entry conditions are met but Stage 4/5/6 were not run. The first stopped attempt remains unchanged and its exact event order remains unrecoverable.

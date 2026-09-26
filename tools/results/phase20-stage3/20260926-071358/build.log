@@ -1,0 +1,113 @@
+[INFO] Scanning for projects...
+[WARNING] 
+[WARNING] Some problems were encountered while building the effective model for coeusyk.spring:engine-uci:jar:0.6.0-SNAPSHOT
+[WARNING] 'build.plugins.plugin.version' for org.apache.maven.plugins:maven-jar-plugin is missing. @ line 50, column 21
+[WARNING] 
+[WARNING] It is highly recommended to fix these problems because they threaten the stability of your build.
+[WARNING] 
+[WARNING] For this reason, future Maven versions might no longer support building such malformed projects.
+[WARNING] 
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Build Order:
+[INFO] 
+[INFO] chess-engine                                                       [pom]
+[INFO] engine-core                                                        [jar]
+[INFO] engine-uci                                                         [jar]
+[INFO] 
+[INFO] --------------------< coeusyk.spring:chess-engine >---------------------
+[INFO] Building chess-engine 0.6.0-SNAPSHOT                               [1/3]
+[INFO] --------------------------------[ pom ]---------------------------------
+[INFO] 
+[INFO] --- maven-clean-plugin:2.5:clean (default-clean) @ chess-engine ---
+[INFO] 
+[INFO] ---------------------< coeusyk.spring:engine-core >---------------------
+[INFO] Building engine-core 0.6.0-SNAPSHOT                                [2/3]
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- maven-clean-plugin:2.5:clean (default-clean) @ engine-core ---
+[INFO] Deleting C:\Users\yashk\WorkDir\Projects\ChessEngine\chess-engine\engine-core\target
+[INFO] 
+[INFO] --- maven-resources-plugin:2.6:resources (default-resources) @ engine-core ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] skip non existing resourceDirectory C:\Users\yashk\WorkDir\Projects\ChessEngine\chess-engine\engine-core\src\main\resources
+[INFO] 
+[INFO] --- maven-compiler-plugin:3.13.0:compile (default-compile) @ engine-core ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 69 source files with javac [debug release 21] to target\classes
+[WARNING] using incubating module(s): jdk.incubator.vector
+[WARNING] /C:/Users/yashk/WorkDir/Projects/ChessEngine/chess-engine/engine-core/src/main/java/coeusyk/game/chess/core/eval/Evaluator.java:[501,18] deprecated item is not annotated with @Deprecated
+[INFO] 
+[INFO] --- maven-resources-plugin:2.6:testResources (default-testResources) @ engine-core ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] Copying 7 resources
+[INFO] 
+[INFO] --- maven-compiler-plugin:3.13.0:testCompile (default-testCompile) @ engine-core ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 64 source files with javac [debug release 21] to target\test-classes
+[WARNING] using incubating module(s): jdk.incubator.vector
+[INFO] 
+[INFO] --- maven-surefire-plugin:3.2.5:test (default-test) @ engine-core ---
+[INFO] Tests are skipped.
+[INFO] 
+[INFO] --- maven-jar-plugin:2.4:jar (default-jar) @ engine-core ---
+[INFO] Building jar: C:\Users\yashk\WorkDir\Projects\ChessEngine\chess-engine\engine-core\target\engine-core-0.6.0-SNAPSHOT.jar
+[INFO] 
+[INFO] ---------------------< coeusyk.spring:engine-uci >----------------------
+[INFO] Building engine-uci 0.6.0-SNAPSHOT                                 [3/3]
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- maven-clean-plugin:2.5:clean (default-clean) @ engine-uci ---
+[INFO] Deleting C:\Users\yashk\WorkDir\Projects\ChessEngine\chess-engine\engine-uci\target
+[INFO] 
+[INFO] --- maven-resources-plugin:2.6:resources (default-resources) @ engine-uci ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] Copying 2 resources
+[INFO] 
+[INFO] --- maven-compiler-plugin:3.13.0:compile (default-compile) @ engine-uci ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 4 source files with javac [debug release 21] to target\classes
+[INFO] 
+[INFO] --- maven-resources-plugin:2.6:testResources (default-testResources) @ engine-uci ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] skip non existing resourceDirectory C:\Users\yashk\WorkDir\Projects\ChessEngine\chess-engine\engine-uci\src\test\resources
+[INFO] 
+[INFO] --- maven-compiler-plugin:3.13.0:testCompile (default-testCompile) @ engine-uci ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 4 source files with javac [debug release 21] to target\test-classes
+[INFO] 
+[INFO] --- maven-surefire-plugin:3.2.5:test (default-test) @ engine-uci ---
+[INFO] Tests are skipped.
+[INFO] 
+[INFO] --- maven-jar-plugin:2.4:jar (default-jar) @ engine-uci ---
+[INFO] Building jar: C:\Users\yashk\WorkDir\Projects\ChessEngine\chess-engine\engine-uci\target\engine-uci-0.6.0-SNAPSHOT.jar
+[INFO] 
+[INFO] --- maven-shade-plugin:3.5.1:shade (default) @ engine-uci ---
+[INFO] Including coeusyk.spring:engine-core:jar:0.6.0-SNAPSHOT in the shaded jar.
+[INFO] Including org.slf4j:slf4j-api:jar:2.0.16 in the shaded jar.
+[INFO] Including ch.qos.logback:logback-classic:jar:1.4.14 in the shaded jar.
+[INFO] Including ch.qos.logback:logback-core:jar:1.4.14 in the shaded jar.
+[WARNING] Discovered module-info.class. Shading will break its strong encapsulation.
+[WARNING] Discovered module-info.class. Shading will break its strong encapsulation.
+[WARNING] engine-core-0.6.0-SNAPSHOT.jar, engine-uci-0.6.0-SNAPSHOT.jar, logback-classic-1.4.14.jar, logback-core-1.4.14.jar, slf4j-api-2.0.16.jar define 1 overlapping resource: 
+[WARNING]   - META-INF/MANIFEST.MF
+[WARNING] maven-shade-plugin has detected that some files are
+[WARNING] present in two or more JARs. When this happens, only one
+[WARNING] single version of the file is copied to the uber jar.
+[WARNING] Usually this is not harmful and you can skip these warnings,
+[WARNING] otherwise try to manually exclude artifacts based on
+[WARNING] mvn dependency:tree -Ddetail=true and the above output.
+[WARNING] See https://maven.apache.org/plugins/maven-shade-plugin/
+[INFO] Replacing original artifact with shaded artifact.
+[INFO] Replacing C:\Users\yashk\WorkDir\Projects\ChessEngine\chess-engine\engine-uci\target\engine-uci-0.6.0-SNAPSHOT.jar with C:\Users\yashk\WorkDir\Projects\ChessEngine\chess-engine\engine-uci\target\engine-uci-0.6.0-SNAPSHOT-shaded.jar
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Summary for chess-engine 0.6.0-SNAPSHOT:
+[INFO] 
+[INFO] chess-engine ....................................... SUCCESS [  0.061 s]
+[INFO] engine-core ........................................ SUCCESS [  2.838 s]
+[INFO] engine-uci ......................................... SUCCESS [  0.667 s]
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  3.741 s
+[INFO] Finished at: 2026-09-26T12:44:03+05:30
+[INFO] ------------------------------------------------------------------------

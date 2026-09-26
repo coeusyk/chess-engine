@@ -1,0 +1,8 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+pass=1 complete; measured samples=93
+pass=2 complete; measured samples=186
+pass=3 complete; measured samples=279
+pass=4 complete; measured samples=372
+pass=5 complete; measured samples=465
+pass=6 complete; measured samples=558
+pass=7 complete; measured samples=651

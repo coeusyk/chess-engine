@@ -1,0 +1,99 @@
+{
+  "branch": "phase/20-smp-qualification",
+  "commit_sha": "78d72c52fa24e455356f816aea26fb040f1450b5",
+  "jar_path": "C:\\Users\\yashk\\WorkDir\\Projects\\ChessEngine\\chess-engine\\engine-uci\\target\\engine-uci-0.6.0-SNAPSHOT.jar",
+  "jar_sha256": "2871341887E480E2E2E8760DC3FD7331A7B6527106D190DCF9301858C89519E0",
+  "post_247_develop_base": "b0f02bd79f8fbe9bff45037cdd307a9636978c91",
+  "amendment_commit": "edd406a9243fcb53c341599d8c04e3fa7f34cab7",
+  "premeasurement_status_commit": "00e20a48fe830cfc8f1652b281ba2306fe997969",
+  "windows_caption": "Microsoft Windows 11 Pro",
+  "windows_version": "10.0.26200",
+  "windows_build": "26200",
+  "cpu_name": "AMD Ryzen 7 7700X 8-Core Processor",
+  "physical_cores": 8.0,
+  "logical_processors": 16.0,
+  "java_exe": "C:\\Tools\\Java\\zulu-21\\bin\\java.exe",
+  "java_version_and_properties": "Property settings:\r\n    file.encoding = UTF-8\r\n    file.separator = \\\r\n    java.class.path = \r\n    java.class.version = 65.0\r\n    java.home = C:\\Tools\\Java\\zulu-21\r\n    java.io.tmpdir = C:\\Users\\yashk\\AppData\\Local\\Temp\\\r\n    java.library.path = C:\\Tools\\Java\\zulu-21\\bin\r\n        C:\\WINDOWS\\Sun\\Java\\bin\r\n        C:\\WINDOWS\\system32\r\n        C:\\WINDOWS\r\n        C:\\Program Files\\PowerShell\\7\r\n        C:\\Tools\\Java\\zulu-21\\bin\\\r\n        C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0\\bin\\x64\r\n        C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0\\bin\r\n        C:\\Tools\\Python313\\Scripts\\\r\n        C:\\Tools\\Python313\\\r\n        C:\\WINDOWS\\System32\r\n        C:\\WINDOWS\\system32\r\n        C:\\WINDOWS\r\n        C:\\WINDOWS\\System32\\Wbem\r\n        C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\\r\n        C:\\WINDOWS\\System32\\OpenSSH\\\r\n        C:\\Program Files (x86)\\NVIDIA Corporation\\PhysX\\Common\r\n        C:\\Program Files\\NVIDIA Corporation\\NVIDIA app\\NvDLISR\r\n        C:\\ProgramData\\chocolatey\\bin\r\n        C:\\Program Files\\nodejs\\\r\n        C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\\r\n        C:\\Program Files\\NVIDIA Corporation\\Nsight Compute 2025.3.1\\\r\n        C:\\Program Files\\dotnet\\\r\n        C:\\Tools\\Go\\bin\r\n        C:\\Program Files\\KeePassXC\\\r\n        C:\\Program Files\\GitHub CLI\\\r\n        C:\\ProgramData\\chocolatey\\lib\\maven\\apache-maven-3.9.16\\bin\r\n        C:\\Tools\\Git\\cmd\r\n        C:\\Program Files\\Docker\\Docker\\resources\\bin\r\n        C:\\Program Files\\PowerShell\\7\\\r\n        \r\n        C:\\Tools\\CuteChess\r\n        C:\\Users\\yashk\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\r\n        C:\\Tools\\stockfish-18\r\n        C:\\Tools\\cutechess-1.5.1-win64\\cutechess-cli.exe\r\n        C:\\Users\\yashk\\.local\\bin\r\n        C:\\Tools\\Python312\\Scripts\\\r\n        C:\\Tools\\Python312\\\r\n        C:\\Users\\yashk\\AppData\\Local\\Programs\\Python\\Launcher\\\r\n        C:\\Users\\yashk\\AppData\\Local\\Programs\\Python\\Python313\\Scripts\\\r\n        C:\\Users\\yashk\\AppData\\Local\\Programs\\Python\\Python313\\\r\n        C:\\Users\\yashk\\AppData\\Local\\Microsoft\\WindowsApps\r\n        C:\\Users\\yashk\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\r\n        C:\\Users\\yashk\\AppData\\Local\\Programs\\Ollama\r\n        C:\\Users\\yashk\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Schniz.fnm_Microsoft.Winget.Source_8wekyb3d8bbwe\r\n        C:\\Users\\yashk\\AppData\\Roaming\\npm\r\n        C:\\Users\\yashk\\go\\bin\r\n        C:\\Users\\yashk\\AppData\\Local\\Microsoft\\WinGet\\Packages\\GitHub.Copilot_Microsoft.Winget.Source_8wekyb3d8bbwe\r\n        C:\\Users\\yashk\\AppData\\Local\\PowerToys\\DSCModules\\\r\n        C:\\Users\\yashk\\AppData\\Local\\Programs\\Antigravity\\bin\r\n        C:\\Users\\yashk\\AppData\\Local\\Programs\\cursor\\resources\\app\\bin\r\n        C:\\Users\\yashk\\AppData\\Local\\Programs\\Zed\\bin\r\n        C:\\Users\\yashk\\AppData\\Local\\Programs\\Antigravity IDE\\bin\r\n        C:\\Users\\yashk\\AppData\\Local\\Programs\\Warp\\bin\r\n        C:\\Users\\yashk\\AppData\\Local\\Programs\\Obsidian\r\n        C:\\Users\\yashk\\AppData\\Local\\Microsoft\\WinGet\\Packages\\jqlang.jq_Microsoft.Winget.Source_8wekyb3d8bbwe\r\n        \r\n        .\r\n    java.runtime.name = OpenJDK Runtime Environment\r\n    java.runtime.version = 21.0.10+7-LTS\r\n    java.specification.name = Java Platform API Specification\r\n    java.specification.vendor = Oracle Corporation\r\n    java.specification.version = 21\r\n    java.vendor = Azul Systems, Inc.\r\n    java.vendor.url = http://www.azul.com/\r\n    java.vendor.url.bug = http://www.azul.com/support/\r\n    java.vendor.version = Zulu21.48+17-CA\r\n    java.version = 21.0.10\r\n    java.version.date = 2026-01-20\r\n    java.vm.compressedOopsMode = Zero based\r\n    java.vm.info = mixed mode, sharing\r\n    java.vm.name = OpenJDK 64-Bit Server VM\r\n    java.vm.specification.name = Java Virtual Machine Specification\r\n    java.vm.specification.vendor = Oracle Corporation\r\n    java.vm.specification.version = 21\r\n    java.vm.vendor = Azul Systems, Inc.\r\n    java.vm.version = 21.0.10+7-LTS\r\n    jdk.debug = release\r\n    line.separator = \\r \\n \r\n    native.encoding = Cp1252\r\n    os.arch = amd64\r\n    os.name = Windows 11\r\n    os.version = 10.0\r\n    path.separator = ;\r\n    stderr.encoding = Cp1252\r\n    stdout.encoding = Cp1252\r\n    sun.arch.data.model = 64\r\n    sun.boot.library.path = C:\\Tools\\Java\\zulu-21\\bin\r\n    sun.cpu.endian = little\r\n    sun.cpu.isalist = amd64\r\n    sun.io.unicode.encoding = UnicodeLittle\r\n    sun.java.launcher = SUN_STANDARD\r\n    sun.jnu.encoding = Cp1252\r\n    sun.management.compiler = HotSpot 64-Bit Tiered Compilers\r\n    sun.os.patch.level = \r\n    user.country = IN\r\n    user.dir = C:\\Users\\yashk\\WorkDir\\Projects\\ChessEngine\\chess-engine\r\n    user.home = C:\\Users\\yashk\r\n    user.language = en\r\n    user.name = yashk\r\n    user.script = \r\n    user.variant = \r\n\r\nopenjdk version \"21.0.10\" 2026-01-20 LTS\r\nOpenJDK Runtime Environment Zulu21.48+17-CA (build 21.0.10+7-LTS)\r\nOpenJDK 64-Bit Server VM Zulu21.48+17-CA (build 21.0.10+7-LTS, mixed mode, sharing)",
+  "javac_version": "javac 21.0.10",
+  "jvm_flags": [
+    "-Xms512m",
+    "-Xmx512m",
+    "-XX:+UseG1GC",
+    "--add-modules",
+    "jdk.incubator.vector"
+  ],
+  "active_power_plan": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
+  "affinity_policy": "No affinity APIs or pinning; normal Windows scheduling",
+  "background_load_condition": "5-second per-process CPU sample immediately before measurement; unrelated workloads closed",
+  "background_load_sample_seconds": 5,
+  "background_load_top_processes": [
+    {
+      "name": "AppActions",
+      "pid": 35104,
+      "machine_cpu_percent": 0.0
+    },
+    {
+      "name": "OpenConsole",
+      "pid": 2436,
+      "machine_cpu_percent": 0.0
+    },
+    {
+      "name": "OpenConsole",
+      "pid": 22992,
+      "machine_cpu_percent": 0.0
+    },
+    {
+      "name": "OpenConsole",
+      "pid": 36192,
+      "machine_cpu_percent": 0.0
+    },
+    {
+      "name": "OpenConsole",
+      "pid": 77100,
+      "machine_cpu_percent": 0.0
+    },
+    {
+      "name": "OpenConsole",
+      "pid": 107960,
+      "machine_cpu_percent": 0.0
+    },
+    {
+      "name": "OpenConsole",
+      "pid": 139524,
+      "machine_cpu_percent": 0.0
+    },
+    {
+      "name": "opik-mcp",
+      "pid": 122044,
+      "machine_cpu_percent": 0.0
+    },
+    {
+      "name": "PhoneExperienceHost",
+      "pid": 18648,
+      "machine_cpu_percent": 0.0
+    },
+    {
+      "name": "PowerToys",
+      "pid": 16428,
+      "machine_cpu_percent": 0.0
+    }
+  ],
+  "timing_os": "Native Windows",
+  "evaluation": "Classical",
+  "hash_mb": 16,
+  "pawn_hash_mb": 1,
+  "depth": 13,
+  "positions": 31,
+  "worker_counts": [
+    1,
+    2,
+    4
+  ],
+  "own_book": false,
+  "syzygy": false,
+  "multipv": 1,
+  "ponder": false,
+  "contempt_cp": 0,
+  "instrumentation": "SMP diagnostics on; helper node/time and post-drain hashfull counters opt-in",
+  "protocol": "one discarded interleaved warm-up corpus; seven measured interleaved passes"
+}
