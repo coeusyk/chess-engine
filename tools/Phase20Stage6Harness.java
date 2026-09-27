@@ -76,6 +76,7 @@ public final class Phase20Stage6Harness {
         validateSchedule();
         validateCommandsAndOptions();
         validateLifecycleAccounting();
+        validateNodeAccounting();
         validateTargetsAndReferences();
         validateAgreementAndDecisionRules();
         validateArtifactGateAndFailureCapture();
@@ -175,6 +176,16 @@ public final class Phase20Stage6Harness {
         } catch (IllegalStateException expected) { duplicateRejected = true; }
         require(duplicateRejected, "Duplicate helper exit was accepted");
         System.out.println("shared_lifecycle_accounting=pass");
+    }
+
+    private static void validateNodeAccounting() {
+        require(nodeCountsConsistent(528_398, 696_932) && !nodeCountsConsistent(696_932, 528_398),
+                "Partial final iteration node accounting failed");
+        System.out.println("partial_iteration_node_accounting=pass");
+    }
+
+    private static boolean nodeCountsConsistent(long completedIterationNodes, long mainNodes) {
+        return completedIterationNodes <= mainNodes;
     }
 
     private static void validateTargetsAndReferences() {
@@ -596,8 +607,8 @@ public final class Phase20Stage6Harness {
         for (int i = 0; i < iterations.size(); i++) {
             require(iterations.get(i).depth == i + 1, "Completed iteration depths are not contiguous from depth 1");
         }
-        require(iterations.get(iterations.size() - 1).nodes == mainNodes,
-                "Final iteration nodes differ from main diagnostic nodes");
+        require(nodeCountsConsistent(iterations.get(iterations.size() - 1).nodes, mainNodes),
+                "Final completed iteration nodes exceed main diagnostic nodes");
         require(iterations.get(iterations.size() - 1).move.equals(mainMove),
                 "Final completed iteration move differs from main result");
         if (kind.equals("reference")) {
