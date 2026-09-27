@@ -1,10 +1,19 @@
 package coeusyk.game.chess.core.search;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import coeusyk.game.chess.core.eval.ClassicalEvaluator;
 import coeusyk.game.chess.core.eval.nnue.NnueEvaluator;
 import coeusyk.game.chess.core.eval.nnue.TestNetworks;
 import coeusyk.game.chess.core.models.Board;
+import coeusyk.game.chess.core.models.Move;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
+
+import java.util.HashMap;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -20,6 +29,87 @@ class SearcherInstrumentationTest {
 
     private static final String MIDDLEGAME_FEN =
             "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/2N5/PPPP1PPP/R1BQK1NR b KQkq - 2 3";
+
+    @Test
+    void phase21ReportsAreOptInCumulativeAndPreserveSearch() {
+        Logger logger = (Logger) LoggerFactory.getLogger(Searcher.class);
+        Level previousLevel = logger.getLevel();
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        logger.setLevel(Level.DEBUG);
+        try {
+            SearchResult control = new Searcher().searchDepth(new Board(MIDDLEGAME_FEN), 6);
+            assertTrue(appender.list.stream().noneMatch(event ->
+                    event.getFormattedMessage().startsWith("[BENCH] phase21 ")));
+            appender.list.clear();
+
+            Searcher instrumented = new Searcher();
+            instrumented.setInstrumentationEnabled(true);
+            SearchResult candidate = instrumented.searchDepth(new Board(MIDDLEGAME_FEN), 6);
+            assertEquals(control.bestMove().pack(), candidate.bestMove().pack());
+            assertEquals(control.scoreCp(), candidate.scoreCp());
+            assertEquals(control.nodesVisited(), candidate.nodesVisited());
+            assertEquals(control.quiescenceNodes(), candidate.quiescenceNodes());
+            assertEquals(control.ttHits(), candidate.ttHits());
+            assertEquals(control.principalVariation().stream().map(Move::pack).toList(),
+                    candidate.principalVariation().stream().map(Move::pack).toList());
+
+            var reports = appender.list.stream().map(ILoggingEvent::getFormattedMessage)
+                    .filter(message -> message.startsWith("[BENCH] phase21 "))
+                    .map(SearcherInstrumentationTest::phase21Counters).toList();
+            assertEquals(6, reports.size());
+            Map<String, Long> previous = Map.of();
+            for (int i = 0; i < reports.size(); i++) {
+                Map<String, Long> report = reports.get(i);
+                assertEquals(18, report.size());
+                assertEquals(i + 1L, report.get("depth"));
+                for (var counter : report.entrySet()) {
+                    assertTrue(counter.getValue() >= previous.getOrDefault(counter.getKey(), 0L),
+                            counter.getKey() + " must be cumulative");
+                }
+                assertEquals(report.get("ab_calls").longValue(), report.get("pv_wide")
+                        + report.get("pv_null") + report.get("nonpv_wide") + report.get("nonpv_null"));
+                assertEquals(0L, report.get("pv_null"));
+                assertEquals(report.get("lmr_fail_highs"), report.get("lmr_researches"));
+                assertTrue(report.get("lmr_fail_highs") <= report.get("lmr_probes"));
+                previous = report;
+            }
+            Map<String, Long> last = reports.getLast();
+            assertTrue(last.get("nonpv_wide") > 0);
+            assertTrue(last.get("ab_calls") > candidate.nodesVisited(), "entry population includes horizon/early returns");
+            assertTrue(last.get("lmr_fail_highs") > 0, "exercise the existing verification gate");
+            assertEquals(candidate.lmrApplications(), last.get("lmr_probes"));
+            assertTrue(last.get("pv_wide_sibling_le_alpha") + last.get("pv_wide_sibling_inside")
+                    + last.get("pv_wide_sibling_ge_beta") > 0);
+            assertTrue(last.get("root_wide_sibling_le_alpha") + last.get("root_wide_sibling_inside")
+                    + last.get("root_wide_sibling_ge_beta") > 0);
+
+            appender.list.clear();
+            instrumented.searchDepth(new Board(MIDDLEGAME_FEN), 1);
+            var resetReports = appender.list.stream().map(ILoggingEvent::getFormattedMessage)
+                    .filter(message -> message.startsWith("[BENCH] phase21 "))
+                    .map(SearcherInstrumentationTest::phase21Counters).toList();
+            assertEquals(1, resetReports.size());
+            assertEquals(reports.getFirst().get("ab_calls"), resetReports.getFirst().get("ab_calls"));
+            assertEquals(0L, resetReports.getFirst().get("lmr_probes"));
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+            logger.setLevel(previousLevel);
+        }
+    }
+
+    private static Map<String, Long> phase21Counters(String message) {
+        Map<String, Long> counters = new HashMap<>();
+        for (String token : message.split(" ")) {
+            int separator = token.indexOf('=');
+            if (separator > 0) {
+                counters.put(token.substring(0, separator), Long.parseLong(token.substring(separator + 1)));
+            }
+        }
+        return counters;
+    }
 
     @Test
     void instrumentationDisabledByDefaultReportsZeroTiming() {

@@ -106,6 +106,21 @@ public class Searcher {
     private long pvNodeEvals;
     private long cutNodeEvals;
     private boolean instrumentationEnabled;
+    private long phase21PvWide;
+    private long phase21PvNull;
+    private long phase21NonPvWide;
+    private long phase21NonPvNull;
+    private long phase21WideRazoringReturns;
+    private long phase21WideFutilitySkips;
+    private long phase21WideLosingCaptureSkips;
+    private long phase21SiblingAtOrBelowAlpha;
+    private long phase21SiblingInsideWindow;
+    private long phase21SiblingAtOrAboveBeta;
+    private long phase21LmrFailHighs;
+    private long phase21LmrResearches;
+    private long phase21RootAtOrBelowAlpha;
+    private long phase21RootInsideWindow;
+    private long phase21RootAtOrAboveBeta;
 
     private TimeManager timeManager;
     private long searchStartNanos;
@@ -447,6 +462,21 @@ public class Searcher {
         long totalEvalNanos = 0;
         long totalPvNodeEvals = 0;
         long totalCutNodeEvals = 0;
+        long totalPhase21PvWide = 0;
+        long totalPhase21PvNull = 0;
+        long totalPhase21NonPvWide = 0;
+        long totalPhase21NonPvNull = 0;
+        long totalPhase21WideRazoringReturns = 0;
+        long totalPhase21WideFutilitySkips = 0;
+        long totalPhase21WideLosingCaptureSkips = 0;
+        long totalPhase21SiblingAtOrBelowAlpha = 0;
+        long totalPhase21SiblingInsideWindow = 0;
+        long totalPhase21SiblingAtOrAboveBeta = 0;
+        long totalPhase21LmrFailHighs = 0;
+        long totalPhase21LmrResearches = 0;
+        long totalPhase21RootAtOrBelowAlpha = 0;
+        long totalPhase21RootInsideWindow = 0;
+        long totalPhase21RootAtOrAboveBeta = 0;
         // Issue #216: NNUE accumulator-update cost is tracked inside NnueEvaluator
         // itself (an instance that may persist across many searches), so this
         // search's contribution is a before/after delta rather than a per-pvIndex
@@ -499,6 +529,21 @@ public class Searcher {
                 evalNanos = 0;
                 pvNodeEvals = 0;
                 cutNodeEvals = 0;
+                phase21PvWide = 0;
+                phase21PvNull = 0;
+                phase21NonPvWide = 0;
+                phase21NonPvNull = 0;
+                phase21WideRazoringReturns = 0;
+                phase21WideFutilitySkips = 0;
+                phase21WideLosingCaptureSkips = 0;
+                phase21SiblingAtOrBelowAlpha = 0;
+                phase21SiblingInsideWindow = 0;
+                phase21SiblingAtOrAboveBeta = 0;
+                phase21LmrFailHighs = 0;
+                phase21LmrResearches = 0;
+                phase21RootAtOrBelowAlpha = 0;
+                phase21RootInsideWindow = 0;
+                phase21RootAtOrAboveBeta = 0;
                 // pvTable and pvLength are pre-allocated; no per-depth allocation needed.
                 RootResult iteration;
                 if (pvIndex == 0 && aspirationWindowsEnabled && depth >= 4 && previousBestMove != null) {
@@ -521,6 +566,21 @@ public class Searcher {
                 totalEvalNanos += evalNanos;
                 totalPvNodeEvals += pvNodeEvals;
                 totalCutNodeEvals += cutNodeEvals;
+                totalPhase21PvWide += phase21PvWide;
+                totalPhase21PvNull += phase21PvNull;
+                totalPhase21NonPvWide += phase21NonPvWide;
+                totalPhase21NonPvNull += phase21NonPvNull;
+                totalPhase21WideRazoringReturns += phase21WideRazoringReturns;
+                totalPhase21WideFutilitySkips += phase21WideFutilitySkips;
+                totalPhase21WideLosingCaptureSkips += phase21WideLosingCaptureSkips;
+                totalPhase21SiblingAtOrBelowAlpha += phase21SiblingAtOrBelowAlpha;
+                totalPhase21SiblingInsideWindow += phase21SiblingInsideWindow;
+                totalPhase21SiblingAtOrAboveBeta += phase21SiblingAtOrAboveBeta;
+                totalPhase21LmrFailHighs += phase21LmrFailHighs;
+                totalPhase21LmrResearches += phase21LmrResearches;
+                totalPhase21RootAtOrBelowAlpha += phase21RootAtOrBelowAlpha;
+                totalPhase21RootInsideWindow += phase21RootInsideWindow;
+                totalPhase21RootAtOrAboveBeta += phase21RootAtOrAboveBeta;
 
                 if (iteration.bestMove == null) {
                     if (pvIndex == 0) {
@@ -627,6 +687,15 @@ public class Searcher {
                     totalBetaCutoffs, fmcPct, totalTtHits, ebfNow,
                     totalNullMoveCutoffs, totalLmrApplications, totalFutilitySkips, totalDeltaPruningSkips,
                     evalPct, accPct, totalPvNodeEvals, totalCutNodeEvals, elapsedMs));
+            if (instrumentationEnabled) {
+                LOG.debug(String.format("[BENCH] phase21 depth=%d ab_calls=%d pv_wide=%d pv_null=%d nonpv_wide=%d nonpv_null=%d nonpv_wide_razor_returns=%d nonpv_wide_futility_skips=%d nonpv_wide_losing_capture_skips=%d pv_wide_sibling_le_alpha=%d pv_wide_sibling_inside=%d pv_wide_sibling_ge_beta=%d lmr_probes=%d lmr_fail_highs=%d lmr_researches=%d root_wide_sibling_le_alpha=%d root_wide_sibling_inside=%d root_wide_sibling_ge_beta=%d",
+                        depth, totalPhase21PvWide + totalPhase21PvNull + totalPhase21NonPvWide + totalPhase21NonPvNull,
+                        totalPhase21PvWide, totalPhase21PvNull, totalPhase21NonPvWide, totalPhase21NonPvNull,
+                        totalPhase21WideRazoringReturns, totalPhase21WideFutilitySkips, totalPhase21WideLosingCaptureSkips,
+                        totalPhase21SiblingAtOrBelowAlpha, totalPhase21SiblingInsideWindow, totalPhase21SiblingAtOrAboveBeta,
+                        totalLmrApplications, totalPhase21LmrFailHighs, totalPhase21LmrResearches,
+                        totalPhase21RootAtOrBelowAlpha, totalPhase21RootInsideWindow, totalPhase21RootAtOrAboveBeta));
+            }
         }
 
         double ebf = 0.0;
@@ -796,6 +865,13 @@ public class Searcher {
                 return new RootResult(bestMove, bestScore, buildPrincipalVariation(), true);
             }
 
+            // rootMoveIndex has already advanced; > 1 means a later sibling.
+            if (instrumentationEnabled && rootMoveIndex > 1 && beta - alpha > 1) {
+                if (score <= alpha) phase21RootAtOrBelowAlpha++;
+                else if (score >= beta) phase21RootAtOrAboveBeta++;
+                else phase21RootInsideWindow++;
+            }
+
             if (score > bestScore || bestMove == null) {
                 bestScore = score;
                 bestMove = move;
@@ -833,6 +909,18 @@ public class Searcher {
             int maxExtensions,
             boolean inSingularitySearch
     ) {
+        // Count every alphaBeta invocation at entry, before horizon/draw/TT/abort
+        // returns, including null-move, singularity, LMR and retry calls. Root
+        // and direct quiescence calls are excluded; this is not nodesVisited.
+        if (instrumentationEnabled) {
+            if (isPvNode) {
+                if (beta - alpha > 1) phase21PvWide++;
+                else phase21PvNull++;
+            } else {
+                if (beta - alpha > 1) phase21NonPvWide++;
+                else phase21NonPvNull++;
+            }
+        }
         pvLength[ply] = 0;
 
         if (ply > seldepth) {
@@ -926,6 +1014,9 @@ public class Searcher {
             }
 
             if (qScore <= alpha) {
+                if (instrumentationEnabled && !isPvNode && beta - alpha > 1) {
+                    phase21WideRazoringReturns++;
+                }
                 return qScore;
             }
         }
@@ -1047,6 +1138,9 @@ public class Searcher {
                     sideToMoveInCheck,
                     moveGivesCheck
             )) {
+                if (instrumentationEnabled && !isPvNode && beta - alpha > 1) {
+                    phase21WideLosingCaptureSkips++;
+                }
                 evaluator.onUnmake();
                 board.unmakeMove();
                 moveIndex++;
@@ -1064,6 +1158,9 @@ public class Searcher {
                     moveGivesCheck
             )) {
                 futilitySkips++;
+                if (instrumentationEnabled && !isPvNode && beta - alpha > 1) {
+                    phase21WideFutilitySkips++;
+                }
                 evaluator.onUnmake();
                 board.unmakeMove();
                 moveIndex++;
@@ -1091,7 +1188,9 @@ public class Searcher {
                         false
                 );
                 if (!aborted && score > alpha) {
+                    if (instrumentationEnabled) phase21LmrFailHighs++;
                     boolean childIsPvNode = isPvNode && moveIndex == 0;
+                    if (instrumentationEnabled) phase21LmrResearches++;
                     score = -alphaBeta(
                             board,
                             childDepth,
@@ -1121,6 +1220,11 @@ public class Searcher {
                         maxExtensions,
                         false
                 );
+                if (instrumentationEnabled && !aborted && isPvNode && moveIndex > 0 && beta - alpha > 1) {
+                    if (score <= alpha) phase21SiblingAtOrBelowAlpha++;
+                    else if (score >= beta) phase21SiblingAtOrAboveBeta++;
+                    else phase21SiblingInsideWindow++;
+                }
             }
 
             evaluator.onUnmake();
