@@ -235,4 +235,106 @@ These five depth-8 counts pin the new deterministic Stage 2 tree. They do not re
 
 The clean-built candidate UCI JAR SHA-256 is `4d1325c4bc3e1a4d312870b21ff53716e684a3f16637b7df1800d72341291da4`. Its alphaBeta signature is `alphaBeta(Board,int,int,int,int,BooleanSupplier,boolean,int,int,boolean)`; the explicit PV flag is absent.
 
-**Stage 2: PASS.** Tests exercise mandatory LMR verification, strict PV full-window re-search ownership, window-derived flag cells, the root PVS path, legal regression PVs and the P18-4 root fail-high case. No fixture revealed a correctness defect under the bounded deeper probes. Stage 3 is the next authorized step. No Stage 3 measurement has started.
+**Stage 2: PASS.** Tests exercise mandatory LMR verification, strict PV full-window re-search ownership, window-derived flag cells, the root PVS path, legal regression PVs and the P18-4 root fail-high case. No fixture revealed a correctness defect under the bounded deeper probes. At the Stage 2 commit, Stage 3 measurement had not started; it is recorded below.
+
+### [2026-09-27] Phase 21 Stage 3: deterministic mechanism gate
+
+**Candidate and controls:**
+
+- Candidate production code is Stage 2 commit `e90d3d4f90b244c46e8bbf75c33222bba7d58003`; candidate UCI JAR SHA-256 is `4d1325c4bc3e1a4d312870b21ff53716e684a3f16637b7df1800d72341291da4`. Frozen control JAR SHA-256 is `cdf7fe59b773d55f4a79a59ccccd9b1b6d804f82332b6200cc88b9e65fa5e95b`.
+- Reused the frozen 31-position corpus at depth 13 and five P18-5 references at depth 8. Each row used a fresh Searcher, 16 MB transposition table, and the same deterministic search setup. The candidate harness required each requested depth to complete and checked every returned PV move for legality. It reported `CANDIDATE PASS total=21713284 reference_rows=5 instrumentation=true`.
+- Stage 1 was not rerun. The combined control/candidate per-position table and all five reference rows are committed in [phase21-stage3-results.tsv](../docs/architecture/research/phase21-stage3-results.tsv), SHA-256 `728c1f5cf8254606af4a61504805f88d0c350ef13a5428b4593f479f191fc56d` (36 rows: 31 depth-13 positions plus five depth-8 references).
+- Counter population: per position, use the final depth-13 `[BENCH] phase21` report, whose counters reset at the start of each iterative-deepening depth. The 2x2 values below sum `alphaBeta` invocations in the depth-13 iteration over the 31 positions; they are call counts, not `nodesVisited`, and exclude quiescence calls. Root later-sibling probes are recorded in their separate root counters. This preserves the Stage 1 denominator definition.
+
+**Depth-13 search totals:**
+
+| Metric | Frozen Stage 0 control | Stage 3 candidate | Candidate delta |
+|---|---:|---:|---:|
+| Main nodes | 24,780,049 | 21,713,284 | -3,066,765 (-12.376%) |
+| Qnodes | 60,071,833 | 48,479,879 | -11,591,954 |
+| TT hits | 5,726,579 | 6,134,980 | +408,401 |
+
+**Candidate alphaBeta flag/window table (31 depth-13 searches):**
+
+| Derived PV identity | Wide (`beta - alpha > 1`) | Null (`beta - alpha == 1`) |
+|---|---:|---:|
+| PV | 23,580 | 0 |
+| Non-PV | 0 | 62,426,843 |
+| Total calls | 23,580 | 62,426,843 |
+
+The sum is 62,450,423 alphaBeta calls. Both contradictory cells are zero: PV/null is impossible because PV identity is derived at entry, and non-PV/wide is absent. For comparison, the frozen Stage 1 depth-13 table was PV/wide 3,487; PV/null 0; non-PV/wide 20,729,984; non-PV/null 51,797,819. The candidate's call totals traverse a different tree and are not treated as a same-tree population comparison.
+
+**Pruning populations:**
+
+| Pruning event | Stage 1 wide-window/non-PV | Stage 3 wide-window/non-PV | Stage 3 all non-PV/null |
+|---|---:|---:|---:|
+| Razoring returns | 878,014 | 0 | 2,312,723 |
+| Futility skips | 5,180,238 | 0 | 11,313,611 |
+| Losing-capture skips | 548,209 | 0 | 1,181,411 |
+
+The candidate wide-window/non-PV cell is empty. Its all non-PV pruning counts are reported for the candidate tree's null-window population; they are not a same-tree comparison to Stage 1's wide-window subset.
+
+**PVS probes and later-sibling outcomes:**
+
+- Candidate later-sibling zero-window probes: 40,260,252 total, including 28,171,217 full-depth zero-window probes. Of these, 375,370 were at internal PV nodes and 12,273 at the root.
+- There were 6,517 full-window re-searches in total; all 6,517 were PV-owned. This total includes 5,521 internal non-LMR later-sibling re-searches, 814 re-searches following LMR verification, and 182 root re-searches.
+- The Stage 1-compatible internal non-LMR outcome split was: score `<= alpha` 314; `alpha < score < beta` 4,832; score `>= beta` 375. Root outcomes were 22; 154; and 6, respectively (182 total).
+- Combined full-window re-search rate was 6,517 / (375,370 internal PV probes + 12,273 root probes) = 1.68%. Internal rate was 6,335 / 375,370 = 1.69%; root rate was 182 / 12,273 = 1.48%. This is not a majority of PV null-window probes.
+
+**LMR verification:**
+
+| Counter | Frozen Stage 1 | Stage 3 candidate |
+|---|---:|---:|
+| Reduced probes | 12,815,062 | 12,089,035 |
+| Reduced fail-highs | 53,656 | 31,386 |
+| Full-depth follow-up | 53,656 existing full-depth re-searches | 31,386 full-depth zero-window verifications |
+
+Every candidate non-aborted reduced-probe fail-high had exactly one counted full-depth zero-window verification: `lmr_fail_highs == lmr_researches == 31,386`. Verification activity is 58.49% of the frozen Stage 1 re-search count (1.71x lower), not an order-of-magnitude collapse. These counts are mechanism evidence across different trees; the comparison does not assume identical populations.
+
+**Per-position depth-13 main-node changes:**
+
+| BENCH index | Stage 0 control | Stage 3 candidate | Delta |
+|---:|---:|---:|---:|
+| 0 | 528,398 | 503,502 | -24,896 |
+| 1 | 3,475,078 | 3,719,319 | +244,241 |
+| 2 | 7,568 | 9,081 | +1,513 |
+| 3 | 605,659 | 856,243 | +250,584 |
+| 4 | 444,366 | 421,737 | -22,629 |
+| 5 | 1,549,645 | 983,092 | -566,553 |
+| 6 | 634,214 | 532,753 | -101,461 |
+| 7 | 994,398 | 761,682 | -232,716 |
+| 8 | 944,419 | 1,065,327 | +120,908 |
+| 9 | 258,683 | 224,527 | -34,156 |
+| 10 | 1,463,870 | 371,551 | -1,092,319 |
+| 11 | 106,151 | 113,241 | +7,090 |
+| 12 | 19,151 | 19,767 | +616 |
+| 13 | 134,731 | 189,541 | +54,810 |
+| 14 | 1,523,227 | 1,172,659 | -350,568 |
+| 15 | 939,472 | 777,022 | -162,450 |
+| 16 | 815,181 | 639,344 | -175,837 |
+| 17 | 467,210 | 452,728 | -14,482 |
+| 18 | 1,369,277 | 1,206,922 | -162,355 |
+| 19 | 437,737 | 381,362 | -56,375 |
+| 20 | 150,814 | 169,381 | +18,567 |
+| 21 | 2,172,114 | 1,759,077 | -413,037 |
+| 22 | 581,587 | 612,390 | +30,803 |
+| 23 | 176,857 | 172,663 | -4,194 |
+| 24 | 57,130 | 53,667 | -3,463 |
+| 25 | 145,819 | 216,932 | +71,113 |
+| 26 | 47,736 | 48,453 | +717 |
+| 27 | 72,278 | 64,657 | -7,621 |
+| 28 | 1,825,906 | 1,442,772 | -383,134 |
+| 29 | 2,053,406 | 1,789,736 | -263,670 |
+| 30 | 777,967 | 982,156 | +204,189 |
+
+**Five-position P18-5 depth-8 semantic reference:** Full PV strings are in the TSV; these rows record move, score, nodes, qnodes and TT hits for control and candidate.
+
+| BENCH index | Control: move / score / nodes / qnodes / TT hits | Candidate: move / score / nodes / qnodes / TT hits |
+|---:|---|---|
+| 0 | e2e4 / 25 / 14,926 / 39,927 / 4,908 | e2e4 / 25 / 14,776 / 38,388 / 6,408 |
+| 2 | e1d2 / 122 / 1,226 / 1,816 / 1,024 | e1d2 / 122 / 1,287 / 1,855 / 1,002 |
+| 6 | b4b2 / -63 / 34,694 / 88,266 / 14,691 | b4b2 / -55 / 32,267 / 74,334 / 14,840 |
+| 13 | b4f4 / 14 / 6,456 / 14,776 / 1,938 | b4f4 / 14 / 6,136 / 13,640 / 1,913 |
+| 20 | d7d2 / 1,565 / 8,902 / 16,736 / 3,982 | d7d2 / 1,567 / 7,829 / 13,552 / 4,259 |
+
+**Decision:** Stage 3 mechanism gate **PASS**. The node total decreased; both contradictory flag/window cells were zero; LMR fail-high and verification counts matched exactly; every measured full-window re-search was PV-owned; and the full-window rate was not pathological under the frozen “most PV null-window probes” criterion. Verification activity did not trigger the order-of-magnitude stop. This is mechanism evidence only, with no strength estimate. Per the task boundary, execution ends here; Stage 4 has not been run.
