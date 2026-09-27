@@ -338,3 +338,35 @@ Every candidate non-aborted reduced-probe fail-high had exactly one counted full
 | 20 | d7d2 / 1,565 / 8,902 / 16,736 / 3,982 | d7d2 / 1,567 / 7,829 / 13,552 / 4,259 |
 
 **Decision:** Stage 3 mechanism gate **PASS**. The node total decreased; both contradictory flag/window cells were zero; LMR fail-high and verification counts matched exactly; every measured full-window re-search was PV-owned; and the full-window rate was not pathological under the frozen “most PV null-window probes” criterion. Verification activity did not trigger the order-of-magnitude stop. This is mechanism evidence only, with no strength estimate. Per the task boundary, execution ends here; Stage 4 has not been run.
+
+### [2026-09-27] Phase 21 Stage 4: decision-quality trace
+
+**Stage 3 documentation correction:** Commit `66a79c5` corrects the counter population description above. The per-`pvIndex` locals reset at each depth, while `totalPhase21*` persists and is reported on the final depth-13 line. Stage 1 and Stage 3 both use cumulative counts through the completed search up to depth 13, including prior completed depths and aspiration retries. Stage 3 numeric results and its committed table were not changed, and neither Stage 1 nor Stage 3 was rerun for this correction.
+
+**Trace setup:**
+
+- Control: frozen Stage 0 JAR, SHA-256 `cdf7fe59b773d55f4a79a59ccccd9b1b6d804f82332b6200cc88b9e65fa5e95b`.
+- Candidate: Stage 2 JAR, SHA-256 `4d1325c4bc3e1a4d312870b21ff53716e684a3f16637b7df1800d72341291da4`.
+- The depth-13 comparison reuses the frozen Stage 3 rows for all 31 positions: 8 different bestmoves and 23 the same. No Stage 1 or Stage 3 measurement was repeated. For each of the eight changed positions, control and candidate were each run at depths 14 and 15 in fresh JVMs, using a new Searcher, a cold 16 MB TT, fixed-depth `searchDepth`, single-threaded direct search, and instrumentation disabled. All 32 searches completed at the requested depth, and each returned PV passed a legal-move check. A separate no-search validation replayed all 16 frozen depth-13 control/candidate PVs against legal move generation; all passed.
+- Full depth-13/14/15 rows, including score, main nodes, qnodes, TT hits and PV, are in [phase21-stage4-decision-trace.tsv](../docs/architecture/research/phase21-stage4-decision-trace.tsv), SHA-256 `e5470c9d6b08e86633d78db331ce3d22e68d1e4d5dd75e71f3d56ff4da31ee45`. `d13_source` marks frozen Stage 3 rows; depth 14 and 15 are fresh cold searches. The reproducible helper is `tools/Phase21DecisionTrace.java`, driven by `tools/phase21-stage4-trace.py`.
+
+**Classification by changed BENCH index:**
+
+| Index | Control move/score at 13 → 14 → 15 | Candidate move/score at 13 → 14 → 15 | Trace reading |
+|---:|---|---|---|
+| 5 | `d1d3/416` → `g1h1/418` → `g1h1/418` | `g1h1/410` → `g1h1/411` → `g1h1/418` | Converges to `g1h1` at depth 14; score also matches at 15. |
+| 7 | `h3f5/-295` → `g2g4/-285` → `h3f5/-305` | `f3d4/-300` → `f3d4/-299` → `f3d4/-317` | Distinct move choices remain at 15. Raw score gaps are 5, 14 and 12 cp; no near-equality threshold is applied. Control changes back to its depth-13 choice. |
+| 10 | `c6d4/432` → `a7a6/426` → `c6e5/421` | `c8d7/445` → `a7a6/421` → `c6d4/431` | Converges at 14, then diverges at 15. The score ordering changes with depth; no stable score difference is established. |
+| 14 | `a2a4/59` → `d1d3/54` → `d1d3/52` | `f1e1/65` → `d1d3/58` → `d1d3/59` | Converges to `d1d3` at 14 and 15; raw score gaps are 4 and 7 cp. |
+| 16 | `d5e4/-51` → `d5e4/-51` → `d5e4/-54` | `f6e4/-38` → `d5e4/-44` → `d5e4/-41` | Converges to `d5e4` at 14 and 15. Candidate scores remain 7 and 13 cp higher. |
+| 21 | `c6a6/-37` → `g6g5/-32` → `g6g5/-38` | `g6g5/-35` → `g6g5/-35` → `g6g5/-46` | Converges to `g6g5` at 14 and 15; raw score gaps are 3 and 8 cp. |
+| 26 | `a6a5/422` → `a6a5/397` → `a6a5/442` | `b5b4/281` → `a6a5/388` → `a6a5/1064` | Same move from 14, but candidate score rises sharply at 15 (622 cp above control). This is depth-sensitive, not a stable score difference. Candidate's one-move depth-13 PV extends to 14 plies at depth 14 and 10 plies at depth 15; every returned move is legal. |
+| 30 | `f2f5/-99` → `f2f3/-118` → `f2f3/-113` | `b1a2/-121` → `h4h5/-111` → `f2f3/-114` | Converges to `f2f3` at 15; final scores differ by 1 cp. Candidate/control score ordering reverses at 14 and again at 15. |
+
+No trace established a transposition-equivalent continuation. The listed convergence classifications refer to the root bestmove; complete PVs are preserved in the TSV. No score is in the engine's mate-score range. Stage 2's mandatory full-depth LMR verification path and root P18-4 fail-high regression remain unchanged; Stage 3's cumulative fail-high/verification counters were exact. Stage 4 exposed no illegal PV, mate-sign, unverified-score or root-window defect. The large index-26 depth-15 score change is recorded as search-depth sensitivity, not treated as a correctness defect on its own.
+
+Stage 3 node increases at indexes 1, 3, 8, 25 and 30 were +244,241, +250,584, +120,908, +71,113 and +204,189 respectively. They are context only; no node-increase gate was added. Indexes 1, 3, 8 and 25 had no depth-13 bestmove difference, so the frozen Stage 4 protocol required no deeper trace for them. Index 30 was traced because its depth-13 bestmove changed.
+
+**Historical depth-8 fixtures:** The four changed regression moves were P5 `c1b2`, P10 `e3d3`, E2 `e1d2` and E5 `a2a6`. E5's FEN (`8/4k3/8/4P3/8/8/R7/4K3 w - - 0 1`) is not among the 31 canonical BENCH positions, so the conditional Stage 4 E5 search did not apply. The existing depth-9/10 probes remain the E5 trace: at depth 9, control chose `a2e2/1768` with a longer PV and candidate chose `a2a6/876` with a one-move legal PV; at depth 10 both chose `a2e2`, with scores 1804 and 1760. Thus the one-move E5 PV was a shallow result and did not persist at depth 10. No additional E5 search was run.
+
+**Stage 4: PASS.** None of the traced decision differences exposed a correctness defect. Ordinary move and score differences, including the recorded depth-sensitive index-26 score, remain search-tree evidence. No Stage 5 work was run.
