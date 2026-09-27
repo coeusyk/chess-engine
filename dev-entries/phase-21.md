@@ -370,3 +370,9 @@ Stage 3 node increases at indexes 1, 3, 8, 25 and 30 were +244,241, +250,584, +1
 **Historical depth-8 fixtures:** The four changed regression moves were P5 `c1b2`, P10 `e3d3`, E2 `e1d2` and E5 `a2a6`. E5's FEN (`8/4k3/8/4P3/8/8/R7/4K3 w - - 0 1`) is not among the 31 canonical BENCH positions, so the conditional Stage 4 E5 search did not apply. The existing depth-9/10 probes remain the E5 trace: at depth 9, control chose `a2e2/1768` with a longer PV and candidate chose `a2a6/876` with a one-move legal PV; at depth 10 both chose `a2e2`, with scores 1804 and 1760. Thus the one-move E5 PV was a shallow result and did not persist at depth 10. No additional E5 search was run.
 
 **Stage 4: PASS.** None of the traced decision differences exposed a correctness defect. Ordinary move and score differences, including the recorded depth-sensitive index-26 score, remain search-tree evidence. No Stage 5 work was run.
+
+### [2026-09-27] Stage 5 runner draft: stopped by user
+
+Implementation of `tools/phase21-stage5.ps1` was in progress when the user requested an immediate stop. The current draft is preserved for review; implementation and validation are incomplete, and it is not ready for a native timing session. No further runner changes were made after the stop request.
+
+PowerShell syntax/validation attempts through WSL interop failed before PowerShell started (`UtilBindVsockAnyPort: socket failed 1`). They provide no script-validation evidence. No native builds, semantic preflights, warm-ups, measured benchmarks, games or SPRT were run. Stage 5 has no measurement or PASS/FAIL decision; Stage 4 remains the last completed stage.
