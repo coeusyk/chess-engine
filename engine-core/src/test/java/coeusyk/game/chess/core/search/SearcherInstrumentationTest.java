@@ -7,6 +7,7 @@ import ch.qos.logback.core.read.ListAppender;
 import coeusyk.game.chess.core.eval.ClassicalEvaluator;
 import coeusyk.game.chess.core.eval.nnue.NnueEvaluator;
 import coeusyk.game.chess.core.eval.nnue.TestNetworks;
+import coeusyk.game.chess.core.movegen.MovesGenerator;
 import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Move;
 import org.junit.jupiter.api.Test;
@@ -29,6 +30,34 @@ class SearcherInstrumentationTest {
 
     private static final String MIDDLEGAME_FEN =
             "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/2N5/PPPP1PPP/R1BQK1NR b KQkq - 2 3";
+    private static final String[] P18_REFERENCE_FENS = {
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "4k3/8/8/8/8/8/4P3/4K3 w - - 5 39",
+        "r3r1k1/2p2ppp/p1p1bn2/8/1q2P3/2NPQN2/PPP3PP/R4RK1 b - - 2 24",
+        "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+        "r4rk1/3qppbp/6p1/2p1n3/2B1P3/2P5/P2Q1PPP/R4RK1 b - - 0 20"
+    };
+
+    @Test
+    void p18ReferencePrincipalVariationsAreLegal() {
+        for (int i = 0; i < P18_REFERENCE_FENS.length; i++) {
+            Board board = new Board(P18_REFERENCE_FENS[i]);
+            board.setSearchMode(true);
+            Searcher searcher = new Searcher();
+            searcher.setTranspositionTableSizeMb(16);
+            SearchResult result = searcher.searchDepth(board, 8);
+            assertPrincipalVariationIsLegal(board, result.principalVariation(), "P18-5 position " + i);
+        }
+    }
+
+    private static void assertPrincipalVariationIsLegal(Board board, java.util.List<Move> pv, String name) {
+        for (Move move : pv) {
+            boolean legal = new MovesGenerator(board).getAllMoves().stream()
+                    .anyMatch(candidate -> candidate.pack() == move.pack());
+            assertTrue(legal, "Illegal PV move for " + name + ": " + move.pack());
+            board.makeMove(move);
+        }
+    }
 
     @Test
     void phase21ReportsAreOptInCumulativeAndPreserveSearch() {
@@ -62,8 +91,9 @@ class SearcherInstrumentationTest {
             Map<String, Long> previous = Map.of();
             for (int i = 0; i < reports.size(); i++) {
                 Map<String, Long> report = reports.get(i);
-                assertEquals(18, report.size());
+                assertEquals(28, report.size());
                 assertEquals(i + 1L, report.get("depth"));
+                assertTrue(report.containsKey("pvs_zero_window_probes"));
                 for (var counter : report.entrySet()) {
                     assertTrue(counter.getValue() >= previous.getOrDefault(counter.getKey(), 0L),
                             counter.getKey() + " must be cumulative");
@@ -71,19 +101,29 @@ class SearcherInstrumentationTest {
                 assertEquals(report.get("ab_calls").longValue(), report.get("pv_wide")
                         + report.get("pv_null") + report.get("nonpv_wide") + report.get("nonpv_null"));
                 assertEquals(0L, report.get("pv_null"));
+                assertEquals(0L, report.get("nonpv_wide"));
                 assertEquals(report.get("lmr_fail_highs"), report.get("lmr_researches"));
                 assertTrue(report.get("lmr_fail_highs") <= report.get("lmr_probes"));
+                assertTrue(report.get("pvs_zero_window_probes") > 0);
+                assertTrue(report.get("full_depth_zero_window_probes") >= report.get("lmr_researches"));
+                assertEquals(report.get("full_window_researches"), report.get("full_window_researches_pv_owned"));
+                assertTrue(report.get("full_window_researches") <= report.get("pv_wide_zero_window_probes")
+                        + report.get("root_wide_zero_window_probes"));
                 previous = report;
             }
             Map<String, Long> last = reports.getLast();
-            assertTrue(last.get("nonpv_wide") > 0);
             assertTrue(last.get("ab_calls") > candidate.nodesVisited(), "entry population includes horizon/early returns");
             assertTrue(last.get("lmr_fail_highs") > 0, "exercise the existing verification gate");
             assertEquals(candidate.lmrApplications(), last.get("lmr_probes"));
-            assertTrue(last.get("pv_wide_sibling_le_alpha") + last.get("pv_wide_sibling_inside")
-                    + last.get("pv_wide_sibling_ge_beta") > 0);
-            assertTrue(last.get("root_wide_sibling_le_alpha") + last.get("root_wide_sibling_inside")
-                    + last.get("root_wide_sibling_ge_beta") > 0);
+            assertTrue(last.get("pv_wide_full_window_research_le_alpha")
+                    + last.get("pv_wide_full_window_research_inside")
+                    + last.get("pv_wide_full_window_research_ge_beta") > 0);
+            assertTrue(last.get("root_wide_full_window_research_le_alpha")
+                    + last.get("root_wide_full_window_research_inside")
+                    + last.get("root_wide_full_window_research_ge_beta") > 0);
+            assertTrue(last.get("pv_wide_zero_window_probes") > 0);
+            assertTrue(last.get("root_wide_zero_window_probes") > 0);
+            assertTrue(last.get("root_full_window_researches") <= last.get("root_wide_zero_window_probes"));
 
             appender.list.clear();
             instrumented.searchDepth(new Board(MIDDLEGAME_FEN), 1);
@@ -91,7 +131,10 @@ class SearcherInstrumentationTest {
                     .filter(message -> message.startsWith("[BENCH] phase21 "))
                     .map(SearcherInstrumentationTest::phase21Counters).toList();
             assertEquals(1, resetReports.size());
-            assertEquals(reports.getFirst().get("ab_calls"), resetReports.getFirst().get("ab_calls"));
+            Map<String, Long> reset = resetReports.getFirst();
+            assertTrue(reset.get("ab_calls") > 0);
+            assertEquals(reset.get("ab_calls").longValue(), reset.get("pv_wide") + reset.get("pv_null")
+                    + reset.get("nonpv_wide") + reset.get("nonpv_null"));
             assertEquals(0L, resetReports.getFirst().get("lmr_probes"));
         } finally {
             logger.detachAppender(appender);

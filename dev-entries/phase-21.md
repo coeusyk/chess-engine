@@ -164,3 +164,75 @@ Fail-highs and current full-depth re-searches are equal in every measured positi
 | 28 | 1,825,906 | 7,088,801 | 149 | 0 | 2,896,222 | 4,192,430 |
 | 29 | 2,053,406 | 5,215,393 | 202 | 0 | 1,091,003 | 4,124,188 |
 | 30 | 777,967 | 2,051,151 | 145 | 0 | 510,419 | 1,540,587 |
+
+### [2026-09-27] Phase 21 Stage 2: window-derived PV identity and zero-window search
+
+**Built:**
+
+- Repeated the call-site audit before changing the private signature. The six production call categories remain: root child, null move, reduced LMR probe, full-depth LMR verification, ordinary child, and singular alternative. Null-move and singular alternatives use width-one windows; LMR probes and verifications use `(-(alpha + 1), -alpha)`. No auxiliary production caller needs contradictory wide-window/non-PV semantics.
+- Removed the explicit PV boolean from `alphaBeta`. Its first statement derives `boolean isPvNode = beta - alpha > 1`, so a recursive call cannot flag PV independently of its window.
+- A node's first searched move uses the full incoming window. Every later ordinary move first searches full depth at `(-(alpha + 1), -alpha)`. A later LMR-eligible move first probes at reduced depth using that zero window; a non-aborted result above alpha always receives one full-depth zero-window verification. Only a full-depth result strictly inside the current PV window triggers a full-window re-search. Low scores require no re-search; high scores retain cutoff behavior. A null-window node cannot satisfy the PV and strict-inside gate.
+- Applied the same first-move and later-move PVS sequence at the root inside the existing aspiration window. Did not change retry widening, root cutoff termination, or any pruning, ordering, TT, extension, evaluator, Board, SMP or time-management rule.
+- Retained Stage 1 fields and added opt-in probe, verification, re-search ownership and all non-PV pruning counters. Stage 3 interpretation: `lmr_researches` now counts full-depth zero-window verifications, not Stage 1's former full-window re-search. The Stage 1 `pv_wide_sibling_*` and `root_wide_sibling_*` report keys are unchanged. Stage 2 uses new `pv_wide_full_window_research_*` and `root_wide_full_window_research_*` keys for completed candidate full-window re-search outcomes; the population is smaller after PVS. `nonpv_razor_returns`, `nonpv_futility_skips` and `nonpv_losing_capture_skips` count all such Stage 3 non-PV pruning events, including their now-expected null-window population; the retained `nonpv_wide_*` fields stay specific to the old wide-window cell.
+- Updated the private-reflection singularity test for the new alphaBeta signature, and added a legal-PV check to every search-regression fixture. Updated only the five depth-8 node-count references and the four changed bestmove fixtures after focused tests and direct control/candidate depth probes.
+
+**Search sequence and mechanical checks:**
+
+| Search site | Sequence |
+|---|---|
+| `alphaBeta`, first searched move | `(-beta, -alpha)` full incoming window |
+| Later, not LMR eligible | `(-(alpha + 1), -alpha)` full-depth probe; only a PV result strictly inside `(alpha, beta)` gets `(-beta, -alpha)` re-search |
+| Later, LMR eligible | reduced-depth zero-window probe; every non-aborted `score > alpha` gets exactly one full-depth zero-window verification; only a PV verification strictly inside `(alpha, beta)` gets a full-window re-search |
+| `searchRoot`, first move | `(-beta, -alpha)` current aspiration/full window |
+| `searchRoot`, later moves | zero-window probe; only a result strictly inside `(alpha, beta)` gets a full-window re-search |
+| Null move / singular alternative | existing width-one windows |
+
+The signature makes contradictory PV identity impossible at alphaBeta entry. The existing opt-in report measures `ab_calls`, the derived 2x2 table, PVS zero-window probes, PV-wide and root-wide probes, full-depth zero-window probes, all full-window re-searches and PV ownership, root re-searches, LMR probes/fail-highs/verifications, and old/new pruning counts. Instrumentation increments plain fields only; no per-node allocation and no search decision depends on them.
+
+**Deeper probe evidence for changed depth-8 regression fixtures:**
+
+Probed both the frozen control JAR (SHA-256 `cdf7fe59b773d55f4a79a59ccccd9b1b6d804f82332b6200cc88b9e65fa5e95b`) and the clean-built Stage 2 candidate JAR (SHA-256 `4d1325c4bc3e1a4d312870b21ff53716e684a3f16637b7df1800d72341291da4`), each in a fresh JVM. Each probe used the same FEN, evaluator, fresh Searcher and normal default Hash as `SearchRegressionTest`; the search-result rows record bestmove, score and complete returned PV. The test now checks every PV move against legal moves on the evolving board.
+
+| Fixture/depth | Control move / score / PV | Candidate move / score / PV | Reading |
+|---|---|---|---|
+| P5 / 9 | c1d2 / 354 / `c1d2 d6c6 b4b5 c6c5 d2c3 c5b6 c3d4 b6a5 d4c5 a5a4` | c1b2 / 354 / `c1b2 d6c6 b4b5 c6c5 b2c3 c5b6 c3d4 b6a5 d4c5 a5a4` | Equal score; king approach differs, continuation structure matches. |
+| P5 / 10 | c1c2 / 410 / `c1c2 d6c6 b4b5 c6c5 c2c3 c5b6 c3d4 b6a5 d4c5 a5a4 b5b6` | c1d2 / 405 / `c1d2 d6e5 d2d3 e5e6 b4b5 e6d6 d3d4 d6e6 b5b6 e6f5` | Scores differ by 5 cp; both king activations support the connected passers. |
+| P10 / 9 | e3f3 / 159 / `e3f3 e5e6 f3f4 e6f6 e4e5 f6e7 f4f5 e7d7 f5f6 d7c6` | e3f3 / 159 / same PV | Exact convergence at the probe depth. |
+| P10 / 10 | e3f3 / 193 / `e3f3 e5e6 f3f4 e6f6 e4e5 f6g6 f4e4 g6g5 e5e6 g5f6 e4d5 f6f5` | e3f3 / 203 / `e3f3 e5e6 f3f4 e6f6 e4e5 f6e6 f4e4 e6d7 e4d5 d7e7 e5e6 e7f6` | Same bestmove; candidate score is 10 cp higher. |
+| E2 / 9 | e1e2 / 682 / `e1e2 e8d7 e2e3 d7e7 e3e4 e7e6 f1f5 e6e7 f5c5` | e1d2 / 682 / `e1d2 e8e7 d2e3 e7d6 f1f5 d6e6 e3e4 e6e7 f5c5` | Equal score; both use king activation followed by rook/king restriction. |
+| E2 / 10 | e1e2 / 694 / `e1e2 e8d7 e2e3 d7e7 e3e4 e7e6 f1f5 e6e7 e4d5 e7d7` | e1d2 / 696 / `e1d2 e8e7 d2e3 e7d6 e3d4 d6d7 d4d5 d7e7 f1f4 e7d7` | Candidate score is 2 cp higher, with a different king approach. |
+| E5 / 9 | a2e2 / 1768 / `a2e2 e7e6 e1f2 e6d7 e5e6 d7e7 f2e1 e7d6 e6e7 f6f5 e2f2 f5g4` | a2a6 / 876 / `a2a6` | Candidate returned a legal one-move PV and an 892 cp lower score at depth 9. |
+| E5 / 10 | a2e2 / 1804 / `a2e2 e7e6 e1f2 e6d7 e5e6 d7e7 f2e1` | a2e2 / 1760 / `a2e2 e7e6 e1f2 e6d7 e5e6 d7e7 f2e1 e7d6 e6e7 d6d5 e2d2 d5c5 e7e8q` | Same bestmove; score gap narrows to 44 cp. The depth-9 candidate PV contains only its first legal move; this remains for the later trace gate. |
+
+The depth-8 fixture choices are deterministic alternatives from the new tree. P5 and P10 are equal-score moves; E2's move and score converge within 2 cp at depths 9 and 10. E5 remains the largest shallow score difference: it narrows by 848 cp from depth 9 to depth 10, its depth-9 one-move PV is legal, and both engines choose a2e2 at depth 10. This did not show an unverified LMR score, illegal PV move, mate-sign error, or root fail-high defect. It does leave E5's shallow evaluation and PV truncation for the later trace gate; Stage 4 has not run.
+
+**Node-count fixture recapture:**
+
+The focused implementation tests passed before recapturing the small depth-8 node fixture. Full core tests confirmed the candidate vector below; the 31-position Stage 0 table remains frozen in its separate control artifact.
+
+| NodeCountRegressionTest position | Frozen Stage 0 nodes | Stage 2 candidate nodes | Delta |
+|---|---:|---:|---:|
+| Start | 14,926 | 14,776 | -150 |
+| K+P vs K | 1,226 | 1,287 | +61 |
+| Tactical middlegame | 34,694 | 32,267 | -2,427 |
+| Rook/pawn | 6,456 | 6,136 | -320 |
+| Queen/king | 8,902 | 7,829 | -1,073 |
+
+These five depth-8 counts pin the new deterministic Stage 2 tree. They do not replace the frozen Stage 0 depth-13 total or predict Stage 3 aggregate reduction.
+
+**Validation:**
+
+- Independent read-only review of the Stage 2 diff found no remaining blocker. It asked for explicit legal-PV coverage of the five frozen reference positions, unambiguous Stage 3 full-window outcome keys, and a more complete record of E5's shallow PV/score anomaly. All three were added; the reviewer confirmed the blocking findings were resolved. E5 remains visible for the later decision-quality trace.
+
+| Stage 2 command | Result |
+|---|---|
+| `mvn -B -pl engine-core -Dtest=SearcherInstrumentationTest,RootFailHighWindowTest test` | PASS: 10 tests, 0 failures/errors/skips |
+| Final focused rerun: `mvn -B -pl engine-core -Dtest=SearcherInstrumentationTest,RootFailHighWindowTest,SingularSearchBoundSemanticsTest test` | PASS: 15 tests, 0 failures/errors/skips, including legal PVs for P18-5 |
+| `mvn -B -pl engine-core test` | PASS: 407 tests, 0 failures/errors, 5 configured skips |
+| `mvn -B -pl engine-core -Dgroups=regression test` | PASS: 38 tests, 0 failures/errors/skips |
+| `mvn -B -pl engine-core,engine-uci,engine-tuner -am test` | PASS: core 407/5 skipped, UCI 42/8 skipped, tuner 131/1 skipped; 0 failures/errors |
+| `mvn -B -pl engine-core,engine-uci,engine-tuner -am package -DskipTests` | PASS: selected reactor modules built |
+
+The clean-built candidate UCI JAR SHA-256 is `4d1325c4bc3e1a4d312870b21ff53716e684a3f16637b7df1800d72341291da4`. Its alphaBeta signature is `alphaBeta(Board,int,int,int,int,BooleanSupplier,boolean,int,int,boolean)`; the explicit PV flag is absent.
+
+**Stage 2: PASS.** Tests exercise mandatory LMR verification, strict PV full-window re-search ownership, window-derived flag cells, the root PVS path, legal regression PVs and the P18-4 root fail-high case. No fixture revealed a correctness defect under the bounded deeper probes. Stage 3 is the next authorized step. No Stage 3 measurement has started.
