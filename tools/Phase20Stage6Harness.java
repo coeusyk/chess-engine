@@ -569,16 +569,16 @@ public final class Phase20Stage6Harness {
             throw new SearchTimeout(lines, timeout, actualTimeoutNanos < timeoutNanos);
         }
         Map<String, String> begin = Phase20UciEvents.awaitEvent(lines, -1, "begin",
-                () -> session.nextLine(deadline, lines));
+                () -> session.nextLine(deadline));
         long searchId = Phase20UciEvents.number(begin, "search");
         Map<String, String> best = Phase20UciEvents.awaitEvent(lines, searchId, "bestmove",
-                () -> session.nextLine(deadline, lines));
+                () -> session.nextLine(deadline));
         int expectedHelpers = threads - 1;
         require(Phase20UciEvents.number(begin, "helpers") == expectedHelpers, "Wrong helper count in begin event");
         List<Map<String, String>> exits = Phase20UciEvents.collectHelperExits(lines, searchId, expectedHelpers,
-                () -> session.nextLine(deadline, lines));
+                () -> session.nextLine(deadline));
         Map<String, String> drained = Phase20UciEvents.awaitEvent(lines, searchId, "drained",
-                () -> session.nextLine(deadline, lines));
+                () -> session.nextLine(deadline));
         Phase20UciEvents.validateObservedHelperExits(lines, searchId, expectedHelpers);
         validateLifecycle(lines, threads, searchId, best, drained, exits);
         String emitted = bestmoveLine.split("\\s+", 3)[1];
@@ -694,11 +694,11 @@ public final class Phase20Stage6Harness {
         Map<String, String> begin = Phase20UciEvents.event(lines, -1, "begin");
         require(begin != null, "Timed out reference lacks begin lifecycle event");
         long searchId = number(begin, "search");
-        Phase20UciEvents.awaitEvent(lines, searchId, "bestmove", () -> session.nextLine(deadline, lines));
+        Phase20UciEvents.awaitEvent(lines, searchId, "bestmove", () -> session.nextLine(deadline));
         int expected = integer(begin, "helpers");
-        Phase20UciEvents.collectHelperExits(lines, searchId, expected, () -> session.nextLine(deadline, lines));
+        Phase20UciEvents.collectHelperExits(lines, searchId, expected, () -> session.nextLine(deadline));
         Map<String, String> drained = Phase20UciEvents.awaitEvent(lines, searchId, "drained",
-                () -> session.nextLine(deadline, lines));
+                () -> session.nextLine(deadline));
         require(integer(drained, "helper_pending") == 0, "Timed-out reference did not drain all helpers");
         checkBudget(runStart);
     }
@@ -1258,14 +1258,19 @@ public final class Phase20Stage6Harness {
             recorder.record("IN", command);
             input.write(command); input.newLine(); input.flush();
         }
-        String nextLine(long deadline, List<String> capture) throws Exception {
+        String nextLine(long deadline) throws Exception {
             long remaining = deadline - System.nanoTime();
             if (remaining <= 0) throw new UciTimeout("UCI deadline expired");
             String line = output.poll(remaining, TimeUnit.NANOSECONDS);
-            if (line != null) { capture.add(line); return line; }
+            if (line != null) return line;
             if (readerFailure != null) throw readerFailure;
             if (!process.isAlive()) throw new IOException("UCI process exited " + process.exitValue());
             throw new UciTimeout("Timed out waiting for UCI output");
+        }
+        String nextLine(long deadline, List<String> capture) throws Exception {
+            String line = nextLine(deadline);
+            capture.add(line);
+            return line;
         }
         void await(String expected, long seconds) throws Exception { await(expected, seconds, new ArrayList<>()); }
         void await(String expected, long seconds, List<String> capture) throws Exception {
