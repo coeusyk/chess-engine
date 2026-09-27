@@ -1,0 +1,6 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+synthetic_pre_bestmove_exit=pass
+synthetic_duplicate_exit=pass
+synthetic_late_duplicate_exit=pass
+failure_artifact_identity=pass
+corpus=31 depth=13 expected_1t_nodes=24780049 hash_mb=16 pawn_hash_mb=1 threads=1,2,4

@@ -1,0 +1,80 @@
+Indexing opening suite...
+Started game 3 of 20000 (NEW vs OLD)
+Started game 5 of 20000 (NEW vs OLD)
+Started game 1 of 20000 (NEW vs OLD)
+Started game 2 of 20000 (OLD vs NEW)
+Started game 4 of 20000 (OLD vs NEW)
+Started game 6 of 20000 (OLD vs NEW)
+Finished game 5 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 0 - 1 - 0  [0.000] 1
+Started game 7 of 20000 (NEW vs OLD)
+Finished game 2 (OLD vs NEW): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 0 - 2 - 0  [0.000] 2
+Started game 8 of 20000 (OLD vs NEW)
+Finished game 1 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 0 - 3 - 0  [0.000] 3
+Started game 9 of 20000 (NEW vs OLD)
+Finished game 4 (OLD vs NEW): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 0 - 4 - 0  [0.000] 4
+Started game 10 of 20000 (OLD vs NEW)
+Finished game 6 (OLD vs NEW): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 0 - 5 - 0  [0.000] 5
+Started game 11 of 20000 (NEW vs OLD)
+Finished game 3 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 0 - 6 - 0  [0.000] 6
+Started game 12 of 20000 (OLD vs NEW)
+Finished game 8 (OLD vs NEW): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 0 - 7 - 0  [0.000] 7
+Started game 13 of 20000 (NEW vs OLD)
+Finished game 11 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 0 - 8 - 0  [0.000] 8
+Started game 14 of 20000 (OLD vs NEW)
+Finished game 13 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 0 - 9 - 0  [0.000] 9
+Started game 15 of 20000 (NEW vs OLD)
+Finished game 9 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 0 - 10 - 0  [0.000] 10
+...      NEW playing White: 0 - 6 - 0  [0.000] 6
+...      NEW playing Black: 0 - 4 - 0  [0.000] 4
+...      White vs Black: 4 - 6 - 0  [0.400] 10
+Elo difference: -inf +/- nan, LOS: 0.1 %, DrawRatio: 0.0 %
+SPRT: llr -1.89 (-64.1%), lbound -2.94, ubound 2.94
+Started game 16 of 20000 (OLD vs NEW)
+Finished game 7 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 0 - 10 - 1  [0.045] 11
+Started game 17 of 20000 (NEW vs OLD)
+Finished game 14 (OLD vs NEW): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 0 - 11 - 1  [0.042] 12
+Started game 18 of 20000 (OLD vs NEW)
+Finished game 10 (OLD vs NEW): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 0 - 12 - 1  [0.038] 13
+Started game 19 of 20000 (NEW vs OLD)
+Finished game 12 (OLD vs NEW): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 0 - 13 - 1  [0.036] 14
+Finished game 18 (OLD vs NEW): * {No result}
+Score of NEW vs OLD: 0 - 13 - 1  [0.036] 14
+Finished game 19 (NEW vs OLD): * {No result}
+Score of NEW vs OLD: 0 - 13 - 1  [0.036] 14
+Finished game 15 (NEW vs OLD): * {No result}
+Score of NEW vs OLD: 0 - 13 - 1  [0.036] 14
+Finished game 17 (NEW vs OLD): * {No result}
+Score of NEW vs OLD: 0 - 13 - 1  [0.036] 14
+Finished game 16 (OLD vs NEW): * {No result}
+Score of NEW vs OLD: 0 - 13 - 1  [0.036] 14
+...      NEW playing White: 0 - 6 - 1  [0.071] 7
+...      NEW playing Black: 0 - 7 - 0  [0.000] 7
+...      White vs Black: 7 - 6 - 1  [0.536] 14
+Elo difference: -572.5 +/- nan, LOS: 0.0 %, DrawRatio: 7.1 %
+SPRT: llr -3.1 (-105.4%), lbound -2.94, ubound 2.94 - H0 was accepted
+
+Player: NEW
+   "Draw by 3-fold repetition": 1
+   "Loss: Black wins by adjudication": 6
+   "Loss: White wins by adjudication": 7
+   "No result": 5
+Player: OLD
+   "Draw by 3-fold repetition": 1
+   "No result": 5
+   "Win: Black wins by adjudication": 6
+   "Win: White wins by adjudication": 7
+Finished match

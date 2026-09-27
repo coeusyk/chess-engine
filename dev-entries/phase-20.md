@@ -115,4 +115,127 @@
 - Bestmove-to-helper-exit latency from diagnostic timestamps: the 64-exit Stage 1 matrix had median 0 ms and maximum 3 ms; the dedicated idle-resize runs with helpers pending at bestmove had 7 exits, median 6 ms and maximum 9 ms. These are lifecycle observations, not performance claims or pass thresholds.
 - `mvn -pl engine-core,engine-uci -am test` passed, including `lazySmpNoDeadlockOver1000Searches` (UCI integration class: 28 passed). `mvn -pl engine-core,engine-tuner -am test` passed. The focused active-resize regression passed all four arms after repair.
 
-Stage 2 was not started. No SMP timing/scaling conclusions, games, SPRT, PVS or tuning work was done.
+At the close of this requalification, Stage 2 had not started. No SMP timing/scaling conclusions, games, SPRT, PVS or tuning work had been done at that point.
+
+### [2026-09-24] Phase 20 — Stage 2 native Windows environment/JVM ceiling (Issue #246)
+
+**Run identity and controls:**
+
+- Continuation branch `phase/20-smp-qualification`; Stage 2 code commit `0691176d68c7f091d01c342a598c78477106812a`, based on post-#247 `develop` merge `b0f02bd79f8fbe9bff45037cdd307a9636978c91`.
+- Shaded JAR SHA-256: `8D00237762376FB03040B4C0D76C101A1AE7A9B6C6B6C74EEEB81B3EB02EEA53`.
+- Native Windows 11 Pro, version `10.0.26200`, build `26200`; AMD Ryzen 7 7700X, 8 cores / 16 logical processors. Azul Zulu OpenJDK `21.0.10+7-LTS`. JVM flags were `-Xms512m -Xmx512m -XX:+UseG1GC --add-modules jdk.incubator.vector` for every measured JVM. Active power plan: Balanced. No CPU affinity was set; normal Windows scheduling was used. The five-second pre-run process CPU sample recorded 0.0% machine CPU for its listed top processes.
+- Classical, depth 13, 31 canonical `BenchRunner.BENCH_FENS`, private 16 MB TT per Searcher, PawnHash=1 MB, instrumentation off; no book, Syzygy, ponder or shared search state; MultiPV=1 and contempt=0.
+- One discarded warm-up and seven interleaved measured passes per configuration. The harness recorded 98 worker samples and 42 aggregate samples. Every worker reproduced exactly 24,780,049 nodes over the 31 positions. Maximum process-arm start skew was 2 ms at N=2 and 4 ms at N=4; same-JVM skew was at most 0.026 ms and 0.049 ms respectively.
+- Native Maven package and harness self-check succeeded. The check confirmed all 31 corpus FENs, depth 13 and the expected node total. Worker logs contained only the expected incubator-module warning; no worker exception occurred. Raw run files are in `tools/results/phase20-stage2/20260924-095910/` on the native checkout.
+
+**Per-worker throughput:**
+
+| Arm | N | Median NPS / worker | `r(N)` | Worker sample range | Pass-median range |
+|---|---:|---:|---:|---:|---:|
+| Separate processes | 1 | 338,811 | 1.0000 | 325,047–341,570 | 325,047–341,570 |
+| Separate processes | 2 | 260,831 | 0.7698 | 219,206–358,533 | 220,039–355,522 |
+| Separate processes | 4 | 286,903 | 0.8468 | 244,294–347,079 | 246,884–342,427 |
+| Same JVM | 1 | 343,634 | 1.0000 | 328,472–367,148 | 328,472–367,148 |
+| Same JVM | 2 | 272,137 | 0.7919 | 239,382–360,494 | 239,397–359,801 |
+| Same JVM | 4 | 274,010 | 0.7974 | 247,045–336,115 | 247,979–334,254 |
+
+**Aggregate throughput:**
+
+| Arm | N | Median aggregate NPS | Pass range | Maximum start skew |
+|---|---:|---:|---:|---:|
+| Separate processes | 1 | 338,811 | 325,047–341,570 | 0 ms |
+| Separate processes | 2 | 517,169 | 438,413–705,001 | 2 ms |
+| Separate processes | 4 | 1,146,129 | 977,176–1,359,439 | 4 ms |
+| Same JVM | 1 | 343,634 | 328,472–367,148 | 0 ms |
+| Same JVM | 2 | 543,676 | 478,764–718,218 | 0.026 ms |
+| Same JVM | 4 | 1,085,166 | 988,178–1,327,235 | 0.049 ms |
+
+**Classification and stop:**
+
+- The separate-process 1T NPS range was 325,047–341,570. The N=2 median per-worker NPS (260,831; `r(2)=0.7698`) and N=4 median (286,903; `r(4)=0.8468`) were both below that observed 1T range. This meets the preregistered environment-ceiling classification; no fixed percentage cutoff was applied.
+- Same-JVM retention ranges overlapped the separate-process ranges at both N=2 and N=4. The seven-run evidence does not separate an additional JVM-level gap, so no JFR/GC diagnostic was triggered.
+- **Stage 2 outcome: environment-limited; stop before Stage 3.** No shared-TT SMP measurement, Stage 3 work, games, SPRT, tuning or WSL2 timing claim was made.
+
+### [2026-09-24] Phase 20 — Post-Stage-2 interpretation amendment accepted before Stage 3
+
+- The Stage 2 run remains historically recorded as stopped under the original preregistered rule and environment-limited. It was not rerun.
+- The reviewed interpretation amendment was committed and pushed before any Stage 3 measurement: `edd406a9243fcb53c341599d8c04e3fa7f34cab7` (`docs(phase20): amend Stage 2 interpretation for Stage 3`). Stage 3 resumes under that post-Stage-2 amendment; its acceptance does not rewrite the original Stage 2 record.
+- The amendment clarifies that main-thread node counts remove direct clock/NPS normalization but are not scheduler-independent: helper timing changes TT visibility and can change the main-thread tree, so pass-to-pass main-node variation is mechanism evidence.
+- It also clarifies that aggregate-throughput loss versus the Stage 2 same-JVM ceiling establishes additional production-SMP execution overhead only. TT contention requires the frozen H3 retention evidence or later Stage 4 evidence.
+
+### [2026-09-24] Phase 20 — Stage 3 native attempt stopped at helper drain (Issue #246)
+
+**Run identity and frozen environment:**
+
+- Branch `phase/20-smp-qualification`, run commit `55ca1171d3ecaf2891d4ee6e38229557c0640438`; shaded JAR SHA-256 `B7743D6C0EA9EA30F4734933D8091959710D7915F5B27CA431AF41A2301D84A5`.
+- Native Windows 11 Pro `10.0.26200`, build `26200`; AMD Ryzen 7 7700X, 8 cores / 16 logical processors; Azul Zulu OpenJDK `21.0.10+7-LTS`.
+- JVM flags: `-Xms512m -Xmx512m -XX:+UseG1GC --add-modules jdk.incubator.vector`. Balanced power plan, no affinity, normal Windows scheduling. The runner recorded its five-second background-load sample before starting the harness.
+- The Maven package and the harness corpus/parser self-check passed. No Stage 2 rerun or environment change was made.
+
+**Stop evidence:**
+
+- During a Threads>1 depth-13 UCI search, the driver received the main-thread `bestmove`, then waited for the expected helper `event=exit` records. It timed out in `Phase20Stage3Harness.search` at the helper-exit wait after 10 minutes. This 10-minute watchdog was a runner execution guard, not a preregistered Stage 3 acceptance threshold.
+- The partial artifact directory is `tools/results/phase20-stage3/20260924-152702/` on the native checkout. `workers.csv`, `helpers.csv` and `events.csv` contain headers only. The precise thread count, position and whether this was warm-up or a measured pass were not retained. The run cannot establish whether helpers remained active or exit diagnostics were lost; helper drainage was not verified.
+- **Stage 3 stopped at the helper-drain lifecycle gate.** No complete Stage 3 sample exists, so no search-work factor, NPS retention, aggregate throughput, time-to-depth, factorization, H3, or production-SMP overhead classification is available. Stage 3 has no PASS classification. No retry, production fix, Stage 4/5, or later stage was started.
+
+### [2026-09-26] Phase 20 — Stage 3 harness accounting repair (Issue #246)
+
+The stopped attempt recorded in commit `99175f2616ee5d692e814e6392c977fc8137fb1b` remains historically unchanged. Its headers-only CSVs still do not establish the precise event order of that sample.
+
+The harness defect is confirmed. Production helper `finally` blocks emit `SMPDIAG event=exit`; `runSearch` sets `helperAbort`, emits and flushes the main UCI `bestmove`, then joins helper futures and emits `event=drained`. A helper can therefore emit `event=exit` before UCI `bestmove`. `Phase20Stage3Harness.search` captured those lines but created an empty exit list after bestmove and consumed only future lines, so already-captured exits were omitted from the count. The synthetic pre-bestmove transcript failed before the repair and passes after it. The collector now seeds exits from the captured transcript, waits only for missing helpers, and rejects repeated helper IDs.
+
+The harness also checkpoints run type, pass, position, Threads and known search ID, then writes the captured UCI/SMP transcript to `failure.txt` on failure or JVM shutdown. This prevents a stopped run from leaving only unidentified CSV headers. No `Searcher`, UCI lifecycle, or TT code changed.
+
+Local `--validate-only` passes, including the synthetic ordering, duplicate-ID, and failure-artifact checks. A separate `-LifecycleSmoke` path runs one depth-13 search at 2T and one at 4T, validates exits/drain/exceptions/boundaries/legal bestmove, and emits no performance CSVs. The native smoke later passed; the performance run and its results are recorded below.
+
+### [2026-09-26] Phase 20 — Stage 3 fixed-depth qualification completed (Issue #246)
+
+**Run:** Native Windows 11 Pro build 26200; Ryzen 7 7700X, 8 cores/16 logical processors; Azul Zulu JDK 21.0.10+7-LTS; Balanced, no affinity. Classical, Hash=16 MB, PawnHashSize=1 MB, depth 13, canonical 31-position corpus; frozen JVM flags. Run commit `78d72c52fa24e455356f816aea26fb040f1450b5`; JAR SHA-256 `2871341887E480E2E2E8760DC3FD7331A7B6527106D190DCF9301858C89519E0`.
+
+Raw artifacts are committed under `tools/results/phase20-stage3/20260926-071358/`. Maven packaging succeeded; unit tests were skipped as specified by the runner. The harness self-check passed.
+
+**Schedule and validity:** One discarded warm-up and seven interleaved passes completed: 651 measured searches (217 per arm; 31 positions × 7 passes at 1T/2T/4T). The warm-up 1T check and each measured 1T pass matched 24,780,049 nodes; every 1T position repeated the same node count across all seven passes. Every search reached depth 13. The CSVs contain 651 each of begin/bestmove/drained events and 868 each of helper submit/start/exit events; helper IDs are unique per search. Every go had one legal main-result bestmove. Helper and main exceptions were zero; drained records had no pending helpers. All helper TT counters after generation, clear and resize were zero. No failure artifact was produced.
+
+Per-search distributions cover 217 position/pass observations per arm. Values are median (P10–P90; full range). Corpus main NPS is summed main nodes divided by summed depth-13 main TTD per pass; total NPS is summed total nodes divided by summed drain elapsed time.
+
+| Threads | Main nodes/search | Main TTD ms/search | UCI main NPS/search | Hashfull at depth 13 |
+|---:|---:|---:|---:|---:|
+| 1 | 581,587 (57,130–1,825,906; 7,568–3,475,078) | 1,623 (84.6–4,904.4; 6–11,781) | 398,061 (317,235–786,403; 269,035–1,261,333) | 372 (38–771; 2–925) |
+| 2 | 427,971 (46,466–1,385,665; 6,532–14,119,997) | 1,158 (69.6–3,828.4; 6–50,917) | 383,991 (319,514–757,539; 258,600–1,127,166) | 410 (33–845; 2–1,000) |
+| 4 | 314,927 (41,453–1,066,534; 3,730–7,861,316) | 888 (64.4–3,251; 3–30,557) | 362,383 (292,634–695,027; 242,476–1,243,333) | 514 (47–933; 2–1,000) |
+
+The seven 1T corpus NPS values were 361,341; 361,536; 361,209; 363,216; 361,879; 363,195; and 348,858. Median 361,536 (range 348,858–363,216) is inside the Stage 2 same-JVM range 328,472–367,148, so the Stage 2 ceiling transfers.
+
+| Threads | Main-node work factor, paired | Main-NPS retention, paired | `r_shared` from corpus-pass medians | TTD speedup, paired | Corpus TTD speedup, pass median (range) |
+|---:|---:|---:|---:|---:|---:|
+| 2 | 1.305 (0.865–1.804; 0.246–2.745) | 0.972 (0.922–1.024; 0.739–1.154) | 0.9560 (pass range 0.887–0.988) | 1.259 (0.819–1.782; 0.230–2.824) | 1.132 (0.729–1.362) |
+| 4 | 1.656 (0.976–2.545; 0.322–4.869) | 0.926 (0.872–0.993; 0.656–1.150) | 0.9024 (pass range 0.856–0.927) | 1.537 (0.893–2.459; 0.280–4.756) | 1.448 (1.058–1.574) |
+
+Corpus-pass work factors were 1.184 (0.822–1.378) at 2T and 1.562 (1.236–1.773) at 4T. Pass-by-pass, `TTD_1 / TTD_N = (mainNodes_1 / mainNodes_N) × (mainNPS_N / mainNPS_1)` matched to the recorded precision (maximum absolute difference 0). Work-factor variation is not scheduler-independent.
+
+| Threads | Helper NPS per exit (median; P10–P90; range) | Corpus total NPS/pass (median; range) | Total NPS / same-session 1T NPS (median; range) |
+|---:|---:|---:|---:|
+| 1 | — | 361,318 (348,685–363,029) | 1.000 |
+| 2 | 381,693 (314,546–728,275; 264,174–998,947) | 687,408 (621,151–714,347) | 1.902 (1.781–1.967) |
+| 4 | 360,868 (294,772–706,710; 236,871–978,985) | 1,317,484 (1,232,626–1,329,952) | 3.638 (3.447–3.682) |
+
+Stage 2 same-JVM aggregate NPS was 543,676 (478,764–718,218) at 2T and 1,085,166 (988,178–1,327,235) at 4T. Stage 3 throughput did not fall below either range's lower bound, so no additional production-SMP overhead is detected by aggregate throughput. Hashfull reached 1,000 in 3/217 2T searches and 2/217 4T searches. Median helper TT reads/writes were 658,285/431,133 at 2T and 493,920/309,054 at 4T; these counters are descriptive and do not establish contention.
+
+**Classification:** Stage 3 fixed-depth PASS; structurally sound under the frozen criteria. Median TTD speedup is outside the 1T spread at both thread counts and greater at 4T. `r_shared(2)=0.9560` is above H3 bound 0.652; `r_shared(4)=0.9024` is above 0.673: **H3 not detected at this power**. Mandatory Stage 4/5 triggers did not fire. Five searches reached full hashfull, making Stage 4 optional capacity characterization only; Stage 5 is not indicated by the positive work-factor/TTD result. Stage 6 entry conditions are met but Stage 4/5/6 were not run. The first stopped attempt remains unchanged and its exact event order remains unrecoverable.
+
+### [2026-09-27] Phase 20 — Stage 6 fixed-time qualification completed (Issue #246)
+
+**Run provenance:** Native Windows 11 Pro build 26200, Ryzen 7 7700X (8 cores / 16 logical processors), Azul Zulu JDK 21.0.10+7-LTS, Balanced plan, no affinity. The runner built and completed on code commit `ca6134a29b1732bb165e620cf7fb2987c027ccef`; shaded JAR SHA-256 `1FB768CD7AAAF4D155D3F0039670CDD6D87AF775E760CA612AC2EDB2EC7823BA`. The Maven build and Stage 3/Stage 6 self-checks passed.
+
+The frozen schedule completed all 186 warm-ups and 1,302 measured searches. All 31 reference attempts were recorded: 20 resolved, 7 timed out at the reference watchdog, and 4 had adjacent-depth disagreement. The complete 50-file native output is preserved under `tools/results/phase20-stage6/20260927-044127-892/`; source and preserved copies matched byte-for-byte before the Windows checkout was cleaned. `SHA256SUMS.txt` covers every original file. The timed completion marker's CSV hashes and transcript prefix hash match its frozen target manifest; the full transcript also includes the later reference searches and is covered by the sidecar's final-file hash.
+
+| Threads | Mode | Fixed-time depth contrast (1T noise range) | Agreement contrast bounds | Time contrast (1T noise range) | Result |
+|---:|---|---:|---:|---:|---|
+| 2 | Movetime | +0.258 (+0.097) | [−0.032, +0.032] | +0.110 / 0.260 ms | No qualification |
+| 2 | Clock | +0.258 (+0.097) | [−0.032, +0.032] | +74.295 / 183.553 ms | No qualification |
+| 4 | Movetime | +0.516 (+0.097) | [−0.032, +0.097] | +0.195 / 0.260 ms | No qualification |
+| 4 | Clock | +0.516 (+0.097) | [−0.065, +0.065] | +81.513 / 183.553 ms | No qualification |
+
+Both arms gained fixed-time depth beyond the 1T noise range and neither showed time inflation. The decision failed only the strict no-regression gate: agreement lower bounds were negative. The upper bounds do not meet the preregistered detectable-regression threshold, so SMP was **not shown to regress strength**; it failed to establish the no-regression bound. The unresolved references account for that uncertainty and are retained in the corpus denominator.
+
+**Final Phase 20 classification:** lifecycle correctness passed; Stage 3 fixed-depth work and time-to-depth benefits were established; Stage 6 fixed-time depth gains were observed; decision-quality preservation and playing-strength effect remain unestablished. The preregistered entry condition for the later 2T strength test was not met, and the test was not run. `Threads=1` remains the qualified production/reference setting. Stage 4's optional characterization was omitted, Stage 5 was not indicated, and Stage 7 is a decision only; no further Phase 20 stage remains authorized. Phase 20 is closed.

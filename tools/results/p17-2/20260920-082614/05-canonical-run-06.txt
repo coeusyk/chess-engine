@@ -1,0 +1,38 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+Bench   : depth 13 | hash 16 MB | 31 positions | evaluator Classical | instrumentation off
+   1/31  nodes=731603        depth=13
+   2/31  nodes=5848160       depth=13
+   3/31  nodes=7294          depth=13
+   4/31  nodes=434187        depth=13
+   5/31  nodes=652801        depth=13
+   6/31  nodes=841207        depth=13
+   7/31  nodes=2878418       depth=13
+   8/31  nodes=615198        depth=13
+   9/31  nodes=3192392       depth=13
+  10/31  nodes=1338696       depth=13
+  11/31  nodes=885311        depth=13
+  12/31  nodes=64484         depth=13
+  13/31  nodes=10955         depth=13
+  14/31  nodes=293812        depth=13
+  15/31  nodes=544133        depth=13
+  16/31  nodes=1176303       depth=13
+  17/31  nodes=918691        depth=13
+  18/31  nodes=1488346       depth=13
+  19/31  nodes=2326456       depth=13
+  20/31  nodes=854847        depth=13
+  21/31  nodes=168044        depth=13
+  22/31  nodes=2736923       depth=13
+  23/31  nodes=660712        depth=13
+  24/31  nodes=136331        depth=13
+  25/31  nodes=81744         depth=13
+  26/31  nodes=119061        depth=13
+  27/31  nodes=12241         depth=13
+  28/31  nodes=45590         depth=13
+  29/31  nodes=258022        depth=13
+  30/31  nodes=7507078       depth=13
+  31/31  nodes=4049243       depth=13
+
+Nodes searched: 40878283
+Time  : 121101 ms
+NPS   : 337555
+Eval time: 0.0% | Accumulator-update time: 0.0% | PV evals: 61767 | Cut evals: 45583967
