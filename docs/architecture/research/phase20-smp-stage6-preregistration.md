@@ -139,3 +139,20 @@ At this commit `sprt.ps1` has `NewOptions`/`OldOptions`, appended after its comm
 - Future artifacts under `tools/results/phase20-stage6/<UTC-run-id>/`: environment/options and target manifests, raw transcripts, timed/reference/helper records, paired pass summaries, decisions and failure records.
 
 Highest-risk assumption: the cold corpus at effective move number zero and initial `60+0.6` clocks represents enough of practical time management to justify a later match. It deliberately leaves played-game clock depletion and history unmeasured; the match must supply that evidence. Deeper-reference agreement is an additional imperfect quality proxy, mitigated by confirmation at two deeper depths and explicit uncertainty bounds.
+
+## 11. Recorded Stage 6 outcome (2026-09-27)
+
+The frozen protocol completed on the qualified native Windows 11 Pro build 26200 / Ryzen 7 7700X host, using Azul Zulu OpenJDK 21.0.10+7-LTS, Balanced power plan and no affinity. Run commit: `ca6134a29b1732bb165e620cf7fb2987c027ccef`; shaded JAR SHA-256: `1FB768CD7AAAF4D155D3F0039670CDD6D87AF775E760CA612AC2EDB2EC7823BA`. The run completed 186 warm-ups, all 1,302 measured searches, and all 31 reference attempts. The build and both harness self-checks passed.
+
+| Threads | Mode | `C_depth` / `R_depth` | Agreement contrast bounds | `C_time` / `R_time` | Qualification |
+|---:|---|---:|---:|---:|---|
+| 2 | Movetime | 0.258 / 0.097 | [−0.032, 0.032] | 0.110 / 0.260 ms | No; no-regression gate failed |
+| 2 | Clock | 0.258 / 0.097 | [−0.032, 0.032] | 74.295 / 183.553 ms | No; no-regression gate failed |
+| 4 | Movetime | 0.516 / 0.097 | [−0.032, 0.097] | 0.195 / 0.260 ms | No; no-regression gate failed |
+| 4 | Clock | 0.516 / 0.097 | [−0.065, 0.065] | 81.513 / 183.553 ms | No; no-regression gate failed |
+
+Both thread counts gained fixed-time depth beyond the 1T noise range in both modes, and all time contrasts stayed within the 1T noise range. Qualification failed because every agreement lower bound was below zero. The upper bounds did not meet the preregistered detectable-regression criterion: this run does not show SMP regressed strength; it failed to establish the no-regression bound. Twenty references resolved; eleven remained unresolved: seven watchdog timeouts and four adjacent-depth disagreements.
+
+The entry condition for the later 2T-versus-1T strength test was therefore not met, so that test was not run. This result leaves lifecycle correctness, fixed-depth scaling, time-to-depth performance, and decision-quality preservation as distinct findings: lifecycle gates passed; Stage 3 established fixed-depth and time-to-depth benefits; Stage 6 observed fixed-time depth gains without time inflation; preservation of decision quality remains unestablished. `Threads=1` remains the qualified production/reference setting. With optional Stage 4 omitted, Stage 5 not indicated, and Stage 7 defined as a decision only, Phase 20 is closed under the frozen plan.
+
+The complete native run artifacts are in [`tools/results/phase20-stage6/20260927-044127-892/`](../../../tools/results/phase20-stage6/20260927-044127-892/), with file hashes in `SHA256SUMS.txt`. `timed-complete.txt` hashes the timed phase, including the transcript prefix captured before references began; the frozen target manifest confirms that prefix hash. The full transcript includes the subsequent reference searches and its final-file hash is recorded in `SHA256SUMS.txt`.

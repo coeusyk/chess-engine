@@ -222,3 +222,20 @@ Corpus-pass work factors were 1.184 (0.822–1.378) at 2T and 1.562 (1.236–1.7
 Stage 2 same-JVM aggregate NPS was 543,676 (478,764–718,218) at 2T and 1,085,166 (988,178–1,327,235) at 4T. Stage 3 throughput did not fall below either range's lower bound, so no additional production-SMP overhead is detected by aggregate throughput. Hashfull reached 1,000 in 3/217 2T searches and 2/217 4T searches. Median helper TT reads/writes were 658,285/431,133 at 2T and 493,920/309,054 at 4T; these counters are descriptive and do not establish contention.
 
 **Classification:** Stage 3 fixed-depth PASS; structurally sound under the frozen criteria. Median TTD speedup is outside the 1T spread at both thread counts and greater at 4T. `r_shared(2)=0.9560` is above H3 bound 0.652; `r_shared(4)=0.9024` is above 0.673: **H3 not detected at this power**. Mandatory Stage 4/5 triggers did not fire. Five searches reached full hashfull, making Stage 4 optional capacity characterization only; Stage 5 is not indicated by the positive work-factor/TTD result. Stage 6 entry conditions are met but Stage 4/5/6 were not run. The first stopped attempt remains unchanged and its exact event order remains unrecoverable.
+
+### [2026-09-27] Phase 20 — Stage 6 fixed-time qualification completed (Issue #246)
+
+**Run provenance:** Native Windows 11 Pro build 26200, Ryzen 7 7700X (8 cores / 16 logical processors), Azul Zulu JDK 21.0.10+7-LTS, Balanced plan, no affinity. The runner built and completed on code commit `ca6134a29b1732bb165e620cf7fb2987c027ccef`; shaded JAR SHA-256 `1FB768CD7AAAF4D155D3F0039670CDD6D87AF775E760CA612AC2EDB2EC7823BA`. The Maven build and Stage 3/Stage 6 self-checks passed.
+
+The frozen schedule completed all 186 warm-ups and 1,302 measured searches. All 31 reference attempts were recorded: 20 resolved, 7 timed out at the reference watchdog, and 4 had adjacent-depth disagreement. The complete 50-file native output is preserved under `tools/results/phase20-stage6/20260927-044127-892/`; source and preserved copies matched byte-for-byte before the Windows checkout was cleaned. `SHA256SUMS.txt` covers every original file. The timed completion marker's CSV hashes and transcript prefix hash match its frozen target manifest; the full transcript also includes the later reference searches and is covered by the sidecar's final-file hash.
+
+| Threads | Mode | Fixed-time depth contrast (1T noise range) | Agreement contrast bounds | Time contrast (1T noise range) | Result |
+|---:|---|---:|---:|---:|---|
+| 2 | Movetime | +0.258 (+0.097) | [−0.032, +0.032] | +0.110 / 0.260 ms | No qualification |
+| 2 | Clock | +0.258 (+0.097) | [−0.032, +0.032] | +74.295 / 183.553 ms | No qualification |
+| 4 | Movetime | +0.516 (+0.097) | [−0.032, +0.097] | +0.195 / 0.260 ms | No qualification |
+| 4 | Clock | +0.516 (+0.097) | [−0.065, +0.065] | +81.513 / 183.553 ms | No qualification |
+
+Both arms gained fixed-time depth beyond the 1T noise range and neither showed time inflation. The decision failed only the strict no-regression gate: agreement lower bounds were negative. The upper bounds do not meet the preregistered detectable-regression threshold, so SMP was **not shown to regress strength**; it failed to establish the no-regression bound. The unresolved references account for that uncertainty and are retained in the corpus denominator.
+
+**Final Phase 20 classification:** lifecycle correctness passed; Stage 3 fixed-depth work and time-to-depth benefits were established; Stage 6 fixed-time depth gains were observed; decision-quality preservation and playing-strength effect remain unestablished. The preregistered entry condition for the later 2T strength test was not met, and the test was not run. `Threads=1` remains the qualified production/reference setting. Stage 4's optional characterization was omitted, Stage 5 was not indicated, and Stage 7 is a decision only; no further Phase 20 stage remains authorized. Phase 20 is closed.
