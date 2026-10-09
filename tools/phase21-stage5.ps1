@@ -340,8 +340,8 @@ function Assert-NativeStage5Environment {
 
     $os = Get-CimInstance -ClassName Win32_OperatingSystem
     $cpu = Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1
-    if ($os.Caption -notmatch '^Microsoft Windows 11 Pro$' -or [int]$os.BuildNumber -ne 26200) {
-        throw "Required Windows 11 Pro build 26200; found '$($os.Caption)' build $($os.BuildNumber)."
+    if ($env:COMPUTERNAME -ine 'RENEGADE') {
+        throw "Required benchmark computer RENEGADE; found '$($env:COMPUTERNAME)'."
     }
     if ($cpu.Name -notmatch '^AMD Ryzen 7 7700X(?:\s|$)') { throw "Required Ryzen 7 7700X; found '$($cpu.Name)'." }
 
