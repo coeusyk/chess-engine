@@ -6,6 +6,8 @@ The authoritative run is [20261009T142702733Z](20261009T142702733Z/). Its 25 ori
 
 ## Documented preparation changes
 
+The governing [Phase 21 preregistration](../phase21-direction-and-preregistration.md) and [development entry](../../../../dev-entries/phase-21.md) retain the earlier bounded amendments and complete stage history. The table below records native runner preparation changes; both the preregistered aggregate NPS floor and the user's explicit median NPS floor were enforced.
+
 The frozen production identities remain control `d3a56ffadf0d9151a2b19fba4902a734a99bff96` and candidate `e90d3d4f90b244c46e8bbf75c33222bba7d58003`. No engine implementation or experimental gate changed during these tooling corrections.
 
 | Record | Change and scope |
