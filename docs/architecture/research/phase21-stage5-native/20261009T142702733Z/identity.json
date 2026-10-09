@@ -1,0 +1,51 @@
+{
+  "invoking_branch": "phase/21-zero-window-search",
+  "invoking_head": "0671e1adc18ec1ff647f688c4f406ee961a3441a",
+  "allowed_untracked": ".claude/agent-memory/",
+  "control_commit": "d3a56ffadf0d9151a2b19fba4902a734a99bff96",
+  "candidate_commit": "e90d3d4f90b244c46e8bbf75c33222bba7d58003",
+  "benchrunner_source_sha256_required": "882f5edc5159dba94bb6faefbb456f1a12e77f2798753a6a82d58755c9b1361f",
+  "benchrunner_source_hash_encoding": "UTF-8 with CRLF normalized to LF",
+  "worktrees": {
+    "control": "C:\\Users\\yashk\\AppData\\Local\\Temp\\phase21-stage5-builds-20261009T142702733Z\\control",
+    "candidate": "C:\\Users\\yashk\\AppData\\Local\\Temp\\phase21-stage5-builds-20261009T142702733Z\\candidate"
+  },
+  "build_command": "mvn -B -pl engine-core,engine-uci -am package -DskipTests",
+  "jar_relative_path": "engine-uci\\target\\engine-uci-0.6.0-SNAPSHOT.jar",
+  "jvm_arguments": [
+    "-Xms512m",
+    "-Xmx512m",
+    "-XX:+UseG1GC",
+    "--add-modules",
+    "jdk.incubator.vector"
+  ],
+  "run_order": [
+    "warmup-control-00",
+    "warmup-candidate-00",
+    "measured-control-01",
+    "measured-candidate-01",
+    "measured-control-02",
+    "measured-candidate-02",
+    "measured-control-03",
+    "measured-candidate-03",
+    "measured-control-04",
+    "measured-candidate-04",
+    "measured-control-05",
+    "measured-candidate-05",
+    "measured-control-06",
+    "measured-candidate-06",
+    "measured-control-07",
+    "measured-candidate-07"
+  ],
+  "measurement_protocol": "control warm-up, candidate warm-up, then control/candidate alternating for ordinals 1..7",
+  "elapsed_source": "BenchRunner --bench-raw Time field; excludes build and warm-up work",
+  "nps_floor": 301116,
+  "qnodes": "BenchRunner --bench-raw does not emit qnodes; recorded as unavailable",
+  "control_jar_sha256": "8b31e3bd9a44523f94158b3719b1845845505e9a07af64e1dccf3ae3f77b0222",
+  "candidate_jar_sha256": "64c5efab060f6c8a4ba98d6162af39ab956f8c0c75d8521639d1af9bb5705553",
+  "control_source_commit": "d3a56ffadf0d9151a2b19fba4902a734a99bff96",
+  "candidate_source_commit": "e90d3d4f90b244c46e8bbf75c33222bba7d58003",
+  "control_benchrunner_source_sha256": "882f5edc5159dba94bb6faefbb456f1a12e77f2798753a6a82d58755c9b1361f",
+  "candidate_benchrunner_source_sha256": "882f5edc5159dba94bb6faefbb456f1a12e77f2798753a6a82d58755c9b1361f",
+  "source_tree_status": "clean before and after each build"
+}

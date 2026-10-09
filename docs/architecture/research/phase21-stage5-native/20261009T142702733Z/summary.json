@@ -1,0 +1,57 @@
+{
+  "ControlElapsedMinMs": 68156.0,
+  "ControlElapsedMedianMs": 71795.0,
+  "ControlElapsedMaxMs": 80462.0,
+  "CandidateElapsedMinMs": 61268.0,
+  "CandidateElapsedMedianMs": 62732.0,
+  "CandidateElapsedMaxMs": 67600.0,
+  "CandidateControlMedianElapsedRatio": 0.8737655825614598,
+  "MedianElapsedImprovementPct": 12.623441743854029,
+  "ControlMedianNps": 345150.0,
+  "CandidateMedianNps": 346127.0,
+  "ControlAggregateNps": 339915.0,
+  "CandidateAggregateNps": 342664.0,
+  "CandidateControlMedianNpsRatio": 1.002830653339128,
+  "NpsFloor": 301116,
+  "CandidateAggregateNpsFloorPass": true,
+  "CandidateMedianNpsFloorPass": true,
+  "CandidateMedianElapsedBelowControlMinimum": true,
+  "Gate": "PASS",
+  "DecisionUtc": "2026-10-09T14:54:04.9203476Z",
+  "ControlElapsedMs": [
+    68156,
+    74308,
+    71795,
+    71439,
+    74895,
+    80462,
+    69250
+  ],
+  "ControlNps": [
+    363578,
+    333477,
+    345150,
+    346870,
+    330863,
+    307972,
+    357834
+  ],
+  "CandidateElapsedMs": [
+    64642,
+    62732,
+    61268,
+    61492,
+    67600,
+    61939,
+    63889
+  ],
+  "CandidateNps": [
+    335900,
+    346127,
+    354398,
+    353107,
+    321202,
+    350559,
+    339859
+  ]
+}
