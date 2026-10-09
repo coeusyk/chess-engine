@@ -397,3 +397,9 @@ PowerShell syntax/validation attempts through WSL interop failed before PowerShe
 ### [2026-10-09] Stage 5 machine identity follows computer name and CPU
 
 The user reported Windows build 26300 and removed the fixed Windows edition/build requirement because routine system updates change it. The runner now identifies the benchmark desktop by computer name `RENEGADE` (case-insensitive) and Ryzen 7 7700X CPU. The P16-2 native baseline records `RENEGADE`, matching the current WSL hostname. Windows caption, version and build remain recorded as environment evidence. Native Windows execution checks and the JDK/power-plan protocol requirements remain in place. Stage 5 timing has not run; native PowerShell validation remains pending because interop could not start.
+
+### [2026-10-09] Stage 5 source hash accepts Windows checkout line endings
+
+The user's native invocation stopped at the control corpus hash check before building or benchmarking. Converting the frozen LF source to CRLF reproduces the reported SHA-256 exactly (`02630596d4ceb14e43e13befe971ed8e07ce5c68d33e9588369542b1be682bb1`). The corpus check now hashes UTF-8 text with CRLF normalized to LF, retaining the frozen SHA-256 and rejecting source-content changes. Identity metadata records this normalization; JAR hashes remain byte-exact.
+
+Added a regression fixture for LF/CRLF equivalence and changed-content rejection. Windows PowerShell 5.1 `-ValidateOnly` passed after running interop with sandbox escalation; this also exposed and fixed a quoting issue in the synthetic failed-command fixture. PowerShell 7 stopped at execution policy before loading the script. No build, JVM launch or benchmark was executed. The user requested that all further script execution be left to them. Stage 5 remains unmeasured with no PASS/FAIL decision.

@@ -178,6 +178,12 @@ function Invoke-Stage5ValidationOnly {
     )
     if (($actualOrder -join '|') -ne ($expected -join '|')) { throw 'Frozen arm schedule mismatch.' }
 
+    $lfSourceHash = Get-Stage5SourceSha256 "line one`nline two`n"
+    $crlfSourceHash = Get-Stage5SourceSha256 "line one`r`nline two`r`n"
+    if ($lfSourceHash -ne $crlfSourceHash -or $lfSourceHash -eq (Get-Stage5SourceSha256 "line one`nchanged`n")) {
+        throw 'Source hashing must ignore CRLF conversion and reject changed content.'
+    }
+
     $fixture = @'
 Bench   : depth 13 | hash 16 MB | 31 positions | evaluator Classical | instrumentation off
 Nodes searched: 24780049
@@ -277,10 +283,10 @@ NPS   : 2478004
         $failureLog = Join-Path $validationRoot 'synthetic-failure.log'
         $powerShellPath = (Get-Process -Id $PID).Path
         $processFailureObserved = $false
-        try { $null = Invoke-CheckedNative $powerShellPath @('-NoProfile', '-NonInteractive', '-Command', 'Write-Output "synthetic failure"; exit 7') $validationRoot $failureLog }
+        try { $null = Invoke-CheckedNative $powerShellPath @('-NoProfile', '-NonInteractive', '-Command', 'Write-Output stage5-synthetic-failure; exit 7') $validationRoot $failureLog }
         catch { $processFailureObserved = $true }
         if (-not $processFailureObserved -or -not (Test-Path -LiteralPath $failureLog -PathType Leaf) -or
-            (Get-Content -LiteralPath $failureLog -Raw) -notmatch 'synthetic failure') {
+            (Get-Content -LiteralPath $failureLog -Raw) -notmatch 'stage5-synthetic-failure') {
             throw 'Non-zero command failure was not raised with its output preserved.'
         }
     }
@@ -453,11 +459,20 @@ function Assert-CleanStage5Worktree([string]$Worktree, [string]$Arm) {
     if ($status) { throw "$Arm worktree is dirty: $status" }
 }
 
+function Get-Stage5SourceSha256([string]$Text) {
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [Text.Encoding]::UTF8.GetBytes($Text.Replace("`r`n", "`n"))
+        return ([BitConverter]::ToString($sha256.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
+    }
+    finally { $sha256.Dispose() }
+}
+
 function Assert-CanonicalBenchSource([string]$Worktree, [string]$Arm) {
     $benchFile = Join-Path $Worktree 'engine-uci\src\main\java\coeusyk\game\chess\uci\BenchRunner.java'
-    $hash = (Get-FileHash -LiteralPath $benchFile -Algorithm SHA256).Hash.ToLowerInvariant()
+    $text = Get-Content -LiteralPath $benchFile -Raw -Encoding UTF8
+    $hash = Get-Stage5SourceSha256 $text
     if ($hash -ne $script:BenchRunnerSha256) { throw "$Arm BenchRunner source is not the frozen 31-position corpus (SHA $hash)." }
-    $text = Get-Content -LiteralPath $benchFile -Raw
     $array = [regex]::Match($text, '(?s)private\s+static\s+final\s+String\[\]\s+BENCH_FENS\s*=\s*\{(.*?)\};')
     if (-not $array.Success) { throw "$Arm BENCH_FENS declaration was not found." }
     $fens = [regex]::Matches($array.Groups[1].Value, '"[^"]+"')
@@ -571,6 +586,7 @@ try {
         control_commit = $script:ControlCommit
         candidate_commit = $script:CandidateCommit
         benchrunner_source_sha256_required = $script:BenchRunnerSha256
+        benchrunner_source_hash_encoding = 'UTF-8 with CRLF normalized to LF'
         worktrees = [ordered]@{ control = $controlWorktree; candidate = $candidateWorktree }
         build_command = 'mvn -B -pl engine-core,engine-uci -am package -DskipTests'
         jar_relative_path = 'engine-uci\target\engine-uci-0.6.0-SNAPSHOT.jar'
