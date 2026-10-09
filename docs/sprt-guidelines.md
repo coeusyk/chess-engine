@@ -88,3 +88,9 @@ $$n \approx \frac{(z_\alpha + z_\beta)^2 \cdot 2}{\Delta^2}$$
 Vex's 2,000-game SPRT at $H_0 = 0$, $H_1 = 5 \cdot \sqrt{50}$, $\alpha = 0.05$, $\beta = 0.05$ is correctly calibrated for the sequential likelihood-ratio framework. The test may terminate in as few as 400 games for a large effect or take the full 20,000-game cap for a marginal effect. Both outcomes are statistically valid.
 
 **Never truncate an SPRT early** just because a certain game count has been reached. Let the LLR decide.
+
+## 5. Phase 21 exception, approved 2026-10-09
+
+The generic project policy remains `[Elo0,Elo1]=[0,50]`. The maintainer separately approved **Phase 21 Stage 6 only** with `[0,10]`, alpha=beta=0.05, BonferroniM=1, MinGames=0 and a 20,000-scored-game cap. See the [dated amendment](architecture/research/phase21-direction-and-preregistration.md#15-approved-stage-6-amendment--2026-10-09) and [frozen execution preregistration](architecture/research/phase21-stage6-strength-policy-proposal.md) for source identities, conditions and evidence requirements.
+
+H1 permits promotion after evidence review; H0 rejects the candidate. The preregistered cap without a boundary is INCONCLUSIVE, with no promotion. Setup/protocol faults require investigation. No rescue SPRT or post-hoc bounds change is allowed. This exception changes neither generic runner defaults nor policy for other phases.

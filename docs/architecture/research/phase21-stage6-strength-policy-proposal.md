@@ -1,70 +1,78 @@
-# Phase 21 Stage 6 strength preregistration proposal
+# Phase 21 Stage 6 frozen execution preregistration
 
-Date: 2026-10-09. **Status: proposed; no policy selected and no execution authorized.** Stages 0–5 passed; [Stage 5 evidence](phase21-stage5-native/README.md) is committed. The measured 12.623% elapsed reduction establishes throughput improvement, with no measured Phase 21 Elo or match throughput.
+Approved by the maintainer on **2026-10-09**, before the first game. This replaces the proposal at the same path. **Stage 6 is unstarted.** Preparation and synthetic validation provide no strength evidence.
 
-## Decision to make before any game
+The approved `[0,10]` comparison is a **Phase 21 exception**; the generic `[0,50]` policy remains unchanged. See the [dated amendment](phase21-direction-and-preregistration.md#15-approved-stage-6-amendment--2026-10-09) and [project policy exception](../../sprt-guidelines.md#5-phase-21-exception-approved-2026-10-09). No production code, search parameter or earlier gate changes.
 
-The current [project policy](../../sprt-guidelines.md) remains `[0,50]`, alpha = beta = 0.05, TC `5+0.05`. [Phase 21 sections 9–11](phase21-direction-and-preregistration.md) permit a separately accepted amendment after Stage 5. Choose one policy before game 1. This proposal does not amend the policy or authorize running multiple alternatives, changing bounds after results, or a rescue SPRT.
+## Frozen engines and host
 
-Let Δ denote candidate strength minus control strength under the common conditions below. H0 and H1 are the lower and upper endpoint hypotheses. Acceptance favors one endpoint over the other; it does not establish Δ equals that endpoint, prove Δ exceeds H1, or give a 95% posterior probability. Values inside the interval have no promised classification.
-
-| Bounds | H0 accepted and promotion consequence | H1 accepted and promotion consequence | Nominal errors at the endpoints |
-|---|---|---|---|
-| Existing `[0,50]` | Favors 0 over +50. Reject promotion under the existing large-gain policy. Does not prove zero gain or regression; a smaller positive gain can fail. | Favors +50 over 0. Promote under the existing policy. This is not a lower confidence bound of +50. | α: about 5% accepting H1 at Δ=0. β: about 5% accepting H0 at Δ=+50. |
-| Narrower gain `[0,10]` | Favors 0 over +10. Reject promotion under a positive-gain policy with a narrower target. Small positive effects can still fail. | Favors +10 over 0. Promote under the narrower gain policy; do not claim a demonstrated minimum +10 gain. | α: about 5% accepting H1 at Δ=0. β: about 5% accepting H0 at Δ=+10. |
-| Non-inferiority `[-5,0]` | Favors −5 over 0. Reject promotion under a policy treating a 5-Elo loss as unacceptable. Does not establish a particular regression magnitude. | Favors 0 over −5. Promote a contract repair under a 5-Elo tolerance policy, even without positive-gain evidence. A small true loss can pass. | α: about 5% accepting H1 at Δ=−5. β: about 5% accepting H0 at Δ=0. |
-
-Alpha concerns choosing the upper endpoint when the lower is true; beta concerns the reverse. These are nominal model-based rates, not guaranteed calibration for correlated games or probabilities a verdict is wrong. The cap adds an inconclusive outcome; 5% error targets do not guarantee 95% promotion by the cap. Use `BonferroniM=1` for the single selected comparison.
-
-[Cute Chess 1.5.1's implementation](https://github.com/cutechess/cutechess/blob/v1.5.1/projects/lib/src/sprt.cpp) uses W/L/D counts, regularization and an estimated draw parameter. Its LLR boundaries are `ln(beta/(1-alpha))` and `ln((1-beta)/alpha)`, giving ±2.944439 at 0.05/0.05. [Its interface documents endpoint error interpretation](https://github.com/cutechess/cutechess/blob/v1.5.1/projects/lib/src/sprt.h). Paired openings are retained, but this implementation does not use a pentanomial pair-count likelihood.
-
-## Estimated sample size and runtime, not engine measurements
-
-For scale only, assume independent game scores, 50% draws near equality, variance `V=0.125`, and local logistic score slope `k=ln(10)/1600`. With interval width `w`, set `v=(k*w)^2/V` and `A=ln(19)`. A symmetric Brownian LLR approximation gives uncapped expected games `1.8*A/v` at either true endpoint and `A*A/v` at the true midpoint. This is a sequential approximation, not fixed-sample power or simulated games. [Fishtest's mathematics notes](https://github.com/official-stockfish/fishtest/wiki/Fishtest-mathematics) describe this resource-estimation approach; its normalized-Elo/pentanomial setup is different from this runner's model.
-
-For wall time only, additionally assume 10–20 seconds per complete game and concurrency 6, so `hours = games * seconds_per_game / (6*3600)`. Neither that game duration nor the assumed draw rate has been measured for this comparison.
-
-| Bounds | Expected games if true Δ is an endpoint | Expected games if true Δ is the midpoint | Estimated hours at an endpoint / midpoint |
-|---|---:|---:|---|
-| `[0,50]` | ~128 at 0 or +50 | ~209 at +25 | 0.06–0.12 / 0.10–0.19 |
-| `[0,10]` | ~3,199 at 0 or +10 | ~5,233 at +5 | 1.48–2.96 / 2.42–4.85 |
-| `[-5,0]` | ~12,795 at −5 or 0 | ~20,931 at −2.5 | 5.92–11.85 / 9.69–19.38 uncapped |
-
-At corresponding endpoints, widths 10 and 5 cost approximately 25× and 100× relative to width 50. These are not runtime ratios at an arbitrary shared Δ. Large effects can stop sooner. Draw rate, pair covariance, fitted nuisance parameters and overhead can change the estimates; Stage 5's time reduction supplies none of these match measurements.
-
-Propose the existing **20,000-game cap for all three alternatives**, with no minimum-game barrier. Reaching it without a boundary is **INCONCLUSIVE**, with no promotion. It corresponds to 9.26–18.52 hours under the assumed game-duration range. In particular, the non-inferiority midpoint expectation already exceeds this cap. Do not stop at an estimated game count or relabel an interruption as H0.
-
-## Unchanged engines and common proposed match conditions
-
-| Arm | Exact production commit | Recorded Stage 5 JAR SHA-256 |
-|---|---|---|
-| OLD/control | `d3a56ffadf0d9151a2b19fba4902a734a99bff96` | `8b31e3bd9a44523f94158b3719b1845845505e9a07af64e1dccf3ae3f77b0222` |
-| NEW/candidate | `e90d3d4f90b244c46e8bbf75c33222bba7d58003` | `64c5efab060f6c8a4ba98d6162af39ab956f8c0c75d8521639d1af9bb5705553` |
-
-Stage 5 cleanup removed those JARs. A rebuild can change ZIP bytes; these hashes remain provenance. After policy acceptance, build these exact commits in isolated native worktrees with Zulu 21.0.10+7-LTS/Maven 3.9.16. Verify clean sources, freeze new Stage 6 JAR hashes before games, and preserve the match binaries. Do not substitute the branch tip or Phase 17 candidate.
-
-The following conditions are common to every bounds alternative and await acceptance with the chosen policy:
-
-| Condition | Exact proposed value |
+| Identity | Required value |
 |---|---|
-| Host | Native Windows PowerShell on `RENEGADE`, Ryzen 7 7700X; Balanced plan, full affinity, no competing CPU workload. Record OS build without pinning it. |
-| Match tool | Cute Chess CLI **1.5.1**, record executable path, version and SHA-256 before launch. |
-| JVM | Same native Java executable for both arms; `--add-modules jdk.incubator.vector -jar <frozen-arm-jar>`, as constructed by `sprt.ps1`. No inherited JVM option variables, JFR, agents or diagnostic overrides. The generic runner does not forward Stage 5's heap flags. |
-| Time and parallelism | `TC=5+0.05`, `Concurrency=6`, `EngineThreads=1`; fixed throughout, following the historical Phase 17 host configuration. |
-| Symmetric UCI options | `Hash=16`, `PawnHashSize=1`, `EvalType=Classical`, `MultiPV=1`, `Contempt=0`, `OwnBook=false`, `SyzygyOnline=false`, empty `SyzygyPath`. All other defaults unchanged. |
-| Openings | `tools/noob_3moves.epd`, 150,932 positions, byte SHA-256 `2011193b4854e9a8cfdc05312ca2dbaffa6ceae3abbdee20e2ead2a18a603347`; `format=epd order=random plies=4`, `-repeat` for swapped colors. Local and native copies currently match this hash. Archive the corpus before games; it is currently gitignored. |
-| Adjudication | `-resign movecount=5 score=400`; `-draw movenumber=40 movecount=8 score=10`, unchanged from the existing runner. |
-| Statistical settings | Explicit selected `Elo0/Elo1`, `Alpha=0.05`, `Beta=0.05`, `BonferroniM=1`, `MinGames=0`, `MaxGames=20000`. |
-| Evidence | Unique native run directory, frozen manifests, complete authoritative log/PGN, final LLR/verdict, W/L/D and paired-opening/color audit. Preserve cancellations after a boundary separately from scored games. |
+| OLD/control | `d3a56ffadf0d9151a2b19fba4902a734a99bff96` |
+| NEW/candidate | `e90d3d4f90b244c46e8bbf75c33222bba7d58003` |
+| Execution | Native Windows PowerShell terminal on `RENEGADE`, AMD Ryzen 7 7700X; no WSL/interop match execution |
+| Resources | Balanced power plan, full hardware CPU affinity, no competing CPU workload. Record Windows caption/version/build; routine OS updates are accepted. |
+| Build/runtime | Azul Zulu JDK `21.0.10+7-LTS`, Maven `3.9.16`; same native toolchain for both isolated detached worktrees. Maven must use the verified JDK. |
+| Match tool | `cutechess-cli 1.5.1`; record executable path, version and SHA-256. Set `CUTECHESS` to its native executable if absent from PATH. |
 
-Use [sprt.ps1](../../../tools/sprt.ps1) with identical NEW/OLD options and explicit settings. Its defaults are `[0,10]`, `60+0.6`, concurrency 2 and UCI Hash 64 MB. It permits a missing opening file, does not enforce native identity or frozen commits/hashes, and `MinGames` is not a minimum-stop barrier. Verify prerequisites before launch. It exposes no opening-seed parameter; retain actual PGN opening order. This proposal changes no tooling.
+Build both exact commits in fresh native worktrees. Require clean sources before/after building and before launch; reject pre-existing module outputs. Use Maven `-B -pl engine-core,engine-uci -am package -DskipTests`. Validate JAR contents/main class, copy each executable JAR into the unique evidence directory, verify the copy, and freeze its byte SHA-256 before game 1. Never substitute the branch tip. The invoking checkout must be clean, allowing only unrelated untracked `.claude/agent-memory/`.
 
-Stop at a valid LLR boundary or the declared cap. Keep all scored games and log any crash, illegal move, timeout, forfeit or recovery. A setup/protocol fault requires a validity audit; an unfavorable score alone cannot invalidate the run. Do not silently restart, selectively discard games, change concurrency or choose new bounds afterward.
+Stage 5 binaries were cleaned up. Their [archived hashes](phase21-stage5-native/README.md) remain provenance, not expected byte hashes for rebuilt ZIP/JAR files. Native preparation will record the new Stage 6 JAR hashes; none are claimed in this tooling commit.
 
-## Recommendation, pending the user's decision
+## Frozen match and decision
 
-I recommend **`[0,10]` with alpha = beta = 0.05**: retain a positive-gain policy, with a narrower target and longer workload. A genuine gain inside the interval can still fail. Choose `[-5,0]` only if tolerating a small possible strength loss for the contract repair is an explicit policy; throughput alone does not justify that tolerance.
+| Setting | Exact value |
+|---|---|
+| SPRT | `Elo0=0`, `Elo1=10`, `Alpha=0.05`, `Beta=0.05`, `BonferroniM=1` |
+| Limits | `MinGames=0`, `MaxGames=20000` scored games; no minimum-stop barrier |
+| Time/parallelism | `TC=5+0.05`, `Concurrency=6`, `EngineThreads=1` |
+| Both arms' UCI options | `Threads=1`, `Hash=16`, `PawnHashSize=1`, `EvalType=Classical`, `MultiPV=1`, `Contempt=0`, `OwnBook=false`, `SyzygyOnline=false`, empty `SyzygyPath`; all other defaults unchanged |
+| JVM arguments | Same Java executable; `--add-modules jdk.incubator.vector -jar <arm-jar>`. No inherited `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`, `_JAVA_OPTIONS` or `MAVEN_OPTS`; no instrumentation, JFR, agents or diagnostic overrides. |
+| Openings | `tools/noob_3moves.epd`, SHA-256 `2011193b4854e9a8cfdc05312ca2dbaffa6ceae3abbdee20e2ead2a18a603347`; archive verified bytes before launch |
+| Opening settings | `format=epd`, `order=random`, `plies=4`, `-repeat` swapped colors. Existing runner exposes no seed parameter; retain actual opening order in PGN. |
+| Resignation | `-resign movecount=5 score=400` |
+| Draw adjudication | `-draw movenumber=40 movecount=8 score=10` |
 
-[Phase 17](phase17-closure.md) validly accepted H0 after 0W/13L/1D despite larger throughput gains. [Phase 19](phase19-pvs-diagnostic-report.md) found a verification hole without proving it solely caused that result or authorizing a rescue test. Neither predicts Phase 21 Elo. The archived Phase 17 preregistration was inspected at commit `2087383dbef2ee345811f67919ae7b39058b67bb`, path `docs/architecture/research/phase17-p17-4-strength-preregistration.md`.
+Let Δ be candidate minus control Elo under these conditions. H0 acceptance favors 0 over +10 and **rejects the candidate**; it does not prove exactly zero gain or a regression. H1 acceptance favors +10 over 0 and makes the candidate **eligible for promotion after evidence review**; it does not demonstrate a minimum +10 gain. Effects inside the interval have no promised classification.
 
-**Before execution:** the user chooses one policy and accepts common conditions/cap. Record any Phase 21 exception in `docs/sprt-guidelines.md` before games, then prepare the exact native command. Until acceptance, `[0,50]` remains governing, no alternative is selected, and Stage 6 is unstarted.
+Alpha is the nominal probability of accepting H1 when Δ=0; beta is the nominal probability of accepting H0 when Δ=+10 under the test model. Neither is a posterior probability that the verdict is wrong. Cute Chess 1.5.1 uses W/L/D likelihood with an estimated draw parameter, not a pentanomial pair likelihood. LLR boundaries are `ln(0.05/0.95)` and `ln(0.95/0.05)`, approximately **−2.944439 and +2.944439**; logs round them.
+
+Stop at an accepted boundary. At **20,000 scored games without a boundary**, report **INCONCLUSIVE**, with no promotion. Setup/protocol faults stop the owned match tree for investigation. An interruption or incomplete evidence is not H0 and cannot authorize promotion. No selective discard, automatic rerun, rescue SPRT or post-hoc change of bounds, options, concurrency or cap.
+
+The existing runner's `-recover` argument is retained. The wrapper watches the flushed authoritative log every 200 ms and stops its owned child tree on detected crashes, disconnections, timeouts, forfeits, illegal moves or option errors. Recovery may begin before observation; it remains fault evidence and cannot yield a valid promotion. Boundary cancellations are recorded separately from scored games. Color/pair audits retain all scored games, including an incomplete pair at a boundary; they do not alter Cute Chess's LLR.
+
+## Native workflow and evidence
+
+From a clean native Windows checkout of `phase/21-zero-window-search`, run harmless fixture validation:
+
+```powershell
+.\tools\phase21-stage6.ps1 -ValidateOnly
+```
+
+The **eventual** native execution command is:
+
+```powershell
+.\tools\phase21-stage6.ps1 -ExecuteNative
+```
+
+Execution mode verifies host/tool versions, corpus, sources and binaries, prepares generic runner arguments without launching Cute Chess, independently checks them against this registration, and freezes the input manifests. It requires the operator to type `RUN-PHASE21-STAGE6` after confirming an idle host. Input manifests, binaries and executable identities are rechecked before one match starts. Do not invoke execution mode from WSL. This preparation task stops before that command and before game 1.
+
+Retain evidence under `tools/results/phase21-stage6/<UTC timestamp>-<unique suffix>/`:
+
+- Approved configuration; environment/tool identity and version logs; source commits/clean-state verification; checkout/build logs; both executable JARs; Java/Maven/Cute Chess executable hashes; archived opening corpus/hash.
+- `prepared-arguments.json`, `runner-parameters.json`, actual `arguments.json`, script/source identities and launch confirmation. Parameter/prepared-argument hashes are frozen before confirmation and rechecked before launch; the runner refuses an actual argument mismatch.
+- Full authoritative `match.log`, `match.pgn`, console streams, runner transcript, owned-process identity and stop log when applicable.
+- `summary.json`: candidate W/L/D, scored/cancelled/partial counts, final LLR/bounds, accepted endpoint, native exit code, verdict, fault lines and audit issues. `pair-audit.csv` and summary retain candidate results by color, completed opening pairs and unpaired scored games.
+- `SHA256SUMS` for all available run files. Partial outputs survive setup failure, match fault or ordinary interruption. Cleanup removes only invocation-owned worktrees, without force; dirty/partial worktrees remain. Frozen binaries and run artifacts remain. Killing the terminal or an OS failure can prevent final summary/checksum generation; preserve raw evidence and investigate without an automatic restart.
+
+No automatic promotion. Review source/JAR identities, full configuration, log/PGN agreement, color/pair balance, cancellations and any crashes, forfeits, timeouts or interruptions. `H1_ACCEPTED` requires a finished match, zero exit code, consistent evidence and no detected fault. Uncertain validity requires investigation, not score reinterpretation.
+
+## Validation and remaining native checks
+
+`-ValidateOnly` uses inert executable files, synthetic logs/PGNs, mocked owned-process/worktree cleanup, and harmless `cmd.exe` stdout/stderr/nonzero-exit checks. It never executes Cute Chess, Java, Maven, builds or games. Windows PowerShell 5.1 and PowerShell 7 have run fixtures through WSL interop; this validates tooling, not experimental performance or strength.
+
+The generic runner lacked preparation, exact argument freeze, immediate log flush and native exit-code rejection; these are now supported without changing match arguments/defaults. Its defaults still differ from project policy; missing openings remain optional generically; `MinGames` is not a minimum-stop barrier. The Phase 21 wrapper supplies/verifies all approved settings, requires the opening hash, and uses approved `MinGames=0`.
+
+Remaining checks in the maintainer's native terminal: actual host/JDK/Maven/Cute Chess identity, clean isolated builds and executable JAR hashes/contents, the prepared native manifest, and live process-tree/interrupt behavior. No installed Cute Chess executable has been launched during preparation, even for `--version`.
+
+The earlier proposal estimated approximately 3,199 games at a true endpoint and 5,233 at the midpoint, assuming independent scores, 50% draws and a local logistic approximation. At an assumed 10–20 seconds/game and concurrency 6, that is roughly 1.5–3 or 2.4–4.9 hours; the cap corresponds to 9.3–18.5 hours. These are illustrative sequential/runtime estimates, **not measured Phase 21 game data or stopping targets**. Stage 5 throughput does not predict Elo or match duration.

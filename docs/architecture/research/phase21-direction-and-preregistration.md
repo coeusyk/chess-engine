@@ -315,3 +315,13 @@ Stage 0 and Stage 1 together, in two commits on `phase/21-zero-window-search`:
 2. Add the Stage 1 counters (opt-in, allocation-free, following the `lmrApplications` pattern), prove the node totals and five-position reference are unchanged, and record the per-position and aggregate 2x2 table plus the later-sibling outcome split.
 
 No search-behavior change in either commit. Commit Stage 0 separately from Stage 1 instrumentation, push the Phase 21 branch, and verify local HEAD equals origin with a clean tracked tree. Leave unrelated `.claude/agent-memory/` untouched. Stop after Stage 1. Do not implement PVS, change the alphaBeta signature, run native timing, or run games or SPRT. A Stage 1 PASS records eligibility for later work; it does not authorize Stage 2.
+
+## 15. Approved Stage 6 amendment — 2026-10-09
+
+After Stages 0–5 passed, the maintainer explicitly approved **one Phase 21 SPRT with `[Elo0,Elo1]=[0,10]`, alpha=beta=0.05, BonferroniM=1, MinGames=0 and MaxGames=20000**. This is a Phase 21 exception; the generic project `[0,50]` policy remains unchanged. Preceding planning/status statements describe the original registration; the development entry records completed stages.
+
+The [frozen Stage 6 execution preregistration](phase21-stage6-strength-policy-proposal.md) supersedes its proposal and records all approved conditions: unchanged control `d3a56ffadf0d9151a2b19fba4902a734a99bff96`, candidate `e90d3d4f90b244c46e8bbf75c33222bba7d58003`, TC `5+0.05`, concurrency 6, one engine thread, symmetric approved UCI options, exact opening corpus/adjudication, native `RENEGADE`/Ryzen 7 7700X host, Balanced/full affinity, Zulu 21.0.10+7-LTS, Maven 3.9.16 and Cute Chess 1.5.1. Record Windows build without pinning it.
+
+H1 permits promotion only after evidence review. H0 rejects the candidate. At 20,000 scored games without a boundary, report INCONCLUSIVE with no promotion. Setup/protocol faults stop execution for investigation. No rescue SPRT, bounds change or selective discard. Freeze JAR hashes and manifests and preserve complete log/PGN evidence as specified.
+
+The current task prepares the native workflow and harmless validation only. **Stage 6 remains unstarted; no game, SPRT or additional benchmark is executed during preparation.** Production code and earlier gates remain unchanged.
