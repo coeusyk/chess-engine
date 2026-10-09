@@ -376,3 +376,20 @@ Stage 3 node increases at indexes 1, 3, 8, 25 and 30 were +244,241, +250,584, +1
 Implementation of `tools/phase21-stage5.ps1` was in progress when the user requested an immediate stop. The current draft is preserved for review; implementation and validation are incomplete, and it is not ready for a native timing session. No further runner changes were made after the stop request.
 
 PowerShell syntax/validation attempts through WSL interop failed before PowerShell started (`UtilBindVsockAnyPort: socket failed 1`). They provide no script-validation evidence. No native builds, semantic preflights, warm-ups, measured benchmarks, games or SPRT were run. Stage 5 has no measurement or PASS/FAIL decision; Stage 4 remains the last completed stage.
+
+### [2026-10-09] Stage 5 runner preparation completed; native validation pending
+
+**Built:**
+
+- Completed the existing `tools/phase21-stage5.ps1` draft. The schedule now matches the frozen workload: one discarded warm-up per arm followed by seven measured runs per arm, alternating control/candidate. Removed the two extra benchmark preflights; node totals are checked by the warm-ups and every later invocation.
+- The runner requires native Windows 11 Pro build 26200, Ryzen 7 7700X, Balanced power plan, and Azul Zulu JDK 21.0.10+7-LTS. It rejects WSL, inherited JVM option variables, dirty worktrees, unexpected pre-existing build outputs, and nonmatching benchmark source.
+- Control and candidate build from detached worktrees at `d3a56ffadf0d9151a2b19fba4902a734a99bff96` and `e90d3d4f90b244c46e8bbf75c33222bba7d58003`, using the same Maven and Java executables. The run directory records source identities, JAR hashes, environment, build logs, raw outputs, planned order, per-run rows and summary. Reported elapsed time comes from the engine's raw `Time` field, outside build and warm-up work.
+- Verified both production commits contain the same canonical `BenchRunner.java` blob, SHA-256 `882f5edc5159dba94bb6faefbb456f1a12e77f2798753a6a82d58755c9b1361f`; the candidate commit object is present locally.
+- Cleanup removes only worktrees created by this invocation, without force, and removes the temporary parent only when empty. A dirty or partial worktree is left in place for inspection; run artifacts remain in the unique results directory.
+- Added `-ValidateOnly` fixtures for parser acceptance and rejection, exact node totals, schedule cardinality/order, elapsed summaries and ratios, median and aggregate NPS floors, nonempty-directory preservation, and failed-command output retention. The gate retains the preregistered elapsed bound, the requested candidate median NPS floor, and the repository aggregate NPS floor.
+
+**Validation:**
+
+- Native Windows PowerShell 5.1 and PowerShell 7 interop were both attempted with `-ValidateOnly`. Both failed before PowerShell started with `UtilBindVsockAnyPort: socket failed 1`, so the PowerShell parser and fixtures have not executed in this session. Source-level review confirms the validation branch returns before any native host probe, Maven build, Java launch or benchmark.
+- A context-mode static synthetic audit passed for the frozen constants and schedule, parser fixture shape, elapsed/NPS calculations and gate boundaries, cleanup guard, and failure-log ordering. This is not a PowerShell parse or runtime result.
+- No native builds, timing runs, games or SPRT were run. Stage 5 has no measurement or PASS/FAIL decision; Stage 4 remains the last completed stage. Run `.\tools\phase21-stage5.ps1 -ValidateOnly` in native PowerShell before the measurement command.
