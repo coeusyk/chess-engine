@@ -433,3 +433,28 @@ Reused `tools/sprt.ps1` match construction and stopping logic. Added opt-in prep
 An independent read-only review found five gaps, all fixed and re-reviewed: PowerShell 5 stderr handling, hardware-based affinity mask, winner-on-time/stall fault wording, immutable parameter/prepared-argument manifests across confirmation, and protecting final evidence reads so cleanup/checksums still run after a read error. WSL static checks verified the corpus hash, documentation file links, whitespace and unchanged engine/Stage 5 archive scope. No additional blocker was found.
 
 **Remaining native checks:** actual host/tool versions, clean isolated native builds and resulting JAR identities, prepared native arguments, and live child-process/interrupt behavior. These have not run as experimental evidence. Native commands are `.\tools\phase21-stage6.ps1 -ValidateOnly`, then eventually `.\tools\phase21-stage6.ps1 -ExecuteNative`; execution asks for `RUN-PHASE21-STAGE6` before game 1. Hard terminal/OS termination can prevent final summary generation; preserve raw evidence for review. **Stage 6 remains unstarted.** No games, SPRT, native builds, extra benchmarks, production changes or search-parameter changes were performed; `.claude/agent-memory/` was untouched.
+
+### [2026-10-11] Phase 21 closure and v0.6.0 release preparation
+
+**Built:**
+
+- Added the [Phase 21 closure](../docs/architecture/research/phase21-closure.md) and v0.6.0 release notes. The closure records the source-backed PV/window contract, implementation and regression coverage, all stage gates, exact candidate source identity, and the accepted provenance limitation.
+- Reworked the release workflow to validate an existing stable version tag and module POMs, verify source ancestry, build and run CI regression groups, smoke-test the exact UCI JAR, generate a checksum and source manifest, and create or resume a draft release.
+
+**Decisions Made:**
+
+- Keep all four Maven modules on v0.6.0 for release, then move development to 0.6.1-SNAPSHOT.
+- Keep throughput and strength as separate measurements. Stage 5 passed with 12.6234% lower median elapsed time. Stage 6 accepted H1 under [0,10], alpha = beta = 0.05, after 13,118 scored games; the estimate was +6.6 +/- 4.6 Elo. H1 does not prove a minimum +10 Elo gain.
+- Record the first attempt's setup fault separately from the successful-run record. The maintainer's later statement was: “The first SPRT attempt encountered an error, so I reran it.” Missing records prevent reconstruction of the exact fault and any unrecorded outcomes. This is not machine proof that no earlier game finished. The maintainer accepted the limitation and authorized release preparation.
+- Preserve evidence commit 8085d99 and its full history unchanged.
+
+**Broke / Fixed:**
+
+- The old release workflow could select an ambiguous JAR, ignored release type for SNAPSHOT versions, directly pushed version commits to develop with broad staging, and could leave partially published releases. The tag-based workflow has no source-branch push or automatic publication; failed uploads leave a draft that can be resumed.
+
+**Measurements:**
+
+- Stage 3: 21,713,284 candidate main nodes versus 24,780,049 control nodes; 48,479,879 versus 60,071,833 quiescence nodes; candidate PVs passed legality checks.
+- Stage 4: 8 of 31 depth-13 best moves changed; 32 deeper searches completed with legal PVs, and all 16 frozen depth-13 PVs replayed legally. No correctness defect was exposed.
+- Stage 5: throughput gate PASS, 12.6234% median elapsed-time improvement.
+- Stage 6: 4,080 wins, 3,829 losses, 5,209 draws; 13,118 scored games; LLR 2.97 above the 2.94 upper boundary; H1 accepted. Five cancellations were not scored.

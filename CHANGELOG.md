@@ -5,6 +5,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.0] — 2026-10-11
+
+### Search correctness and performance
+
+- Phase 21 derives PV-node identity from the active alpha-beta window and applies zero-window probes with full-depth verification and PV-owned re-searches. Regression coverage includes root fail-high, singular-search bounds, LMR verification, and legal PVs.
+- Other search fixes address a lock-free transposition-table read race, per-ply move-order metadata, singular-search result semantics, root fail-high termination, and quiescing SMP helpers before table mutations.
+- Native fixed-depth Stage 5 passed its throughput gate with a 12.6234% median elapsed-time improvement.
+
+### Evaluation and engine tooling
+
+- Added optional NNUE evaluation through the EvalType and EvalFile UCI options. Classical evaluation remains the default.
+- Expanded the reproducible self-play and VSPR training-data pipeline, with corpus and run-manifest validation.
+- Hardened shared transposition-table and helper-thread behavior for SMP searches, with additional regression and qualification coverage.
+
+### Strength qualification
+
+- Stage 6 accepted H1 under SPRT bounds [0,10] with alpha = beta = 0.05 after 13,118 scored games: 4,080 wins, 3,829 losses, and 5,209 draws. LLR was 2.97; estimated Elo was +6.6 +/- 4.6. H1 acceptance does not prove a minimum +10 Elo gain.
+- The first attempt's setup fault and missing records leave its exact failure and any unrecorded outcomes unreconstructable. The maintainer's retrospective statement and accepted limitation are documented in the [Phase 21 closure](docs/architecture/research/phase21-closure.md).
+
+### Runtime and use
+
+- Requires Java 21 or newer. Download engine-uci-0.6.0.jar from the GitHub release assets and launch it with java -jar engine-uci-0.6.0.jar. A UCI client can send uci and isready; the engine answers with uciok and readyok.
+- NNUE users can select EvalType=NNUE and set EvalFile to a compatible network. The standard UCI workflow and Classical default remain available.
+
 ## [0.5.7] — Phase 14: Eval Optimization — 2026-07-03
 
 ### Search — SPRT-Validated Strength Gains
