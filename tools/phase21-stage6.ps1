@@ -51,7 +51,7 @@ function Get-Stage6Environment([string]$Repository, [string]$Output) {
     $os=Get-CimInstance Win32_OperatingSystem; $cpu=Get-CimInstance Win32_Processor | Select-Object -First 1
     $proc=Get-Process -Id $PID
     $java=(Get-Command java.exe -CommandType Application).Source
-    $maven=(Get-Command mvn -CommandType Application).Source
+    $maven=(Get-Command mvn -CommandType Application | Select-Object -First 1).Source
     $cute=if ($env:CUTECHESS) { (Resolve-Path -LiteralPath $env:CUTECHESS).Path } else { (Get-Command cutechess-cli.exe -CommandType Application).Source }
     foreach ($path in @($java,$maven,$cute)) { if ($path -notmatch '^[A-Za-z]:\\' -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Non-native or missing tool: $path" } }
     foreach ($name in @('JAVA_TOOL_OPTIONS','JDK_JAVA_OPTIONS','_JAVA_OPTIONS','MAVEN_OPTS')) {
