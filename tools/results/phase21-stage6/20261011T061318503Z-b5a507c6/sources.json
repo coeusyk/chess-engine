@@ -1,0 +1,16 @@
+[
+  {
+    "Arm": "control",
+    "Commit": "d3a56ffadf0d9151a2b19fba4902a734a99bff96",
+    "Jar": "C:\\Users\\yashk\\WorkDir\\Projects\\ChessEngine\\chess-engine\\tools\\results\\phase21-stage6\\20261011T061318503Z-b5a507c6\\control.jar",
+    "JarSha256": "b54ed03dc6960352c299927a405c89a9b550b9583079aa6bcf883e4c1dc014f2",
+    "SourceClean": true
+  },
+  {
+    "Arm": "candidate",
+    "Commit": "e90d3d4f90b244c46e8bbf75c33222bba7d58003",
+    "Jar": "C:\\Users\\yashk\\WorkDir\\Projects\\ChessEngine\\chess-engine\\tools\\results\\phase21-stage6\\20261011T061318503Z-b5a507c6\\candidate.jar",
+    "JarSha256": "4018a032ca64b80b588a9d0912f5fdac366424089c6750a08c2ef6723665d875",
+    "SourceClean": true
+  }
+]

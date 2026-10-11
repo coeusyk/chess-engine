@@ -1,0 +1,25 @@
+{
+  "ControlCommit": "d3a56ffadf0d9151a2b19fba4902a734a99bff96",
+  "CandidateCommit": "e90d3d4f90b244c46e8bbf75c33222bba7d58003",
+  "OpeningSha256": "2011193b4854e9a8cfdc05312ca2dbaffa6ceae3abbdee20e2ead2a18a603347",
+  "Elo0": 0,
+  "Elo1": 10,
+  "Alpha": 0.05,
+  "Beta": 0.05,
+  "BonferroniM": 1,
+  "MinGames": 0,
+  "MaxGames": 20000,
+  "TC": "5+0.05",
+  "Concurrency": 6,
+  "EngineThreads": 1,
+  "Options": [
+    "Hash=16",
+    "PawnHashSize=1",
+    "EvalType=Classical",
+    "MultiPV=1",
+    "Contempt=0",
+    "OwnBook=false",
+    "SyzygyOnline=false",
+    "SyzygyPath="
+  ]
+}

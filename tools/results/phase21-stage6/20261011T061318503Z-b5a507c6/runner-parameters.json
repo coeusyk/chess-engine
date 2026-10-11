@@ -1,0 +1,40 @@
+{
+  "ArgumentManifestPath": "C:\\Users\\yashk\\WorkDir\\Projects\\ChessEngine\\chess-engine\\tools\\results\\phase21-stage6\\20261011T061318503Z-b5a507c6\\arguments.json",
+  "NewOptions": [
+    "Hash=16",
+    "PawnHashSize=1",
+    "EvalType=Classical",
+    "MultiPV=1",
+    "Contempt=0",
+    "OwnBook=false",
+    "SyzygyOnline=false",
+    "SyzygyPath="
+  ],
+  "EngineThreads": 1,
+  "LogPath": "C:\\Users\\yashk\\WorkDir\\Projects\\ChessEngine\\chess-engine\\tools\\results\\phase21-stage6\\20261011T061318503Z-b5a507c6\\match.log",
+  "Elo0": 0,
+  "MaxGames": 20000,
+  "Beta": 0.05,
+  "ExpectedArgumentManifestPath": "C:\\Users\\yashk\\WorkDir\\Projects\\ChessEngine\\chess-engine\\tools\\results\\phase21-stage6\\20261011T061318503Z-b5a507c6\\prepared-arguments.json",
+  "New": "C:\\Users\\yashk\\WorkDir\\Projects\\ChessEngine\\chess-engine\\tools\\results\\phase21-stage6\\20261011T061318503Z-b5a507c6\\candidate.jar",
+  "BonferroniM": 1,
+  "MinGames": 0,
+  "Elo1": 10,
+  "OldOptions": [
+    "Hash=16",
+    "PawnHashSize=1",
+    "EvalType=Classical",
+    "MultiPV=1",
+    "Contempt=0",
+    "OwnBook=false",
+    "SyzygyOnline=false",
+    "SyzygyPath="
+  ],
+  "TC": "5+0.05",
+  "Alpha": 0.05,
+  "OpeningsFile": "C:\\Users\\yashk\\WorkDir\\Projects\\ChessEngine\\chess-engine\\tools\\results\\phase21-stage6\\20261011T061318503Z-b5a507c6\\noob_3moves.epd",
+  "Concurrency": 6,
+  "Tag": "phase21-stage6",
+  "PgnPath": "C:\\Users\\yashk\\WorkDir\\Projects\\ChessEngine\\chess-engine\\tools\\results\\phase21-stage6\\20261011T061318503Z-b5a507c6\\match.pgn",
+  "Old": "C:\\Users\\yashk\\WorkDir\\Projects\\ChessEngine\\chess-engine\\tools\\results\\phase21-stage6\\20261011T061318503Z-b5a507c6\\control.jar"
+}
