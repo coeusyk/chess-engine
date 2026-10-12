@@ -14,8 +14,11 @@ function Get-ReleaseSprtConfig {
         BaselineSha256 = 'bc41c91b0d3b4c20f6a334ff3f0cc2cf5c04e6820b817b1cfd46e62a640663d3'
         OpeningRelativePath = 'docs/architecture/research/release-strength-sprt-v0.5.7-v0.6.0/openings-v1.epd'
         OpeningSha256 = '32a2dc9b6ee1fee14a44ebb915441a2401e54276f75424804fe70f7f48354e1d'
+        SmokeOpeningRelativePath = 'docs/architecture/research/release-strength-sprt-v0.5.7-v0.6.0/openings-smoke-v1.epd'
+        SmokeOpeningSha256 = '51ed4dc523be6e29c28c6693ad6022478b142465b699df3397c53537cd6ca195'
+        SmokeGames = 20
         PreregistrationRelativePath = 'docs/architecture/research/release-strength-sprt-v0.5.7-v0.6.0/preregistration.md'
-        PreregistrationSha256 = '9eeeef6d6b232f03d8466988556119c0008ca420341ee145288facdc970612b1'
+        PreregistrationSha256 = 'dc6c592737614ee746c175427fee532b74164182053e95da559caf03958efde3'
         Elo0 = 0; Elo1 = 20; Alpha = 0.05; Beta = 0.05; BonferroniM = 1
         MinGames = 0; MaxGames = 20000; TC = '5+0.05'; Concurrency = 6; EngineThreads = 1
         OpeningOrder = 'sequential'
@@ -26,22 +29,24 @@ function Get-ReleaseSprtConfig {
     }
 }
 
-function Get-ReleaseSprtParameters([string]$Directory, [string]$Openings) {
+function Get-ReleaseSprtParameters([string]$Directory, [string]$Openings, [switch]$Smoke) {
     $config = Get-ReleaseSprtConfig
     $parameters = @{
         New = Join-Path $Directory 'candidate-v0.6.0.jar'; Old = Join-Path $Directory 'baseline-v0.5.7.jar'
         NewOptions = @($config.NewOptions); OldOptions = @($config.OldOptions)
-        OpeningsFile = $Openings; Tag = 'release-strength'
+        OpeningsFile = $Openings; Tag = $(if ($Smoke) { 'release-strength-smoke' } else { 'release-strength' })
         LogPath = Join-Path $Directory 'match.log'; PgnPath = Join-Path $Directory 'match.pgn'
     }
     foreach ($key in @('Elo0','Elo1','Alpha','Beta','BonferroniM','MinGames','MaxGames','TC','Concurrency','EngineThreads','OpeningOrder')) {
         $parameters[$key] = $config[$key]
     }
+    if ($Smoke) { $parameters.MaxGames = $config.SmokeGames }
     return $parameters
 }
 
-function Assert-ReleaseSprtParameters($Parameters) {
+function Assert-ReleaseSprtParameters($Parameters, [switch]$Smoke) {
     $config = Get-ReleaseSprtConfig
+    if ($Smoke) { $config.MaxGames = $config.SmokeGames }
     foreach ($key in @('Elo0','Elo1','Alpha','Beta','BonferroniM','MinGames','MaxGames','TC','Concurrency','EngineThreads','OpeningOrder')) {
         if (-not $Parameters.ContainsKey($key) -or $Parameters[$key] -cne $config[$key]) {
             throw "Parameter differs from the preregistration: $key"
@@ -58,8 +63,9 @@ function Assert-ReleaseSprtParameters($Parameters) {
     if (@($paths | Select-Object -Unique).Count -ne 5) { throw 'Inputs and output paths must be distinct.' }
 }
 
-function Assert-ReleaseSprtArguments($Manifest, $Parameters, [string]$Java, [string]$Cutechess) {
-    Assert-ReleaseSprtParameters $Parameters
+function Assert-ReleaseSprtArguments($Manifest, $Parameters, [string]$Java, [string]$Cutechess, [switch]$Smoke) {
+    Assert-ReleaseSprtParameters $Parameters -Smoke:$Smoke
+    $games = if ($Smoke) { [string](Get-ReleaseSprtConfig).SmokeGames } else { '20000' }
     $expected = @()
     foreach ($arm in @(@{ Name='NEW'; Jar=$Parameters.New; Options=$Parameters.NewOptions },
                         @{ Name='OLD'; Jar=$Parameters.Old; Options=$Parameters.OldOptions })) {
@@ -67,7 +73,7 @@ function Assert-ReleaseSprtArguments($Manifest, $Parameters, [string]$Java, [str
             'arg=jdk.incubator.vector', 'arg=-jar', "arg=$($arm.Jar)", 'proto=uci', 'option.Threads=1')
         $expected += @($arm.Options | ForEach-Object { "option.$_" })
     }
-    $expected += @('-each','tc=5+0.05','-games','20000','-repeat','-recover',
+    $expected += @('-each','tc=5+0.05','-games',$games,'-repeat','-recover',
         '-resign','movecount=5','score=400','-draw','movenumber=40','movecount=8','score=10',
         '-sprt','elo0=0','elo1=20','alpha=0.05','beta=0.05','-concurrency','6','-ratinginterval','10',
         '-pgnout',$Parameters.PgnPath,'-openings',"file=$($Parameters.OpeningsFile)",'format=epd','order=sequential','plies=4')
@@ -94,12 +100,14 @@ function Test-ReleaseSprtFaultLine([string]$Line) {
     return $Line -match "(?i)(doesn't|does not|has no|have no)\s+(have\s+)?(an?\s+)?option|option\s+\S+\s+(not found|not supported|is unknown)"
 }
 
-function Assert-ReleaseSprtOpenings([string]$Path) {
+function Assert-ReleaseSprtOpenings([string]$Path, [int]$Count = 10000) {
     $bytes = [IO.File]::ReadAllBytes($Path)
     if ($bytes -contains 13) { throw 'Opening list must use LF line endings.' }
     $lines = [Text.Encoding]::ASCII.GetString($bytes).TrimEnd("`n") -split "`n"
-    if ($lines.Count -ne 10000) { throw "Expected 10000 openings, found $($lines.Count)." }
+    if ($lines.Count -ne $Count) { throw "Expected $Count openings, found $($lines.Count)." }
     if (@($lines | Select-Object -Unique).Count -ne $lines.Count) { throw 'Opening list contains duplicates.' }
+    # Cute Chess rewrites the move counters in the PGN FEN tag, so two lines that differ only there would merge.
+    if (@($lines | ForEach-Object { ($_ -split ' ')[0..3] -join ' ' } | Select-Object -Unique).Count -ne $lines.Count) { throw 'Opening list contains positions that differ only in move counters.' }
     foreach ($line in $lines) { if (($line -split ' ').Count -ne 6 -or ($line -split ' ')[1] -ne 'w') { throw "Unexpected opening line: $line" } }
 }
 
@@ -138,4 +146,48 @@ function Invoke-ReleaseSprtHandshake([string]$Java, [string]$Jar, [string[]]$Opt
     [IO.File]::WriteAllText($OutputPath, $text, (New-Object Text.UTF8Encoding($false)))
     if ($process.ExitCode -ne 0) { throw "Engine exited with code $($process.ExitCode) during handshake: $Jar" }
     return $outTask.Result
+}
+
+# Production verdict. Read-Stage6Results only calls the cap INCONCLUSIVE when 20000 games were scored. The preregistered
+# cap is on game STARTS, so games cancelled at the end count toward it. Cute Chess alone decides H0 or H1: this never
+# turns the cap, or anything else, into a hypothesis decision.
+function Get-ReleaseSprtVerdict($Result, [int]$GameCap = 20000) {
+    $verdict = $Result.Verdict
+    if ($verdict -eq 'INCOMPLETE' -and $Result.FinishedMatch -and $Result.ExitCode -eq 0 -and $Result.Decision -eq '' -and
+        @($Result.FaultLines).Count -eq 0 -and @($Result.AuditIssues).Count -eq 0 -and ($Result.Scored + $Result.Cancelled) -eq $GameCap) {
+        $verdict = 'INCONCLUSIVE'
+    }
+    return $verdict
+}
+
+# Smoke verdict. A smoke test is not a result: it passes when Cute Chess ran both JARs to a clean finish.
+function Get-ReleaseSprtSmokeVerdict($Result) {
+    if (@($Result.FaultLines).Count -eq 0 -and @($Result.AuditIssues).Count -eq 0 -and $Result.ExitCode -eq 0 -and $Result.FinishedMatch -and
+        $Result.Scored -gt 0 -and $Result.CompletedOpeningPairs -ge 1 -and ($Result.Cancelled -gt 0 -or $Result.UnpairedScoredGames -eq 0) -and
+        $Result.Verdict -notin @('SETUP_PROTOCOL_FAULT', 'INTERRUPTED')) { return 'SMOKE_PASSED' }
+    return 'SMOKE_FAILED'
+}
+
+# The smoke test is only allowed after a native preflight passed on this exact code. Returns the qualifying preflight
+# directory name, or $null. The preflight's own evidence must still verify against its SHA256SUMS.
+function Find-ReleaseSprtPassedPreflight([string]$ResultsRoot, [string]$Head, $ScriptHashes) {
+    if (-not (Test-Path -LiteralPath $ResultsRoot)) { return $null }
+    foreach ($dir in @(Get-ChildItem -LiteralPath $ResultsRoot -Directory -Filter 'preflight-*' | Sort-Object Name -Descending)) {
+        $summary = Join-Path $dir.FullName 'summary.json'; $identity = Join-Path $dir.FullName 'identity.json'; $sums = Join-Path $dir.FullName 'SHA256SUMS'
+        if (-not ((Test-Path -LiteralPath $summary) -and (Test-Path -LiteralPath $identity) -and (Test-Path -LiteralPath $sums))) { continue }
+        if ((Get-Content -LiteralPath $summary -Raw | ConvertFrom-Json).Verdict -cne 'PREFLIGHT_PASSED') { continue }
+        $id = Get-Content -LiteralPath $identity -Raw | ConvertFrom-Json
+        if ($id.InvokingHead -cne $Head) { continue }
+        $same = $true
+        foreach ($name in $ScriptHashes.Keys) { if ($id.ScriptSha256.$name -cne $ScriptHashes[$name]) { $same = $false } }
+        if (-not $same) { continue }
+        $intact = $true
+        foreach ($line in @(Get-Content -LiteralPath $sums)) {
+            $parts = $line -split '  ', 2
+            $file = Join-Path $dir.FullName $parts[1]
+            if (-not (Test-Path -LiteralPath $file) -or (Get-Stage6Hash $file) -cne $parts[0]) { $intact = $false }
+        }
+        if ($intact) { return $dir.Name }
+    }
+    return $null
 }

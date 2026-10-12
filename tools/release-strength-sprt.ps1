@@ -7,13 +7,17 @@
 .PARAMETER PreflightNative
     Native host and input qualification: host facts, idle sample, JAR and opening identities, a uci/setoption/isready
     handshake with each JAR, and the exact Cute Chess argument list. Starts no games. Writes its own attempt directory.
+.PARAMETER SmokeNative
+    A short, separately recorded Cute Chess run (20 games, 10 color-reversed pairs from openings-smoke-v1.epd, never from the
+    production list) with both published JARs. Refuses to start unless a native preflight passed on this exact code. It is
+    not a result and never leads to production games: the production SPRT is a separate invocation.
 .PARAMETER ExecuteNative
     Everything in PreflightNative, then an operator confirmation, then the one preregistered SPRT.
 .PARAMETER AssetDirectory
     Directory holding engine-uci-0.6.0.jar and engine-uci-0.5.7.jar exactly as published.
 #>
 [CmdletBinding()]
-param([switch]$ValidateOnly, [switch]$PreflightNative, [switch]$ExecuteNative, [string]$AssetDirectory = '')
+param([switch]$ValidateOnly, [switch]$PreflightNative, [switch]$SmokeNative, [switch]$ExecuteNative, [string]$AssetDirectory = '')
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -29,12 +33,13 @@ foreach ($name in @('Invoke-Stage6Checked', 'Get-Stage6Git', 'Stop-Stage6OwnedPr
     . ([scriptblock]::Create($definition.Extent.Text))
 }
 
-$modes = @($ValidateOnly, $PreflightNative, $ExecuteNative) | Where-Object { $_ }
-if (@($modes).Count -ne 1) { throw 'Choose exactly one of -ValidateOnly, -PreflightNative, -ExecuteNative.' }
+$modes = @($ValidateOnly, $PreflightNative, $SmokeNative, $ExecuteNative) | Where-Object { $_ }
+if (@($modes).Count -ne 1) { throw 'Choose exactly one of -ValidateOnly, -PreflightNative, -SmokeNative, -ExecuteNative.' }
 if ($ValidateOnly) { & (Join-Path $PSScriptRoot 'release-strength-sprt-validation.ps1'); return }
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $config = Get-ReleaseSprtConfig
-$kind = if ($ExecuteNative) { 'run' } else { 'preflight' }
+$kind = if ($ExecuteNative) { 'run' } elseif ($SmokeNative) { 'smoke' } else { 'preflight' }
+$launchesGames = $ExecuteNative -or $SmokeNative
 $runId = $kind + '-' + [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
 $output = Join-Path (Join-Path $repo 'tools\results\release-strength-sprt') $runId
 if (Test-Path -LiteralPath $output) { throw 'Run directory collision; nothing overwritten.' }
@@ -99,11 +104,28 @@ try {
     if ((Get-Stage6Hash $prereg) -cne $config.PreregistrationSha256) { throw 'Preregistration differs from the frozen hash.' }
     Copy-Item -LiteralPath $prereg -Destination (Join-Path $output 'preregistration.md')
 
-    $openingSource = Join-Path $repo $config.OpeningRelativePath.Replace('/', '\')
-    if ((Get-Stage6Hash $openingSource) -cne $config.OpeningSha256) { throw 'Opening list missing or incorrect.' }
-    Assert-ReleaseSprtOpenings $openingSource
-    $openingCopy = Join-Path $output 'openings-v1.epd'; Copy-Item -LiteralPath $openingSource -Destination $openingCopy
-    if ((Get-Stage6Hash $openingCopy) -cne $config.OpeningSha256) { throw 'Opening archive copy differs.' }
+    # Production and smoke games never share an opening list. Every mode checks both so a preflight also readies the smoke test.
+    foreach ($list in @(@($config.OpeningRelativePath, $config.OpeningSha256), @($config.SmokeOpeningRelativePath, $config.SmokeOpeningSha256))) {
+        if ((Get-Stage6Hash (Join-Path $repo $list[0].Replace('/', '\'))) -cne $list[1]) { throw "Opening list missing or incorrect: $($list[0])" }
+    }
+    $openingRelative = if ($SmokeNative) { $config.SmokeOpeningRelativePath } else { $config.OpeningRelativePath }
+    $openingExpected = if ($SmokeNative) { $config.SmokeOpeningSha256 } else { $config.OpeningSha256 }
+    $openingCount = if ($SmokeNative) { $config.SmokeGames / 2 } else { 10000 }
+    $openingSource = Join-Path $repo $openingRelative.Replace('/', '\')
+    if ((Get-Stage6Hash $openingSource) -cne $openingExpected) { throw 'Opening list missing or incorrect.' }
+    Assert-ReleaseSprtOpenings $openingSource $openingCount
+    $openingCopy = Join-Path $output (Split-Path -Leaf $openingRelative); Copy-Item -LiteralPath $openingSource -Destination $openingCopy
+    if ((Get-Stage6Hash $openingCopy) -cne $openingExpected) { throw 'Opening archive copy differs.' }
+
+    $scripts = [ordered]@{}
+    foreach ($name in @('release-strength-sprt.ps1', 'release-strength-sprt-common.ps1', 'release-strength-sprt-validation.ps1', 'phase21-stage6-common.ps1', 'phase21-stage6.ps1', 'sprt.ps1', 'release-sprt-analyze.py', 'release-sprt-openings.py')) {
+        $scripts[$name] = Get-Stage6Hash (Join-Path $PSScriptRoot $name)
+    }
+    $qualifyingPreflight = $null
+    if ($SmokeNative) {
+        $qualifyingPreflight = Find-ReleaseSprtPassedPreflight (Join-Path $repo 'tools\results\release-strength-sprt') (Get-Stage6Git $repo @('rev-parse', 'HEAD')) $scripts
+        if (-not $qualifyingPreflight) { throw 'No passed native preflight with intact evidence exists for this exact commit and scripts. Run -PreflightNative first.' }
+    }
 
     $arms = @(@{ Name = 'candidate'; Asset = $config.CandidateAsset; Sha = $config.CandidateSha256; Copy = 'candidate-v0.6.0.jar'; Options = $config.NewOptions; Forbidden = @() },
               @{ Name = 'baseline'; Asset = $config.BaselineAsset; Sha = $config.BaselineSha256; Copy = 'baseline-v0.5.7.jar'; Options = $config.OldOptions; Forbidden = @('EvalType', 'EvalFile') })
@@ -122,30 +144,29 @@ try {
     Save-Stage6Json $assets (Join-Path $output 'assets.json')
 
     $runner = Join-Path $PSScriptRoot 'sprt.ps1'
-    $parameters = Get-ReleaseSprtParameters $output $openingCopy
-    Assert-ReleaseSprtParameters $parameters
+    $parameters = Get-ReleaseSprtParameters $output $openingCopy -Smoke:$SmokeNative
+    Assert-ReleaseSprtParameters $parameters -Smoke:$SmokeNative
     $prepared = Join-Path $output 'prepared-arguments.json'
     & $runner @parameters -PrepareOnly -ArgumentManifestPath $prepared
-    Assert-ReleaseSprtArguments (Get-Content -LiteralPath $prepared -Raw | ConvertFrom-Json) $parameters $facts.JavaExecutable $facts.CutechessExecutable
+    Assert-ReleaseSprtArguments (Get-Content -LiteralPath $prepared -Raw | ConvertFrom-Json) $parameters $facts.JavaExecutable $facts.CutechessExecutable -Smoke:$SmokeNative
     $parameters.ArgumentManifestPath = Join-Path $output 'arguments.json'
     $parameters.ExpectedArgumentManifestPath = $prepared
     $parameterPath = Join-Path $output 'runner-parameters.json'
     Save-Stage6Json $parameters $parameterPath
-    $scripts = [ordered]@{}
-    foreach ($name in @('release-strength-sprt.ps1', 'release-strength-sprt-common.ps1', 'release-strength-sprt-validation.ps1', 'phase21-stage6-common.ps1', 'phase21-stage6.ps1', 'sprt.ps1', 'release-sprt-analyze.py', 'release-sprt-openings.py')) {
-        $scripts[$name] = Get-Stage6Hash (Join-Path $PSScriptRoot $name)
-    }
-    Save-Stage6Json ([ordered]@{ InvokingHead = Get-Stage6Git $repo @('rev-parse', 'HEAD'); Config = $config; Assets = $assets
+    $priorAttempts = @(Get-ChildItem -LiteralPath (Split-Path -Parent $output) -Directory | Where-Object { $_.Name -ne $runId } | Sort-Object Name | ForEach-Object { $_.Name })
+    Save-Stage6Json ([ordered]@{ Kind = $kind; QualifyingPreflight = $qualifyingPreflight; PriorAttempts = $priorAttempts
+        InvokingHead = Get-Stage6Git $repo @('rev-parse', 'HEAD'); Config = $config; Assets = $assets
         ScriptSha256 = $scripts; ParametersSha256 = Get-Stage6Hash $parameterPath; PreparedArgumentsSha256 = Get-Stage6Hash $prepared
         RandomSeed = 'none: sequential opening order, no cutechess -srand' }) (Join-Path $output 'identity.json')
     $preflightPassed = $true
     if ($PreflightNative) { Write-Host "Preflight passed. No games were started. Evidence: $output" }
     else {
         Write-Host "Evidence and frozen inputs: $output"
-        if ((Read-Host 'Confirm idle native host: type RUN-RELEASE-SPRT to start the first game') -cne 'RUN-RELEASE-SPRT') { throw 'Operator did not confirm. No games started.' }
+        $phrase = if ($SmokeNative) { 'RUN-RELEASE-SMOKE' } else { 'RUN-RELEASE-SPRT' }
+        if ((Read-Host "Confirm idle native host: type $phrase to start the first game") -cne $phrase) { throw 'Operator did not confirm. No games started.' }
         foreach ($arm in $arms) { if ((Get-Stage6Hash (Join-Path $output $arm.Copy)) -cne $arm.Sha) { throw 'Frozen binary changed before launch.' } }
         foreach ($name in $scripts.Keys) { if ((Get-Stage6Hash (Join-Path $PSScriptRoot $name)) -cne $scripts[$name]) { throw "Script changed after the identity record: $name" } }
-        if ((Get-Stage6Hash $openingCopy) -cne $config.OpeningSha256 -or (Get-Stage6Hash $parameterPath) -cne (Get-Content -LiteralPath (Join-Path $output 'identity.json') -Raw | ConvertFrom-Json).ParametersSha256 -or
+        if ((Get-Stage6Hash $openingCopy) -cne $openingExpected -or (Get-Stage6Hash $parameterPath) -cne (Get-Content -LiteralPath (Join-Path $output 'identity.json') -Raw | ConvertFrom-Json).ParametersSha256 -or
             (Get-Stage6Hash $java) -cne $facts.JavaSha256 -or (Get-Stage6Hash $cute) -cne $facts.CutechessSha256) { throw 'Frozen input or tool changed before launch.' }
         $facts.PowerPlanRaw = Invoke-Stage6Checked 'powercfg.exe' @('/getactivescheme') $repo (Join-Path $output 'launch-power-plan.log')
         $facts.AffinityMask = (Get-Process -Id $PID).ProcessorAffinity.ToInt64()
@@ -200,7 +221,10 @@ finally {
             $pgn = if (Test-Path -LiteralPath $pgnPath) { [string](Get-Content -LiteralPath $pgnPath -Raw -Encoding UTF8) } else { '' }
             $result = Read-Stage6Results $log $pgn $exitCode ($matchStarted -and -not $matchCompleted)
             if ($failure -and $result.Verdict -ne 'INTERRUPTED') { $result.Verdict = 'SETUP_PROTOCOL_FAULT'; $result.EligibleForPromotion = $false }
+            if (-not $failure) { $result.Verdict = Get-ReleaseSprtVerdict $result }
+            if ($SmokeNative -and $matchStarted) { $result.Verdict = Get-ReleaseSprtSmokeVerdict $result; $result.EligibleForPromotion = $false }
             if (-not $matchStarted -and $failure) { $result.Verdict = 'NOT_STARTED' }
+            $result | Add-Member -NotePropertyName Kind -NotePropertyValue $kind
             $result | Add-Member -NotePropertyName Failure -NotePropertyValue $failure
             $result.PairAudit | Export-Csv -LiteralPath (Join-Path $output 'pair-audit.csv') -NoTypeInformation -Encoding UTF8
             Save-Stage6Json $result (Join-Path $output 'summary.json')

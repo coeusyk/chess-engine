@@ -475,7 +475,7 @@ An independent read-only review found five gaps, all fixed and re-reviewed: Powe
 - The option lists differ in one place. v0.5.7 has no `EvalType` option, so it is not sent one, and the runner and handshake check both refuse it. `Contempt=0` is set explicitly on both.
 - Every runner invocation writes an attempt record before any probe and never deletes anything, because the Phase 21 first attempt could not be reconstructed.
 - Kept zero tolerance for time forfeits, as in Phase 21, but listed it as an open decision.
-- Left the merged release comparison report unedited. Its sentence that the v0.5.7 UCI `Contempt` default is 50 is wrong: both JARs advertise 0. The preregistration carries the erratum.
+- Corrected the release comparison report's Contempt sentence (maintainer-approved), keeping the original wording and the evidence in a Corrections section. The report said the UCI `Contempt` default is 50 in v0.5.7. That is true of the source the `v0.5.7` git tag names (`7b5b3a4`) and false of the published JAR (source `beaef36`, default 0): the default was reverted in `29aafac` on 2026-07-03. The report had conflated the tag with the release, which is the distinction it documents elsewhere. My first note on this said the 50 was an unused constant; that was wrong and is fixed.
 
 **Broke / Fixed:**
 
@@ -489,3 +489,11 @@ An independent read-only review found five gaps, all fixed and re-reviewed: Powe
 - Planning numbers at [0,20] with a 39.7% draw ratio: P(accept H1) is 0.05 at 0 Elo and 0.95 at 20 Elo; expected games are about 960 at either end and about 1,580 at 10 Elo. The Phase 21 match took 7 hours 13 minutes for 13,123 games at this concurrency.
 - Validation: 70 new synthetic PowerShell checks, 8 Python tests, and the 75 Phase 21 checks still pass, under PowerShell 7.6.6 on Linux. Windows PowerShell 5.1 was not tested.
 - Develop CI on the merge commit `b5f54ab` passed. All three archived `SHA256SUMS` manifests verified from a clean checkout: 16, 36 and 36 files OK.
+
+**After maintainer review (2026-10-12):** configuration approved, with the cap defined on game starts, cap means INCONCLUSIVE, Cute Chess authoritative for stopping, zero tolerance for unexplained time forfeits, crashes and protocol failures, and a bounded smoke test authorized after a passed preflight. No production SPRT.
+
+- Replaced the analyzer's normal-approximation LLR with a port of the cutechess-cli 1.5.1 SPRT model (read from its source: Jeffreys +0.5 per class, BayesElo with an estimated draw Elo). It reproduces the archived Phase 21 value (2.9709 against 2.97 printed) and an independent worked example (-2.819), so the reconciliation tolerance is 0.01 again instead of 0.1. The analyzer is read-only, has no path to the stopping decision, and a test enforces that it imports nothing that can write or launch.
+- Read the Cute Chess source for opening handling: `-repeat` is two plays with sides swapped, sequential EPD order rewinds only after the end of file, so 20,000 game starts use exactly the 10,000 openings. Cute Chess rewrites the PGN FEN move counters, so reconciliation compares the first four fields, and the analyzer now checks that the openings used are a gap-free prefix used at most twice.
+- The runner's Read-Stage6Results calls the cap INCONCLUSIVE only when 20,000 games were scored. The cap is on game starts, so a run ending with 19,998 scored and 2 cancelled would have been INCOMPLETE. `Get-ReleaseSprtVerdict` fixes that, and the validation checks that neither the cap nor an interruption can become H0 or H1.
+- Added `-SmokeNative`: 20 games on a separate 10-position list (the ranks after the production list, no shared position), the production command line otherwise, its own directory and confirmation phrase, refused unless an intact passed preflight exists for the same commit and scripts, and no path from it to production.
+

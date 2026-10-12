@@ -103,6 +103,75 @@ try {
     Assert-Check ((Read-Stage6Results $log $pgn 0 $true).Verdict -eq 'INTERRUPTED') 'an interrupted attempt is never accepted'
     Assert-Check ((Get-Stage6Verdict '' 20000 $true $false 0 $false) -eq 'INCONCLUSIVE') 'game cap without a boundary is inconclusive'
 
+    # Smoke test: separate list, separate parameters, bounded size.
+    $smokePath = Join-Path $repoRoot $config.SmokeOpeningRelativePath
+    Assert-Check ((Get-Stage6Hash $smokePath) -ceq $config.SmokeOpeningSha256 -and $config.SmokeGames -eq 20) 'committed smoke list hash and size'
+    Assert-ReleaseSprtOpenings $smokePath 10; $script:checks++
+    $prodKeys = @(([IO.File]::ReadAllText($openingPath).TrimEnd("`n") -split "`n") | ForEach-Object { ($_ -split ' ')[0..3] -join ' ' })
+    $smokeKeys = @(([IO.File]::ReadAllText($smokePath).TrimEnd("`n") -split "`n") | ForEach-Object { ($_ -split ' ')[0..3] -join ' ' })
+    Assert-Check (@($smokeKeys | Where-Object { $prodKeys -contains $_ }).Count -eq 0) 'smoke and production lists share no position'
+    Assert-Rejected { $l = @($good.TrimEnd("`n") -split "`n"); $l[1] = ($l[0] -split ' ')[0..3] -join ' '; $l[1] += ' 0 9'; [IO.File]::WriteAllText((Join-Path $temp 'counter.epd'), ($l -join "`n") + "`n"); Assert-ReleaseSprtOpenings (Join-Path $temp 'counter.epd') } 'reject positions that differ only in move counters'
+    $smokeParameters = Get-ReleaseSprtParameters $temp (Join-Path $temp 'openings.epd') -Smoke
+    Assert-Check ($smokeParameters.MaxGames -eq 20 -and $parameters.MaxGames -eq 20000) 'smoke is 20 games, production 20000'
+    Assert-ReleaseSprtParameters $smokeParameters -Smoke
+    Assert-Rejected { Assert-ReleaseSprtParameters $smokeParameters } 'smoke parameters are not accepted as production'
+    Assert-Rejected { Assert-ReleaseSprtParameters $parameters -Smoke } 'production parameters are not accepted as smoke'
+    $smokeManifestPath = Join-Path $temp 'smoke-prepared.json'
+    & (Join-Path $PSScriptRoot 'sprt.ps1') @smokeParameters -PrepareOnly -ArgumentManifestPath $smokeManifestPath | Out-Null
+    $smokeManifest = Get-Content -LiteralPath $smokeManifestPath -Raw | ConvertFrom-Json
+    Assert-ReleaseSprtArguments $smokeManifest $smokeParameters (Join-Path $env:JAVA 'bin\java.exe') $env:CUTECHESS -Smoke
+    Assert-Check ($smokeManifest.Arguments[($smokeManifest.Arguments.IndexOf('-games') + 1)] -eq '20' -and $smokeManifest.Arguments -contains '-repeat' -and $smokeManifest.Arguments -contains 'order=sequential') 'smoke is 20 color-reversed games in file order'
+    Assert-Rejected { Assert-ReleaseSprtArguments $smokeManifest $smokeParameters (Join-Path $env:JAVA 'bin\java.exe') $env:CUTECHESS } 'smoke argument list is not accepted as production'
+
+    # The game cap is on game starts. Hitting it is INCONCLUSIVE and never a hypothesis decision.
+    function New-Result($Verdict, $Scored, $Cancelled, $Decision = '', $Faults = @(), $Issues = @(), $Finished = $true, $Exit = 0, $Pairs = 5, $Unpaired = 0) {
+        [pscustomobject]@{ Verdict = $Verdict; Scored = $Scored; Cancelled = $Cancelled; Decision = $Decision; FaultLines = $Faults; AuditIssues = $Issues
+            FinishedMatch = $Finished; ExitCode = $Exit; CompletedOpeningPairs = $Pairs; UnpairedScoredGames = $Unpaired }
+    }
+    Assert-Check ((Get-ReleaseSprtVerdict (New-Result 'INCOMPLETE' 19998 2)) -eq 'INCONCLUSIVE') 'cap reached through cancelled starts is INCONCLUSIVE'
+    Assert-Check ((Get-ReleaseSprtVerdict (New-Result 'INCONCLUSIVE' 20000 0)) -eq 'INCONCLUSIVE') 'cap with all games scored stays INCONCLUSIVE'
+    Assert-Check ((Get-ReleaseSprtVerdict (New-Result 'INCOMPLETE' 19998 1)) -eq 'INCOMPLETE') 'short of the cap is not INCONCLUSIVE'
+    Assert-Check ((Get-ReleaseSprtVerdict (New-Result 'INCOMPLETE' 19998 2 '' @('engine crashed'))) -eq 'INCOMPLETE') 'a fault blocks INCONCLUSIVE'
+    Assert-Check ((Get-ReleaseSprtVerdict (New-Result 'H1_ACCEPTED' 19990 2 'H1')) -eq 'H1_ACCEPTED') 'a Cute Chess decision is never overridden by the cap rule'
+    foreach ($v in @((New-Result 'INCOMPLETE' 19998 2), (New-Result 'INCONCLUSIVE' 20000 0), (New-Result 'INTERRUPTED' 100 0))) {
+        Assert-Check ((Get-ReleaseSprtVerdict $v) -notin @('H0_ACCEPTED', 'H1_ACCEPTED')) 'the cap or an interruption never becomes H0 or H1'
+    }
+    $capPgn = (New-FixtureGame 'NEW' '1/2-1/2') + (New-FixtureGame 'OLD' '1/2-1/2')
+    $capLog = "Finished game 1 (NEW vs OLD): 1/2-1/2 {Draw by adjudication}`nFinished game 2 (OLD vs NEW): 1/2-1/2 {Draw by adjudication}`nScore of NEW vs OLD: 0 - 0 - 2  [0.500] 2`nSPRT: llr -0.1 (-3.4%), lbound -2.94, ubound 2.94`nFinished match`n"
+    $capResult = Read-Stage6Results $capLog $capPgn 0
+    Assert-Check ($capResult.Decision -eq '' -and $capResult.Verdict -notin @('H0_ACCEPTED', 'H1_ACCEPTED')) 'no decision line in the Cute Chess log means no hypothesis decision'
+
+    # Smoke verdicts.
+    Assert-Check ((Get-ReleaseSprtSmokeVerdict (New-Result 'H0_ACCEPTED' 20 0 'H0')) -eq 'SMOKE_PASSED') 'clean smoke passes whatever the SPRT label says'
+    Assert-Check ((Get-ReleaseSprtSmokeVerdict (New-Result 'INCOMPLETE' 18 2 '' @() @() $true 0 9 0)) -eq 'SMOKE_PASSED') 'smoke may end with cancelled games'
+    foreach ($bad in @((New-Result 'SETUP_PROTOCOL_FAULT' 20 0 '' @('White loses on time')), (New-Result 'INCOMPLETE' 0 0), (New-Result 'INCOMPLETE' 20 0 '' @() @() $false),
+                       (New-Result 'INCOMPLETE' 20 0 '' @() @('x')), (New-Result 'INCOMPLETE' 20 0 '' @() @() $true 1), (New-Result 'INCOMPLETE' 19 0 '' @() @() $true 0 9 1), (New-Result 'INCOMPLETE' 1 0 '' @() @() $true 0 0 1))) {
+        Assert-Check ((Get-ReleaseSprtSmokeVerdict $bad) -eq 'SMOKE_FAILED') 'smoke fails on fault, no games, unfinished match, audit issue, exit code, unpaired games or no pair'
+    }
+
+    # The smoke test requires an intact passed preflight for this exact commit and scripts.
+    $resultsRoot = Join-Path $temp 'results'
+    $scriptHashes = [ordered]@{ 'a.ps1' = 'aaa'; 'b.ps1' = 'bbb' }
+    function New-FixturePreflight([string]$Name, [string]$Verdict = 'PREFLIGHT_PASSED', [string]$Head = 'head1', $Hashes = $scriptHashes, [switch]$NoSums) {
+        $dir = Join-Path $resultsRoot $Name; New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $dir 'evidence.txt') -Value 'evidence'
+        Save-Stage6Json @{ Verdict = $Verdict } (Join-Path $dir 'summary.json')
+        Save-Stage6Json @{ InvokingHead = $Head; ScriptSha256 = $Hashes } (Join-Path $dir 'identity.json')
+        if (-not $NoSums) { Get-ChildItem -LiteralPath $dir -File | Where-Object { $_.Name -ne 'SHA256SUMS' } | ForEach-Object { '{0}  {1}' -f (Get-Stage6Hash $_.FullName), $_.Name } | Set-Content -LiteralPath (Join-Path $dir 'SHA256SUMS') -Encoding ASCII }
+        return $dir
+    }
+    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight (Join-Path $temp 'no-such-root') 'head1' $scriptHashes)) 'no results directory means no qualifying preflight'
+    $null = New-FixturePreflight 'preflight-20261012T000001000Z-fail' 'PREFLIGHT_FAILED'
+    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $scriptHashes)) 'a failed preflight does not qualify'
+    $null = New-FixturePreflight 'preflight-20261012T000002000Z-nosums' 'PREFLIGHT_PASSED' 'head1' $scriptHashes -NoSums
+    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $scriptHashes)) 'a preflight without SHA256SUMS does not qualify'
+    $good1 = New-FixturePreflight 'preflight-20261012T000003000Z-good'
+    Assert-Check ((Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $scriptHashes) -ceq 'preflight-20261012T000003000Z-good') 'an intact passed preflight qualifies'
+    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head2' $scriptHashes)) 'a preflight from another commit does not qualify'
+    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' ([ordered]@{ 'a.ps1' = 'aaa'; 'b.ps1' = 'CHANGED' }))) 'a preflight from different scripts does not qualify'
+    Set-Content -LiteralPath (Join-Path $good1 'evidence.txt') -Value 'tampered'
+    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $scriptHashes)) 'a preflight whose evidence no longer matches its checksums does not qualify'
+
     # Provenance contract in the wrapper source, and its syntax.
     $wrapperPath = Join-Path $PSScriptRoot 'release-strength-sprt.ps1'
     $parseErrors = $null; $tokens = $null
@@ -115,6 +184,9 @@ try {
     Assert-Check ($source.IndexOf('Script changed after the identity record') -gt $source.IndexOf('RUN-RELEASE-SPRT') -and $source.IndexOf('Script changed after the identity record') -lt $source.IndexOf('Start-Process')) 'script hashes are rechecked after the confirmation and before launch'
     Assert-Check ($source -notmatch 'Remove-Item|git(\.exe)?[^\r\n]*(clean|reset|checkout)') 'wrapper never deletes or resets anything'
     Assert-Check ($source.Contains('Assert-ReleaseSprtHandshake') -and $source.Contains('-PrepareOnly') -and $source.Contains('Assert-ReleaseSprtArguments')) 'preflight handshakes both JARs and prepares the exact arguments'
+    Assert-Check ($source.Contains('RUN-RELEASE-SMOKE') -and $source.Contains('-SmokeNative') -and $source.IndexOf('Find-ReleaseSprtPassedPreflight') -lt $source.IndexOf('Start-Process')) 'smoke has its own confirmation phrase and checks the preflight before launching'
+    Assert-Check ($source -notmatch '\$PSCommandPath|&\s+\$MyInvocation|Invoke-Expression|-ExecuteNative\s+-') 'no mode can start another mode'
+    Assert-Check ($source.Contains('$config.SmokeOpeningRelativePath') -and $source.Contains('$config.OpeningRelativePath') -and ([regex]::Matches($source, 'Join-Path \$repo ''[^'']*openings')).Count -eq 0) 'opening lists are selected through the config only'
     Write-Host "Release SPRT synthetic validation PASS: $script:checks checks. No engines, Cute Chess or games launched."
 }
 finally {
