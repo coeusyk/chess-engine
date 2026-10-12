@@ -39,7 +39,7 @@ This should print `ValidateOnly OK` with the two commits, the corpus hash and th
 
 ## 4. Run
 
-The two runs behind the report were made into `tools/results/release-comparison-20261012` and `tools/results/release-comparison-20261012-repeat-bfirst`. Those directories are committed on this branch, so a new run needs new names (each run also needs a clean tree). A-first:
+The two runs behind the report were made into `tools/results/release-comparison-20261012` and `tools/results/release-comparison-20261012-repeat-bfirst`. Those directories are committed on this branch, so a new run needs new names (each run also needs a clean tree). A-first. The output directory is inside the repository, so once this run finishes the working tree is dirty and the runner would refuse the next run. Keep the evidence (never delete it) and get a clean tree before the next run, either by committing the finished output directory on a local branch or by moving it out of the repository:
 
 ```powershell
 pwsh -NoProfile -File tools/release-comparison.ps1 -OutDir tools/results/release-comparison-rerun-a-first
@@ -68,4 +68,4 @@ In the output directory:
    `Get-Content SHA256SUMS | ForEach-Object { $h,$f = $_ -split '  ',2; if ((Get-FileHash $f -Algorithm SHA256).Hash.ToLower() -ne $h) { "MISMATCH $f" } }` prints nothing when everything matches.
 7. `summary.json` gives median, minimum, maximum and median absolute deviation of elapsed time per arm, median NPS, the median elapsed ratio B over A and the per-pair ratios. Treat the run as noisy if an arm's maximum is more than 5 percent above its minimum, or if the per-pair ratios do not agree to within a few percent. Do not drop runs; repeat the whole procedure in a fresh output directory instead.
 
-Copy the output directory back and the results can be added to the report. Only elapsed times and the ratio are conclusions from this run. The node reduction is a separate, deterministic result, and neither says anything about Elo.
+Copy the output directory back and the results can be added to the report. Before committing a new output directory, copy `.gitattributes` from `tools/results/release-comparison-20261012/` into it. The manifests hash the CRLF bytes the runner wrote on Windows, and without that file `core.autocrlf` can store them as LF, so `sha256sum -c` fails on a checkout elsewhere. Only elapsed times and the ratio are conclusions from this run. The node reduction is a separate, deterministic result, and neither says anything about Elo.
