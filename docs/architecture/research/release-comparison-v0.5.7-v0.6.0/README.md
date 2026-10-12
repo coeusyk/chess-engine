@@ -237,6 +237,3 @@ The `<own>` corpus for each JAR is the 31-position file in this directory (`corp
 | `raw-wsl-deterministic/` | Raw harness output for every run, with `SHA256SUMS` |
 | `tools/results/release-comparison-20261012/` | Native Windows run metadata, all measured and warm-up outputs, and `SHA256SUMS` |
 
-## Does the v0.6.0 release page need a benchmark section?
-
-I would not add one now, and I changed nothing on the published release. A line saying "65.65% fewer nodes than v0.5.7" is accurate as a search-work statement but reads as a speed claim, and the speed number is the one that has not been measured. If you want a supplementary note, write it after the native run so it can state node reduction and measured time together, label the first as a fixed-depth search-work result on 30 positions, and say nothing about Elo. Separately, the stale `v0.5.7` tag is worth a note in the release record, since someone building from the tag gets different code than the asset.
