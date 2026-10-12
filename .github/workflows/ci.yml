@@ -8,20 +8,62 @@ on:
     paths-ignore:
       - 'trainer/**'
   pull_request:
-    paths-ignore:
-      - 'trainer/**'
 
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
+      - name: Determine backend scope
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python3 - <<'PYTHON'
+          import json
+          import os
+          import subprocess
+          backend = True
+          if os.environ["EVENT_NAME"] == "pull_request" and os.environ["BASE_REF"] != "master":
+              endpoint = f"repos/{os.environ['GITHUB_REPOSITORY']}/pulls/{os.environ['PR_NUMBER']}"
+              def get(*args):
+                  return json.loads(subprocess.check_output(["gh", "api", *args]))
+              count = get(endpoint)["changed_files"]
+              # GitHub caps the files endpoint at 3,000. Unknown scope runs all tests.
+              if count <= 3000:
+                  pages = get("--paginate", "--slurp", f"{endpoint}/files?per_page=100")
+                  files = [file for page in pages for file in page]
+                  if len(files) != count:
+                      raise RuntimeError("Incomplete PR file inventory")
+                  backend = any(not file["filename"].startswith("trainer/") or
+                                (file.get("previous_filename") is not None and
+                                 not file["previous_filename"].startswith("trainer/")) for file in files)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"backend={str(backend).lower()}\n")
+          PYTHON
+
       - name: Checkout
+        if: steps.scope.outputs.backend == 'true'
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate release workflow contracts
+        if: steps.scope.outputs.backend == 'true'
+        run: |
+          python3 -m pip install --target "$RUNNER_TEMP/workflow-checks" PyYAML==6.0.2
+          PYTHONPATH="$RUNNER_TEMP/workflow-checks" python3 -m unittest discover -s tools/tests -p test_release_workflow.py -v
 
       - name: Set up JDK 21
+        if: steps.scope.outputs.backend == 'true'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -29,12 +71,15 @@ jobs:
           cache: maven
 
       - name: Build and test modules
+        if: steps.scope.outputs.backend == 'true'
         run: mvn -B clean test
 
       - name: Run search regression suite
+        if: steps.scope.outputs.backend == 'true'
         run: mvn -B -pl engine-core -Dgroups=regression test
 
       - name: NPS benchmark gate
+        if: steps.scope.outputs.backend == 'true'
         run: mvn -B test -pl engine-core -Dgroups=benchmark -Dbenchmark.enabled=true -Dnps.baseline=160000 -Dnps.threshold=0.05
         # Baseline calibrated to GitHub-hosted ubuntu-latest runner (~183k NPS measured).
         # 5% tolerance → floor of 152,000 NPS. Pawn-hash hit rate ≥85% checked inside the test.
@@ -50,12 +95,15 @@ jobs:
       # by "Build and test modules" above; no separate step needed for either.
 
       - name: NNUE-mode regression (search tree under EvalType=NNUE)
+        if: steps.scope.outputs.backend == 'true'
         run: mvn -B test -pl engine-core -Dgroups=nnue-mode
 
       - name: NNUE golden-eval regression
+        if: steps.scope.outputs.backend == 'true'
         run: mvn -B test -pl engine-core -Dgroups=nnue-golden
 
       - name: NNUE benchmark throughput (tracked, not gated)
+        if: steps.scope.outputs.backend == 'true'
         run: mvn -B test -pl engine-core -Dgroups=nnue-benchmark -Dbenchmark.enabled=true
         # Per-category eval throughput/NPS is reported for tracking (plan Task 3,
         # "Regression thresholds") — the single aggregate NPS gate above remains the
