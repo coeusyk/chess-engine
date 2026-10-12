@@ -6,17 +6,17 @@ It measures the elapsed time of fixed-depth search work. It says nothing about p
 
 ## 1. Get a clean checkout of the branch
 
-The branch is not pushed. Use a separate worktree so the run starts from a clean tree and does not touch your working checkout (the script refuses to start on a dirty tree).
+Use a separate worktree so the run starts from a clean tree and does not touch your working checkout (the script refuses to start on a dirty tree).
 
 ```powershell
 # in your Windows clone of the repository
 git fetch origin --tags
-git fetch "<path to the WSL repository>" research/release-comparison-v0.5.7-v0.6.0:research/release-comparison-v0.5.7-v0.6.0
-git worktree add ../release-comparison-run research/release-comparison-v0.5.7-v0.6.0
+git fetch origin research/release-comparison-v0.5.7-v0.6.0
+git worktree add ../release-comparison-run FETCH_HEAD
 cd ../release-comparison-run
 ```
 
-If the branch has been pushed by then, `git fetch origin research/release-comparison-v0.5.7-v0.6.0` replaces the second command. Both release commits must exist locally: `git cat-file -t beaef361d35160d768473af7d2c349719db8508b` and `git cat-file -t v0.6.0` should each print a type, not an error.
+Both release commits must exist locally: `git cat-file -t beaef361d35160d768473af7d2c349719db8508b` and `git cat-file -t v0.6.0` should each print a type, not an error.
 
 ## 2. Make the machine idle
 
@@ -31,7 +31,7 @@ The script then checks for itself. It refuses to start if a `java`, `javaw`, `mv
 ## 3. Pre-flight (no build, no timing)
 
 ```powershell
-$env:JAVA_HOME = "<path to JDK 21>"     # for example the Zulu 21 install used for Stage 5
+& "$env:JAVA_HOME/bin/java" -version     # JAVA_HOME must already point at a JDK 21 (the runs used Azul Zulu 21.0.10)
 pwsh -NoProfile -File tools/release-comparison.ps1 -ValidateOnly
 ```
 
@@ -39,11 +39,13 @@ This should print `ValidateOnly OK` with the two commits, the corpus hash and th
 
 ## 4. Run
 
+The two runs behind the report, in the order they were made (each needs a clean tree and a new output directory):
+
 ```powershell
-pwsh -NoProfile -File tools/release-comparison.ps1 -OutDir tools/results/release-comparison-<yyyymmdd>
+pwsh -NoProfile -File tools/release-comparison.ps1 -OutDir tools/results/release-comparison-20261012
 ```
 
-Warm-up runs always occur A then B. They do not determine the measured-pair order. Pair 1 starts with `-StartWith` (A by default), and the arms alternate in every pair. To start the measured sequence B-first, choose a new output directory and pass `-StartWith B`:
+Warm-up runs always occur A then B. They do not determine the measured-pair order. Pair 1 starts with `-StartWith` (A by default), and the arms alternate in every pair. The second run started the measured sequence B-first:
 
 ```powershell
 pwsh -NoProfile -File tools/release-comparison.ps1 -OutDir tools/results/release-comparison-20261012-repeat-bfirst -StartWith B

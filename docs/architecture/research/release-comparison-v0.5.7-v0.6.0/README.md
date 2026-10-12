@@ -1,7 +1,7 @@
 # Vex v0.5.7 vs v0.6.0: search work at fixed depth
 
 Status: deterministic stage complete. Two native timing runs completed on RENEGADE; qualified with limitations for this fixed-depth workload.
-Date: 2026-10-12. Branch: `research/release-comparison-v0.5.7-v0.6.0` (local, not pushed).
+Date: 2026-10-12. Branch: `research/release-comparison-v0.5.7-v0.6.0`.
 
 ## Summary
 
@@ -119,7 +119,9 @@ Two native runs completed on 2026-10-12 on RENEGADE. The first used A-first meas
 
 ### Evidence integrity and settings
 
-Each `SHA256SUMS` verifies all 36 listed files: `environment.json`, `run.log`, `runs.csv`, `summary.json`, and 32 raw files. The manifest does not hash itself or `work/harness-classes/ReleaseComparisonHarness.class`; the compiled helper is not a timing output. Neither completed directory contains `FAILED.txt` or `CLEANUP-FAILED.txt`. Both logs record the two published-class listing matches, warm-ups A and B, all 14 measured runs, and normal completion.
+Each `SHA256SUMS` verifies all 36 listed files: `environment.json`, `run.log`, `runs.csv`, `summary.json`, and 32 raw files. The manifest does not hash itself. Neither completed directory contains `FAILED.txt` or `CLEANUP-FAILED.txt`. The compiled `work/harness-classes/ReleaseComparisonHarness.class` that the runner leaves behind is a build output and is not part of the archived evidence (it is not tracked; `tools/ReleaseComparisonHarness.java` and its SHA-256 in `environment.json` identify the code). The files were written on Windows with CRLF line endings and the manifests hash those bytes, so each results directory carries a `.gitattributes` (`text eol=crlf`, except `SHA256SUMS`) that makes a checkout on any platform reproduce them. After a checkout, `sha256sum -c SHA256SUMS` run inside the directory should report every file OK.
+
+One earlier attempt at the second run, in `tools/results/release-comparison-20261012-repeat/`, ends at the start of warm-up A (11:12 UTC), with no raw output and no `FAILED.txt`. The reason is not recorded. It has no timing data, is not committed (the directory is untracked), and is not used anywhere in this report. The completed second run is the `-repeat-bfirst` directory. Both logs record the two published-class listing matches, warm-ups A and B, all 14 measured runs, and normal completion.
 
 All 16 raw TSV files contain 30 positions. Their per-position main-node sums equal the expected total for their arm: 59,793,662 for A and 20,540,625 for B. All 14 measured CSV rows also have the expected node totals, with seven rows per arm. Every stderr file has the expected depth 13, hash 16 MB, contempt 0, one thread, 30 positions and warm-up depth 8. A uses `Evaluator` with instrumentation absent; B uses `ClassicalEvaluator` with instrumentation off. The evaluator class names differ across releases, but both arms use the classical evaluator. Both use the same corpus, JVM flags, depth, hash size, contempt, thread count and harness.
 
@@ -225,23 +227,59 @@ The benchmark-specific result supports a concise supplement if its scope and var
 
 > On RENEGADE, a single-threaded depth-13 search over 30 positions shared by the published v0.5.7 and v0.6.0 JARs searched 59.79 million and 20.54 million main nodes, respectively. Across two seven-pair native runs, combined median elapsed times were 169.5 seconds for v0.5.7 and 55.3 seconds for v0.6.0; the median paired elapsed-time ratio was 0.327, about 67% lower for v0.6.0. Run-to-run variability exceeded the 5% investigation threshold, particularly for v0.5.7. This result applies to the stated fixed-depth benchmark and one Windows host. It is not a playing-strength test or a general gameplay-speed claim. Full methodology and per-run results: `docs/architecture/research/release-comparison-v0.5.7-v0.6.0/README.md`.
 
-## Reproducing the deterministic stage
+## Reproducing
+
+There are two separate procedures. The first is the primary comparison. The second is a validation of the harness on a different corpus and is not part of the 30-position result.
+
+### Primary: 30-position comparison (the numbers in this report)
+
+The corpus is `common-corpus-30-release-vs-v0.6.0.fen` (30 positions common to both releases), depth 13, 16 MB hash, one thread, Classical evaluation.
+
+**Node counts (deterministic, any OS with JDK 21).** Fetch the two published JARs and run the harness over the 30-position corpus. The v0.5.7 arm is the published `engine-uci-0.5.7.jar` (source `beaef361d35160d768473af7d2c349719db8508b`, not the `v0.5.7` tag). The v0.6.0 published JAR has the same class set as a rebuild of `bc3dc380e759526e8aa19cd8385af16ab22ac502`.
 
 ```bash
-git worktree add --detach wt/rel0.5.7 beaef361d35160d768473af7d2c349719db8508b
-git worktree add --detach wt/v0.6.0   v0.6.0
-(cd wt/rel0.5.7 && mvn -B -q -pl engine-core,engine-uci -am package -DskipTests)
-(cd wt/v0.6.0   && mvn -B -q -pl engine-core,engine-uci -am package -DskipTests)
-mkdir hc && javac --add-modules jdk.incubator.vector \
-  -cp wt/v0.6.0/engine-uci/target/engine-uci-0.6.0.jar -d hc tools/ReleaseComparisonHarness.java
+mkdir -p wt/jars wt/hc
+gh release download v0.5.7 -R coeusyk/chess-engine -p 'engine-uci-0.5.7.jar' -D wt/jars
+gh release download v0.6.0 -R coeusyk/chess-engine -p 'engine-uci-0.6.0.jar' -D wt/jars
+sha256sum wt/jars/*.jar    # compare with identity/assets.txt
+javac --add-modules jdk.incubator.vector -cp wt/jars/engine-uci-0.6.0.jar -d wt/hc tools/ReleaseComparisonHarness.java
 C=docs/architecture/research/release-comparison-v0.5.7-v0.6.0
-for J in wt/rel0.5.7/engine-uci/target/engine-uci-0.5.7.jar wt/v0.6.0/engine-uci/target/engine-uci-0.6.0.jar; do
-  java -Xms512m -Xmx512m -XX:+UseG1GC --add-modules jdk.incubator.vector -cp hc:$J \
-    ReleaseComparisonHarness $C/corpus-<own>.fen 13 16 > out.tsv
+for V in 0.5.7 0.6.0; do
+  java -Xms512m -Xmx512m -XX:+UseG1GC --add-modules jdk.incubator.vector -cp wt/hc:wt/jars/engine-uci-$V.jar \
+    ReleaseComparisonHarness $C/common-corpus-30-release-vs-v0.6.0.fen 13 16 > wt/out-$V.tsv
+  awk -F'\t' 'NR>1{n+=$5;q+=$6;t+=$7}END{print n, q, t}' wt/out-$V.tsv
 done
 ```
 
-The `<own>` corpus for each JAR is the 31-position file in this directory (`corpus-v0.5.7-release-own31.fen`, `corpus-v0.6.0-own31.fen`). The 30 shared positions are joined by FEN. The builds were done with `-DskipTests` because the task is to measure the shipped search, not to re-verify the test suite. The v0.5.7 numbers in this report come from the downloaded GitHub release asset, run with the same command.
+Expected totals, as main nodes, quiescence nodes and TT hits: v0.5.7 `59793662 169860333 7330427`, v0.6.0 `20540625 45406213 5866705`. The harness takes an optional fourth argument (warm-up depth); leave it out here, because the node counts do not depend on it. The per-position table in `per-position-nodes.tsv` was built from one pass of each release over its own 31-position corpus (`raw-wsl-deterministic/v0.5.7-published-jar-own31.tsv` and `validate-v0.6.0-own31.tsv`), joined on FEN to the 30 shared positions. The command above runs the shared corpus directly. Each position starts from an empty transposition table, so both routes give the same per-position counts, and the native runs below used the shared corpus and reproduced the main-node totals above in all 32 raw TSV files (checked again for this write-up; quiescence and TT totals are from `per-position-nodes.tsv`). This exact command was not re-executed when the report was finalized; no further benchmarks were started.
+
+**Elapsed time (native Windows only).** Requires Windows, PowerShell 7, JDK 21 (`$env:JAVA_HOME`), Maven on `PATH`, and an idle machine. Not WSL. The runner builds both arms in temporary worktrees, checks each class listing against the published JAR, and times 7 alternating pairs after two warm-up runs. Run these from the repository root of a clean checkout of this branch. The full procedure, idle checks and validation steps are in [`native-run-instructions.md`](native-run-instructions.md).
+
+```powershell
+git fetch origin --tags
+git fetch origin research/release-comparison-v0.5.7-v0.6.0
+git worktree add ../release-comparison-run FETCH_HEAD
+cd ../release-comparison-run
+pwsh -NoProfile -File tools/release-comparison.ps1 -ValidateOnly
+# first run, A-first (output: tools/results/release-comparison-20261012)
+pwsh -NoProfile -File tools/release-comparison.ps1 -OutDir tools/results/release-comparison-20261012
+# second run, B-first (output: tools/results/release-comparison-20261012-repeat-bfirst), after a fresh clean tree
+pwsh -NoProfile -File tools/release-comparison.ps1 -OutDir tools/results/release-comparison-20261012-repeat-bfirst -StartWith B
+```
+
+The runner refuses to start on a dirty tree or into a non-empty output directory, so use a new directory name for any new run. The results in this report were produced from repository heads `da81d3f3232cb4a7d726a236a851112e05db1444` (first run) and `2d7032bea100449c8811327f3825f640e67383a4` (second run).
+
+### Separate validation: v0.6.0 on its own 31-position corpus
+
+This is not the primary comparison and does not feed any number above except the harness check in the Preflight section. It confirms the harness reproduces the Phase 21 Stage 3 candidate numbers on v0.6.0's own `BenchRunner` corpus (`corpus-v0.6.0-own31.fen`, 31 positions).
+
+```bash
+java -Xms512m -Xmx512m -XX:+UseG1GC --add-modules jdk.incubator.vector -cp wt/hc:wt/jars/engine-uci-0.6.0.jar \
+  ReleaseComparisonHarness $C/corpus-v0.6.0-own31.fen 13 16 > wt/validate-v0.6.0-own31.tsv
+awk -F'\t' 'NR>1{n+=$5;q+=$6;t+=$7}END{print n, q, t}' wt/validate-v0.6.0-own31.tsv
+```
+
+Expected: `21713284 48479879 6134980`, which is exactly what the archived `raw-wsl-deterministic/validate-v0.6.0-own31.tsv` sums to (checked). That archived run used a local rebuild of `bc3dc38` made with `mvn -B -q -pl engine-core,engine-uci -am package -DskipTests` (skipped tests because the task is to measure the shipped search, not to re-verify the suite); its class set matches the published JAR.
 
 ## Files
 
