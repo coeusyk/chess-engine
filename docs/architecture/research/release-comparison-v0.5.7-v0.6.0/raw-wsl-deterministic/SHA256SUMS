@@ -1,0 +1,16 @@
+ec869469ea95813f3ae2b9aa88cacfbaf189c9c708dd88eb627bdd0d55425191  tag-7b5b3a4-build-common29-pass1.tsv
+c21ca8b9d490f7c42ce5125e7b754d2fc1775c278bf40dc145d0ad7ed154d720  tag-7b5b3a4-build-common29-pass2.tsv
+9cdf2af508c2e5fce590c93c0ced232461aae8c131a303b7ecdfec21b15416a2  v0.5.7-published-jar-common29-pass1.tsv
+622f93239410b4b2a4de495bc875307f93005bd74a284603e3a6096f99c44ea7  v0.5.7-published-jar-common29-pass2.tsv
+0432de15170753358e0fb581b72c2b41677f5952f7ba5e7a1cf17a8c8600b136  v0.5.7-published-jar-own31.tsv
+ecc62230f961c034377f00646f7d801622a7faf4cd1efd4b84e72f4bd6d0bf73  v0.6.0-common29-pass1.tsv
+283b121e51fb7eb0e1e0453425e73dd1f02f4bd9c4687e8b518a577fa1206768  v0.6.0-common29-pass2.tsv
+87167680f6ae81185778a31d74b416e7bb5e28f89086daf30f5c244d0206eaba  validate-v0.6.0-own31.tsv
+713be9911398119e65b9b7a7c289529343097171900b21bfa534ce744546eece  tag-7b5b3a4-build-common29-pass1.stderr.txt
+5d364ccc77ce85f00fd2e0f938b347f5487f0974dcf7046d3db2f1b48c141566  tag-7b5b3a4-build-common29-pass2.stderr.txt
+97b72ebe28a2f2724d923065dd307a8668a6ebb206eb5efde9cd46045aa05b13  v0.5.7-published-jar-common29-pass1.stderr.txt
+1baba89bc4ce79a7d5fea3a4ffeba3d6a4f9a2b4400acd90310be8d845815dd5  v0.5.7-published-jar-common29-pass2.stderr.txt
+8f5a09b1c1f3359afff68e237954cc7899ab18c62b9c168bc9ca637c79baf765  v0.5.7-published-jar-own31.stderr.txt
+cc662eec700f6f86837b376281b468da7aa0f8397df2acfcc41809f6ccc37e79  v0.6.0-common29-pass1.stderr.txt
+6fa4da3fbb7b29e4a158ecc35efa1a60793516c8860998863ffe439011b0de44  v0.6.0-common29-pass2.stderr.txt
+75c97ae8b0591699fbeb55a85fbb53247fcbc5b562cf34777672bb68ca614200  validate-v0.6.0-own31.stderr.txt
