@@ -82,6 +82,8 @@ esac
                              "${{ needs.build.outputs." + name + "_sha256 }}")
         self.assertEqual(publisher_env["RELEASE_SHA"], "${{ github.sha }}")
         self.assertEqual(publisher_env["RELEASE_TAG"], "${{ github.ref_name }}")
+        # The publish job has no checkout, so gh release upload cannot infer the repository from git.
+        self.assertEqual(publisher_env["GH_REPO"], "${{ github.repository }}")
 
     def test_all_master_prs_have_a_check_context(self):
         self.assertIn("pull_request", CI["on"])
