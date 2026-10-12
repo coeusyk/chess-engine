@@ -458,3 +458,42 @@ An independent read-only review found five gaps, all fixed and re-reviewed: Powe
 - Stage 4: 8 of 31 depth-13 best moves changed; 32 deeper searches completed with legal PVs, and all 16 frozen depth-13 PVs replayed legally. No correctness defect was exposed.
 - Stage 5: throughput gate PASS, 12.6234% median elapsed-time improvement.
 - Stage 6: 4,080 wins, 3,829 losses, 5,209 draws; 13,118 scored games; LLR 2.97 above the 2.94 upper boundary; H1 accepted. Five cancellations were not scored.
+
+### [2026-10-12] v0.6.0 against v0.5.7 SPRT preregistered, nothing run
+
+**Built:**
+
+- A [preregistration](../docs/architecture/research/release-strength-sprt-v0.5.7-v0.6.0/preregistration.md) for one SPRT between the published `engine-uci-0.6.0.jar` and `engine-uci-0.5.7.jar`. Proposed, not approved. No game, pilot or search has been played.
+- `tools/release-strength-sprt.ps1` (with `-ValidateOnly`, `-PreflightNative` and `-ExecuteNative`), its common helpers and validation, a frozen 10,000-position opening list with a reproducible generator, a post-match analyzer, and Python contract tests.
+- UCI handshake transcripts for both published JARs under `compatibility/`.
+
+**Decisions Made:**
+
+- The baseline is the published v0.5.7 JAR, not a build of the `v0.5.7` tag, because the tag points at older source than the JAR was built from.
+- Reused `sprt.ps1` and the Phase 21 result parser instead of writing a second match path. The one change to `sprt.ps1` is an `-OpeningOrder` parameter that defaults to `random`, so every existing caller gets an identical argument list.
+- Replaced the Phase 21 `order=random` opening selection with a fixed list used in order. The list is the 10,000 lowest ranks of the archived 150,932-line book under a salted SHA-256 ranking, so it does not depend on a random-number generator or on the source file's order.
+- The option lists differ in one place. v0.5.7 has no `EvalType` option, so it is not sent one, and the runner and handshake check both refuse it. `Contempt=0` is set explicitly on both.
+- Every runner invocation writes an attempt record before any probe and never deletes anything, because the Phase 21 first attempt could not be reconstructed.
+- Kept zero tolerance for time forfeits, as in Phase 21, but listed it as an open decision.
+- Corrected the release comparison report's Contempt sentence (maintainer-approved), keeping the original wording and the evidence in a Corrections section. The report said the UCI `Contempt` default is 50 in v0.5.7. That is true of the source the `v0.5.7` git tag names (`7b5b3a4`) and false of the published JAR (source `beaef36`, default 0): the default was reverted in `29aafac` on 2026-07-03. The report had conflated the tag with the release, which is the distinction it documents elsewhere. My first note on this said the 50 was an unused constant; that was wrong and is fixed.
+
+**Broke / Fixed:**
+
+- The analyzer crashed on a small one-sided sample because the 95% interval left (0, 1) and the Elo logarithm is undefined there. A synthetic test caught it. Elo is now `None` at those bounds.
+- `Get-Command java` returns two paths on Linux; the lookup now takes the first.
+- An independent Codex review (gpt-6-luna, xhigh) found no blocker and seven should-fix items, all taken. Runner: the attempt record is now written before the platform, dirty-tree and host checks, so a refused invocation is recorded (exercised on Linux, where the platform check refuses); a machine-wide mutex stops two concurrent attempts; script hashes are rechecked after the confirmation prompt; 16 logical processors are enforced, not just recorded. Document: the LLR cross-check tolerance went from 0.02 to 0.1 because Cute Chess and the analyzer use different likelihood models and one calibration point is not enough to justify 0.02; the Elo intervals are labelled nominal fixed-sample intervals; the game-level SPRT's independence assumption across paired games is listed as a limitation. The review also confirmed from the Cute Chess 1.5.1 source that `-repeat` plays each opening twice with sides swapped, that sequential EPD order follows the file, and that 20,000 game starts use exactly the 10,000 openings without wraparound.
+
+**Measurements:**
+
+- The analyzer reproduces the archived Phase 21 result: 13,118 scored games, 4,080-3,829-5,209, LLR 2.974 against Cute Chess's 2.97, Elo 6.65 with a 95% half-width of 4.6 against 6.6 +/- 4.6. 6,558 completed pairs plus 2 unpaired games equal the scored total.
+- Planning numbers at [0,20] with a 39.7% draw ratio: P(accept H1) is 0.05 at 0 Elo and 0.95 at 20 Elo; expected games are about 960 at either end and about 1,580 at 10 Elo. The Phase 21 match took 7 hours 13 minutes for 13,123 games at this concurrency.
+- Validation: 70 new synthetic PowerShell checks, 8 Python tests, and the 75 Phase 21 checks still pass, under PowerShell 7.6.6 on Linux. Windows PowerShell 5.1 was not tested.
+- Develop CI on the merge commit `b5f54ab` passed. All three archived `SHA256SUMS` manifests verified from a clean checkout: 16, 36 and 36 files OK.
+
+**After maintainer review (2026-10-12):** configuration approved, with the cap defined on game starts, cap means INCONCLUSIVE, Cute Chess authoritative for stopping, zero tolerance for unexplained time forfeits, crashes and protocol failures, and a bounded smoke test authorized after a passed preflight. No production SPRT.
+
+- Replaced the analyzer's normal-approximation LLR with a port of the cutechess-cli 1.5.1 SPRT model (read from its source: Jeffreys +0.5 per class, BayesElo with an estimated draw Elo). It reproduces the archived Phase 21 value (2.9709 against 2.97 printed) and an independent worked example (-2.819), so the reconciliation tolerance is 0.01 again instead of 0.1. The analyzer is read-only, has no path to the stopping decision, and a test enforces that it imports nothing that can write or launch.
+- Read the Cute Chess source for opening handling: `-repeat` is two plays with sides swapped, sequential EPD order rewinds only after the end of file, so 20,000 game starts use exactly the 10,000 openings. Cute Chess rewrites the PGN FEN move counters, so reconciliation compares the first four fields, and the analyzer now checks that the openings used are a gap-free prefix used at most twice.
+- The runner's Read-Stage6Results calls the cap INCONCLUSIVE only when 20,000 games were scored. The cap is on game starts, so a run ending with 19,998 scored and 2 cancelled would have been INCOMPLETE. `Get-ReleaseSprtVerdict` fixes that, and the validation checks that neither the cap nor an interruption can become H0 or H1.
+- Added `-SmokeNative`: 20 games on a separate 10-position list (the ranks after the production list, no shared position), the production command line otherwise, its own directory and confirmation phrase, refused unless an intact passed preflight exists for the same commit and scripts, and no path from it to production.
+- A second independent review (Codex gpt-6-luna, xhigh) of the smoke and reconciliation work found no blocker and four items, all fixed. The smoke gate accepted an empty `SHA256SUMS`, which would let a truncated manifest hide tampered evidence; it now needs a non-empty manifest that lists every file, and a preflight started within 24 hours. The analyzer picks the opening list from the attempt's recorded kind and labels a smoke attempt as not a result. A third game on one opening no longer overwrites a scored game in the pair statistics. The review confirmed the model port against `sprt.cpp` at v1.5.1, including the NEW-side perspective and the draw-Elo scaling.

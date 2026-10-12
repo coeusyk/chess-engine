@@ -1,0 +1,38 @@
+> uci
+> setoption name Threads value 1
+> setoption name Hash value 16
+> setoption name PawnHashSize value 1
+> setoption name EvalType value Classical
+> setoption name MultiPV value 1
+> setoption name Contempt value 0
+> setoption name OwnBook value false
+> setoption name SyzygyOnline value false
+> setoption name SyzygyPath value 
+> isready
+> quit
+id name Vex
+id author coeusyk
+option name Hash type spin default 64 min 1 max 65536
+option name PawnHashSize type spin default 1 min 1 max 256
+option name MultiPV type spin default 1 min 1 max 500
+option name MoveOverhead type spin default 30 min 0 max 5000
+option name Threads type spin default 1 min 1 max 512
+option name SyzygyPath type string default <empty>
+option name SyzygyOnline type check default false
+option name SyzygyProbeDepth type spin default 1 min 0 max 100
+option name Syzygy50MoveRule type check default true
+option name Ponder type check default false
+option name OwnBook type check default false
+option name BookFile type string default Performance.bin
+option name BookDepth type spin default 20 min 0 max 50
+option name BookVariance type spin default 50 min 0 max 100
+option name Contempt type spin default 0 min 0 max 200
+option name EvalType type combo default Classical var Classical var NNUE
+option name EvalFile type string default <empty>
+option name NnueDebug type check default false
+uciok
+readyok
+
+[exit code 0]
+[stderr]
+WARNING: Using incubator modules: jdk.incubator.vector
