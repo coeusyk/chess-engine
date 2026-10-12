@@ -15,7 +15,7 @@ function Get-ReleaseSprtConfig {
         OpeningRelativePath = 'docs/architecture/research/release-strength-sprt-v0.5.7-v0.6.0/openings-v1.epd'
         OpeningSha256 = '32a2dc9b6ee1fee14a44ebb915441a2401e54276f75424804fe70f7f48354e1d'
         PreregistrationRelativePath = 'docs/architecture/research/release-strength-sprt-v0.5.7-v0.6.0/preregistration.md'
-        PreregistrationSha256 = '62be5464fe67ca8aae40d36c50016517bba078472a91c8431e40d0e0c24fb5f6'
+        PreregistrationSha256 = '9eeeef6d6b232f03d8466988556119c0008ca420341ee145288facdc970612b1'
         Elo0 = 0; Elo1 = 20; Alpha = 0.05; Beta = 0.05; BonferroniM = 1
         MinGames = 0; MaxGames = 20000; TC = '5+0.05'; Concurrency = 6; EngineThreads = 1
         OpeningOrder = 'sequential'
@@ -84,6 +84,7 @@ function Assert-ReleaseSprtHostFacts($Facts) {
     if ($Facts.JavaVersion -ne '21.0.10' -or $Facts.JavaRuntime -ne '21.0.10+7-LTS' -or
         $Facts.JavaVendor -notmatch 'Azul') { throw 'Wrong JDK.' }
     if ($Facts.CutechessVersion -ne '1.5.1') { throw 'Requires cutechess-cli 1.5.1.' }
+    if ($Facts.HardwareLogicalProcessors -ne 16) { throw "Requires 16 logical processors, found $($Facts.HardwareLogicalProcessors)." }
     if ($Facts.IdleCpuMean -gt (Get-ReleaseSprtConfig).IdleCpuMeanLimitPercent) { throw "Host is not idle: mean CPU $($Facts.IdleCpuMean)%." }
 }
 

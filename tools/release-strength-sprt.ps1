@@ -32,34 +32,37 @@ foreach ($name in @('Invoke-Stage6Checked', 'Get-Stage6Git', 'Stop-Stage6OwnedPr
 $modes = @($ValidateOnly, $PreflightNative, $ExecuteNative) | Where-Object { $_ }
 if (@($modes).Count -ne 1) { throw 'Choose exactly one of -ValidateOnly, -PreflightNative, -ExecuteNative.' }
 if ($ValidateOnly) { & (Join-Path $PSScriptRoot 'release-strength-sprt-validation.ps1'); return }
-if ($env:WSL_INTEROP -or $env:WSL_DISTRO_NAME -or [Environment]::OSVersion.Platform -ne 'Win32NT') { throw 'Run from native Windows PowerShell, never WSL/interop.' }
-if (-not $AssetDirectory) { throw 'Pass -AssetDirectory with the two published JARs.' }
-
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
-if ($repo -notmatch '^[A-Za-z]:\\' -or $repo -match '(?i)wsl') { throw 'The checkout must be on a native Windows drive.' }
 $config = Get-ReleaseSprtConfig
-if ($config.PreregistrationSha256 -ceq 'PENDING') { throw 'Preregistration is not frozen: PreregistrationSha256 is still PENDING.' }
-
-# The attempts directory itself is allowed to be untracked; anything else dirty blocks the run.
-$resultsRoot = 'tools/results/release-strength-sprt/'
-$status = Get-Stage6Git $repo @('status', '--porcelain=v1', '--untracked-files=all')
-$dirty = @($status -split '\r?\n' | Where-Object { $_ -and $_ -notmatch ('^\?\? ' + [regex]::Escape($resultsRoot)) -and $_ -notmatch '^\?\? \.claude/agent-memory/' })
-if ($dirty.Count) { throw "Dirty checkout: $($dirty -join '; ')" }
-
 $kind = if ($ExecuteNative) { 'run' } else { 'preflight' }
 $runId = $kind + '-' + [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
 $output = Join-Path (Join-Path $repo 'tools\results\release-strength-sprt') $runId
 if (Test-Path -LiteralPath $output) { throw 'Run directory collision; nothing overwritten.' }
-New-Item -ItemType Directory -Path $output | Out-Null
-# First write, before anything can fail: proves this attempt started even if every later step dies.
+New-Item -ItemType Directory -Path $output -Force | Out-Null
+# First write, before any other check can fail: every invocation that passes mode selection leaves a record.
+function Get-AttemptGit([string[]]$Arguments) { try { return Get-Stage6Git $repo $Arguments } catch { return 'unavailable' } }
 Save-Stage6Json ([ordered]@{ RunId = $runId; Kind = $kind; StartedUtc = [DateTime]::UtcNow.ToString('o'); Status = 'STARTED'
-    InvokingHead = (Get-Stage6Git $repo @('rev-parse', 'HEAD')); Branch = (Get-Stage6Git $repo @('branch', '--show-current')) }) (Join-Path $output 'attempt-start.json')
+    InvokingHead = (Get-AttemptGit @('rev-parse', 'HEAD')); Branch = (Get-AttemptGit @('branch', '--show-current')) }) (Join-Path $output 'attempt-start.json')
 
-$child = $null; $exitCode = -1; $failure = ''; $matchStarted = $false; $matchCompleted = $false; $transcript = $false; $preflightPassed = $false
+$mutex = $null; $child = $null; $exitCode = -1; $failure = ''; $matchStarted = $false; $matchCompleted = $false; $transcript = $false; $preflightPassed = $false
 $oldJava = $env:JAVA; $oldCute = $env:CUTECHESS
 try {
     Start-Transcript -LiteralPath (Join-Path $output 'runner.log') | Out-Null; $transcript = $true
     Save-Stage6Json $config (Join-Path $output 'approved-config.json')
+
+    if ($env:WSL_INTEROP -or $env:WSL_DISTRO_NAME -or [Environment]::OSVersion.Platform -ne 'Win32NT') { throw 'Run from native Windows PowerShell, never WSL/interop.' }
+    if (-not $AssetDirectory) { throw 'Pass -AssetDirectory with the two published JARs.' }
+    if ($repo -notmatch '^[A-Za-z]:\\' -or $repo -match '(?i)wsl') { throw 'The checkout must be on a native Windows drive.' }
+    if ($config.PreregistrationSha256 -ceq 'PENDING') { throw 'Preregistration is not frozen: PreregistrationSha256 is still PENDING.' }
+    # One attempt at a time on this machine: a second concurrent run would change the host load the preregistration assumes.
+    # The mutex is released by the OS if this process is killed, so a dead attempt never blocks the next one.
+    $mutex = New-Object Threading.Mutex($false, 'Global\VexReleaseSprt')
+    if (-not $mutex.WaitOne(0)) { $mutex.Dispose(); $mutex = $null; throw 'Another release SPRT attempt is running on this machine.' }
+    # The attempts directory itself is allowed to be untracked; anything else dirty blocks the run.
+    $resultsRoot = 'tools/results/release-strength-sprt/'
+    $status = Get-Stage6Git $repo @('status', '--porcelain=v1', '--untracked-files=all')
+    $dirty = @($status -split '\r?\n' | Where-Object { $_ -and $_ -notmatch ('^\?\? ' + [regex]::Escape($resultsRoot)) -and $_ -notmatch '^\?\? \.claude/agent-memory/' })
+    if ($dirty.Count) { throw "Dirty checkout: $($dirty -join '; ')" }
 
     foreach ($name in @('JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS', 'MAVEN_OPTS')) {
         if ([Environment]::GetEnvironmentVariable($name)) { throw "Unset inherited JVM option variable $name first." }
@@ -141,6 +144,7 @@ try {
         Write-Host "Evidence and frozen inputs: $output"
         if ((Read-Host 'Confirm idle native host: type RUN-RELEASE-SPRT to start the first game') -cne 'RUN-RELEASE-SPRT') { throw 'Operator did not confirm. No games started.' }
         foreach ($arm in $arms) { if ((Get-Stage6Hash (Join-Path $output $arm.Copy)) -cne $arm.Sha) { throw 'Frozen binary changed before launch.' } }
+        foreach ($name in $scripts.Keys) { if ((Get-Stage6Hash (Join-Path $PSScriptRoot $name)) -cne $scripts[$name]) { throw "Script changed after the identity record: $name" } }
         if ((Get-Stage6Hash $openingCopy) -cne $config.OpeningSha256 -or (Get-Stage6Hash $parameterPath) -cne (Get-Content -LiteralPath (Join-Path $output 'identity.json') -Raw | ConvertFrom-Json).ParametersSha256 -or
             (Get-Stage6Hash $java) -cne $facts.JavaSha256 -or (Get-Stage6Hash $cute) -cne $facts.CutechessSha256) { throw 'Frozen input or tool changed before launch.' }
         $facts.PowerPlanRaw = Invoke-Stage6Checked 'powercfg.exe' @('/getactivescheme') $repo (Join-Path $output 'launch-power-plan.log')
@@ -184,6 +188,7 @@ catch { $failure = $_.ToString(); Write-Warning $failure }
 finally {
     try { Stop-Stage6OwnedProcess $child $output } catch { $failure += "`n$_" }
     $env:JAVA = $oldJava; $env:CUTECHESS = $oldCute
+    if ($null -ne $mutex) { $mutex.ReleaseMutex(); $mutex.Dispose() }
     try {
         if ($PreflightNative) {
             $verdict = if ($preflightPassed -and -not $failure) { 'PREFLIGHT_PASSED' } else { 'PREFLIGHT_FAILED' }

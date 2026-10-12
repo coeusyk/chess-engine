@@ -481,10 +481,11 @@ An independent read-only review found five gaps, all fixed and re-reviewed: Powe
 
 - The analyzer crashed on a small one-sided sample because the 95% interval left (0, 1) and the Elo logarithm is undefined there. A synthetic test caught it. Elo is now `None` at those bounds.
 - `Get-Command java` returns two paths on Linux; the lookup now takes the first.
+- An independent Codex review (gpt-6-luna, xhigh) found no blocker and seven should-fix items, all taken. Runner: the attempt record is now written before the platform, dirty-tree and host checks, so a refused invocation is recorded (exercised on Linux, where the platform check refuses); a machine-wide mutex stops two concurrent attempts; script hashes are rechecked after the confirmation prompt; 16 logical processors are enforced, not just recorded. Document: the LLR cross-check tolerance went from 0.02 to 0.1 because Cute Chess and the analyzer use different likelihood models and one calibration point is not enough to justify 0.02; the Elo intervals are labelled nominal fixed-sample intervals; the game-level SPRT's independence assumption across paired games is listed as a limitation. The review also confirmed from the Cute Chess 1.5.1 source that `-repeat` plays each opening twice with sides swapped, that sequential EPD order follows the file, and that 20,000 game starts use exactly the 10,000 openings without wraparound.
 
 **Measurements:**
 
 - The analyzer reproduces the archived Phase 21 result: 13,118 scored games, 4,080-3,829-5,209, LLR 2.974 against Cute Chess's 2.97, Elo 6.65 with a 95% half-width of 4.6 against 6.6 +/- 4.6. 6,558 completed pairs plus 2 unpaired games equal the scored total.
 - Planning numbers at [0,20] with a 39.7% draw ratio: P(accept H1) is 0.05 at 0 Elo and 0.95 at 20 Elo; expected games are about 960 at either end and about 1,580 at 10 Elo. The Phase 21 match took 7 hours 13 minutes for 13,123 games at this concurrency.
-- Validation: 67 new synthetic PowerShell checks, 8 Python tests, and the 75 Phase 21 checks still pass, under PowerShell 7.6.6 on Linux. Windows PowerShell 5.1 was not tested.
+- Validation: 70 new synthetic PowerShell checks, 8 Python tests, and the 75 Phase 21 checks still pass, under PowerShell 7.6.6 on Linux. Windows PowerShell 5.1 was not tested.
 - Develop CI on the merge commit `b5f54ab` passed. All three archived `SHA256SUMS` manifests verified from a clean checkout: 16, 36 and 36 files OK.

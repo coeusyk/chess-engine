@@ -5,7 +5,8 @@
 NEW is the candidate (v0.6.0), OLD is the baseline (v0.5.7). Elo is logistic. The LLR is the
 normal-approximation GSPRT, which reproduces cutechess-cli's reported LLR for the archived Phase 21
 result (4080-3829-5209 at [0,10] gives 2.974 here against 2.97 reported). The pair-level numbers treat the
-two color-reversed games on one opening as one observation.
+two color-reversed games on one opening as one observation. The Elo intervals are nominal fixed-sample intervals;
+the match stops on an LLR boundary, so their coverage after that stop is not guaranteed to be 95%.
 """
 import argparse
 import json
@@ -43,6 +44,7 @@ def summarize(counts_by_value, elo0, elo1, alpha, beta):
     return {
         "observations": n, "score": mean, "elo": elo_of(mean),
         "elo_95_low": elo_of(mean - 1.96 * se), "elo_95_high": elo_of(mean + 1.96 * se),
+        "interval_basis": "nominal fixed-sample normal approximation; not corrected for sequential stopping",
         "llr": llr, "lower_bound": math.log(beta / (1 - alpha)), "upper_bound": math.log((1 - beta) / alpha),
     }
 

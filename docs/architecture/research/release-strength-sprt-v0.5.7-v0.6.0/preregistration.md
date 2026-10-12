@@ -77,7 +77,8 @@ Correction to the release comparison report: its Settings paragraph says the UCI
 
 | Item | Requirement | Recorded at run time |
 |---|---|---|
-| Host | `RENEGADE`, Windows, AMD Ryzen 7 7700X, native only, never WSL or interop | `environment.json` |
+| Host | `RENEGADE`, Windows, AMD Ryzen 7 7700X with 16 logical processors, native only, never WSL or interop | `environment.json` |
+| One attempt at a time | machine-wide mutex `Global\VexReleaseSprt`, released by the OS if the process dies | `runner.log` |
 | Power and affinity | Balanced plan, full processor affinity | `environment.json`, `launch-power-plan.log` |
 | JDK | Azul 21.0.10, runtime 21.0.10+7-LTS | `java-version.log`, SHA-256 of `java.exe` |
 | Match runner | `cutechess-cli` 1.5.1 | `cutechess-version.log`, SHA-256 of the executable |
@@ -158,7 +159,8 @@ Restart rules.
 
 This section exists because the Phase 21 closure could not reconstruct its first attempt: six game starts, no preserved finished-game events, no recorded exit cause.
 
-- Every invocation of the runner, preflight or match, creates its own directory `tools/results/release-strength-sprt/<kind>-<UTC timestamp>-<random>/` before any other work and writes `attempt-start.json` first (run id, kind, UTC start, repository HEAD and branch).
+- Every invocation of the runner that passes mode selection, preflight or match, creates its own directory `tools/results/release-strength-sprt/<kind>-<UTC timestamp>-<random>/` and writes `attempt-start.json` (run id, kind, UTC start, repository HEAD and branch, or `unavailable` if git fails) before any other check, including the platform, dirty-tree, single-instance and host checks. A refused invocation therefore leaves a record with its failure text in `attempt-end.json`.
+- After the operator confirms and before the first game, the runner rechecks the hashes of the binaries, the opening list, the parameters, Java, Cute Chess and every script recorded in `identity.json`, and refuses to launch if any changed.
 - `attempt-end.json` is written in a `finally` block with the end time, whether the match started or completed, the exit code and the failure text. If it is missing, the process was killed and that is itself the record.
 - The runner never deletes, overwrites or resets anything. A run id collision aborts. Failed and interrupted attempts are committed with the rest.
 - The log is flushed to disk line by line as it is written, so a killed process leaves its finished-game events.
@@ -174,7 +176,7 @@ Validation after the run, in order. The report is not written until all pass.
 1. `sha256sum -c SHA256SUMS` inside the attempt directory reports every file OK, and the listing covers every file present except itself.
 2. Both JAR copies hash to the values in section 3, and `identity.json` records the script hashes and the preregistration hash.
 3. `summary.json` has `AuditIssues` empty and `PartialPgnRecords` 0, and its win, loss and draw counts equal the last `Score of NEW vs OLD` line.
-4. `python tools/release-sprt-analyze.py <attempt-dir> --elo1 20` reproduces the scored games and W/L/D from the PGN, and its game-level LLR is within 0.02 of the last `SPRT: llr` line. That tolerance comes from the one case available to calibrate against: the archived Phase 21 result reproduces as 2.974 against 2.97 reported.
+4. `python tools/release-sprt-analyze.py <attempt-dir> --elo1 20` reproduces the scored games and W/L/D from the PGN, and its game-level LLR is within 0.1 of the last `SPRT: llr` line. The analyzer uses a normal approximation and Cute Chess uses its own likelihood model, so they are not expected to match exactly. On the one case available to calibrate against, the archived Phase 21 result, they agree to 0.004 (2.974 against 2.97 reported); the gap can be larger elsewhere, which is why the tolerance is 0.1 and not tighter.
 5. `arguments.json` equals `prepared-arguments.json` and the argument list in section 3 to 8.
 6. The attempt table in the report accounts for every directory (section 10).
 
@@ -183,16 +185,17 @@ Validation after the run, in order. The report is not written until all pass.
 Reported for the primary attempt, in this order and with these definitions:
 
 - Counts: scored games, wins, draws, losses (NEW's point of view), cancelled games, completed pairs, unpaired games, draw ratio, and the NEW score split by color.
-- Elo: logistic Elo from the score, `Elo = -400 log10(1/score - 1)`, with its 95% interval from the empirical per-game variance. Reported as `Elo [low, high]`. Cute Chess's own `Elo difference` line is quoted next to it.
+- Elo: logistic Elo from the score, `Elo = -400 log10(1/score - 1)`, with its nominal 95% interval from the empirical per-game variance. Reported as `Elo [low, high]`. Cute Chess's own `Elo difference` line is quoted next to it. These are fixed-sample intervals. The match stops on an LLR boundary, so their coverage after that stop is not guaranteed to be 95%, and the report says so next to them.
 - Pair-level Elo and interval, from the completed color-reversed pairs, as a secondary figure. The primary figure is game-level, because that is what the stopping rule and the Phase 21 numbers use.
 - LLR: Cute Chess's final value, the independent recomputation, and the boundaries.
-- Decision: one of H1 accepted, H0 accepted, inconclusive at the cap, using Cute Chess's stopping decision. If the recomputed LLR disagrees with Cute Chess by more than 0.02, that is reported and investigated before any conclusion is written.
+- Decision: one of H1 accepted, H0 accepted, inconclusive at the cap, using Cute Chess's stopping decision. If the recomputed LLR disagrees with Cute Chess by more than 0.1, that is reported and investigated before any conclusion is written.
 - The wording rules of section 2 apply. The report states that the result applies to these two binaries, this time control, one thread, Classical evaluation, this host and this opening list, and that it is not derived from or compared against the fixed-depth benchmark.
 - Any early stop, fault, restart or deviation from this document is listed, with the attempt that contains it.
 
 ## 13. Assumptions and limitations
 
 - Cute Chess's LLR is the quantity that stops the match. Its internal model was not independently derived; the recomputation above is a cross-check calibrated on one archived result.
+- Cute Chess's SPRT counts every game as independent, but the two games on one opening share a starting position. If their results are correlated, the nominal alpha and beta are not guaranteed. The pair-level statistics are reported afterwards and do not affect stopping, and the effect was not measured.
 - One host, one time control, one thread. Six simultaneous games share 16 logical processors with Cute Chess itself, and their effect on engine speed was not measured.
 - The opening list is a fixed sample of one book, all positions white to move after three moves. It is not a general opening distribution.
 - I found no archived run of the published v0.5.7 JAR under Cute Chess 1.5.1 in the records read for this document. Its UCI handshake is verified, and its behavior in games is verified only by the fault monitor once games start.

@@ -73,10 +73,11 @@ try {
     # Host qualification.
     $facts = @{ Platform = 'Win32NT'; ComputerName = 'RENEGADE'; CpuName = 'AMD Ryzen 7 7700X 8-Core Processor'
         PowerPlanRaw = '381b4222-f694-41f0-9685-ff5bb260df2e'; AffinityMask = 65535; FullAffinityMask = 65535
-        JavaVersion = '21.0.10'; JavaRuntime = '21.0.10+7-LTS'; JavaVendor = 'Azul Systems, Inc.'; CutechessVersion = '1.5.1'; IdleCpuMean = 1.5 }
+        JavaVersion = '21.0.10'; JavaRuntime = '21.0.10+7-LTS'; JavaVendor = 'Azul Systems, Inc.'; CutechessVersion = '1.5.1'; HardwareLogicalProcessors = 16; IdleCpuMean = 1.5 }
     Assert-ReleaseSprtHostFacts $facts
     foreach ($key in @('Platform', 'ComputerName', 'CpuName', 'PowerPlanRaw', 'JavaVersion', 'JavaRuntime', 'JavaVendor', 'CutechessVersion')) { $bad = $facts.Clone(); $bad[$key] = 'wrong'; Assert-Rejected { Assert-ReleaseSprtHostFacts $bad } "reject incorrect host/tool $key" }
     $bad = $facts.Clone(); $bad.AffinityMask = 1; Assert-Rejected { Assert-ReleaseSprtHostFacts $bad } 'reject restricted affinity'
+    $bad = $facts.Clone(); $bad.HardwareLogicalProcessors = 8; Assert-Rejected { Assert-ReleaseSprtHostFacts $bad } 'reject SMT off or a different processor count'
     $bad = $facts.Clone(); $bad.IdleCpuMean = 5.5; Assert-Rejected { Assert-ReleaseSprtHostFacts $bad } 'reject a busy host'
 
     # UCI handshake contract.
@@ -108,7 +109,10 @@ try {
     $null = [Management.Automation.Language.Parser]::ParseFile($wrapperPath, [ref]$tokens, [ref]$parseErrors)
     Assert-Check ($parseErrors.Count -eq 0) 'wrapper syntax'
     $source = Get-Content -LiteralPath $wrapperPath -Raw
-    Assert-Check ($source.IndexOf('attempt-start.json') -ge 0 -and $source.IndexOf('attempt-start.json') -lt $source.IndexOf('Start-Transcript') -and $source.IndexOf('Start-Transcript') -lt $source.IndexOf('Get-Counter')) 'attempt record is written before any probe'
+    $at = $source.IndexOf('attempt-start.json')
+    Assert-Check ($at -ge 0 -and $at -lt $source.IndexOf('Start-Transcript') -and $at -lt $source.IndexOf('WSL_INTEROP') -and $at -lt $source.IndexOf('Dirty checkout') -and $at -lt $source.IndexOf('Threading.Mutex') -and $source.IndexOf('Start-Transcript') -lt $source.IndexOf('Get-Counter')) 'attempt record is written before any platform, dirty-tree, mutex or host probe'
+    Assert-Check ($source.Contains('Global\VexReleaseSprt') -and $source.Contains('ReleaseMutex')) 'single-instance mutex is taken and released'
+    Assert-Check ($source.IndexOf('Script changed after the identity record') -gt $source.IndexOf('RUN-RELEASE-SPRT') -and $source.IndexOf('Script changed after the identity record') -lt $source.IndexOf('Start-Process')) 'script hashes are rechecked after the confirmation and before launch'
     Assert-Check ($source -notmatch 'Remove-Item|git(\.exe)?[^\r\n]*(clean|reset|checkout)') 'wrapper never deletes or resets anything'
     Assert-Check ($source.Contains('Assert-ReleaseSprtHandshake') -and $source.Contains('-PrepareOnly') -and $source.Contains('Assert-ReleaseSprtArguments')) 'preflight handshakes both JARs and prepares the exact arguments'
     Write-Host "Release SPRT synthetic validation PASS: $script:checks checks. No engines, Cute Chess or games launched."
