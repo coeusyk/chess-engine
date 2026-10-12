@@ -1,0 +1,54 @@
+{
+  "utc": "2026-10-12T11:37:30.5912396Z",
+  "machine": "RENEGADE",
+  "os": "Microsoft Windows 10.0.26300",
+  "cpu": "AMD Ryzen 7 7700X 8-Core Processor",
+  "logical_processors": 16,
+  "ram_gb": 31.2,
+  "power_scheme": "(Balanced)",
+  "powershell": "7.6.6",
+  "java": "openjdk version \"21.0.10\" 2026-01-20 LTS",
+  "java_vendor": "java.vendor = Azul Systems, Inc.",
+  "maven": "Apache Maven 3.9.16",
+  "git": "git version 2.55.0.windows.3",
+  "jvm_flags": "-Xms512m -Xmx512m -XX:+UseG1GC --add-modules jdk.incubator.vector",
+  "idle_check": {
+    "mean_cpu_percent": 1.65,
+    "max_cpu_percent": 6.93,
+    "samples": 15,
+    "limit_percent": 5.0
+  },
+  "repo_head": "2d7032bea100449c8811327f3825f640e67383a4",
+  "repo_clean_at_start": true,
+  "script_sha256": "058374c377ad7b8ce4044e38ffbcf203021b91211d85d865d78d9a69c14a8935",
+  "harness_sha256": "803978d418bf8c0ad349f63c18de23945e17145bc889b13c74ec072f77039b06",
+  "corpus_sha256_lf": "3544a8fbb6f79e4f3c153f979a98da4b62c4380a98e0d8b7dc0259992341e560",
+  "expected_main_nodes": {
+    "A": 59793662,
+    "B": 20540625
+  },
+  "pairs": 7,
+  "measured_start_with": "B",
+  "timeout_sec": 1200,
+  "warmup_depth": 8,
+  "arms": {
+    "A": {
+      "ref": "beaef361d35160d768473af7d2c349719db8508b",
+      "commit": "beaef361d35160d768473af7d2c349719db8508b",
+      "jar": "engine-uci-0.5.7.jar",
+      "jar_bytes": 2185534,
+      "jar_sha256": "ccb6feedcd1a58f134273921f2e7372ab1d5b07743fcaa6dc2bb5894771f00c5",
+      "classes": 736,
+      "class_listing_matches_published": true
+    },
+    "B": {
+      "ref": "v0.6.0",
+      "commit": "bc3dc380e759526e8aa19cd8385af16ab22ac502",
+      "jar": "engine-uci-0.6.0.jar",
+      "jar_bytes": 2301979,
+      "jar_sha256": "88e2d2cd89a811d92c1f79c0c71ee2e68cf0ceecad4c8c7e2664e2e9e5a18833",
+      "classes": 791,
+      "class_listing_matches_published": true
+    }
+  }
+}

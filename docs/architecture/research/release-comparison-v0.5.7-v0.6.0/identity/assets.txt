@@ -1,0 +1,11 @@
+Published release assets, downloaded with: gh release download <tag> -p 'engine-uci-*.jar'
+engine-uci-0.5.7.jar  2185506 bytes  sha256 bc41c91b0d3b4c20f6a334ff3f0cc2cf5c04e6820b817b1cfd46e62a640663d3
+engine-uci-0.6.0.jar  2301950 bytes  sha256 e16163b8fe6f8278161db0d9220883c5d49a4814df0d81f7a6cad901c07cf4e7
+
+Local rebuilds (mvn -B -q -pl engine-core,engine-uci -am package -DskipTests, OpenJDK 21.0.12.1, Maven 3.8.7, detached worktrees):
+beaef361d35160d768473af7d2c349719db8508b  engine-uci-0.5.7.jar           sha256 a507e37e24114ad66276437710af25a951a55dd35ecb9803e3e3db16016b4ea8
+7b5b3a4332193d28a1f668654806fac434f2cb8f  engine-uci-0.5.7-SNAPSHOT.jar  sha256 81595a5c57078a5acf22db8117e4493f21c2a61981189c79b947909397d3ac93
+bc3dc380e759526e8aa19cd8385af16ab22ac502  engine-uci-0.6.0.jar           sha256 98b5db2dd759711848dd3eb888ed45ef1a9648bcb0885a53a64e1b5aa48d35d1
+
+Whole-file hashes differ between a published JAR and its rebuild (timestamps, build JDK, Maven version in the manifest). The classes-*.sha256 files list the SHA-256 of every .class file inside each shaded JAR, sorted; identical files mean identical compiled classes.
+Verify yourself: unzip the JAR into an empty directory, then: find . -name '*.class' | LC_ALL=C sort | xargs sha256sum | diff - classes-<name>.sha256
