@@ -39,16 +39,16 @@ This should print `ValidateOnly OK` with the two commits, the corpus hash and th
 
 ## 4. Run
 
-The two runs behind the report, in the order they were made (each needs a clean tree and a new output directory):
+The two runs behind the report were made into `tools/results/release-comparison-20261012` and `tools/results/release-comparison-20261012-repeat-bfirst`. Those directories are committed on this branch, so a new run needs new names (each run also needs a clean tree). A-first:
 
 ```powershell
-pwsh -NoProfile -File tools/release-comparison.ps1 -OutDir tools/results/release-comparison-20261012
+pwsh -NoProfile -File tools/release-comparison.ps1 -OutDir tools/results/release-comparison-rerun-a-first
 ```
 
 Warm-up runs always occur A then B. They do not determine the measured-pair order. Pair 1 starts with `-StartWith` (A by default), and the arms alternate in every pair. The second run started the measured sequence B-first:
 
 ```powershell
-pwsh -NoProfile -File tools/release-comparison.ps1 -OutDir tools/results/release-comparison-20261012-repeat-bfirst -StartWith B
+pwsh -NoProfile -File tools/release-comparison.ps1 -OutDir tools/results/release-comparison-rerun-b-first -StartWith B
 ```
 
 Each timed run is a fresh JVM that first searches the whole corpus once at depth 8 (`-WarmupDepth`, untimed and discarded) and then times the depth-13 pass, so cold-JIT cost is not in the measured time. This is different from the Stage 5 procedure, which timed a whole cold `--bench` process, so absolute seconds here are not comparable with the Phase 21 Stage 5 numbers. The warm-up does not change any search result: node counts, scores, moves and PVs were identical with and without it on four positions on both JARs. The two discarded full runs still precede the timed pairs, to settle file caches.

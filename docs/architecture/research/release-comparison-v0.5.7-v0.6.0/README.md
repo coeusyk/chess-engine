@@ -125,7 +125,7 @@ One earlier attempt at the second run, in `tools/results/release-comparison-2026
 
 All 16 raw TSV files contain 30 positions. Their per-position main-node sums equal the expected total for their arm: 59,793,662 for A and 20,540,625 for B. All 14 measured CSV rows also have the expected node totals, with seven rows per arm. Every stderr file has the expected depth 13, hash 16 MB, contempt 0, one thread, 30 positions and warm-up depth 8. A uses `Evaluator` with instrumentation absent; B uses `ClassicalEvaluator` with instrumentation off. The evaluator class names differ across releases, but both arms use the classical evaluator. Both use the same corpus, JVM flags, depth, hash size, contempt, thread count and harness.
 
-The two runs have the same harness SHA-256 (`803978d418bf8c0ad349f63c18de23945e17145bc889b13c74ec072f77039b06`) and LF-normalized corpus SHA-256 (`3544a8fbb6f79e4f3c153f979a98da4b62c4380a98e0d8b7dc0259992341e560`). The runner SHA differs because the second run used the added `-StartWith` parameter: `f7256d71c3aeb576ec705662cee48b1b9357b11886ca7eef615e8bd372261cfd` for the first run and `058374c377ad7b8ce4044e38ffbcf203021b91211d85d865d78d9a69c14a8935` for the second. Both match their Windows source after CRLF normalization. The recorded repository heads are `da81d3f3232cb4a7d726a236a851112e05db1444` and `2d7032bea100449c8811327f3825f640e67383a4` respectively.
+The two runs have the same harness SHA-256 (`803978d418bf8c0ad349f63c18de23945e17145bc889b13c74ec072f77039b06`) and LF-normalized corpus SHA-256 (`3544a8fbb6f79e4f3c153f979a98da4b62c4380a98e0d8b7dc0259992341e560`). The runner SHA differs because the second run used the added `-StartWith` parameter: `f7256d71c3aeb576ec705662cee48b1b9357b11886ca7eef615e8bd372261cfd` for the first run and `058374c377ad7b8ce4044e38ffbcf203021b91211d85d865d78d9a69c14a8935` for the second. Each is the SHA-256 of the script bytes on disk during that run: the first matches `da81d3f`'s `tools/release-comparison.ps1` with CRLF line endings, the second matches `2d7032b`'s with LF endings (the same file with CRLF endings would hash to `7d1eca1755e1...`). Check against the committed blob with the matching line endings. The recorded repository heads are `da81d3f3232cb4a7d726a236a851112e05db1444` and `2d7032bea100449c8811327f3825f640e67383a4` respectively.
 
 | Arm | Published asset SHA-256 | Source commit | First run build JAR SHA-256 | B-first run build JAR SHA-256 | Published class listing matched |
 |---|---|---|---|---|---|
@@ -204,7 +204,7 @@ The existing rule in `native-run-instructions.md` flags a run as noisy when eith
 
 All 14 paired ratios are retained. They range from 0.2561 to 0.3335, so every measured pair is substantially faster for v0.6.0. The first run had lower B/A ratios in B-first pairs than A-first pairs, mostly because v0.5.7 was slower on several A-second runs. The order-reversed repeat does not reproduce that split: its A-first and B-first median pair ratios are 0.3289 and 0.3285. Across both runs they are 0.3289 and 0.3262. The order reversal therefore supports the direction of the effect, while the large v0.5.7 variance remains unexplained.
 
-Using Tukey's 1.5 times IQR rule within each seven-run arm, the B-first run's `pair01-A` time of 215,292.4 ms is a high outlier; its paired ratio is 0.2749. No other run is flagged by that rule. This is a descriptive flag only. No observations were removed. The first run's two slowest v0.5.7 times were pairs 4 and 5; the repeat's slowest was pair 1. Neither sequence shows a steady drift through all seven pairs.
+Using Tukey's 1.5 times IQR rule within each seven-run arm, the B-first run's `pair01-A` time of 215,292.4 ms is a high outlier; its paired ratio is 0.2749. No other run is flagged by that rule. This is a descriptive flag only. No observations were removed. The first run's two slowest v0.5.7 times were pairs 4 and 2; the repeat's slowest was pair 1. Neither sequence shows a steady drift through all seven pairs.
 
 - **Execution order, moderate confidence that it does not explain the replicated direction.** The first run showed an order split, but the B-first repeat did not. Across both runs, v0.5.7's median was 167,557.3 ms when A ran first and 172,089.6 ms when A ran second, a 2.7% difference. v0.6.0's corresponding medians were 55,046.4 ms and 55,755.0 ms. This does not identify what caused individual slow runs.
 - **CPU contention or other host activity, low confidence as a cause.** The first pre-run idle sample had mean 0.65% and max 4.73%; the repeat had mean 1.65% and max 6.93%. The runner's hard check is on the 15-second mean, which passed both times, and the operator confirmed the host was otherwise idle. No activity was sampled during the measured runs, so these records neither establish nor rule out contention during a slow search.
@@ -261,13 +261,13 @@ git fetch origin research/release-comparison-v0.5.7-v0.6.0
 git worktree add ../release-comparison-run FETCH_HEAD
 cd ../release-comparison-run
 pwsh -NoProfile -File tools/release-comparison.ps1 -ValidateOnly
-# first run, A-first (output: tools/results/release-comparison-20261012)
-pwsh -NoProfile -File tools/release-comparison.ps1 -OutDir tools/results/release-comparison-20261012
-# second run, B-first (output: tools/results/release-comparison-20261012-repeat-bfirst), after a fresh clean tree
-pwsh -NoProfile -File tools/release-comparison.ps1 -OutDir tools/results/release-comparison-20261012-repeat-bfirst -StartWith B
+# A-first measured pairs (the archived first run used -OutDir tools/results/release-comparison-20261012)
+pwsh -NoProfile -File tools/release-comparison.ps1 -OutDir tools/results/release-comparison-rerun-a-first
+# B-first measured pairs (the archived second run used -OutDir tools/results/release-comparison-20261012-repeat-bfirst); needs a clean tree again
+pwsh -NoProfile -File tools/release-comparison.ps1 -OutDir tools/results/release-comparison-rerun-b-first -StartWith B
 ```
 
-The runner refuses to start on a dirty tree or into a non-empty output directory, so use a new directory name for any new run. The results in this report were produced from repository heads `da81d3f3232cb4a7d726a236a851112e05db1444` (first run) and `2d7032bea100449c8811327f3825f640e67383a4` (second run).
+The runner at this branch head differs from the versions that produced the archived runs in two places found in the final review: `Write-Manifest` now excludes only the `work/` directory under the output directory (it used to skip any path with a `work` component, which would empty the manifest for a checkout under a folder named `work`), and `CLEANUP-FAILED.txt` is now also written when the run itself failed. Neither changes timing, node counts or the archived output; the archived runs' own script hashes are in their `environment.json`. The runner refuses to start on a dirty tree or into a non-empty output directory, so the output names above are new ones; the archived directories already exist in this branch. The results in this report were produced from repository heads `da81d3f3232cb4a7d726a236a851112e05db1444` (first run) and `2d7032bea100449c8811327f3825f640e67383a4` (second run).
 
 ### Separate validation: v0.6.0 on its own 31-position corpus
 

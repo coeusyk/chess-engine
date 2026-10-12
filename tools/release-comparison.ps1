@@ -70,7 +70,7 @@ function Get-ClassListing([string]$jarPath) {   # same lines as: find . -name '*
     } finally { $zip.Dispose() }
 }
 function Write-Manifest {
-    Get-ChildItem $OutDir -File -Recurse | Where-Object { $_.Name -ne "SHA256SUMS" -and $_.FullName -notlike "*$([IO.Path]::DirectorySeparatorChar)work$([IO.Path]::DirectorySeparatorChar)*" } |
+    Get-ChildItem $OutDir -File -Recurse | Where-Object { $_.Name -ne "SHA256SUMS" -and $_.FullName.Substring($OutDir.Length + 1) -notlike "work$([IO.Path]::DirectorySeparatorChar)*" } |
         ForEach-Object { "{0}  {1}" -f (Sha256File $_.FullName), $_.FullName.Substring($OutDir.Length + 1).Replace("\", "/") } | Set-Content (Join-Path $OutDir "SHA256SUMS")
 }
 function Get-Median($v) { $s = @($v | Sort-Object); $n = $s.Count; if ($n % 2) { $s[($n - 1) / 2] } else { ($s[$n / 2 - 1] + $s[$n / 2]) / 2 } }
@@ -242,9 +242,9 @@ try {
         if ($LASTEXITCODE -ne 0) { $leftover += "$t : $removal" }
     }
     git worktree prune
+    if ($leftover) {   # in finally, so it is also reported when the run itself failed and rethrew
+        Set-Content (Join-Path $OutDir "CLEANUP-FAILED.txt") ($leftover -join "`n")   # written after the manifest, so it is not listed there
+        Write-Warning "Could not remove $($leftover.Count) temporary worktree(s). See CLEANUP-FAILED.txt and remove them with 'git worktree remove --force' before another run."
+    }
 }
-if ($leftover) {
-    Set-Content (Join-Path $OutDir "CLEANUP-FAILED.txt") ($leftover -join "`n")   # written after the manifest, so it is not listed there
-    Write-Warning "Could not remove $($leftover.Count) temporary worktree(s). See CLEANUP-FAILED.txt and remove them with 'git worktree remove --force' before another run."
-    exit 1
-}
+if ($leftover) { exit 1 }
