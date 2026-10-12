@@ -26,6 +26,7 @@ param(
 $ErrorActionPreference = "Stop"
 if (-not $JavaHome) { throw "Set JAVA_HOME (or pass -JavaHome) to a JDK 21 install." }
 $java = Join-Path $JavaHome "bin/java"; $javac = Join-Path $JavaHome "bin/javac"
+$env:JAVA_HOME = $JavaHome   # Maven reads JAVA_HOME, so -JavaHome must reach it too (process scope only)
 $jvm = @("-Xms512m", "-Xmx512m", "-XX:+UseG1GC", "--add-modules", "jdk.incubator.vector")
 if ($IsWindows -eq $false) { throw "Native Windows required for timing evidence." }
 foreach ($v in "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS", "MAVEN_OPTS") {

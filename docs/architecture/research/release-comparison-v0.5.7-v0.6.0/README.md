@@ -20,7 +20,7 @@ One problem with the release record turned up during the preflight and shapes ev
 | Published asset | `engine-uci-0.5.7.jar`, 2,185,506 bytes, SHA-256 `bc41c91b0d3b4c20f6a334ff3f0cc2cf5c04e6820b817b1cfd46e62a640663d3` | `engine-uci-0.6.0.jar`, 2,301,950 bytes, SHA-256 `e16163b8fe6f8278161db0d9220883c5d49a4814df0d81f7a6cad901c07cf4e7` |
 | Source of the published asset | `beaef361d35160d768473af7d2c349719db8508b` ("chore(release): v0.5.7", 2026-07-07) | `bc3dc380e759526e8aa19cd8385af16ab22ac502` |
 
-How I tied each asset to a source: I rebuilt each candidate commit in its own detached worktree and compared the SHA-256 of the sorted list of every `.class` file's hash inside the shaded JAR. JARs are not byte-reproducible (timestamps and the build JDK differ), so whole-file hashes do not match, but the class contents can.
+How I tied each asset to a source: I rebuilt each candidate commit in its own detached worktree and compared the SHA-256 of every `.class` file inside the shaded JAR. The per-class listings and the asset hashes are archived in [`identity/`](identity/) so this can be checked without redoing the builds: unzip a JAR, run `find . -name '*.class' | LC_ALL=C sort | xargs sha256sum | diff - identity/classes-<name>.sha256`. JARs are not byte-reproducible (timestamps and the build JDK differ), so whole-file hashes do not match, but the class contents can.
 
 | JAR | Class-set digest (first 16 hex) |
 |---|---|
@@ -30,7 +30,7 @@ How I tied each asset to a source: I rebuilt each candidate commit in its own de
 | rebuilt from `beaef36` | `77cd88805a63d380` (same) |
 | rebuilt from tag commit `7b5b3a4` | `8af6956e7a689e54` (different) |
 
-So the published v0.5.7 JAR was built from `beaef36`, which is 37 commits after the commit the `v0.5.7` tag names. The tagged commit is the Phase 13 state. The release includes the Phase 14 eval work merged in July. Behavior confirms it: the published JAR and the tag build produce different node counts on the same positions (54,546,076 and 58,104,689 over the same 29 positions). The tag cannot be moved (it is covered by the immutable-tag ruleset), so this is recorded here and not corrected. Anything that builds "v0.5.7" from the tag gets different code than users downloaded.
+The per-class listings are identical for the published v0.5.7 JAR and the `beaef36` rebuild (736 classes), and for the published v0.6.0 JAR and the `bc3dc38` rebuild (791 classes). The tag-commit rebuild differs from the published v0.5.7 JAR in 13 classes. So the published v0.5.7 JAR was built from `beaef36`, which is 37 commits after the commit the `v0.5.7` tag names. The tagged commit is the Phase 13 state. The release includes the Phase 14 eval work merged in July. Behavior confirms it: the published JAR and the tag build produce different node counts on the same positions (54,546,076 and 58,104,689 over the same 29 positions). The tag cannot be moved (it is covered by the immutable-tag ruleset), so this is recorded here and not corrected. Anything that builds "v0.5.7" from the tag gets different code than users downloaded.
 
 **This report uses the published v0.5.7 JAR (source `beaef36`) as the v0.5.7 arm.** The tag build is kept as a supplementary row.
 
@@ -100,7 +100,7 @@ Supplementary, on the 29 positions that all three builds share (the tag build, t
 
 ## Best-move and search divergences
 
-12 of 30 positions end depth 13 with a different best move. Across all 30 positions only one full PV is identical. Scores move by a median of 14 cp (maximum 123 cp), and no score changes sign when both are beyond 20 cp. Several of the differing moves carry nearly the same score in both releases (positions 5, 15, 16, 20 and 29 differ by 3 cp or less), which fits a tie between near-equal moves. The largest differences are position 0 (the start position: h2h4 at -17 against e2e4 at +26) and position 6 (a8d8 at -71 against b4b2 at -31, also the biggest node cut at 94%). Whether the new move is better is not something this data can say. That needs a strength test.
+12 of 30 positions end depth 13 with a different best move. Across all 30 positions only one full PV is identical. Scores move by a median of 14 cp (maximum 123 cp), and no score changes sign when both are beyond 20 cp. Several of the differing moves carry nearly the same score in both releases (positions 5, 15, 16, 20 and 29 differ by 3 cp or less), which fits a tie between near-equal moves. The largest score changes are position 27 (144 against 267 cp, with a different move, 123 cp), position 24 (1594 against 1529 cp, same move, 65 cp) and position 17 (337 against 383 cp, different move, 46 cp). Two other divergences are worth a look: position 0, the start position (h2h4 at -17 against e2e4 at +26), and position 6 (a8d8 at -71 against b4b2 at -31), which is also the biggest node cut at 94%. Whether the new move is better is not something this data can say. That needs a strength test.
 
 Position 25 is the one large increase (+126%). It is a candidate for a closer look in a later phase, since the new search spends more there than the old one.
 
@@ -157,6 +157,7 @@ The `<own>` corpus for each JAR is the 31-position file in this directory (`corp
 | `corpus-index-map.tsv` | Index of each 29-set position in the tag-commit and v0.6.0 corpora |
 | `per-position-nodes.tsv` | Primary per-position results (published v0.5.7 vs v0.6.0, 30 positions) |
 | `per-position-nodes-tag-7b5b3a4-vs-v0.6.0-common29.tsv` | Supplementary: tag build vs v0.6.0, 29 positions |
+| `identity/` | Published asset hashes (`assets.txt`) and per-class SHA-256 listings for the published and rebuilt JARs |
 | `raw-wsl-deterministic/` | Raw harness output for every run, with `SHA256SUMS` |
 
 ## Does the v0.6.0 release page need a benchmark section?
