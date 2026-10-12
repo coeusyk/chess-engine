@@ -106,6 +106,31 @@ public class Searcher {
     private long pvNodeEvals;
     private long cutNodeEvals;
     private boolean instrumentationEnabled;
+    private long phase21PvWide;
+    private long phase21PvNull;
+    private long phase21NonPvWide;
+    private long phase21NonPvNull;
+    private long phase21WideRazoringReturns;
+    private long phase21WideFutilitySkips;
+    private long phase21WideLosingCaptureSkips;
+    private long phase21SiblingAtOrBelowAlpha;
+    private long phase21SiblingInsideWindow;
+    private long phase21SiblingAtOrAboveBeta;
+    private long phase21LmrFailHighs;
+    private long phase21LmrResearches;
+    private long phase21RootAtOrBelowAlpha;
+    private long phase21RootInsideWindow;
+    private long phase21RootAtOrAboveBeta;
+    private long phase21ZeroWindowProbes;
+    private long phase21PvWideZeroWindowProbes;
+    private long phase21RootWideZeroWindowProbes;
+    private long phase21FullDepthZeroWindowProbes;
+    private long phase21FullWindowResearches;
+    private long phase21FullWindowResearchesPvOwned;
+    private long phase21RootFullWindowResearches;
+    private long phase21NonPvRazoringReturns;
+    private long phase21NonPvFutilitySkips;
+    private long phase21NonPvLosingCaptureSkips;
 
     private TimeManager timeManager;
     private long searchStartNanos;
@@ -447,6 +472,31 @@ public class Searcher {
         long totalEvalNanos = 0;
         long totalPvNodeEvals = 0;
         long totalCutNodeEvals = 0;
+        long totalPhase21PvWide = 0;
+        long totalPhase21PvNull = 0;
+        long totalPhase21NonPvWide = 0;
+        long totalPhase21NonPvNull = 0;
+        long totalPhase21WideRazoringReturns = 0;
+        long totalPhase21WideFutilitySkips = 0;
+        long totalPhase21WideLosingCaptureSkips = 0;
+        long totalPhase21SiblingAtOrBelowAlpha = 0;
+        long totalPhase21SiblingInsideWindow = 0;
+        long totalPhase21SiblingAtOrAboveBeta = 0;
+        long totalPhase21LmrFailHighs = 0;
+        long totalPhase21LmrResearches = 0;
+        long totalPhase21RootAtOrBelowAlpha = 0;
+        long totalPhase21RootInsideWindow = 0;
+        long totalPhase21RootAtOrAboveBeta = 0;
+        long totalPhase21ZeroWindowProbes = 0;
+        long totalPhase21PvWideZeroWindowProbes = 0;
+        long totalPhase21RootWideZeroWindowProbes = 0;
+        long totalPhase21FullDepthZeroWindowProbes = 0;
+        long totalPhase21FullWindowResearches = 0;
+        long totalPhase21FullWindowResearchesPvOwned = 0;
+        long totalPhase21RootFullWindowResearches = 0;
+        long totalPhase21NonPvRazoringReturns = 0;
+        long totalPhase21NonPvFutilitySkips = 0;
+        long totalPhase21NonPvLosingCaptureSkips = 0;
         // Issue #216: NNUE accumulator-update cost is tracked inside NnueEvaluator
         // itself (an instance that may persist across many searches), so this
         // search's contribution is a before/after delta rather than a per-pvIndex
@@ -499,6 +549,31 @@ public class Searcher {
                 evalNanos = 0;
                 pvNodeEvals = 0;
                 cutNodeEvals = 0;
+                phase21PvWide = 0;
+                phase21PvNull = 0;
+                phase21NonPvWide = 0;
+                phase21NonPvNull = 0;
+                phase21WideRazoringReturns = 0;
+                phase21WideFutilitySkips = 0;
+                phase21WideLosingCaptureSkips = 0;
+                phase21SiblingAtOrBelowAlpha = 0;
+                phase21SiblingInsideWindow = 0;
+                phase21SiblingAtOrAboveBeta = 0;
+                phase21LmrFailHighs = 0;
+                phase21LmrResearches = 0;
+                phase21RootAtOrBelowAlpha = 0;
+                phase21RootInsideWindow = 0;
+                phase21RootAtOrAboveBeta = 0;
+                phase21ZeroWindowProbes = 0;
+                phase21PvWideZeroWindowProbes = 0;
+                phase21RootWideZeroWindowProbes = 0;
+                phase21FullDepthZeroWindowProbes = 0;
+                phase21FullWindowResearches = 0;
+                phase21FullWindowResearchesPvOwned = 0;
+                phase21RootFullWindowResearches = 0;
+                phase21NonPvRazoringReturns = 0;
+                phase21NonPvFutilitySkips = 0;
+                phase21NonPvLosingCaptureSkips = 0;
                 // pvTable and pvLength are pre-allocated; no per-depth allocation needed.
                 RootResult iteration;
                 if (pvIndex == 0 && aspirationWindowsEnabled && depth >= 4 && previousBestMove != null) {
@@ -521,6 +596,31 @@ public class Searcher {
                 totalEvalNanos += evalNanos;
                 totalPvNodeEvals += pvNodeEvals;
                 totalCutNodeEvals += cutNodeEvals;
+                totalPhase21PvWide += phase21PvWide;
+                totalPhase21PvNull += phase21PvNull;
+                totalPhase21NonPvWide += phase21NonPvWide;
+                totalPhase21NonPvNull += phase21NonPvNull;
+                totalPhase21WideRazoringReturns += phase21WideRazoringReturns;
+                totalPhase21WideFutilitySkips += phase21WideFutilitySkips;
+                totalPhase21WideLosingCaptureSkips += phase21WideLosingCaptureSkips;
+                totalPhase21SiblingAtOrBelowAlpha += phase21SiblingAtOrBelowAlpha;
+                totalPhase21SiblingInsideWindow += phase21SiblingInsideWindow;
+                totalPhase21SiblingAtOrAboveBeta += phase21SiblingAtOrAboveBeta;
+                totalPhase21LmrFailHighs += phase21LmrFailHighs;
+                totalPhase21LmrResearches += phase21LmrResearches;
+                totalPhase21RootAtOrBelowAlpha += phase21RootAtOrBelowAlpha;
+                totalPhase21RootInsideWindow += phase21RootInsideWindow;
+                totalPhase21RootAtOrAboveBeta += phase21RootAtOrAboveBeta;
+                totalPhase21ZeroWindowProbes += phase21ZeroWindowProbes;
+                totalPhase21PvWideZeroWindowProbes += phase21PvWideZeroWindowProbes;
+                totalPhase21RootWideZeroWindowProbes += phase21RootWideZeroWindowProbes;
+                totalPhase21FullDepthZeroWindowProbes += phase21FullDepthZeroWindowProbes;
+                totalPhase21FullWindowResearches += phase21FullWindowResearches;
+                totalPhase21FullWindowResearchesPvOwned += phase21FullWindowResearchesPvOwned;
+                totalPhase21RootFullWindowResearches += phase21RootFullWindowResearches;
+                totalPhase21NonPvRazoringReturns += phase21NonPvRazoringReturns;
+                totalPhase21NonPvFutilitySkips += phase21NonPvFutilitySkips;
+                totalPhase21NonPvLosingCaptureSkips += phase21NonPvLosingCaptureSkips;
 
                 if (iteration.bestMove == null) {
                     if (pvIndex == 0) {
@@ -627,6 +727,19 @@ public class Searcher {
                     totalBetaCutoffs, fmcPct, totalTtHits, ebfNow,
                     totalNullMoveCutoffs, totalLmrApplications, totalFutilitySkips, totalDeltaPruningSkips,
                     evalPct, accPct, totalPvNodeEvals, totalCutNodeEvals, elapsedMs));
+            if (instrumentationEnabled) {
+                LOG.debug(String.format("[BENCH] phase21 depth=%d ab_calls=%d pv_wide=%d pv_null=%d nonpv_wide=%d nonpv_null=%d nonpv_wide_razor_returns=%d nonpv_wide_futility_skips=%d nonpv_wide_losing_capture_skips=%d pv_wide_full_window_research_le_alpha=%d pv_wide_full_window_research_inside=%d pv_wide_full_window_research_ge_beta=%d lmr_probes=%d lmr_fail_highs=%d lmr_researches=%d root_wide_full_window_research_le_alpha=%d root_wide_full_window_research_inside=%d root_wide_full_window_research_ge_beta=%d pvs_zero_window_probes=%d pv_wide_zero_window_probes=%d root_wide_zero_window_probes=%d full_depth_zero_window_probes=%d full_window_researches=%d full_window_researches_pv_owned=%d root_full_window_researches=%d nonpv_razor_returns=%d nonpv_futility_skips=%d nonpv_losing_capture_skips=%d",
+                        depth, totalPhase21PvWide + totalPhase21PvNull + totalPhase21NonPvWide + totalPhase21NonPvNull,
+                        totalPhase21PvWide, totalPhase21PvNull, totalPhase21NonPvWide, totalPhase21NonPvNull,
+                        totalPhase21WideRazoringReturns, totalPhase21WideFutilitySkips, totalPhase21WideLosingCaptureSkips,
+                        totalPhase21SiblingAtOrBelowAlpha, totalPhase21SiblingInsideWindow, totalPhase21SiblingAtOrAboveBeta,
+                        totalLmrApplications, totalPhase21LmrFailHighs, totalPhase21LmrResearches,
+                        totalPhase21RootAtOrBelowAlpha, totalPhase21RootInsideWindow, totalPhase21RootAtOrAboveBeta,
+                        totalPhase21ZeroWindowProbes, totalPhase21PvWideZeroWindowProbes, totalPhase21RootWideZeroWindowProbes,
+                        totalPhase21FullDepthZeroWindowProbes, totalPhase21FullWindowResearches,
+                        totalPhase21FullWindowResearchesPvOwned, totalPhase21RootFullWindowResearches,
+                        totalPhase21NonPvRazoringReturns, totalPhase21NonPvFutilitySkips, totalPhase21NonPvLosingCaptureSkips));
+            }
         }
 
         double ebf = 0.0;
@@ -774,8 +887,10 @@ public class Searcher {
 
             board.makeMove(move);
             evaluator.onMake(board, move.pack(), board.lastCapturedPiece());
-            boolean childIsPvNode = rootMoveIndex == 0;
-                int score = -alphaBeta(
+            boolean fullWindowResearch = false;
+            int score;
+            if (rootMoveIndex == 0) {
+                score = -alphaBeta(
                     board,
                     childDepth,
                     1,
@@ -783,17 +898,61 @@ public class Searcher {
                     -alpha,
                     shouldStopHard,
                     false,
-                    childIsPvNode,
                     rootExtensionsUsed,
                     maxCheckExtensions,
                     false
                 );
+            } else {
+                if (instrumentationEnabled) {
+                    phase21ZeroWindowProbes++;
+                    phase21FullDepthZeroWindowProbes++;
+                    if (beta - alpha > 1) phase21RootWideZeroWindowProbes++;
+                }
+                score = -alphaBeta(
+                        board,
+                        childDepth,
+                        1,
+                        -(alpha + 1),
+                        -alpha,
+                        shouldStopHard,
+                        false,
+                        rootExtensionsUsed,
+                        maxCheckExtensions,
+                        false
+                );
+                if (!aborted && score > alpha && score < beta) {
+                    if (instrumentationEnabled) {
+                        phase21FullWindowResearches++;
+                        phase21FullWindowResearchesPvOwned++;
+                        phase21RootFullWindowResearches++;
+                    }
+                    score = -alphaBeta(
+                            board,
+                            childDepth,
+                            1,
+                            -beta,
+                            -alpha,
+                            shouldStopHard,
+                            false,
+                            rootExtensionsUsed,
+                            maxCheckExtensions,
+                            false
+                    );
+                    fullWindowResearch = true;
+                }
+            }
             evaluator.onUnmake();
             board.unmakeMove();
             rootMoveIndex++;
 
             if (aborted) {
                 return new RootResult(bestMove, bestScore, buildPrincipalVariation(), true);
+            }
+
+            if (instrumentationEnabled && fullWindowResearch) {
+                if (score <= alpha) phase21RootAtOrBelowAlpha++;
+                else if (score >= beta) phase21RootAtOrAboveBeta++;
+                else phase21RootInsideWindow++;
             }
 
             if (score > bestScore || bestMove == null) {
@@ -828,11 +987,23 @@ public class Searcher {
             int beta,
             BooleanSupplier shouldStopHard,
             boolean previousMoveWasNull,
-            boolean isPvNode,
             int extensionsUsed,
             int maxExtensions,
             boolean inSingularitySearch
     ) {
+        boolean isPvNode = beta - alpha > 1;
+        // Count every alphaBeta invocation at entry, before horizon/draw/TT/abort
+        // returns, including null-move, singularity, LMR and retry calls. Root
+        // and direct quiescence calls are excluded; this is not nodesVisited.
+        if (instrumentationEnabled) {
+            if (isPvNode) {
+                if (beta - alpha > 1) phase21PvWide++;
+                else phase21PvNull++;
+            } else {
+                if (beta - alpha > 1) phase21NonPvWide++;
+                else phase21NonPvNull++;
+            }
+        }
         pvLength[ply] = 0;
 
         if (ply > seldepth) {
@@ -926,6 +1097,10 @@ public class Searcher {
             }
 
             if (qScore <= alpha) {
+                if (instrumentationEnabled && !isPvNode) phase21NonPvRazoringReturns++;
+                if (instrumentationEnabled && !isPvNode && beta - alpha > 1) {
+                    phase21WideRazoringReturns++;
+                }
                 return qScore;
             }
         }
@@ -943,7 +1118,6 @@ public class Searcher {
                     -beta + 1,
                     shouldStopHard,
                     true,
-                false,
                 currentExtensionsUsed,
                 maxExtensions,
                 false
@@ -1047,6 +1221,10 @@ public class Searcher {
                     sideToMoveInCheck,
                     moveGivesCheck
             )) {
+                if (instrumentationEnabled && !isPvNode) phase21NonPvLosingCaptureSkips++;
+                if (instrumentationEnabled && !isPvNode && beta - alpha > 1) {
+                    phase21WideLosingCaptureSkips++;
+                }
                 evaluator.onUnmake();
                 board.unmakeMove();
                 moveIndex++;
@@ -1064,6 +1242,10 @@ public class Searcher {
                     moveGivesCheck
             )) {
                 futilitySkips++;
+                if (instrumentationEnabled && !isPvNode) phase21NonPvFutilitySkips++;
+                if (instrumentationEnabled && !isPvNode && beta - alpha > 1) {
+                    phase21WideFutilitySkips++;
+                }
                 evaluator.onUnmake();
                 board.unmakeMove();
                 moveIndex++;
@@ -1071,12 +1253,18 @@ public class Searcher {
             }
 
             int score;
-            if (canApplyLmr(effectiveDepth, moveIndex, isQuiet, isKiller, isTtMove, sideToMoveInCheck, moveGivesCheck)) {
+            boolean fullWindowResearch = false;
+            boolean lmrMove = canApplyLmr(effectiveDepth, moveIndex, isQuiet, isKiller, isTtMove, sideToMoveInCheck, moveGivesCheck);
+            if (lmrMove) {
                 lmrApplications++;
                 int reduction = lmrReductions[Math.min(effectiveDepth, MAX_PLY - 1)][Math.min(moveIndex + 1, MAX_LEGAL_MOVES - 1)];
                 if (!improving) { reduction++; }
                 int reducedDepth = Math.max(1, childDepth - reduction);
 
+                if (instrumentationEnabled) {
+                    phase21ZeroWindowProbes++;
+                    if (isPvNode) phase21PvWideZeroWindowProbes++;
+                }
                 score = -alphaBeta(
                         board,
                         reducedDepth,
@@ -1085,29 +1273,51 @@ public class Searcher {
                         -alpha,
                         shouldStopHard,
                         false,
-                        false,
                         childExtensionsUsed,
                         maxExtensions,
                         false
                 );
                 if (!aborted && score > alpha) {
-                    boolean childIsPvNode = isPvNode && moveIndex == 0;
+                    if (instrumentationEnabled) phase21LmrFailHighs++;
+                    if (instrumentationEnabled) {
+                        phase21LmrResearches++;
+                        phase21ZeroWindowProbes++;
+                        phase21FullDepthZeroWindowProbes++;
+                        if (isPvNode) phase21PvWideZeroWindowProbes++;
+                    }
                     score = -alphaBeta(
                             board,
                             childDepth,
                             ply + 1,
-                            -beta,
+                            -(alpha + 1),
                             -alpha,
                             shouldStopHard,
                             false,
-                            childIsPvNode,
                             childExtensionsUsed,
                             maxExtensions,
                             false
                     );
+                    if (!aborted && isPvNode && score > alpha && score < beta) {
+                        if (instrumentationEnabled) {
+                            phase21FullWindowResearches++;
+                            phase21FullWindowResearchesPvOwned++;
+                        }
+                        score = -alphaBeta(
+                                board,
+                                childDepth,
+                                ply + 1,
+                                -beta,
+                                -alpha,
+                                shouldStopHard,
+                                false,
+                                childExtensionsUsed,
+                                maxExtensions,
+                                false
+                        );
+                        fullWindowResearch = true;
+                    }
                 }
-            } else {
-                boolean childIsPvNode = isPvNode && moveIndex == 0;
+            } else if (moveIndex == 0) {
                 score = -alphaBeta(
                         board,
                         childDepth,
@@ -1116,11 +1326,53 @@ public class Searcher {
                         -alpha,
                         shouldStopHard,
                         false,
-                        childIsPvNode,
                         childExtensionsUsed,
                         maxExtensions,
                         false
                 );
+            } else {
+                if (instrumentationEnabled) {
+                    phase21ZeroWindowProbes++;
+                    phase21FullDepthZeroWindowProbes++;
+                    if (isPvNode) phase21PvWideZeroWindowProbes++;
+                }
+                score = -alphaBeta(
+                        board,
+                        childDepth,
+                        ply + 1,
+                        -(alpha + 1),
+                        -alpha,
+                        shouldStopHard,
+                        false,
+                        childExtensionsUsed,
+                        maxExtensions,
+                        false
+                );
+                if (!aborted && isPvNode && score > alpha && score < beta) {
+                    if (instrumentationEnabled) {
+                        phase21FullWindowResearches++;
+                        phase21FullWindowResearchesPvOwned++;
+                    }
+                    score = -alphaBeta(
+                            board,
+                            childDepth,
+                            ply + 1,
+                            -beta,
+                            -alpha,
+                            shouldStopHard,
+                            false,
+                            childExtensionsUsed,
+                            maxExtensions,
+                            false
+                    );
+                    fullWindowResearch = true;
+                }
+            }
+
+            if (instrumentationEnabled && fullWindowResearch && !lmrMove && isPvNode) {
+                if (score <= alpha) phase21SiblingAtOrBelowAlpha++;
+                else if (score >= beta) phase21SiblingAtOrAboveBeta++;
+                else phase21SiblingInsideWindow++;
             }
 
             evaluator.onUnmake();
@@ -1352,7 +1604,6 @@ public class Searcher {
                     -singularBeta,
                     -singularAlpha,
                     shouldStopHard,
-                    false,
                     false,
                     extensionsUsed,
                     maxExtensions,

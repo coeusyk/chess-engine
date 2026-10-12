@@ -61,6 +61,15 @@
 .PARAMETER PgnPath
     Optional exact path for the authoritative PGN. Must be supplied together with LogPath.
     When omitted, the existing timestamped tools/results path is used.
+
+.PARAMETER PrepareOnly
+    Resolve inputs and export arguments without launching Cute Chess. Requires ArgumentManifestPath.
+
+.PARAMETER ArgumentManifestPath
+    Optional JSON record of the exact executable and argument array, written before launch.
+
+.PARAMETER ExpectedArgumentManifestPath
+    Optional prepared JSON manifest. Refuse to launch if the executable or arguments differ.
 #>
 param(
     [Parameter(Mandatory)][string]$New,
@@ -80,7 +89,10 @@ param(
     [string[]]$NewOptions = @(),
     [string[]]$OldOptions = @(),
     [string]$LogPath = "",
-    [string]$PgnPath = ""
+    [string]$PgnPath = "",
+    [switch]$PrepareOnly,
+    [string]$ArgumentManifestPath = "",
+    [string]$ExpectedArgumentManifestPath = ""
 )
 
 # ─── Color-balance warning thresholds (issue #213) ───────────────────────────
@@ -199,6 +211,23 @@ if ($openingsArgs.Count -gt 0) {
     $ccArgs += $openingsArgs
 }
 
+if ($PrepareOnly -and [string]::IsNullOrWhiteSpace($ArgumentManifestPath)) {
+    throw 'PrepareOnly requires ArgumentManifestPath.'
+}
+$argumentManifest = [ordered]@{ Executable = [IO.Path]::GetFullPath($Cutechess); Arguments = @($ccArgs) }
+if ($ExpectedArgumentManifestPath) {
+    $expected = Get-Content -LiteralPath $ExpectedArgumentManifestPath -Raw | ConvertFrom-Json
+    if ($expected.Executable -cne $argumentManifest.Executable -or
+        (ConvertTo-Json -InputObject @($expected.Arguments) -Compress) -cne
+        (ConvertTo-Json -InputObject @($ccArgs) -Compress)) {
+        throw 'Actual Cute Chess arguments differ from the prepared manifest.'
+    }
+}
+if ($ArgumentManifestPath) {
+    $argumentManifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $ArgumentManifestPath -Encoding UTF8
+}
+if ($PrepareOnly) { return }
+
 # ─── Run cutechess-cli ───────────────────────────────────────────────────────
 # Parses cutechess-cli's own "Finished game N (White vs Black): result" lines as they
 # stream by (format confirmed against real SPRT logs in tools/results/*.log) to tally a
@@ -210,8 +239,13 @@ $draws = 0
 $nextColorCheckpoint = $ColorCheckMinGames
 
 $logWriter = New-Object System.IO.StreamWriter($LogOut, $false)
+$logWriter.AutoFlush = $true
+$nativeExitCode = $null
+$previousErrorPreference = $ErrorActionPreference
+# Windows PowerShell 5.1 turns redirected native stderr into ErrorRecords.
+$ErrorActionPreference = 'Continue'
 try {
-    & $Cutechess @ccArgs 2>&1 | ForEach-Object {
+    & $Cutechess @ccArgs 2>&1 | ForEach-Object -ErrorAction Stop {
         $line = $_
         Write-Host $line
         $logWriter.WriteLine($line)
@@ -255,10 +289,13 @@ try {
             }
         }
     }
+    $nativeExitCode = $LASTEXITCODE
 } finally {
+    $ErrorActionPreference = $previousErrorPreference
     $logWriter.Flush()
     $logWriter.Close()
 }
+if ($nativeExitCode -ne 0) { throw "Cute Chess exited with code $nativeExitCode. Evidence retained at $LogOut" }
 
 Write-Host ""
 Write-Host "SPRT complete. Log: $LogOut"

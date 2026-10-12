@@ -6,11 +6,8 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * Pins exact node counts at a fixed depth over a small, diverse position
- * subset (drawn from {@code BenchRunner}'s 31-position suite). The values are
- * the current deterministic search-shape reference. Contract repairs may
- * legitimately change them; recapture only after the repair's focused tests
- * pass and the resulting deltas have been explained.
+ * Pins exact depth-8 node counts on five positions from {@code BenchRunner}'s
+ * suite for the Phase 21 PVS search shape.
  */
 class NodeCountRegressionTest {
 
@@ -25,15 +22,15 @@ class NodeCountRegressionTest {
     };
 
     private static final long[] EXPECTED_NODES = {
-        14926,
-        1226,
-        34694,
-        6456,
-        8902,
+        14776,
+        1287,
+        32267,
+        6136,
+        7829,
     };
 
     @Test
-    void nodeCountsAreUnchangedFromGoldenBaseline() {
+    void nodeCountsAreStableForPhase21Pvs() {
         for (int i = 0; i < FENS.length; i++) {
             Searcher searcher = new Searcher();
             searcher.setTranspositionTableSizeMb(16);

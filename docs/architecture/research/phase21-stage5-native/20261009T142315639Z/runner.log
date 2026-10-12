@@ -1,0 +1,42 @@
+**********************
+PowerShell transcript start
+Start time: 20261009195315
+Username: RENEGADE\yashk
+RunAs User: RENEGADE\yashk
+Configuration Name: 
+Machine: RENEGADE (Microsoft Windows NT 10.0.26300.0)
+Host Application: C:\Program Files\PowerShell\7\pwsh.dll -NoLogo -NoProfile -NoExit -Command Remove-Module -Name PSReadline;$global:_warpOriginalPrompt = $function:global:prompt;if ($PSEdition -eq 'Desktop' -or $IsWindows) {;    $EP = [Microsoft.PowerShell.ExecutionPolicy];    if ((Get-ExecutionPolicy -Scope MachinePolicy) -eq $EP::Restricted -or (Get-ExecutionPolicy -Scope UserPolicy) -eq $EP::Restricted) {;        Write-Error 'ExecutionPolicy is Restricted. Unable to Warpify this PowerShell session.';    } elseif ((Get-ExecutionPolicy) -eq $EP::Restricted -and (Get-ExecutionPolicy -Scope MachinePolicy) -eq $EP::Undefined -and (Get-ExecutionPolicy -Scope UserPolicy) -eq $EP::Undefined) {;        $global:_warp_PSProcessExecPolicy = $(Get-ExecutionPolicy -Scope Process);        Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned -Force;    };};function prompt {;    $function:global:prompt = $global:_warpOriginalPrompt;    $username = [Environment]::UserName;    $global:_warpSessionId = [uint64]9572182392009670548;    $msg = ConvertTo-Json -Compress -InputObject @{ hook = 'InitShell'; value = @{ session_id = $_warpSessionId; shell = 'pwsh'; user = $username; hostname = [System.Net.Dns]::GetHostName() } };    $encodedMsg = [BitConverter]::ToString([System.Text.Encoding]::UTF8.GetBytes($msg)).Replace('-', '');    $oscStart = "$([char]0x1b)]9278;";    $oscEnd = "`a";    $oscJsonMarker = 'd';    $oscParameterSeparator = ';';    Write-Host "${oscStart}${oscJsonMarker}${oscParameterSeparator}${encodedMsg}${oscEnd}";    return $null;}
+Process ID: 48672
+PSVersion: 7.6.6
+PSEdition: Core
+GitCommitId: 7.6.6
+OS: Microsoft Windows 10.0.26300
+Platform: Win32NT
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1, 6.0, 7.0
+PSRemotingProtocolVersion: 2.4
+SerializationVersion: 1.1.0.1
+WSManStackVersion: 3.0
+**********************
+Frozen invocation order (including unmeasured warm-ups):
+  01. warmup-control
+  02. warmup-candidate
+  03. control-01
+  04. candidate-01
+  05. control-02
+  06. candidate-02
+  07. control-03
+  08. candidate-03
+  09. control-04
+  10. candidate-04
+  11. control-05
+  12. candidate-05
+  13. control-06
+  14. candidate-06
+  15. control-07
+  16. candidate-07
+Creating detached native worktrees under C:\Users\yashk\AppData\Local\Temp\phase21-stage5-builds-20261009T142315639Z
+PS>TerminatingError(): "control BenchRunner source is not the frozen 31-position corpus (SHA 02630596d4ceb14e43e13befe971ed8e07ce5c68d33e9588369542b1be682bb1)."
+**********************
+PowerShell transcript end
+End time: 20261009195322
+**********************

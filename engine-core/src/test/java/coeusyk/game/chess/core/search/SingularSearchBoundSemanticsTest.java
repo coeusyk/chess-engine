@@ -97,7 +97,6 @@ class SingularSearchBoundSemanticsTest {
                 int.class,
                 BooleanSupplier.class,
                 boolean.class,
-                boolean.class,
                 int.class,
                 int.class,
                 boolean.class
@@ -111,7 +110,6 @@ class SingularSearchBoundSemanticsTest {
                 CALLER_ALPHA,
                 CALLER_BETA,
                 (BooleanSupplier) () -> false,
-                false,
                 false,
                 0,
                 0,
