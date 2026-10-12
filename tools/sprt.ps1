@@ -44,6 +44,10 @@
 .PARAMETER OpeningsFile
     Path to an EPD opening book. Auto-detected from tools/noob_3moves.epd if empty.
 
+.PARAMETER OpeningOrder
+    Cutechess opening order, 'random' (default, unchanged behavior) or 'sequential' (use the file top to bottom,
+    so a frozen opening list is played in a fixed order).
+
 .PARAMETER NewOptions
     Extra UCI options for the New engine only, as "Name=Value" strings (e.g.
     "EvalType=NNUE","EvalFile=C:\path\net.nnue"). Default: none -- every existing
@@ -86,6 +90,7 @@ param(
     [int]   $MinGames     = 0,
     [int]   $MaxGames     = 0,
     [string]$OpeningsFile = "",
+    [ValidateSet('random','sequential')][string]$OpeningOrder = 'random',
     [string[]]$NewOptions = @(),
     [string[]]$OldOptions = @(),
     [string]$LogPath = "",
@@ -142,7 +147,7 @@ if ($OpeningsFile -eq "") {
 }
 $openingsArgs = @()
 if ($OpeningsFile -ne "" -and (Test-Path $OpeningsFile)) {
-    $openingsArgs = @("-openings", "file=$OpeningsFile", "format=epd", "order=random", "plies=4")
+    $openingsArgs = @("-openings", "file=$OpeningsFile", "format=epd", "order=$OpeningOrder", "plies=4")
 }
 
 # ─── Output paths ────────────────────────────────────────────────────────────

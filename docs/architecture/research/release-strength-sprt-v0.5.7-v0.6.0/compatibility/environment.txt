@@ -1,0 +1,13 @@
+Compatibility checks for the v0.5.7 vs v0.6.0 release SPRT. No game and no search was run.
+Generated with the runner's own Invoke-ReleaseSprtHandshake against the published assets.
+
+java -version:
+openjdk version "21.0.12.1" 2026-08-18
+OpenJDK Runtime Environment (build 21.0.12.1+1-1-24.04.4-Ubuntu)
+OpenJDK 64-Bit Server VM (build 21.0.12.1+1-1-24.04.4-Ubuntu, mixed mode, sharing)
+
+assets:
+e16163b8fe6f8278161db0d9220883c5d49a4814df0d81f7a6cad901c07cf4e7  engine-uci-0.6.0.jar
+bc41c91b0d3b4c20f6a334ff3f0cc2cf5c04e6820b817b1cfd46e62a640663d3  engine-uci-0.5.7.jar
+
+uname: Linux 6.18.33.2-microsoft-standard-WSL2

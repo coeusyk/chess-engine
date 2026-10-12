@@ -458,3 +458,33 @@ An independent read-only review found five gaps, all fixed and re-reviewed: Powe
 - Stage 4: 8 of 31 depth-13 best moves changed; 32 deeper searches completed with legal PVs, and all 16 frozen depth-13 PVs replayed legally. No correctness defect was exposed.
 - Stage 5: throughput gate PASS, 12.6234% median elapsed-time improvement.
 - Stage 6: 4,080 wins, 3,829 losses, 5,209 draws; 13,118 scored games; LLR 2.97 above the 2.94 upper boundary; H1 accepted. Five cancellations were not scored.
+
+### [2026-10-12] v0.6.0 against v0.5.7 SPRT preregistered, nothing run
+
+**Built:**
+
+- A [preregistration](../docs/architecture/research/release-strength-sprt-v0.5.7-v0.6.0/preregistration.md) for one SPRT between the published `engine-uci-0.6.0.jar` and `engine-uci-0.5.7.jar`. Proposed, not approved. No game, pilot or search has been played.
+- `tools/release-strength-sprt.ps1` (with `-ValidateOnly`, `-PreflightNative` and `-ExecuteNative`), its common helpers and validation, a frozen 10,000-position opening list with a reproducible generator, a post-match analyzer, and Python contract tests.
+- UCI handshake transcripts for both published JARs under `compatibility/`.
+
+**Decisions Made:**
+
+- The baseline is the published v0.5.7 JAR, not a build of the `v0.5.7` tag, because the tag points at older source than the JAR was built from.
+- Reused `sprt.ps1` and the Phase 21 result parser instead of writing a second match path. The one change to `sprt.ps1` is an `-OpeningOrder` parameter that defaults to `random`, so every existing caller gets an identical argument list.
+- Replaced the Phase 21 `order=random` opening selection with a fixed list used in order. The list is the 10,000 lowest ranks of the archived 150,932-line book under a salted SHA-256 ranking, so it does not depend on a random-number generator or on the source file's order.
+- The option lists differ in one place. v0.5.7 has no `EvalType` option, so it is not sent one, and the runner and handshake check both refuse it. `Contempt=0` is set explicitly on both.
+- Every runner invocation writes an attempt record before any probe and never deletes anything, because the Phase 21 first attempt could not be reconstructed.
+- Kept zero tolerance for time forfeits, as in Phase 21, but listed it as an open decision.
+- Left the merged release comparison report unedited. Its sentence that the v0.5.7 UCI `Contempt` default is 50 is wrong: both JARs advertise 0. The preregistration carries the erratum.
+
+**Broke / Fixed:**
+
+- The analyzer crashed on a small one-sided sample because the 95% interval left (0, 1) and the Elo logarithm is undefined there. A synthetic test caught it. Elo is now `None` at those bounds.
+- `Get-Command java` returns two paths on Linux; the lookup now takes the first.
+
+**Measurements:**
+
+- The analyzer reproduces the archived Phase 21 result: 13,118 scored games, 4,080-3,829-5,209, LLR 2.974 against Cute Chess's 2.97, Elo 6.65 with a 95% half-width of 4.6 against 6.6 +/- 4.6. 6,558 completed pairs plus 2 unpaired games equal the scored total.
+- Planning numbers at [0,20] with a 39.7% draw ratio: P(accept H1) is 0.05 at 0 Elo and 0.95 at 20 Elo; expected games are about 960 at either end and about 1,580 at 10 Elo. The Phase 21 match took 7 hours 13 minutes for 13,123 games at this concurrency.
+- Validation: 67 new synthetic PowerShell checks, 8 Python tests, and the 75 Phase 21 checks still pass, under PowerShell 7.6.6 on Linux. Windows PowerShell 5.1 was not tested.
+- Develop CI on the merge commit `b5f54ab` passed. All three archived `SHA256SUMS` manifests verified from a clean checkout: 16, 36 and 36 files OK.
