@@ -117,16 +117,7 @@ Position 25 is the one large increase (+126%). It is a candidate for a closer lo
 
 I did not run timing. The native procedure from Phase 21 Stage 5 requires an idle Windows host confirmed by the operator, and the machine was in use (this session was running builds and benchmarks in WSL2 on the same CPU). WSL2 timing is not accepted as performance evidence in this repository, and I did not use it.
 
-`tools/release-comparison.ps1` is ready to run on RENEGADE. It builds both releases from detached worktrees, compiles the harness once, runs one discarded warm-up per version and then seven measured pairs with alternating order (A,B then B,A and so on), and writes `runs.csv`, `summary.json` (medians, minimum, maximum and median absolute deviation of elapsed time, median NPS, jar hashes, commits, Java version, JVM flags) and a SHA-256 manifest of every raw output. It refuses to start if a JVM options environment variable is set, if it is not Windows, or if the operator does not type `idle`.
-
-The script defaults to the published v0.5.7 source commit (`beaef36...`) and the 30-position corpus, not to the `v0.5.7` tag, for the reason given above. Passing `-TagA v0.5.7` would time the Phase 13 source instead.
-
-```powershell
-git switch research/release-comparison-v0.5.7-v0.6.0
-$env:JAVA_HOME = "<path to a JDK 21>"
-pwsh -NoProfile -File tools/release-comparison.ps1 `
-  -OutDir tools/results/release-comparison-<stamp>
-```
+`tools/release-comparison.ps1` is ready to run on RENEGADE. Step-by-step instructions, including how to confirm the machine is idle and how to validate the output, are in [`native-run-instructions.md`](native-run-instructions.md). The script pins both source commits and refuses the stale `v0.5.7` tag (see [`v0.5.7-tag-provenance.md`](v0.5.7-tag-provenance.md)), checks that each build matches the published JAR class by class, checks the corpus hash, the engine configuration and the deterministic node totals of every run, kills a run that exceeds a timeout, alternates the order of the two engines, and writes raw per-run output, an environment record and a checksum manifest. It reports elapsed time only. It has a `-ValidateOnly` pre-flight mode. It has not yet been run natively.
 
 ## Reproducing the deterministic stage
 
@@ -152,11 +143,14 @@ The `<own>` corpus for each JAR is the 31-position file in this directory (`corp
 |---|---|
 | `tools/ReleaseComparisonHarness.java` | Deterministic fixed-depth driver, adapted from `Phase21ControlHarness` |
 | `tools/release-comparison.ps1` | Native Windows timing runner (not run) |
+| `tools/tests/test_release_comparison.py` | Contract checks for the runner, harness, corpus and recorded totals |
 | `common-corpus-30-release-vs-v0.6.0.fen`, `common-corpus-29.fen` | Shared position sets |
 | `corpus-v0.5.7-release-own31.fen`, `corpus-v0.6.0-own31.fen` | Each release's own `BenchRunner` corpus |
 | `corpus-index-map.tsv` | Index of each 29-set position in the tag-commit and v0.6.0 corpora |
 | `per-position-nodes.tsv` | Primary per-position results (published v0.5.7 vs v0.6.0, 30 positions) |
 | `per-position-nodes-tag-7b5b3a4-vs-v0.6.0-common29.tsv` | Supplementary: tag build vs v0.6.0, 29 positions |
+| `native-run-instructions.md` | How to run and validate the native timing run |
+| `v0.5.7-tag-provenance.md` | Why the `v0.5.7` tag does not match the published JAR, with the evidence |
 | `identity/` | Published asset hashes (`assets.txt`) and per-class SHA-256 listings for the published and rebuilt JARs |
 | `raw-wsl-deterministic/` | Raw harness output for every run, with `SHA256SUMS` |
 

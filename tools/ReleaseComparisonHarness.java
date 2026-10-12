@@ -28,10 +28,21 @@ public class ReleaseComparisonHarness {
         for (int i = 0; i < fens.size(); i++) {
             Searcher searcher = new Searcher();
             searcher.setTranspositionTableSizeMb(hashMb);
+            searcher.setContempt(0);
+            String instrumentation = "absent";
             try {
                 Searcher.class.getMethod("setInstrumentationEnabled", boolean.class).invoke(searcher, false);
+                instrumentation = "off";
             } catch (NoSuchMethodException absent) {
                 // v0.5.7 has no instrumentation switch
+            }
+            if (i == 0) {
+                // The runner checks this line, so a changed evaluator or setting cannot go unnoticed.
+                java.lang.reflect.Field evaluator = Searcher.class.getDeclaredField("evaluator");
+                evaluator.setAccessible(true);
+                System.err.println("CONFIG depth=" + depth + " hash_mb=" + hashMb + " contempt=0 threads=1 evaluator="
+                        + evaluator.get(searcher).getClass().getSimpleName() + " instrumentation=" + instrumentation
+                        + " positions=" + fens.size());
             }
             Board board = new Board(fens.get(i));
             board.setSearchMode(true);
