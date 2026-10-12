@@ -1,0 +1,3 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+CONFIG depth=13 hash_mb=16 contempt=0 threads=1 evaluator=ClassicalEvaluator instrumentation=off positions=30 warmup_depth=8
+TOTAL nodes=20540625 elapsed_ms=53916 nps=380971
