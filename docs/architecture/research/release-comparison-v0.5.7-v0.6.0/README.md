@@ -1,13 +1,13 @@
 # Vex v0.5.7 vs v0.6.0: search work at fixed depth
 
-Status: deterministic stage complete. Native throughput stage prepared, not run.
+Status: deterministic stage complete. Native timing stage completed on RENEGADE; qualification is inconclusive pending a repeat run.
 Date: 2026-10-12. Branch: `research/release-comparison-v0.5.7-v0.6.0` (local, not pushed).
 
 ## Summary
 
 At depth 13 on the 30 benchmark positions the two releases share, v0.6.0 searches **65.65% fewer main nodes** than the published v0.5.7 release (59,793,662 down to 20,540,625). Quiescence nodes drop 73.27%. Node counts are deterministic: two passes per release on a 29-position subset gave identical moves, scores, nodes, TT hits and PVs, and the 30-position numbers below come from one pass per release. This is the cumulative change in search work over the 241 commits between the two release sources. The Phase 21 figure (12.38% fewer main nodes) is one slice of it.
 
-These are node counts, not speed and not strength. A smaller tree can be cheaper or better, but it can also come from pruning more aggressively. In 12 of 30 positions the two releases choose a different best move at depth 13. This report makes no claim about Elo. Native Windows timing has not been measured, so there is no throughput number here.
+These node counts are search work, not speed or strength. A smaller tree can cost less, but it can also come from more aggressive pruning. In 12 of 30 positions the releases choose different best moves at depth 13. Native timing on RENEGADE later showed a large elapsed-time reduction, though run-to-run variability crossed the pre-set 5% investigation threshold. The timing comparison is therefore inconclusive until repeated. Neither result measures Elo.
 
 One problem with the release record turned up during the preflight and shapes everything below: the `v0.5.7` git tag does not point at the source of the published v0.5.7 release.
 
@@ -107,17 +107,99 @@ Position 25 is the one large increase (+126%). It is a candidate for a closer lo
 ## What this does and does not show
 
 - It shows the v0.6.0 search visits about a third of the interior nodes and about a quarter of the quiescence nodes that the v0.5.7 release does at the same depth on these positions.
-- It does not show v0.6.0 is faster. The cost of a node may have changed between the releases, so nodes per second can move either way, and wall-clock time can only come from the native run below.
+- The node comparison alone does not show v0.6.0 is faster. The native timing stage below measures elapsed time, but remains inconclusive because of run-to-run variability.
 - It does not show v0.6.0 is stronger. The only strength evidence in the repository is the Phase 21 SPRT against its own immediate control (+6.6 +/- 4.6 Elo, H1 accepted under [0,10]). There is no match between v0.5.7 and v0.6.0, and node counts cannot stand in for one.
 - It does not cover Lazy SMP, fixed-time behavior or NNUE. The fixed-time comparison in the task was not run: it needs real games or timed searches under a clock, and doing it properly belongs with the native run.
 - 30 positions is a small, hand-picked corpus. The per-position spread is wide (-94% to +126%).
-- Everything ran in WSL2 (Linux 6.18.33.2, AMD Ryzen 7 7700X, OpenJDK 21.0.12.1, Maven 3.8.7 for the rebuilds). Node counts from a single-threaded fixed-depth search are not expected to depend on the host JVM, and the published-JAR run for v0.5.7 agrees with that, but I did not repeat the v0.6.0 run on a second JVM.
+- The deterministic node comparison ran in WSL2 (Linux 6.18.33.2, AMD Ryzen 7 7700X, OpenJDK 21.0.12.1, Maven 3.8.7 for the rebuilds). The native timing run on RENEGADE is reported separately below.
 
-## Native throughput: not run
+## Native timing on RENEGADE
 
-I did not run timing. The native procedure from Phase 21 Stage 5 requires an idle Windows host confirmed by the operator, and the machine was in use (this session was running builds and benchmarks in WSL2 on the same CPU). WSL2 timing is not accepted as performance evidence in this repository, and I did not use it.
+The native run completed on 2026-10-12 on RENEGADE, using the published v0.5.7 and v0.6.0 JAR class contents. The complete output is in [`tools/results/release-comparison-20261012/`](../../../../tools/results/release-comparison-20261012/). The native build JAR hashes and published asset hashes are both recorded below; the whole JAR hashes differ because the build artifacts are not byte-reproducible, while the class listings match the published assets.
 
-`tools/release-comparison.ps1` is ready to run on RENEGADE. Step-by-step instructions, including how to confirm the machine is idle and how to validate the output, are in [`native-run-instructions.md`](native-run-instructions.md). The script pins both source commits and refuses the stale `v0.5.7` tag (see [`v0.5.7-tag-provenance.md`](v0.5.7-tag-provenance.md)), checks that each build matches the published JAR class by class, checks the corpus hash, the engine configuration and the deterministic node totals of every run, kills a run that exceeds a timeout, alternates the order of the two engines, and writes raw per-run output, an environment record and a checksum manifest. It reports elapsed time only. It has a `-ValidateOnly` pre-flight mode. Each timed run does an untimed in-process warm-up pass first (`-WarmupDepth`, default 8), which leaves every search result unchanged but means the absolute times are not comparable with the Phase 21 Stage 5 whole-process figures. It has not yet been run natively.
+### Evidence integrity and settings
+
+`SHA256SUMS` verifies all 36 listed files: `environment.json`, `run.log`, `runs.csv`, `summary.json`, and the 32 raw files. The source Windows directory and the copy in this worktree both pass `sha256sum -c SHA256SUMS`. The manifest does not hash itself or `work/harness-classes/ReleaseComparisonHarness.class`; that compiled helper is not a timing output. There is no `FAILED.txt` or `CLEANUP-FAILED.txt` marker. The run log records both published-class listing matches, two pre-run warm-up passes, all 14 measured runs, and normal completion.
+
+All 16 raw TSV files contain 30 positions. Their per-position main-node sums equal the expected total for their arm: 59,793,662 for A and 20,540,625 for B. All 14 measured CSV rows also have the expected node totals, with seven rows per arm. Every stderr file has the expected depth 13, hash 16 MB, contempt 0, one thread, 30 positions and warm-up depth 8. A uses `Evaluator` with instrumentation absent; B uses `ClassicalEvaluator` with instrumentation off. The evaluator class names differ across releases, but both arms use the classical evaluator. Both use the same corpus, JVM flags, depth, hash size, contempt, thread count and harness.
+
+The recorded harness SHA-256 matches the repository file after Windows CRLF normalization; the script hash also matches after CRLF normalization. The corpus hash matches the LF-normalized corpus file exactly. The recorded repository head is `da81d3f3232cb4a7d726a236a851112e05db1444`, the commit used by this branch for the native runner.
+
+| Arm | Published asset SHA-256 | Source commit | Native build JAR SHA-256 | Published class listing matched |
+|---|---|---|---|---|
+| A, published v0.5.7 | `bc41c91b0d3b4c20f6a334ff3f0cc2cf5c04e6820b817b1cfd46e62a640663d3` | `beaef361d35160d768473af7d2c349719db8508b` | `df6125bbe87d05d3d9a449fe21e162b3fc7c6db71dd1041b1ce1f2919d62f4ba` | yes, 736 classes |
+| B, published v0.6.0 | `e16163b8fe6f8278161db0d9220883c5d49a4814df0d81f7a6cad901c07cf4e7` | `bc3dc380e759526e8aa19cd8385af16ab22ac502` | `367229071e44482bdb62bf6980af8f8a1cfef791e7c31947152e1381be571af6` | yes, 791 classes |
+
+The environment record identifies RENEGADE as Windows 10.0.26300, Ryzen 7 7700X, 16 logical processors and 31.2 GB RAM, on the Balanced power scheme. It records Java 21.0.10 (Azul), Maven 3.9.16 and PowerShell 7.6.6. The pre-run idle check sampled CPU 15 times: mean 0.65%, maximum 4.73%, against the 5% limit. The harness did not record CPU or other host activity during the measured runs, nor JVM garbage-collection events.
+
+### Every measured run
+
+The order alternated A-first and B-first. The timestamps are each run's start time from `run.log`; elapsed time and NPS are from `runs.csv`. No measured run was removed.
+
+| Pair | Order | Run start UTC | Arm | Main nodes | Elapsed ms | NPS |
+|---:|---|---|---|---:|---:|---:|
+| 1 | A then B | 10:05:08.8479485 | A, v0.5.7 | 59,793,662 | 165,057.7 | 362,259 |
+| 1 | A then B | 10:07:56.1876283 | B, v0.6.0 | 20,540,625 | 55,046.4 | 373,150 |
+| 2 | B then A | 10:08:53.4153819 | B, v0.6.0 | 20,540,625 | 55,430.3 | 370,567 |
+| 2 | B then A | 10:09:50.9756060 | A, v0.5.7 | 59,793,662 | 196,373.0 | 304,490 |
+| 3 | A then B | 10:13:09.7101236 | A, v0.5.7 | 59,793,662 | 158,974.6 | 376,120 |
+| 3 | A then B | 10:15:50.9593848 | B, v0.6.0 | 20,540,625 | 52,416.1 | 391,876 |
+| 4 | B then A | 10:16:45.3787544 | B, v0.6.0 | 20,540,625 | 54,401.6 | 377,573 |
+| 4 | B then A | 10:17:41.8108736 | A, v0.5.7 | 59,793,662 | 212,401.0 | 281,513 |
+| 5 | A then B | 10:21:16.5873560 | A, v0.5.7 | 59,793,662 | 195,593.7 | 305,703 |
+| 5 | A then B | 10:24:34.5588440 | B, v0.6.0 | 20,540,625 | 56,167.7 | 365,701 |
+| 6 | B then A | 10:25:32.8041197 | B, v0.6.0 | 20,540,625 | 55,755.0 | 368,408 |
+| 6 | B then A | 10:26:30.5987706 | A, v0.5.7 | 59,793,662 | 168,273.9 | 355,335 |
+| 7 | A then B | 10:29:21.1465966 | A, v0.5.7 | 59,793,662 | 170,818.8 | 350,041 |
+| 7 | A then B | 10:32:14.2456716 | B, v0.6.0 | 20,540,625 | 55,799.7 | 368,113 |
+
+### Timing summary
+
+MAD is the unscaled median absolute deviation. CV is the sample standard deviation divided by the mean. The max/min column is the maximum divided by the minimum, minus one. All values are recalculated from `runs.csv`, rather than taken only from `summary.json`.
+
+| Release | Median elapsed ms | Mean elapsed ms | Min ms | Max ms | MAD ms | CV | Max/min spread | Median NPS |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Published v0.5.7 | 170,818.8 | 181,070.4 | 158,974.6 | 212,401.0 | 11,844.2 | 11.14% | 33.61% | 350,041 |
+| Published v0.6.0 | 55,430.3 | 55,002.4 | 52,416.1 | 56,167.7 | 383.9 | 2.32% | 7.16% | 370,567 |
+
+The ratio of the independent medians is **0.3245** (55,430.3 / 170,818.8). The median of the seven paired B/A elapsed-time ratios is **0.3267**, a 67.33% reduction. The paired timing results are:
+
+| Pair | Order | v0.5.7 ms | v0.6.0 ms | B/A ratio | Difference, B minus A ms |
+|---:|---|---:|---:|---:|---:|
+| 1 | A then B | 165,057.7 | 55,046.4 | 0.3335 | -110,011.3 |
+| 2 | B then A | 196,373.0 | 55,430.3 | 0.2823 | -140,942.7 |
+| 3 | A then B | 158,974.6 | 52,416.1 | 0.3297 | -106,558.5 |
+| 4 | B then A | 212,401.0 | 54,401.6 | 0.2561 | -157,999.4 |
+| 5 | A then B | 195,593.7 | 56,167.7 | 0.2872 | -139,426.0 |
+| 6 | B then A | 168,273.9 | 55,755.0 | 0.3313 | -112,518.9 |
+| 7 | A then B | 170,818.8 | 55,799.7 | 0.3267 | -115,019.1 |
+
+### Variability and possible causes
+
+The v0.5.7 max/min spread is 33.61%, and v0.6.0's is 7.16%. Both exceed the existing 5% investigation threshold. The paired ratios range from 0.2561 to 0.3335. All seven favor v0.6.0 by a large margin, but their spread is not within a few percent.
+
+There is an order association in the small sample. When A ran first (pairs 1, 3, 5 and 7), its median was 167,938.3 ms. When it ran second (pairs 2, 4 and 6), its median was 196,373.0 ms, about 16.9% higher. B's median was nearly unchanged by order: 55,423.1 ms when second and 55,430.3 ms when first. Pair 5 is a slow A-first run, and pair 6 is a normal A-second run. The sequence is not a steady upward or downward drift: A's two slowest runs are pairs 4 and 5, followed by lower values in pairs 6 and 7.
+
+- **Execution-order or temporal effect, moderate confidence as an association, low confidence as a cause.** The slower A median when second is observed, but the sample is small and the exceptions prevent attributing the difference to order itself.
+- **CPU contention or other host activity, low confidence.** The pre-run idle check passed. No CPU or host-activity data was collected during timing, so contention cannot be confirmed or ruled out as the cause.
+- **JVM warm-up bias, low confidence.** Each run uses a fresh JVM and the same untimed depth-8 in-process warm-up before the timed depth-13 search; two additional warm-up runs precede measured pairs. This reduces cold-start and file-cache effects, but the records do not show whether that depth settles JIT compilation equally for both versions. There is no systematic time trend across the seven pairs.
+- **Garbage collection, unobserved.** G1GC is enabled, but no GC logging was collected, so there is no evidence linking collection to the slower runs.
+
+The timer sums per-position search elapsed time in the harness. It does not include process startup and teardown, and this result should not be compared directly with Phase 21 Stage 5 whole-process timings. It measures elapsed time for this 30-position, single-threaded, fixed-depth workload. The node reduction is deterministic search work; NPS is throughput per searched node; neither is playing strength.
+
+### Qualification and next run
+
+**INCONCLUSIVE.** The direction is consistent and large: every pair has a B/A ratio below 0.34, and both the ratio of medians and median of paired ratios are close. The precision is limited by v0.5.7's high variation, v0.6.0 also crossing the 5% threshold, and the order association. The runner's existing instruction says to treat this threshold breach as noisy and repeat the whole procedure in a fresh output directory. One repeat is therefore warranted before calling this a qualified release-level elapsed-time comparison.
+
+The smallest useful follow-up is one fresh seven-pair run on RENEGADE with the existing runner, same settings and integrity checks, in a fresh output directory. The runner begins A-first and alternates each pair. Do not start it until the operator approves and confirms RENEGADE is idle. Accept the repeat only if both arms' max/min spread is at most 5%, the paired B/A ratios have a max/min spread at most 5%, all 14 node totals and settings match, and all checksums and cleanup checks pass. Also require every paired ratio to remain below 0.40. If the noise criteria still fail, report the result as qualified with limitations only if the per-pair direction remains consistent; otherwise another measurement is needed.
+
+## Does the v0.6.0 release page need a benchmark section?
+
+I would not publish a benchmark section from this run yet. The speedup is large, but both arms cross the recorded 5% variability threshold and the paired ratios vary with execution order. After a repeat meets the acceptance criteria, a supplementary section could report both search work and elapsed time, identify the 30-position depth-13 setup, and say explicitly that this is not a playing-strength result. Suggested wording, conditional on that repeat, is:
+
+> In a native Windows fixed-depth benchmark over 30 positions shared by the published v0.5.7 and v0.6.0 JARs, v0.6.0 searched 20.54 million main nodes versus 59.79 million and had a median elapsed time of 55.4 seconds versus 170.8 seconds across seven alternating pairs. This benchmark measures search work and elapsed time for the stated setup; it does not measure playing strength.
+
+Do not edit the published release page from this research task. The stale `v0.5.7` tag is a separate provenance issue and should not be folded into a speed claim.
 
 ## Reproducing the deterministic stage
 
@@ -142,7 +224,7 @@ The `<own>` corpus for each JAR is the 31-position file in this directory (`corp
 | File | Content |
 |---|---|
 | `tools/ReleaseComparisonHarness.java` | Deterministic fixed-depth driver, adapted from `Phase21ControlHarness` |
-| `tools/release-comparison.ps1` | Native Windows timing runner (not run) |
+| `tools/release-comparison.ps1` | Native Windows timing runner |
 | `tools/tests/test_release_comparison.py` | Contract checks for the runner, harness, corpus and recorded totals |
 | `common-corpus-30-release-vs-v0.6.0.fen`, `common-corpus-29.fen` | Shared position sets |
 | `corpus-v0.5.7-release-own31.fen`, `corpus-v0.6.0-own31.fen` | Each release's own `BenchRunner` corpus |
@@ -153,7 +235,5 @@ The `<own>` corpus for each JAR is the 31-position file in this directory (`corp
 | `v0.5.7-tag-provenance.md` | Why the `v0.5.7` tag does not match the published JAR, with the evidence |
 | `identity/` | Published asset hashes (`assets.txt`) and per-class SHA-256 listings for the published and rebuilt JARs |
 | `raw-wsl-deterministic/` | Raw harness output for every run, with `SHA256SUMS` |
+| `tools/results/release-comparison-20261012/` | Native Windows run metadata, all measured and warm-up outputs, and `SHA256SUMS` |
 
-## Does the v0.6.0 release page need a benchmark section?
-
-I would not add one now, and I changed nothing on the published release. A line saying "65.65% fewer nodes than v0.5.7" is accurate as a search-work statement but reads as a speed claim, and the speed number is the one that has not been measured. If you want a supplementary note, write it after the native run so it can state node reduction and measured time together, label the first as a fixed-depth search-work result on 30 positions, and say nothing about Elo. Separately, the stale `v0.5.7` tag is worth a note in the release record, since someone building from the tag gets different code than the asset.

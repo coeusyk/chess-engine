@@ -1,0 +1,33 @@
+{
+  "note": "Elapsed time of fixed-depth search work on 30 positions. Not a strength measurement.",
+  "A": {
+    "commit": "beaef361d35160d768473af7d2c349719db8508b",
+    "runs": 7,
+    "main_nodes_each_run": 59793662,
+    "median_elapsed_ms": 170818.8,
+    "min_elapsed_ms": 158974.6,
+    "max_elapsed_ms": 212401.0,
+    "mad_ms": 11844.199999999983,
+    "median_nps": 350041
+  },
+  "B": {
+    "commit": "bc3dc380e759526e8aa19cd8385af16ab22ac502",
+    "runs": 7,
+    "main_nodes_each_run": 20540625,
+    "median_elapsed_ms": 55430.3,
+    "min_elapsed_ms": 52416.1,
+    "max_elapsed_ms": 56167.7,
+    "mad_ms": 383.90000000000146,
+    "median_nps": 370567
+  },
+  "median_elapsed_ratio_B_over_A": 0.3267,
+  "pair_elapsed_ratios_B_over_A": [
+    0.3335,
+    0.2823,
+    0.3297,
+    0.2561,
+    0.2872,
+    0.3313,
+    0.3267
+  ]
+}
