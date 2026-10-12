@@ -7,11 +7,19 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+permissions: {}
+
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      jar_sha256: ${{ steps.assets.outputs.jar_sha256 }}
+      checksum_sha256: ${{ steps.assets.outputs.checksum_sha256 }}
+      manifest_sha256: ${{ steps.assets.outputs.manifest_sha256 }}
+      notes_sha256: ${{ steps.assets.outputs.notes_sha256 }}
 
     steps:
       - name: Checkout the selected release tag
@@ -19,6 +27,7 @@ jobs:
         with:
           ref: ${{ github.ref }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -27,11 +36,9 @@ jobs:
           java-version: '21'
           cache: maven
 
-      - name: Validate tag, source, versions, and release state
+      - name: Validate tag, source, and versions
         id: release
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_REF_TYPE" != "tag" ]]; then
@@ -46,7 +53,7 @@ jobs:
           fi
           VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
 
-          if [[ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
+          if [[ "$(git rev-parse HEAD)" != "$GITHUB_SHA" || "$(git rev-parse "$GITHUB_REF^{commit}")" != "$GITHUB_SHA" ]]; then
             echo "The checkout does not match the selected tag commit." >&2
             exit 1
           fi
@@ -63,14 +70,6 @@ jobs:
               exit 1
             fi
           done
-
-          if RELEASE_STATE="$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
-            if [[ "$RELEASE_STATE" != "true" ]]; then
-              echo "A published release already exists for $TAG." >&2
-              exit 1
-            fi
-            echo "Found an unpublished draft for $TAG; this run will resume it."
-          fi
 
           {
             echo "tag=$TAG"
@@ -110,63 +109,15 @@ jobs:
           grep -Fxq 'uciok' "$RUNNER_TEMP/uci-smoke.log"
           grep -Fxq 'readyok' "$RUNNER_TEMP/uci-smoke.log"
 
-      - name: Prepare versioned JAR, checksum, and source manifest
-        id: assets
-        shell: bash
-        env:
-          TAG: ${{ steps.release.outputs.tag }}
-          VERSION: ${{ steps.release.outputs.version }}
-          SOURCE: ${{ steps.release.outputs.source }}
-          JAR: ${{ steps.jar.outputs.path }}
-        run: |
-          set -euo pipefail
-          ASSET_DIR="$RUNNER_TEMP/release-assets"
-          mkdir -p "$ASSET_DIR"
-          JAR_NAME="engine-uci-${VERSION}.jar"
-          CHECKSUM_NAME="${JAR_NAME}.sha256"
-          MANIFEST_NAME="release-manifest-${VERSION}.json"
-          cp "$JAR" "$ASSET_DIR/$JAR_NAME"
-          (cd "$ASSET_DIR" && sha256sum "$JAR_NAME" > "$CHECKSUM_NAME")
-          (cd "$ASSET_DIR" && sha256sum --check "$CHECKSUM_NAME")
-          SHA256="$(sha256sum "$ASSET_DIR/$JAR_NAME" | cut -d ' ' -f 1)"
-
-          python3 - "$VERSION" "$TAG" "$SOURCE" "$JAR_NAME" "$SHA256" "$ASSET_DIR/$MANIFEST_NAME" <<'PY'
-          import json
-          import sys
-          version, tag, source, artifact, digest, output = sys.argv[1:]
-          manifest = {
-              "version": version,
-              "tag": tag,
-              "source_commit": source,
-              "minimum_java_version": 21,
-              "artifact": artifact,
-              "sha256": digest,
-          }
-          with open(output, "w", encoding="utf-8") as file:
-              json.dump(manifest, file, indent=2, sort_keys=True)
-              file.write("\n")
-          PY
-
-          {
-            echo "directory=$ASSET_DIR"
-            echo "jar=$ASSET_DIR/$JAR_NAME"
-            echo "checksum=$ASSET_DIR/$CHECKSUM_NAME"
-            echo "manifest=$ASSET_DIR/$MANIFEST_NAME"
-            echo "jar_name=$JAR_NAME"
-            echo "checksum_name=$CHECKSUM_NAME"
-            echo "manifest_name=$MANIFEST_NAME"
-          } >> "$GITHUB_OUTPUT"
-
       - name: Extract release notes from CHANGELOG.md
-        id: notes
         env:
           VERSION: ${{ steps.release.outputs.version }}
         run: |
-          python3 - "$VERSION" CHANGELOG.md "$RUNNER_TEMP/release-notes.md" <<'PY'
+          python3 - <<'PYTHON'
+          import os
           import pathlib
-          import sys
-          version, source, destination = sys.argv[1:]
-          lines = pathlib.Path(source).read_text(encoding="utf-8").splitlines()
+          version = os.environ["VERSION"]
+          lines = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8").splitlines()
           start = next((i for i, line in enumerate(lines) if line.startswith(f"## [{version}]")), None)
           if start is None:
               raise SystemExit(f"CHANGELOG.md has no section for {version}")
@@ -174,41 +125,236 @@ jobs:
           notes = "\n".join(lines[start:end]).strip()
           if len(notes.splitlines()) < 3:
               raise SystemExit(f"CHANGELOG.md section for {version} is empty")
-          pathlib.Path(destination).write_text(notes + "\n", encoding="utf-8")
-          PY
-          echo "path=$RUNNER_TEMP/release-notes.md" >> "$GITHUB_OUTPUT"
+          directory = pathlib.Path(os.environ["RUNNER_TEMP"]) / "release-assets"
+          directory.mkdir()
+          (directory / "release-notes.md").write_text(notes + "\n", encoding="utf-8")
+          PYTHON
 
-      - name: Create or resume a draft release
+      - name: Prepare versioned JAR, checksum, and source manifest
+        id: assets
         env:
-          GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.release.outputs.tag }}
           VERSION: ${{ steps.release.outputs.version }}
-          NOTES: ${{ steps.notes.outputs.path }}
-          JAR: ${{ steps.assets.outputs.jar }}
-          CHECKSUM: ${{ steps.assets.outputs.checksum }}
-          MANIFEST: ${{ steps.assets.outputs.manifest }}
-          JAR_NAME: ${{ steps.assets.outputs.jar_name }}
-          CHECKSUM_NAME: ${{ steps.assets.outputs.checksum_name }}
-          MANIFEST_NAME: ${{ steps.assets.outputs.manifest_name }}
+          SOURCE: ${{ steps.release.outputs.source }}
+          JAR: ${{ steps.jar.outputs.path }}
+        run: |
+          python3 - <<'PYTHON'
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import shutil
+          directory = pathlib.Path(os.environ["RUNNER_TEMP"]) / "release-assets"
+          version = os.environ["VERSION"]
+          jar_name = f"engine-uci-{version}.jar"
+          jar = directory / jar_name
+          shutil.copyfile(os.environ["JAR"], jar)
+          def digest(path):
+              with path.open("rb") as file:
+                  return hashlib.file_digest(file, "sha256").hexdigest()
+          jar_digest = digest(jar)
+          checksum = directory / f"{jar_name}.sha256"
+          checksum.write_text(f"{jar_digest}  {jar_name}\n", encoding="utf-8")
+          manifest = directory / f"release-manifest-{version}.json"
+          manifest.write_text(json.dumps({
+              "version": version,
+              "tag": os.environ["TAG"],
+              "source_commit": os.environ["SOURCE"],
+              "minimum_java_version": 21,
+              "artifact": jar_name,
+              "sha256": jar_digest,
+          }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              for key, path in {
+                  "jar": jar, "checksum": checksum, "manifest": manifest,
+                  "notes": directory / "release-notes.md",
+              }.items():
+                  output.write(f"{key}_sha256={digest(path)}\n")
+          PYTHON
+          (cd "$RUNNER_TEMP/release-assets" && sha256sum --check "engine-uci-${VERSION}.jar.sha256")
+
+      - name: Upload verified release bundle
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: vex-release-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/release-assets/engine-uci-${{ steps.release.outputs.version }}.jar
+            ${{ runner.temp }}/release-assets/engine-uci-${{ steps.release.outputs.version }}.jar.sha256
+            ${{ runner.temp }}/release-assets/release-manifest-${{ steps.release.outputs.version }}.json
+            ${{ runner.temp }}/release-assets/release-notes.md
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Require the build artifact identity
+        env:
+          ARTIFACT_ID: ${{ needs.build.outputs.artifact_id }}
         run: |
           set -euo pipefail
-          DRAFT_STATE="$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null || true)"
-          if [[ -n "$DRAFT_STATE" ]]; then
-            if [[ "$DRAFT_STATE" != "true" ]]; then
-              echo "A published release already exists for $TAG." >&2
-              exit 1
-            fi
-            gh release edit "$TAG" --title "Vex Chess Engine $TAG" --notes-file "$NOTES"
-          else
-            gh release create "$TAG" --draft --verify-tag --title "Vex Chess Engine $TAG" --notes-file "$NOTES"
-          fi
+          [[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
 
-          gh release upload "$TAG" "$JAR" "$CHECKSUM" "$MANIFEST" --clobber
-          EXPECTED="$(printf '%s\n' "$JAR_NAME" "$CHECKSUM_NAME" "$MANIFEST_NAME" | LC_ALL=C sort)"
-          ACTUAL="$(gh release view "$TAG" --json assets --jq '.assets[].name' | LC_ALL=C sort)"
-          if [[ "$ACTUAL" != "$EXPECTED" ]]; then
-            echo "Draft release assets do not match the expected JAR, checksum, and manifest." >&2
-            printf 'Expected:\n%s\nActual:\n%s\n' "$EXPECTED" "$ACTUAL" >&2
-            exit 1
-          fi
-          echo "Draft $TAG is ready for maintainer review and publication."
+      - name: Download the verified release bundle
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/release-assets
+
+      # This code is part of the selected workflow, never loaded from the bundle.
+      - name: Verify bundle and create or resume the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET_DIR: ${{ runner.temp }}/release-assets
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_REF_TYPE: ${{ github.ref_type }}
+          JAR_SHA256: ${{ needs.build.outputs.jar_sha256 }}
+          CHECKSUM_SHA256: ${{ needs.build.outputs.checksum_sha256 }}
+          MANIFEST_SHA256: ${{ needs.build.outputs.manifest_sha256 }}
+          NOTES_SHA256: ${{ needs.build.outputs.notes_sha256 }}
+        run: |
+          python3 - <<'PYTHON'
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import re
+          import subprocess
+          from urllib.parse import quote
+
+          def require(condition, message):
+              if not condition:
+                  raise RuntimeError(message)
+
+          def digest(path):
+              with path.open("rb") as file:
+                  return hashlib.file_digest(file, "sha256").hexdigest()
+
+          def verify_bundle():
+              tag = os.environ["RELEASE_TAG"]
+              source = os.environ["RELEASE_SHA"]
+              require(os.environ["RELEASE_REF_TYPE"] == "tag", "Release ref must be a tag")
+              require(re.fullmatch(r"v(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)", tag), "Invalid stable tag")
+              require(re.fullmatch(r"[0-9a-f]{40}", source), "Invalid source commit")
+              version = tag[1:]
+              jar_name = f"engine-uci-{version}.jar"
+              directory = pathlib.Path(os.environ["ASSET_DIR"])
+              expected = {
+                  jar_name: os.environ["JAR_SHA256"],
+                  f"{jar_name}.sha256": os.environ["CHECKSUM_SHA256"],
+                  f"release-manifest-{version}.json": os.environ["MANIFEST_SHA256"],
+                  "release-notes.md": os.environ["NOTES_SHA256"],
+              }
+              require({p.name for p in directory.iterdir()} == set(expected), "Unexpected or missing bundle files")
+              for name, expected_digest in expected.items():
+                  path = directory / name
+                  require(not path.is_symlink() and path.is_file() and path.stat().st_size > 0, f"Invalid file: {name}")
+                  require(re.fullmatch(r"[0-9a-f]{64}", expected_digest), f"Missing build digest: {name}")
+                  require(digest(path) == expected_digest, f"Build digest mismatch: {name}")
+              require((directory / f"{jar_name}.sha256").read_text(encoding="utf-8") == f"{expected[jar_name]}  {jar_name}\n", "Invalid checksum file")
+              manifest = json.loads((directory / f"release-manifest-{version}.json").read_text(encoding="utf-8"))
+              require(manifest == {
+                  "version": version, "tag": tag, "source_commit": source,
+                  "minimum_java_version": 21, "artifact": jar_name,
+                  "sha256": expected[jar_name],
+              }, "Manifest does not match the selected tag, source, and JAR")
+              notes = (directory / "release-notes.md").read_text(encoding="utf-8")
+              require(notes.startswith(f"## [{version}]") and len(notes.splitlines()) >= 3, "Invalid release notes")
+              return directory, manifest, expected, notes
+
+          def api(path, method="GET", body=None, binary=False):
+              command = ["gh", "api", "--method", method, path]
+              if binary:
+                  command += ["-H", "Accept: application/octet-stream"]
+              else:
+                  command += ["-H", "Accept: application/vnd.github+json"]
+              command += ["-H", "X-GitHub-Api-Version: 2022-11-28"]
+              if body is not None:
+                  command += ["--input", "-"]
+              result = subprocess.run(command, input=json.dumps(body).encode() if body is not None else None,
+                                      stdout=subprocess.PIPE, check=True).stdout
+              return result if binary else json.loads(result)
+
+          def pages(path):
+              result = []
+              page = 1
+              while True:
+                  batch = api(f"{path}?per_page=100&page={page}")
+                  result.extend(batch)
+                  if len(batch) < 100:
+                      return result
+                  page += 1
+
+          def verify_tag(repo, manifest):
+              obj = api(f"{repo}/git/ref/tags/{quote(manifest['tag'], safe='')}")["object"]
+              for _ in range(10):
+                  if obj["type"] != "tag":
+                      break
+                  obj = api(f"{repo}/git/tags/{obj['sha']}")["object"]
+              require(obj["type"] == "commit" and obj["sha"] == manifest["source_commit"], "Remote tag no longer matches the built source")
+
+          def require_draft(repo, release_id, tag):
+              release = api(f"{repo}/releases/{release_id}")
+              require(release["draft"] is True, "Refusing to modify a published release")
+              require(release["tag_name"] == tag, "Draft tag mismatch")
+              return release
+
+          def publish(directory, manifest, expected, notes):
+              repo = f"repos/{os.environ['GITHUB_REPOSITORY']}"
+              tag = manifest["tag"]
+              verify_tag(repo, manifest)
+              matches = [r for r in pages(f"{repo}/releases") if r["tag_name"] == tag]
+              require(len(matches) <= 1, "Multiple releases match the tag")
+              release_files = set(expected) - {"release-notes.md"}
+              if matches:
+                  release = matches[0]
+                  require(release["draft"] is True, "A published release already exists")
+                  release_id = release["id"]
+                  assets = pages(f"{repo}/releases/{release_id}/assets")
+                  require(len({a['name'] for a in assets}) == len(assets), "Duplicate draft asset names")
+                  require({a['name'] for a in assets} <= release_files, "Unexpected draft assets require manual review")
+                  for asset in assets:
+                      if asset["name"] == f"release-manifest-{manifest['version']}.json":
+                          previous = json.loads(api(f"{repo}/releases/assets/{asset['id']}", binary=True))
+                          require(all(previous.get(k) == manifest[k] for k in ("version", "tag", "source_commit", "minimum_java_version", "artifact")), "Existing draft has different source provenance")
+                  require_draft(repo, release_id, tag)
+                  verify_tag(repo, manifest)
+                  api(f"{repo}/releases/{release_id}", "PATCH", {"name": f"Vex Chess Engine {tag}", "body": notes})
+              else:
+                  # Only a successful list response establishes absence; API errors abort.
+                  verify_tag(repo, manifest)
+                  release = api(f"{repo}/releases", "POST", {
+                      "tag_name": tag, "target_commitish": manifest["source_commit"],
+                      "name": f"Vex Chess Engine {tag}", "body": notes, "draft": True,
+                  })
+                  release_id = release["id"]
+              for name in sorted(release_files):
+                  require_draft(repo, release_id, tag)
+                  verify_tag(repo, manifest)
+                  subprocess.run(["gh", "release", "upload", tag, str(directory / name), "--clobber"], check=True)
+              require_draft(repo, release_id, tag)
+              assets = pages(f"{repo}/releases/{release_id}/assets")
+              require(len(assets) == len(release_files) and {a['name'] for a in assets} == release_files, "Remote release asset set mismatch")
+              for asset in assets:
+                  name = asset["name"]
+                  require(asset["state"] == "uploaded" and asset["size"] == (directory / name).stat().st_size, f"Incomplete remote asset: {name}")
+                  remote_digest = asset.get("digest")
+                  if remote_digest and remote_digest.startswith("sha256:"):
+                      require(remote_digest == f"sha256:{expected[name]}", f"Remote digest mismatch: {name}")
+                  else:
+                      # Older API responses have no digest; hash the downloaded bytes.
+                      data = api(f"{repo}/releases/assets/{asset['id']}", binary=True)
+                      require(hashlib.sha256(data).hexdigest() == expected[name], f"Downloaded digest mismatch: {name}")
+              verify_tag(repo, manifest)
+              require_draft(repo, release_id, tag)
+              print(f"Verified draft {tag}; maintainer review and publication are still required.")
+
+          if __name__ == "__main__":
+              publish(*verify_bundle())
+          PYTHON
