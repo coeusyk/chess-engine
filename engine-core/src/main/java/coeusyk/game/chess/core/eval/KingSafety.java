@@ -58,9 +58,33 @@ public final class KingSafety {
     /**
      * Returns only the pawn shield + open-file components of king safety (white minus black),
      * mg-only. Attacker penalties are computed in Evaluator's merged mobility pass.
+     *
+     * <p>When kings are on opposite flanks (one on files a-d, the other on e-h), defender-side
+     * shield structure is discounted to avoid over-valuing static shelter in dynamic attack races.
+     * Only the side currently under higher king-zone pressure is scaled.
+     *
+     * @param whiteAttackWeight attacker weight on Black king (from White pieces)
+     * @param blackAttackWeight attacker weight on White king (from Black pieces)
      */
-    public static int evaluatePawnShieldAndFiles(Board board) {
-        return evaluateCheapSide(board, true) - evaluateCheapSide(board, false);
+    public static int evaluatePawnShieldAndFiles(Board board, int whiteAttackWeight, int blackAttackWeight) {
+        long wKing = board.getWhiteKing();
+        long bKing = board.getBlackKing();
+        int wScore = wKing != 0L ? evaluateCheapSide(board, true)  : 0;
+        int bScore = bKing != 0L ? evaluateCheapSide(board, false) : 0;
+        // Opposite flanks: one king on queenside (files 0-3), the other on kingside (files 4-7).
+        if (wKing != 0L && bKing != 0L) {
+            int wFile = Long.numberOfTrailingZeros(wKing) % 8;
+            int bFile = Long.numberOfTrailingZeros(bKing) % 8;
+            if ((wFile < 4) != (bFile < 4)) {
+                int scale = EvalParams.OPPOSITE_FLANK_SHIELD_SCALE;
+                if (blackAttackWeight > whiteAttackWeight) {
+                    wScore = (wScore * scale) / 100;
+                } else if (whiteAttackWeight > blackAttackWeight) {
+                    bScore = (bScore * scale) / 100;
+                }
+            }
+        }
+        return wScore - bScore;
     }
 
     private static int evaluateCheapSide(Board board, boolean white) {
@@ -129,9 +153,17 @@ public final class KingSafety {
     // Non-linear mapping from attacker-weight sum to centipawn penalty.
     // Replaces the old -(w*w/4) integer formula which truncated to 0 for w<2
     // and grew quadratically without bound for large multi-attacker positions.
-    // Table is capped at 50 cp. Mirrors PositionFeatures.SAFETY_TABLE in engine-tuner.
+    // Extended from 18 to 32 entries (Phase 15 prerequisite, phase-14.md "King Safety
+    // Retune Postmortem"): the original 18-entry table saturated at w>=17, giving
+    // zero Texel-tuning gradient to any ATK weight combination that pushed attacker
+    // weight past that point. Indices 0-17 are unchanged (preserves existing engine
+    // strength); indices 18-31 continue the same diff-growth pattern (diff increases
+    // by 1 every 3 steps), keeping the curve quadratic-like with no premature plateau.
+    // Table is now capped at 160 cp. Mirrors TunerEvaluator.SAFETY_TABLE and
+    // PositionFeatures.SAFETY_TABLE in engine-tuner.
     static final int[] SAFETY_TABLE = {
-        0, 0, 1, 2, 3, 5, 7, 9, 12, 15, 18, 22, 26, 30, 35, 40, 45, 50
+        0, 0, 1, 2, 3, 5, 7, 9, 12, 15, 18, 22, 26, 30, 35, 40, 45, 50,
+        56, 62, 68, 75, 82, 89, 97, 105, 113, 122, 131, 140, 150, 160
     };
 
     /**

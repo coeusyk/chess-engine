@@ -1,6 +1,9 @@
 package coeusyk.game.chess.core.search;
 
-import coeusyk.game.chess.core.eval.Evaluator;
+import coeusyk.game.chess.core.eval.ClassicalEvaluator;
+import coeusyk.game.chess.core.eval.EvalParams;
+import coeusyk.game.chess.core.eval.EvaluatorStrategy;
+import coeusyk.game.chess.core.eval.nnue.NnueEvaluator;
 import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Move;
 import coeusyk.game.chess.core.models.Piece;
@@ -29,7 +32,7 @@ public class Searcher {
     private static final int INF = 1_000_000;
     private static final int MATE_SCORE = 100_000;
     private static final int MAX_PLY = 128;
-    private static final int ASPIRATION_INITIAL_DELTA_CP = 50;
+    private static final int ASPIRATION_INITIAL_DELTA_CP = 25;
     private static final int NULL_MOVE_DEPTH_THRESHOLD = 4; // C-5 SPRT: threshold=4 won (+90.3 Elo vs baseline, H1 accepted)
     private static final int MAX_LEGAL_MOVES = 256;
     private static final int FUTILITY_MARGIN_DEPTH_1 = 150;
@@ -47,14 +50,13 @@ public class Searcher {
     private static final int TB_LOSS_SCORE = -(MATE_SCORE - 2 * MAX_PLY);
 
     // Minimum material+PST advantage (white-positive, centipawns, MG scale) required for
-    // contempt to activate.  Below this threshold the position is close enough to equal
-    // that a draw score of 0 is more appropriate.  Prevents balanced middlegames from
-    // being distorted by a non-zero contempt penalty.
-    private static final int CONTEMPT_THRESHOLD = 150;
+    // contempt to activate.  Loaded from EvalParams.CONTEMPT_THRESHOLD at call-time so
+    // the value can be overridden via the CLOP override file.
     // Default contempt value (centipawns) used by the UCI interface and the draw-failure
-    // regression tests.  Exposed as a public constant so tests can reference it without
-    // hard-coding the magic number 50.
-    public static final int DEFAULT_CONTEMPT_CP = 50;
+    // regression tests.  Derived from EvalParams.CONTEMPT_VALUE so both stay in sync when
+    // the tuning default is adjusted.  Exposed as a public constant so tests can reference
+    // it without hard-coding a magic number.
+    public static final int DEFAULT_CONTEMPT_CP = EvalParams.CONTEMPT_VALUE;
 
     // Correction history: maps pawn structure to a static-eval bias.
     // Stored at GRAIN scale; applied as: adjustedEval = rawEval + ch[color][key] / GRAIN.
@@ -96,6 +98,39 @@ public class Searcher {
     private long lmrApplications;
     private long futilitySkips;
     private long deltaPruningSkips;
+    // Issue #216: search-time instrumentation. pvNodeEvals/cutNodeEvals are cheap
+    // increments (always on, like the counters above). evalNanos is gated behind
+    // instrumentationEnabled -- a nanoTime() pair around every evaluate() call is
+    // not free at this call frequency, so it stays zero-cost by default.
+    private long evalNanos;
+    private long pvNodeEvals;
+    private long cutNodeEvals;
+    private boolean instrumentationEnabled;
+    private long phase21PvWide;
+    private long phase21PvNull;
+    private long phase21NonPvWide;
+    private long phase21NonPvNull;
+    private long phase21WideRazoringReturns;
+    private long phase21WideFutilitySkips;
+    private long phase21WideLosingCaptureSkips;
+    private long phase21SiblingAtOrBelowAlpha;
+    private long phase21SiblingInsideWindow;
+    private long phase21SiblingAtOrAboveBeta;
+    private long phase21LmrFailHighs;
+    private long phase21LmrResearches;
+    private long phase21RootAtOrBelowAlpha;
+    private long phase21RootInsideWindow;
+    private long phase21RootAtOrAboveBeta;
+    private long phase21ZeroWindowProbes;
+    private long phase21PvWideZeroWindowProbes;
+    private long phase21RootWideZeroWindowProbes;
+    private long phase21FullDepthZeroWindowProbes;
+    private long phase21FullWindowResearches;
+    private long phase21FullWindowResearchesPvOwned;
+    private long phase21RootFullWindowResearches;
+    private long phase21NonPvRazoringReturns;
+    private long phase21NonPvFutilitySkips;
+    private long phase21NonPvLosingCaptureSkips;
 
     private TimeManager timeManager;
     private long searchStartNanos;
@@ -111,7 +146,10 @@ public class Searcher {
     private final boolean checkExtensionsEnabled;
     private final boolean singularExtensionsEnabled = true;
     private boolean seeEnabled = true;
-    private final Evaluator evaluator = new Evaluator();
+    // Not final: replaceable via setEvaluatorStrategy (e.g. for NNUE), mirroring the
+    // syzygyProber setter-injection pattern below. Defaults to classical so Searcher
+    // is fully functional standalone (tests, tuner) without any wiring.
+    private EvaluatorStrategy evaluator = new ClassicalEvaluator();
     private final MoveOrderer moveOrderer = new MoveOrderer();
     private final StaticExchangeEvaluator staticExchangeEvaluator = new StaticExchangeEvaluator();
     private final int[][] killerMoves = initKillerMoves();
@@ -284,19 +322,58 @@ public class Searcher {
         transpositionTable.enableStats();
     }
 
-    /** Enables pawn-hash statistics tracking in the evaluator. Resets counters. */
+    /**
+     * Enables pawn-hash statistics tracking in the evaluator. Resets counters.
+     * Classical-only: a no-op when a non-classical strategy is active.
+     */
     void enablePawnHashStats() {
-        evaluator.enablePawnHashStats();
+        if (evaluator instanceof ClassicalEvaluator ce) {
+            ce.enablePawnHashStats();
+        }
     }
 
-    /** Returns the pawn-hash hit rate [0.0, 1.0] since stats were last enabled. */
+    /**
+     * Returns the pawn-hash hit rate [0.0, 1.0] since stats were last enabled.
+     * Classical-only: returns 0.0 when a non-classical strategy is active
+     * (the concept does not apply — there is no pawn hash to report on).
+     */
     double getPawnHashHitRate() {
-        return evaluator.getPawnHashHitRate();
+        return evaluator instanceof ClassicalEvaluator ce ? ce.getPawnHashHitRate() : 0.0;
     }
 
-    /** Resizes the pawn hash table in the evaluator. See {@link Evaluator#setPawnHashSizeMb}. */
+    /**
+     * Resizes the pawn hash table. Classical-only: a no-op when a non-classical
+     * strategy is active. See {@link ClassicalEvaluator#setPawnHashSizeMb}.
+     */
     public void setPawnHashSizeMb(int mb) {
-        evaluator.setPawnHashSizeMb(mb);
+        if (evaluator instanceof ClassicalEvaluator ce) {
+            ce.setPawnHashSizeMb(mb);
+        }
+    }
+
+    /**
+     * Replaces this searcher's evaluator strategy. Defaults to {@link ClassicalEvaluator};
+     * falls back to it if {@code strategy} is {@code null}.
+     */
+    public void setEvaluatorStrategy(EvaluatorStrategy strategy) {
+        this.evaluator = strategy != null ? strategy : new ClassicalEvaluator();
+        if (instrumentationEnabled && evaluator instanceof NnueEvaluator ne) {
+            ne.enableAccumulatorTiming();
+        }
+    }
+
+    /**
+     * Issue #216: opt-in search-time instrumentation (eval-time, NNUE accumulator-
+     * update time, PV/cut-node eval frequency) -- off by default, zero added cost
+     * to {@link #evaluate}'s hot path unless enabled. Call after {@link
+     * #setEvaluatorStrategy} (or call this again after swapping evaluators) so a
+     * newly-set {@link NnueEvaluator} also gets accumulator timing enabled.
+     */
+    public void setInstrumentationEnabled(boolean enabled) {
+        this.instrumentationEnabled = enabled;
+        if (enabled && evaluator instanceof NnueEvaluator ne) {
+            ne.enableAccumulatorTiming();
+        }
     }
 
     public void setSyzygyProber(SyzygyProber prober) {
@@ -374,6 +451,10 @@ public class Searcher {
         int effectiveMaxDepth = Math.min(maxDepth, MAX_PLY - 1);
         int effectiveStartDepth = Math.max(1, Math.min(startDepth, effectiveMaxDepth));
 
+        // Root change: every public entry point funnels through here, so this is the
+        // single place to rebuild any incremental evaluator state from scratch.
+        evaluator.reset(board);
+
         Move previousBestMove = null;
         int bestScore = 0;
         int depthReached = 0;
@@ -388,6 +469,40 @@ public class Searcher {
         long totalLmrApplications = 0;
         long totalFutilitySkips = 0;
         long totalDeltaPruningSkips = 0;
+        long totalEvalNanos = 0;
+        long totalPvNodeEvals = 0;
+        long totalCutNodeEvals = 0;
+        long totalPhase21PvWide = 0;
+        long totalPhase21PvNull = 0;
+        long totalPhase21NonPvWide = 0;
+        long totalPhase21NonPvNull = 0;
+        long totalPhase21WideRazoringReturns = 0;
+        long totalPhase21WideFutilitySkips = 0;
+        long totalPhase21WideLosingCaptureSkips = 0;
+        long totalPhase21SiblingAtOrBelowAlpha = 0;
+        long totalPhase21SiblingInsideWindow = 0;
+        long totalPhase21SiblingAtOrAboveBeta = 0;
+        long totalPhase21LmrFailHighs = 0;
+        long totalPhase21LmrResearches = 0;
+        long totalPhase21RootAtOrBelowAlpha = 0;
+        long totalPhase21RootInsideWindow = 0;
+        long totalPhase21RootAtOrAboveBeta = 0;
+        long totalPhase21ZeroWindowProbes = 0;
+        long totalPhase21PvWideZeroWindowProbes = 0;
+        long totalPhase21RootWideZeroWindowProbes = 0;
+        long totalPhase21FullDepthZeroWindowProbes = 0;
+        long totalPhase21FullWindowResearches = 0;
+        long totalPhase21FullWindowResearchesPvOwned = 0;
+        long totalPhase21RootFullWindowResearches = 0;
+        long totalPhase21NonPvRazoringReturns = 0;
+        long totalPhase21NonPvFutilitySkips = 0;
+        long totalPhase21NonPvLosingCaptureSkips = 0;
+        // Issue #216: NNUE accumulator-update cost is tracked inside NnueEvaluator
+        // itself (an instance that may persist across many searches), so this
+        // search's contribution is a before/after delta rather than a per-pvIndex
+        // reset like the counters above. 0 for any evaluator that isn't NnueEvaluator
+        // (mirrors the existing evaluator instanceof ClassicalEvaluator passthroughs).
+        long accumulatorNanosBefore = evaluator instanceof NnueEvaluator ne ? ne.accumulatorUpdateNanos() : 0L;
         long[] nodesPerDepth = new long[effectiveMaxDepth + 1];
 
         aborted = false;
@@ -431,6 +546,34 @@ public class Searcher {
                 lmrApplications = 0;
                 futilitySkips = 0;
                 deltaPruningSkips = 0;
+                evalNanos = 0;
+                pvNodeEvals = 0;
+                cutNodeEvals = 0;
+                phase21PvWide = 0;
+                phase21PvNull = 0;
+                phase21NonPvWide = 0;
+                phase21NonPvNull = 0;
+                phase21WideRazoringReturns = 0;
+                phase21WideFutilitySkips = 0;
+                phase21WideLosingCaptureSkips = 0;
+                phase21SiblingAtOrBelowAlpha = 0;
+                phase21SiblingInsideWindow = 0;
+                phase21SiblingAtOrAboveBeta = 0;
+                phase21LmrFailHighs = 0;
+                phase21LmrResearches = 0;
+                phase21RootAtOrBelowAlpha = 0;
+                phase21RootInsideWindow = 0;
+                phase21RootAtOrAboveBeta = 0;
+                phase21ZeroWindowProbes = 0;
+                phase21PvWideZeroWindowProbes = 0;
+                phase21RootWideZeroWindowProbes = 0;
+                phase21FullDepthZeroWindowProbes = 0;
+                phase21FullWindowResearches = 0;
+                phase21FullWindowResearchesPvOwned = 0;
+                phase21RootFullWindowResearches = 0;
+                phase21NonPvRazoringReturns = 0;
+                phase21NonPvFutilitySkips = 0;
+                phase21NonPvLosingCaptureSkips = 0;
                 // pvTable and pvLength are pre-allocated; no per-depth allocation needed.
                 RootResult iteration;
                 if (pvIndex == 0 && aspirationWindowsEnabled && depth >= 4 && previousBestMove != null) {
@@ -450,6 +593,34 @@ public class Searcher {
                 totalLmrApplications += lmrApplications;
                 totalFutilitySkips += futilitySkips;
                 totalDeltaPruningSkips += deltaPruningSkips;
+                totalEvalNanos += evalNanos;
+                totalPvNodeEvals += pvNodeEvals;
+                totalCutNodeEvals += cutNodeEvals;
+                totalPhase21PvWide += phase21PvWide;
+                totalPhase21PvNull += phase21PvNull;
+                totalPhase21NonPvWide += phase21NonPvWide;
+                totalPhase21NonPvNull += phase21NonPvNull;
+                totalPhase21WideRazoringReturns += phase21WideRazoringReturns;
+                totalPhase21WideFutilitySkips += phase21WideFutilitySkips;
+                totalPhase21WideLosingCaptureSkips += phase21WideLosingCaptureSkips;
+                totalPhase21SiblingAtOrBelowAlpha += phase21SiblingAtOrBelowAlpha;
+                totalPhase21SiblingInsideWindow += phase21SiblingInsideWindow;
+                totalPhase21SiblingAtOrAboveBeta += phase21SiblingAtOrAboveBeta;
+                totalPhase21LmrFailHighs += phase21LmrFailHighs;
+                totalPhase21LmrResearches += phase21LmrResearches;
+                totalPhase21RootAtOrBelowAlpha += phase21RootAtOrBelowAlpha;
+                totalPhase21RootInsideWindow += phase21RootInsideWindow;
+                totalPhase21RootAtOrAboveBeta += phase21RootAtOrAboveBeta;
+                totalPhase21ZeroWindowProbes += phase21ZeroWindowProbes;
+                totalPhase21PvWideZeroWindowProbes += phase21PvWideZeroWindowProbes;
+                totalPhase21RootWideZeroWindowProbes += phase21RootWideZeroWindowProbes;
+                totalPhase21FullDepthZeroWindowProbes += phase21FullDepthZeroWindowProbes;
+                totalPhase21FullWindowResearches += phase21FullWindowResearches;
+                totalPhase21FullWindowResearchesPvOwned += phase21FullWindowResearchesPvOwned;
+                totalPhase21RootFullWindowResearches += phase21RootFullWindowResearches;
+                totalPhase21NonPvRazoringReturns += phase21NonPvRazoringReturns;
+                totalPhase21NonPvFutilitySkips += phase21NonPvFutilitySkips;
+                totalPhase21NonPvLosingCaptureSkips += phase21NonPvLosingCaptureSkips;
 
                 if (iteration.bestMove == null) {
                     if (pvIndex == 0) {
@@ -479,7 +650,8 @@ public class Searcher {
                             elapsedMs,
                             transpositionTable.hashfull(),
                             iteration.principalVariation,
-                            pvIndex + 1
+                            pvIndex + 1,
+                            !iteration.aborted
                     );
                     listener.onIteration(info);
                 }
@@ -546,16 +718,36 @@ public class Searcher {
                     ? 100.0 * totalFirstMoveCutoffs / totalBetaCutoffs : 0.0;
             double ebfNow = (depth >= 3 && nodesPerDepth[depth - 2] > 0)
                     ? Math.sqrt((double) nodesPerDepth[depth] / nodesPerDepth[depth - 2]) : 0.0;
-            LOG.debug(String.format("[BENCH] depth=%d nodes=%d qnodes=%d nps=%d cutoffs=%d firstMoveCutoff%%=%.1f tt_hits=%d ebf=%.2f nmp_cuts=%d lmr_apps=%d fut_skips=%d delta_prune=%d time=%dms",
+            long accumulatorNanosNow = (evaluator instanceof NnueEvaluator ne ? ne.accumulatorUpdateNanos() : 0L) - accumulatorNanosBefore;
+            double elapsedNanos = elapsedMs * 1_000_000.0;
+            double evalPct = elapsedNanos > 0 ? 100.0 * totalEvalNanos / elapsedNanos : 0.0;
+            double accPct = elapsedNanos > 0 ? 100.0 * accumulatorNanosNow / elapsedNanos : 0.0;
+            LOG.debug(String.format("[BENCH] depth=%d nodes=%d qnodes=%d nps=%d cutoffs=%d firstMoveCutoff%%=%.1f tt_hits=%d ebf=%.2f nmp_cuts=%d lmr_apps=%d fut_skips=%d delta_prune=%d eval_pct=%.1f acc_pct=%.1f pv_evals=%d cut_evals=%d time=%dms",
                     depth, totalNodes, totalQuiescenceNodes, nps,
                     totalBetaCutoffs, fmcPct, totalTtHits, ebfNow,
-                    totalNullMoveCutoffs, totalLmrApplications, totalFutilitySkips, totalDeltaPruningSkips, elapsedMs));
+                    totalNullMoveCutoffs, totalLmrApplications, totalFutilitySkips, totalDeltaPruningSkips,
+                    evalPct, accPct, totalPvNodeEvals, totalCutNodeEvals, elapsedMs));
+            if (instrumentationEnabled) {
+                LOG.debug(String.format("[BENCH] phase21 depth=%d ab_calls=%d pv_wide=%d pv_null=%d nonpv_wide=%d nonpv_null=%d nonpv_wide_razor_returns=%d nonpv_wide_futility_skips=%d nonpv_wide_losing_capture_skips=%d pv_wide_full_window_research_le_alpha=%d pv_wide_full_window_research_inside=%d pv_wide_full_window_research_ge_beta=%d lmr_probes=%d lmr_fail_highs=%d lmr_researches=%d root_wide_full_window_research_le_alpha=%d root_wide_full_window_research_inside=%d root_wide_full_window_research_ge_beta=%d pvs_zero_window_probes=%d pv_wide_zero_window_probes=%d root_wide_zero_window_probes=%d full_depth_zero_window_probes=%d full_window_researches=%d full_window_researches_pv_owned=%d root_full_window_researches=%d nonpv_razor_returns=%d nonpv_futility_skips=%d nonpv_losing_capture_skips=%d",
+                        depth, totalPhase21PvWide + totalPhase21PvNull + totalPhase21NonPvWide + totalPhase21NonPvNull,
+                        totalPhase21PvWide, totalPhase21PvNull, totalPhase21NonPvWide, totalPhase21NonPvNull,
+                        totalPhase21WideRazoringReturns, totalPhase21WideFutilitySkips, totalPhase21WideLosingCaptureSkips,
+                        totalPhase21SiblingAtOrBelowAlpha, totalPhase21SiblingInsideWindow, totalPhase21SiblingAtOrAboveBeta,
+                        totalLmrApplications, totalPhase21LmrFailHighs, totalPhase21LmrResearches,
+                        totalPhase21RootAtOrBelowAlpha, totalPhase21RootInsideWindow, totalPhase21RootAtOrAboveBeta,
+                        totalPhase21ZeroWindowProbes, totalPhase21PvWideZeroWindowProbes, totalPhase21RootWideZeroWindowProbes,
+                        totalPhase21FullDepthZeroWindowProbes, totalPhase21FullWindowResearches,
+                        totalPhase21FullWindowResearchesPvOwned, totalPhase21RootFullWindowResearches,
+                        totalPhase21NonPvRazoringReturns, totalPhase21NonPvFutilitySkips, totalPhase21NonPvLosingCaptureSkips));
+            }
         }
 
         double ebf = 0.0;
         if (depthReached >= 3 && nodesPerDepth[depthReached - 2] > 0) {
             ebf = Math.sqrt((double) nodesPerDepth[depthReached] / nodesPerDepth[depthReached - 2]);
         }
+
+        long accumulatorNanos = (evaluator instanceof NnueEvaluator ne ? ne.accumulatorUpdateNanos() : 0L) - accumulatorNanosBefore;
 
         return new SearchResult(
             previousBestMove,
@@ -574,7 +766,11 @@ public class Searcher {
             totalNullMoveCutoffs,
             totalLmrApplications,
             totalFutilitySkips,
-            totalDeltaPruningSkips
+            totalDeltaPruningSkips,
+            totalEvalNanos,
+            accumulatorNanos,
+            totalPvNodeEvals,
+            totalCutNodeEvals
         );
     }
 
@@ -690,8 +886,11 @@ public class Searcher {
             }
 
             board.makeMove(move);
-            boolean childIsPvNode = rootMoveIndex == 0;
-                int score = -alphaBeta(
+            evaluator.onMake(board, move.pack(), board.lastCapturedPiece());
+            boolean fullWindowResearch = false;
+            int score;
+            if (rootMoveIndex == 0) {
+                score = -alphaBeta(
                     board,
                     childDepth,
                     1,
@@ -699,16 +898,61 @@ public class Searcher {
                     -alpha,
                     shouldStopHard,
                     false,
-                    childIsPvNode,
                     rootExtensionsUsed,
                     maxCheckExtensions,
                     false
                 );
+            } else {
+                if (instrumentationEnabled) {
+                    phase21ZeroWindowProbes++;
+                    phase21FullDepthZeroWindowProbes++;
+                    if (beta - alpha > 1) phase21RootWideZeroWindowProbes++;
+                }
+                score = -alphaBeta(
+                        board,
+                        childDepth,
+                        1,
+                        -(alpha + 1),
+                        -alpha,
+                        shouldStopHard,
+                        false,
+                        rootExtensionsUsed,
+                        maxCheckExtensions,
+                        false
+                );
+                if (!aborted && score > alpha && score < beta) {
+                    if (instrumentationEnabled) {
+                        phase21FullWindowResearches++;
+                        phase21FullWindowResearchesPvOwned++;
+                        phase21RootFullWindowResearches++;
+                    }
+                    score = -alphaBeta(
+                            board,
+                            childDepth,
+                            1,
+                            -beta,
+                            -alpha,
+                            shouldStopHard,
+                            false,
+                            rootExtensionsUsed,
+                            maxCheckExtensions,
+                            false
+                    );
+                    fullWindowResearch = true;
+                }
+            }
+            evaluator.onUnmake();
             board.unmakeMove();
             rootMoveIndex++;
 
             if (aborted) {
                 return new RootResult(bestMove, bestScore, buildPrincipalVariation(), true);
+            }
+
+            if (instrumentationEnabled && fullWindowResearch) {
+                if (score <= alpha) phase21RootAtOrBelowAlpha++;
+                else if (score >= beta) phase21RootAtOrAboveBeta++;
+                else phase21RootInsideWindow++;
             }
 
             if (score > bestScore || bestMove == null) {
@@ -726,6 +970,10 @@ public class Searcher {
             if (score > alpha) {
                 alpha = score;
             }
+
+            if (alpha >= beta) {
+                break;
+            }
         }
 
         return new RootResult(bestMove, bestScore, buildPrincipalVariation(), false);
@@ -739,11 +987,23 @@ public class Searcher {
             int beta,
             BooleanSupplier shouldStopHard,
             boolean previousMoveWasNull,
-            boolean isPvNode,
             int extensionsUsed,
             int maxExtensions,
             boolean inSingularitySearch
     ) {
+        boolean isPvNode = beta - alpha > 1;
+        // Count every alphaBeta invocation at entry, before horizon/draw/TT/abort
+        // returns, including null-move, singularity, LMR and retry calls. Root
+        // and direct quiescence calls are excluded; this is not nodesVisited.
+        if (instrumentationEnabled) {
+            if (isPvNode) {
+                if (beta - alpha > 1) phase21PvWide++;
+                else phase21PvNull++;
+            } else {
+                if (beta - alpha > 1) phase21NonPvWide++;
+                else phase21NonPvNull++;
+            }
+        }
         pvLength[ply] = 0;
 
         if (ply > seldepth) {
@@ -811,6 +1071,11 @@ public class Searcher {
         }
 
         int staticEval = evaluate(board);
+        if (isPvNode) {
+            pvNodeEvals++;
+        } else {
+            cutNodeEvals++;
+        }
 
         // Derive a pawn-structure key for correction history lookup.
         int colorIdx = Piece.isWhite(board.getActiveColor()) ? 0 : 1;
@@ -832,6 +1097,10 @@ public class Searcher {
             }
 
             if (qScore <= alpha) {
+                if (instrumentationEnabled && !isPvNode) phase21NonPvRazoringReturns++;
+                if (instrumentationEnabled && !isPvNode && beta - alpha > 1) {
+                    phase21WideRazoringReturns++;
+                }
                 return qScore;
             }
         }
@@ -840,6 +1109,7 @@ public class Searcher {
                 sideToMoveInCheck, staticEval)) {
             int nullReduction = effectiveDepth > 6 ? 3 : 2;
             Board.NullMoveState nullMoveState = board.makeNullMove();
+            evaluator.onMakeNull();
             int nullScore = -alphaBeta(
                     board,
                 effectiveDepth - nullReduction - 1,
@@ -848,11 +1118,11 @@ public class Searcher {
                     -beta + 1,
                     shouldStopHard,
                     true,
-                false,
                 currentExtensionsUsed,
                 maxExtensions,
                 false
             );
+            evaluator.onUnmakeNull();
             board.unmakeNullMove(nullMoveState);
 
             if (aborted) {
@@ -871,8 +1141,8 @@ public class Searcher {
         int[] moves = moveListPool[poolIdx];
         int moveCount = MovesGenerator.generate(board, moves);
         int ttMoveInt = ttEntry != null ? ttEntry.bestMove() : Move.NONE;
+        int orderPly = Math.min(ply, MAX_PLY - 1);
         if (moveOrderingEnabled) {
-            int orderPly = Math.min(ply, MAX_PLY - 1);
             moveOrderer.orderMoves(board, moves, moveCount, orderPly, ttMoveInt, killerMoves, historyHeuristic);
         }
 
@@ -883,7 +1153,7 @@ public class Searcher {
 
         int singularMoveToExtend = Move.NONE;
         if (canAttemptSingularity(effectiveDepth, ttEntry, inSingularitySearch, sideToMoveInCheck, alpha, beta)) {
-            SingularityOutcome singularity = runSingularitySearch(
+            SingularityResult singularity = runSingularitySearch(
                     board,
                     moves,
                     moveCount,
@@ -900,11 +1170,11 @@ public class Searcher {
                 return alpha;
             }
 
-            if (singularity.failHigh()) {
-                return beta;
+            if (singularity == SingularityResult.ABORTED || aborted) {
+                return alpha;
             }
 
-            if (singularity.failLow()) {
+            if (singularity == SingularityResult.SINGULAR) {
                 singularMoveToExtend = ttEntry.bestMove();
             }
         }
@@ -918,13 +1188,14 @@ public class Searcher {
             boolean isCapture = moveOrderer.isCapture(board, move);
             boolean isKiller = isKillerMove(ply, move);
             boolean isTtMove = ttMoveInt != Move.NONE && move == ttMoveInt;
-            // Read ordering score before makeMove (before recursion can overwrite scoringBuffer).
+            // Read ordering score before makeMove. Metadata is owned by this DFS ply,
+            // so child ordering cannot overwrite the parent's score vector.
             // Losing captures have score < 0 (LOSING_CAPTURE_BASE + seeScore, where seeScore < 0).
             // This avoids recomputing SEE here — it was already computed during orderMoves.
             boolean isLosingCapture = isCapture && seeEnabled && moveOrderingEnabled
-                    && moveOrderer.scoringBuffer[mi] < 0;
-
+                    && moveOrderer.scoringBufferForPly(orderPly)[mi] < 0;
             board.makeMove(move);
+            evaluator.onMake(board, move, board.lastCapturedPiece());
 
             boolean moveGivesCheck = board.isActiveColorInCheck();
             
@@ -950,6 +1221,11 @@ public class Searcher {
                     sideToMoveInCheck,
                     moveGivesCheck
             )) {
+                if (instrumentationEnabled && !isPvNode) phase21NonPvLosingCaptureSkips++;
+                if (instrumentationEnabled && !isPvNode && beta - alpha > 1) {
+                    phase21WideLosingCaptureSkips++;
+                }
+                evaluator.onUnmake();
                 board.unmakeMove();
                 moveIndex++;
                 continue;
@@ -966,18 +1242,29 @@ public class Searcher {
                     moveGivesCheck
             )) {
                 futilitySkips++;
+                if (instrumentationEnabled && !isPvNode) phase21NonPvFutilitySkips++;
+                if (instrumentationEnabled && !isPvNode && beta - alpha > 1) {
+                    phase21WideFutilitySkips++;
+                }
+                evaluator.onUnmake();
                 board.unmakeMove();
                 moveIndex++;
                 continue;
             }
 
             int score;
-            if (canApplyLmr(effectiveDepth, moveIndex, isQuiet, isKiller, isTtMove, sideToMoveInCheck, moveGivesCheck)) {
+            boolean fullWindowResearch = false;
+            boolean lmrMove = canApplyLmr(effectiveDepth, moveIndex, isQuiet, isKiller, isTtMove, sideToMoveInCheck, moveGivesCheck);
+            if (lmrMove) {
                 lmrApplications++;
                 int reduction = lmrReductions[Math.min(effectiveDepth, MAX_PLY - 1)][Math.min(moveIndex + 1, MAX_LEGAL_MOVES - 1)];
                 if (!improving) { reduction++; }
                 int reducedDepth = Math.max(1, childDepth - reduction);
 
+                if (instrumentationEnabled) {
+                    phase21ZeroWindowProbes++;
+                    if (isPvNode) phase21PvWideZeroWindowProbes++;
+                }
                 score = -alphaBeta(
                         board,
                         reducedDepth,
@@ -986,29 +1273,51 @@ public class Searcher {
                         -alpha,
                         shouldStopHard,
                         false,
-                        false,
                         childExtensionsUsed,
                         maxExtensions,
                         false
                 );
                 if (!aborted && score > alpha) {
-                    boolean childIsPvNode = isPvNode && moveIndex == 0;
+                    if (instrumentationEnabled) phase21LmrFailHighs++;
+                    if (instrumentationEnabled) {
+                        phase21LmrResearches++;
+                        phase21ZeroWindowProbes++;
+                        phase21FullDepthZeroWindowProbes++;
+                        if (isPvNode) phase21PvWideZeroWindowProbes++;
+                    }
                     score = -alphaBeta(
                             board,
                             childDepth,
                             ply + 1,
-                            -beta,
+                            -(alpha + 1),
                             -alpha,
                             shouldStopHard,
                             false,
-                            childIsPvNode,
                             childExtensionsUsed,
                             maxExtensions,
                             false
                     );
+                    if (!aborted && isPvNode && score > alpha && score < beta) {
+                        if (instrumentationEnabled) {
+                            phase21FullWindowResearches++;
+                            phase21FullWindowResearchesPvOwned++;
+                        }
+                        score = -alphaBeta(
+                                board,
+                                childDepth,
+                                ply + 1,
+                                -beta,
+                                -alpha,
+                                shouldStopHard,
+                                false,
+                                childExtensionsUsed,
+                                maxExtensions,
+                                false
+                        );
+                        fullWindowResearch = true;
+                    }
                 }
-            } else {
-                boolean childIsPvNode = isPvNode && moveIndex == 0;
+            } else if (moveIndex == 0) {
                 score = -alphaBeta(
                         board,
                         childDepth,
@@ -1017,13 +1326,56 @@ public class Searcher {
                         -alpha,
                         shouldStopHard,
                         false,
-                        childIsPvNode,
                         childExtensionsUsed,
                         maxExtensions,
                         false
                 );
+            } else {
+                if (instrumentationEnabled) {
+                    phase21ZeroWindowProbes++;
+                    phase21FullDepthZeroWindowProbes++;
+                    if (isPvNode) phase21PvWideZeroWindowProbes++;
+                }
+                score = -alphaBeta(
+                        board,
+                        childDepth,
+                        ply + 1,
+                        -(alpha + 1),
+                        -alpha,
+                        shouldStopHard,
+                        false,
+                        childExtensionsUsed,
+                        maxExtensions,
+                        false
+                );
+                if (!aborted && isPvNode && score > alpha && score < beta) {
+                    if (instrumentationEnabled) {
+                        phase21FullWindowResearches++;
+                        phase21FullWindowResearchesPvOwned++;
+                    }
+                    score = -alphaBeta(
+                            board,
+                            childDepth,
+                            ply + 1,
+                            -beta,
+                            -alpha,
+                            shouldStopHard,
+                            false,
+                            childExtensionsUsed,
+                            maxExtensions,
+                            false
+                    );
+                    fullWindowResearch = true;
+                }
             }
 
+            if (instrumentationEnabled && fullWindowResearch && !lmrMove && isPvNode) {
+                if (score <= alpha) phase21SiblingAtOrBelowAlpha++;
+                else if (score >= beta) phase21SiblingAtOrAboveBeta++;
+                else phase21SiblingInsideWindow++;
+            }
+
+            evaluator.onUnmake();
             board.unmakeMove();
             moveIndex++;
 
@@ -1215,7 +1567,7 @@ public class Searcher {
         return ttEntry.bound() == TTBound.EXACT || ttEntry.bound() == TTBound.LOWER_BOUND;
     }
 
-    private SingularityOutcome runSingularitySearch(
+    private SingularityResult runSingularitySearch(
             Board board,
             int[] moves,
             int moveCount,
@@ -1228,7 +1580,7 @@ public class Searcher {
             int maxExtensions
     ) {
         if (ttMoveInt == Move.NONE) {
-            return new SingularityOutcome(false, false);
+            return SingularityResult.NOT_SINGULAR;
         }
 
         int singularAlpha = ttScore - getSingularMargin(depth);
@@ -1244,6 +1596,7 @@ public class Searcher {
 
             searchedAlternative = true;
             board.makeMove(move);
+            evaluator.onMake(board, move, board.lastCapturedPiece());
             int score = -alphaBeta(
                     board,
                     Math.max(0, reducedDepth - 1),
@@ -1252,23 +1605,23 @@ public class Searcher {
                     -singularAlpha,
                     shouldStopHard,
                     false,
-                    false,
                     extensionsUsed,
                     maxExtensions,
                     true
             );
+            evaluator.onUnmake();
             board.unmakeMove();
 
             if (aborted) {
-                return new SingularityOutcome(false, false);
+                return SingularityResult.ABORTED;
             }
 
             if (score >= singularBeta) {
-                return new SingularityOutcome(false, true);
+                return SingularityResult.NOT_SINGULAR;
             }
         }
 
-        return new SingularityOutcome(searchedAlternative, false);
+        return searchedAlternative ? SingularityResult.SINGULAR : SingularityResult.NOT_SINGULAR;
     }
 
     private int[][] precomputeLmrReductions() {
@@ -1472,7 +1825,9 @@ public class Searcher {
             for (int qi = 0; qi < legalCount; qi++) {
                 int move = legalMoves[qi];
                 board.makeMove(move);
+                evaluator.onMake(board, move, board.lastCapturedPiece());
                 int score = -quiescence(board, -beta, -alpha, ply + 1, qPly + 1, shouldStopHard);
+                evaluator.onUnmake();
                 board.unmakeMove();
 
                 if (aborted) {
@@ -1546,7 +1901,9 @@ public class Searcher {
             }
 
             board.makeMove(move);
+            evaluator.onMake(board, move, board.lastCapturedPiece());
             int score = -quiescence(board, -beta, -alpha, ply + 1, qPly + 1, shouldStopHard);
+            evaluator.onUnmake();
             board.unmakeMove();
 
             if (aborted) {
@@ -1606,7 +1963,9 @@ public class Searcher {
             }
 
             board.makeMove(move);
+            evaluator.onMake(board, move, board.lastCapturedPiece());
             int score = -quiescence(board, -beta, -alpha, ply + 1, qPly + 1, shouldStopHard);
+            evaluator.onUnmake();
             board.unmakeMove();
 
             if (aborted) {
@@ -1649,7 +2008,13 @@ public class Searcher {
     }
 
     private int evaluate(Board board) {
-        return evaluator.evaluate(board);
+        if (!instrumentationEnabled) {
+            return evaluator.evaluate(board);
+        }
+        long start = System.nanoTime();
+        int result = evaluator.evaluate(board);
+        evalNanos += System.nanoTime() - start;
+        return result;
     }
 
     /**
@@ -1668,8 +2033,8 @@ public class Searcher {
         // incMgScore is white-positive; flip sign for black to get side-to-move advantage.
         int incMg = board.getIncMgScore();
         int sideToMoveAdv = Piece.isWhite(board.getActiveColor()) ? incMg : -incMg;
-        if (sideToMoveAdv >  CONTEMPT_THRESHOLD) return -contemptCp;
-        if (sideToMoveAdv < -CONTEMPT_THRESHOLD) return  contemptCp;
+        if (sideToMoveAdv >  EvalParams.CONTEMPT_THRESHOLD) return -contemptCp;
+        if (sideToMoveAdv < -EvalParams.CONTEMPT_THRESHOLD) return  contemptCp;
         return 0;
     }
 
@@ -1824,6 +2189,12 @@ public class Searcher {
     private record RootResult(Move bestMove, int bestScore, List<Move> principalVariation, boolean aborted) {
     }
 
-    private record SingularityOutcome(boolean failLow, boolean failHigh) {
+    private enum SingularityResult {
+        /** Every searched alternative stayed below singularBeta; the TT move is singular. */
+        SINGULAR,
+        /** An alternative reached singularBeta, or no alternative was searched. */
+        NOT_SINGULAR,
+        /** Verification stopped before it established either result. */
+        ABORTED
     }
 }

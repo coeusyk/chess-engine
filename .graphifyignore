@@ -1,0 +1,52 @@
+# Maven
+target/
+
+# IntelliJ
+.idea/
+*.iml
+
+# VSCode
+.vscode/
+
+# Claude
+.claude/plans/
+.claude/tmp/
+.claude/cache/
+
+# Graphify output cache
+graphify-out/cache/
+graphify-out/cost.json
+
+# NNUE generated artifacts
+nets/
+training/
+datasets/
+selfplay/
+labels/
+exports/
+checkpoints/
+runs/
+tensorboard/
+logs/
+
+# Temporary benchmark output
+bench/
+benchmarks/output/
+profiling/
+profiles/
+
+# Generated test artifacts
+coverage/
+jacoco/
+surefire-reports/
+
+# Runtime
+*.log
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git worktrees (if inside repo)
+.worktrees/

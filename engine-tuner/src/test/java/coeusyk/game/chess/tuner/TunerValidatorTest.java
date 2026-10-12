@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class TunerValidatorTest {
 
     private static final TunerPostRunValidator.ValidatorConfig SKIP_SMOKE =
-            new TunerPostRunValidator.ValidatorConfig(false, false, true, 100, 3, 0.30);
+            new TunerPostRunValidator.ValidatorConfig(true, 100, 3, 0.30);
 
     /** A parameter array that satisfies all default sanity constraints. */
     private double[] validParams;
@@ -240,7 +240,9 @@ class TunerValidatorTest {
     }
 
     @Test
-    void validate_passes_when_skip_flags_override_failures() {
+    void validate_fails_when_convergence_and_sanity_both_bad() {
+        // Convergence and sanity gates are now mandatory (no skip flags).
+        // Bad iter-cap delta + ordering violation must cause overall FAIL.
         TunerRunMetrics m = buildGoodMetrics();
         m.hitIterCap = true;
         for (int i = 0; i < 20; i++) m.recordRelDelta(5e-3); // would fail convergence
@@ -248,31 +250,27 @@ class TunerValidatorTest {
         double[] badParams = validParams.clone();
         badParams[4] = badParams[2] - 10; // Bishop MG < Knight MG: violates ordering but stays in bounds
 
-        // Skip all checks → should pass
-        TunerPostRunValidator.ValidatorConfig allSkip =
-                new TunerPostRunValidator.ValidatorConfig(true, true, true, 100, 3, 0.30);
-
         TunerPostRunValidator.ValidationResult result =
-                TunerPostRunValidator.validate(validParams, badParams, m, allSkip);
+                TunerPostRunValidator.validate(validParams, badParams, m, SKIP_SMOKE);
 
-        assertTrue(result.passed(), "All-skipped validate should PASS: " + result.reportText());
+        assertFalse(result.passed(), "Should FAIL with mandatory convergence/sanity: " + result.reportText());
     }
 
     @Test
     void sanity_fail_when_rook_mg_collapsed_by_eval_mode() {
         // Rook MG = 362 replicates the eval-mode compression from issue #141 post-mortem.
-        // Min bound is 430. Must fail even when --skip-sanity is active (non-negotiable).
+        // Min bound is 430. Must fail via the mandatory material-bounds gate.
         double[] p = validParams.clone();
         p[6] = 362.0; // ROOK_MG index (params[6])
 
-        TunerPostRunValidator.ValidatorConfig skipSanity =
-                new TunerPostRunValidator.ValidatorConfig(false, true, true, 100, 3, 0.30);
+        TunerPostRunValidator.ValidatorConfig skipSmoke =
+                new TunerPostRunValidator.ValidatorConfig(true, 100, 3, 0.30);
 
         TunerPostRunValidator.ValidationResult result =
-                TunerPostRunValidator.validate(validParams, p, buildGoodMetrics(), skipSanity);
+                TunerPostRunValidator.validate(validParams, p, buildGoodMetrics(), skipSmoke);
 
         assertFalse(result.passed(),
-                "Collapsed Rook MG=362 must fail material bounds even with --skip-sanity: "
+                "Collapsed Rook MG=362 must fail material bounds: "
                 + result.reportText());
         assertTrue(result.reportText().contains("Rook"),
                 "Report must name the violating piece: " + result.reportText());

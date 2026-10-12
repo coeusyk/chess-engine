@@ -1,0 +1,9 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+schedule_cardinality_and_order=pass
+commands_and_options=pass
+shared_lifecycle_accounting=pass
+partial_iteration_node_accounting=pass
+target_manifest_and_reference_rules=pass
+agreement_intervals_noise_and_decisions=pass
+reference_gate_and_failure_artifact=pass
+Stage 6 self-checks passed: corpus=31 warmup=186 measured=1302 arms=1,2,4 modes=movetime,clock

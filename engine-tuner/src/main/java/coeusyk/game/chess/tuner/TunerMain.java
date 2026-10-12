@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -15,7 +16,7 @@ import java.util.List;
  *
  * <p>Usage:
  * <pre>
- *   java -jar engine-tuner.jar &lt;dataset&gt; [maxPositions] [maxIterations] [--optimizer adam|coordinate|lbfgs] [--no-recalibrate-k]
+ *   java -jar engine-tuner.jar &lt;dataset&gt; [maxPositions] [maxIterations] [--optimizer adam|coordinate|lbfgs] [--freeze-k]
  * </pre>
  *
  * <ul>
@@ -26,8 +27,8 @@ import java.util.List;
  *   <li>{@code --optimizer adam|coordinate|lbfgs} — optional: choose optimizer (default: adam).
  *                                   {@code lbfgs} uses limited-memory BFGS with m=10 history pairs
  *                                   and gradient norm convergence (Issue #137).</li>
- *   <li>{@code --no-recalibrate-k} — optional: disable K recalibration after each pass
- *                                   (default: enabled)</li>
+ *   <li>{@code --freeze-k}          — optional: disable K recalibration after each pass
+ *                                   (default: enabled; K is always fitted on the val split only)</li>
  *   <li>{@code --coverage-audit}   — compute Fisher diagonal, print starved parameters, exit</li>
  * </ul>
  *
@@ -53,7 +54,7 @@ public final class TunerMain {
 
     public static void main(String[] args) throws Exception {
         if (args.length < 1) {
-        LOG.error("Usage: engine-tuner <dataset> [maxPositions] [maxIterations] [--optimizer adam|coordinate|lbfgs] [--param-group material|pst|pawn-structure|king-safety|mobility|scalars] [--corpus-format csv|epd] [--no-recalibrate-k] [--freeze-k] [--k <value>] [--freeze-params] [--corpus <csv>] [--coverage-audit] [--balanced-corpus]");
+        LOG.error("Usage: engine-tuner <dataset> [maxPositions] [maxIterations] [--optimizer adam|coordinate|lbfgs] [--param-group material|pst|pawn-structure|king-safety|mobility|scalars] [--corpus-format csv|epd] [--freeze-k] [--k <value>] [--freeze-params] [--corpus <csv>] [--coverage-audit] [--balanced-corpus]");
             System.exit(1);
         }
 
@@ -70,11 +71,12 @@ public final class TunerMain {
         String corpusFormat   = "auto"; // #140: "auto", "csv", "epd"
         String paramGroup     = null;  // --param-group: restrict optimizer to one parameter group
         boolean skipSmoke      = false; // --skip-smoke
-        boolean skipSanity     = false; // --skip-sanity
-        boolean skipConvergence = false; // --skip-convergence
         boolean balancedCorpus  = false; // --balanced-corpus: augment EPD corpus with color-flipped copies
         int smokeGames         = 100;  // --smoke-games N
         int smokeDepth         = 3;    // --smoke-depth N
+        double trainFrac       = 0.80; // --train-frac
+        double valFrac         = 0.10; // --val-frac
+        long   splitSeed       = 42L;  // --split-seed
 
         // Parse remaining positional args and named flags
         for (int i = 1; i < args.length; i++) {
@@ -88,8 +90,6 @@ public final class TunerMain {
                     LOG.error("Unknown optimizer: {} (valid: adam, coordinate, lbfgs)", optimizer);
                     System.exit(1);
                 }
-            } else if ("--no-recalibrate-k".equals(args[i])) {
-                recalibrateK = false;
             } else if ("--freeze-k".equals(args[i])) {
                 freezeK = true;
                 recalibrateK = false;
@@ -144,10 +144,17 @@ public final class TunerMain {
                 balancedCorpus = true;
             } else if ("--skip-smoke".equals(args[i])) {
                 skipSmoke = true;
-            } else if ("--skip-sanity".equals(args[i])) {
-                skipSanity = true;
-            } else if ("--skip-convergence".equals(args[i])) {
-                skipConvergence = true;
+            } else if ("--skip-sanity".equals(args[i]) || "--skip-convergence".equals(args[i])) {
+                LOG.warn("[TunerMain] {} is no longer supported — convergence and sanity checks are mandatory.", args[i]);
+            } else if ("--train-frac".equals(args[i])) {
+                if (i + 1 >= args.length) { LOG.error("--train-frac requires a numeric value"); System.exit(1); }
+                trainFrac = Double.parseDouble(args[++i]);
+            } else if ("--val-frac".equals(args[i])) {
+                if (i + 1 >= args.length) { LOG.error("--val-frac requires a numeric value"); System.exit(1); }
+                valFrac = Double.parseDouble(args[++i]);
+            } else if ("--split-seed".equals(args[i])) {
+                if (i + 1 >= args.length) { LOG.error("--split-seed requires a numeric value"); System.exit(1); }
+                splitSeed = Long.parseLong(args[++i]);
             } else if ("--smoke-games".equals(args[i])) {
                 if (i + 1 >= args.length) {
                     LOG.error("--smoke-games requires a numeric value");
@@ -181,7 +188,7 @@ public final class TunerMain {
                 maxPositions == Integer.MAX_VALUE ? "all" : String.format("%,d", maxPositions));
         LOG.info("[TunerMain] Max iters:     {}", maxIters);
         LOG.info("[TunerMain] Optimizer:     {}", optimizer);
-        LOG.info("[TunerMain] Recalibrate K: {}", recalibrateK ? "yes" : "no (--no-recalibrate-k)");
+        LOG.info("[TunerMain] Recalibrate K: {}", recalibrateK ? "yes" : "no (--freeze-k)");
         LOG.info("[TunerMain] Freeze K:      {}", freezeK      ? "yes (--freeze-k, Phase B)"      : "no");
         LOG.info("[TunerMain] Freeze params: {}", freezeParams ? "yes (--freeze-params, Phase A)"  : "no");
         LOG.info("[TunerMain] Coverage audit: {}", coverageAudit ? "yes (will exit after audit)" : "no");
@@ -210,25 +217,44 @@ public final class TunerMain {
         long loadMs = Duration.between(loadStart, Instant.now()).toMillis();
         LOG.info(String.format("[TunerMain] Loaded %,d positions in %,d ms", positions.size(), loadMs));
 
+        // --- Corpus fingerprint (fast: first 1000 FENs, SHA-256) ---
+        String fingerprint = computeCorpusFingerprint(positions);
+        LOG.info("[TunerMain] Corpus fingerprint: {}", fingerprint);
+
+        // --- Train / Val / Test split ---
+        LOG.info("[TunerMain] Splitting corpus: train={:.0%} val={:.0%} test={:.0%} seed={}",
+                trainFrac, valFrac, 1.0 - trainFrac - valFrac, splitSeed);
+        CorpusPartition partition = PositionLoader.split(positions, trainFrac, valFrac, splitSeed);
+        LOG.info("[TunerMain] Partition sizes — train: {}, val: {}, test: {}",
+                partition.train().size(), partition.val().size(), partition.test().size());
+
         // --- Extract initial parameters from hardcoded engine constants ---
         double[] params = EvalParams.extractFromCurrentEval();
         LOG.info("[TunerMain] Parameter count: {}", params.length);
 
-        // --- Precompute feature vectors (one-time cost, eliminates bitboard ops during training) ---
+        // --- Precompute feature vectors for training partition only ---
         LOG.info("[TunerMain] Building precomputed feature vectors...");
         Instant featStart = Instant.now();
-        List<PositionFeatures> features = PositionFeatures.buildList(positions);
+        List<PositionFeatures> features = PositionFeatures.buildList(partition.train());
         long featMs = Duration.between(featStart, Instant.now()).toMillis();
         LOG.info(String.format("[TunerMain] Feature vectors built in %,d ms", featMs));
 
-        // --- Find optimal K using fast feature-based MSE ---
+        // --- Feature-level 90/10 subList split for K calibration isolation ---
+        // K is fitted exclusively on valFeatures so it never sees the training signal.
+        // trainFeatures and valFeatures are O(1) views — no copy of feature data.
+        int valFeatSize = featureValSplitSize(features.size());
+        List<PositionFeatures> valFeatures   = features.subList(features.size() - valFeatSize, features.size());
+        List<PositionFeatures> trainFeatures = features.subList(0, features.size() - valFeatSize);
+        LOG.info("[TunerMain] Feature split — train: {} | val (K-only): {}", trainFeatures.size(), valFeatures.size());
+
+        // --- Find optimal K using val features only (never training data) ---
         double k;
         if (!Double.isNaN(initialK)) {
             k = initialK;
             LOG.info("[TunerMain] K supplied via --k: {}", k);
         } else {
-            LOG.info("[TunerMain] Finding optimal K...");
-            k = KFinder.findKFromFeatures(features, params);
+            LOG.info("[TunerMain] Finding optimal K (on val features)...");
+            k = KFinder.findKFromFeatures(valFeatures, params);
         }
 
         // --- Coverage audit: compute Fisher diagonal, report starved params, exit ---
@@ -303,23 +329,34 @@ public final class TunerMain {
         TunerRunMetrics metrics = new TunerRunMetrics();
         if ("adam".equals(optimizer)) {
             LOG.info(String.format("[TunerMain] Running Adam gradient descent (K=%.6f, maxIters=%d, fast-path)...", k, maxIters));
-            tuned = GradientDescent.tuneWithFeatures(features, params, k, maxIters, recalibrateK, groupMask, metrics);
+            tuned = GradientDescent.tuneWithFeatures(trainFeatures, params, k, maxIters, recalibrateK, groupMask, valFeatures, metrics);
         } else if ("lbfgs".equals(optimizer)) {
             LOG.info(String.format("[TunerMain] Running L-BFGS (K=%.6f, maxIters=%d, m=10, ||\u2207L||<1e-5 convergence)...", k, maxIters));
-            tuned = GradientDescent.tuneWithFeaturesLBFGS(features, params, k, maxIters, recalibrateK, groupMask, metrics);
+            tuned = GradientDescent.tuneWithFeaturesLBFGS(trainFeatures, params, k, maxIters, recalibrateK, groupMask, valFeatures, metrics);
         } else {
+            LOG.warn("[TunerMain] WARN: coordinate descent uses full positions list; feature-level train/val split is not enforced for this optimizer.");
             LOG.info(String.format("[TunerMain] Running coordinate descent (K=%.6f, maxIters=%d)...", k, maxIters));
             tuned = CoordinateDescent.tune(positions, params, k, maxIters, recalibrateK);
         }
 
-        // Final K after tuning
-        LOG.info("[TunerMain] Computing final K...");
-        double finalK = KFinder.findKFromFeatures(features, tuned);
+        // Final K — fitted on val features only
+        LOG.info("[TunerMain] Computing final K (on val features)...");
+        double finalK = KFinder.findKFromFeatures(valFeatures, tuned);
         LOG.info(String.format("[TunerMain] Final K = %.6f", finalK));
 
-        // --- Post-run validation gate ---
+        // --- Train / Val MSE diagnostics ---
+        double trainMse = TunerEvaluator.computeMseFromFeatures(trainFeatures, tuned, finalK);
+        double valMse   = TunerEvaluator.computeMseFromFeatures(valFeatures,   tuned, finalK);
+        double msGap    = valMse - trainMse;
+        LOG.info(String.format("[TunerMain] Final train MSE: %.8f  |  val MSE: %.8f  |  gap: %.8f",
+                trainMse, valMse, msGap));
+        if (msGap > 0.002) {
+            LOG.warn(String.format("[TunerMain] WARN: possible overfitting — val MSE exceeds train MSE by %.8f", msGap));
+        }
+
+        // --- Post-run validation gate (uses held-out test partition for smoke test) ---
         TunerPostRunValidator.ValidatorConfig vConfig = new TunerPostRunValidator.ValidatorConfig(
-                skipConvergence, skipSanity, skipSmoke, smokeGames, smokeDepth, 0.30);
+                skipSmoke, smokeGames, smokeDepth, 0.30);
         TunerPostRunValidator.ValidationResult vResult =
                 TunerPostRunValidator.validate(params, tuned, metrics, vConfig);
 
@@ -332,11 +369,69 @@ public final class TunerMain {
         Path outputPath = Paths.get("tuned_params.txt");
         if (vResult.passed()) {
             EvalParams.writeToFile(tuned, finalK, outputPath);
+            // Append corpus fingerprint, split info, and MSE diagnostics to tuned_params.txt header
+            appendFingerprintToOutput(outputPath, fingerprint, trainFrac, valFrac,
+                    partition.train().size(), partition.val().size(), partition.test().size(),
+                    trainMse, valMse);
             LOG.info("[TunerMain] Tuned parameters written to: {}", outputPath.toAbsolutePath());
             LOG.info("[TunerMain] Copy values manually from tuned_params.txt into engine-core source files.");
         } else {
             LOG.error("[TunerMain] Validation FAILED — tuned_params.txt NOT written. See validator-report.txt.");
             System.exit(2);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Corpus fingerprint helpers
+    // -----------------------------------------------------------------------
+
+    /**
+     * Computes a fast corpus fingerprint: SHA-256 over the first 1000 FEN strings
+     * concatenated with newline separators.
+     *
+     * @return hex-encoded SHA-256 digest (64 characters), or "unavailable" on error
+     */
+    static String computeCorpusFingerprint(List<LabelledPosition> positions) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            int limit = Math.min(1000, positions.size());
+            for (int i = 0; i < limit; i++) {
+                String fen = positions.get(i).pos().fen();
+                md.update(fen.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                md.update((byte) '\n');
+            }
+            byte[] digest = md.digest();
+            StringBuilder sb = new StringBuilder(64);
+            for (byte b : digest) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (Exception e) {
+            return "unavailable";
+        }
+    }
+
+    /** Package-private for testing: size of the val split (10% of n, min 1). */
+    static int featureValSplitSize(int n) {
+        return Math.max(1, (int)(n * 0.10));
+    }
+
+    /** Prepends fingerprint, split metadata, and MSE diagnostics as comment lines in tuned_params.txt. */
+    private static void appendFingerprintToOutput(Path outputPath, String fingerprint,
+            double trainFrac, double valFrac,
+            int nTrain, int nVal, int nTest,
+            double trainMse, double valMse) {
+        try {
+            String existing = Files.readString(outputPath);
+            String header = String.format(
+                    "# corpus_fingerprint=%s%n"
+                    + "# split=train:%.0f%%/val:%.0f%%/test:%.0f%%  sizes=%d/%d/%d%n"
+                    + "# train_mse=%.8f  val_mse=%.8f  gap=%.8f%n",
+                    fingerprint,
+                    trainFrac * 100, valFrac * 100, (1.0 - trainFrac - valFrac) * 100,
+                    nTrain, nVal, nTest,
+                    trainMse, valMse, valMse - trainMse);
+            Files.writeString(outputPath, header + existing);
+        } catch (java.io.IOException e) {
+            LOG.warn("[TunerMain] Could not prepend fingerprint to {}: {}", outputPath, e.getMessage());
         }
     }
 }

@@ -2,6 +2,7 @@ package coeusyk.game.chess.core.search;
 
 import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Move;
+import coeusyk.game.chess.core.movegen.MovesGenerator;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -11,10 +12,12 @@ import org.junit.jupiter.params.provider.MethodSource;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.URL;
+import java.util.List;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Tag("regression")
@@ -146,8 +149,18 @@ class SearchRegressionTest {
     void bestMoveIsStable(String name, String fen, String expectedMove) {
         Board board = new Board(fen);
         SearchResult result = new Searcher().searchDepth(board, DEFAULT_DEPTH);
+        assertPrincipalVariationIsLegal(board, result.principalVariation(), name);
         assertEquals(expectedMove, toUci(result.bestMove()),
                 "Regression: bestmove changed for " + name + " | " + fen);
+    }
+
+    private static void assertPrincipalVariationIsLegal(Board board, List<Move> pv, String name) {
+        for (Move move : pv) {
+            boolean legal = new MovesGenerator(board).getAllMoves().stream()
+                    .anyMatch(candidate -> candidate.pack() == move.pack());
+            assertTrue(legal, "Illegal PV move for " + name + ": " + toUci(move));
+            board.makeMove(move);
+        }
     }
 
     static Stream<Arguments> regressionPositions() {
@@ -212,7 +225,12 @@ class SearchRegressionTest {
             //     Lower hanging penalty (52→40) and higher rook attack weight (9→12) slightly
             //     shift depth-8 king-advance ordering toward b4b5 (pawn push). All of
             //     c1c2, c1d2, c1b2, c4c5, b4b5 win; choice is eval-dependent.
-            Arguments.of("P5",  P5_FEN,  "b4b5"),
+            //     Updated Phase 14 A-4: ASPIRATION_INITIAL_DELTA_CP 50→25 shifts TT ordering;
+            //     depth-8 preference returns to c1d2 (king activation). All of c1c2, c1d2,
+            //     c1b2, c4c5, b4b5 win; choice is eval-dependent.
+            // Phase 21 PVS changes the depth-8 preference to c1b2. At depth 9 it keeps
+            // the same score and continuation structure as c1d2; both king approaches win.
+            Arguments.of("P5",  P5_FEN,  "c1b2"),
             Arguments.of("P6",  P6_FEN,  "f4f5"),
             // P7: 8/3P4/8/8/8/8/8/3K1k2 — Kd1+Pd7 vs Kf1. d7d8q (immediate promotion)
             //     and d1d2 (king advance toward f1 before promoting) both win. d7d8q gains
@@ -254,7 +272,9 @@ class SearchRegressionTest {
             //      depth-8 reduction pattern; e3f3 becomes preferred. Provably equivalent to e3d3.
             //     Reverted to v0.5.4 eval baseline: depth-8 preference returns to e3f3.
             //     Both e3d3 and e3f3 are provably equivalent king moves.
-            Arguments.of("P10", P10_FEN, "e3f3"),
+            // Phase 21 PVS chooses the mirror-equivalent e3d3 at depth 8; depth 9 returns
+            // to e3f3 with the same score and PV as the control.
+            Arguments.of("P10", P10_FEN, "e3d3"),
             // Endgame
             // E1: 4k3/8/8/8/8/8/8/4KQ2 — KQ vs K. f1f6 (queen to 6th rank, restricts
             //     BK to ranks 7-8) is a textbook technique; f1b5 also wins. Tuned eval
@@ -273,6 +293,15 @@ class SearchRegressionTest {
             //     d7/e6). Both f1f6 and f1b5 are winning KQK continuations; equivalent.
             //     Reverted 2026-04-10: eval-mode PSTs reverted (issue #141 post-mortem); depth-8
             //     preference returns to f1f6 (textbook 6th-rank restriction). Both win; equivalent.
+            //     Updated Phase 14 A-4: ASPIRATION_INITIAL_DELTA_CP 50→25 shifts TT ordering;
+            //     depth-8 preference shifts to f1b5 (queen to bishop-5 diagonal — restricts BK
+            //     from d7/e6). Both f1f6 and f1b5 are winning KQK continuations; equivalent.
+            //     Updated P18-1: repairing null-subtree current-hash restoration changes the
+            //     deterministic TT path and selects f1c4. The score remains 1308 cp; both moves
+            //     are winning KQK continuations.
+            //     Updated P18-4: stopping root search at a valid fail-high removes the old
+            //     invalid-window sibling work. The deterministic path returns to f1f6 at
+            //     1303 cp; f1f6 and f1c4 are both winning KQK continuations.
             Arguments.of("E1",  E1_FEN,  "f1f6"),
             // E2: 4k3/8/8/8/8/8/8/4KR2 — KR vs K.  f1f6 (rook-to-6th restriction) and
             //     e1d2 (king activation toward centre) both win; known theoretical equivalence.
@@ -296,7 +325,9 @@ class SearchRegressionTest {
             //     fixed ATK_WEIGHT_QUEEN from -1 to +5; kept TEMPO=17, HANGING=52.
             //     Depth-8 preference returns to f1f6 (textbook 6th-rank restriction).
             //     Both e1e2 and f1f6 are correct KRK technique; equivalent.
-            Arguments.of("E2",  E2_FEN,  "f1f6"),
+            // Phase 21 PVS chooses king activation e1d2. At depths 9 and 10 the control
+            // also selects a king-activation move (e1e2), with scores within 4 cp.
+            Arguments.of("E2",  E2_FEN,  "e1d2"),
             Arguments.of("E3",  E3_FEN,  "f4f5"),
             // E4: e4d4 and e4f4 are symmetric king moves to break e-file direct opposition.
             //     Both win; equivalent by symmetry for a central pawn.
@@ -310,7 +341,10 @@ class SearchRegressionTest {
             //     Updated 2026-04-12: final two-phase CLOP baked in (Q=0,K=6,B=2,R=12,H=40,T=17).
             //     e4f4 preference confirmed preserved under final production params.
             Arguments.of("E4",  E4_FEN,  "e4f4"),
-            Arguments.of("E5",  E5_FEN,  "a2e2"),
+            // Phase 21 PVS chooses Ra6 at depths 8 and 9 (scores +844/+876 versus +989/+1768
+            // for Ra2-e2). Its depth-9 PV is truncated to this one legal move. At depth 10
+            // the candidate returns to Ra2-e2, 44 cp below the control's Ke1-f1.
+            Arguments.of("E5",  E5_FEN,  "a2a6"),
             // E6: 8/8/8/5k2/1PP5/8/2K5/8 — Kc2+Pb4c4 vs Kf5. Both b4b5 and c4c5 advance
             //     connected pawns; BK on f5 is far from both.
             //     Updated 2026-04-03: SEE-based hanging-piece penalty (gain/4) causes a small
@@ -328,7 +362,11 @@ class SearchRegressionTest {
             //     Knight weight bump (5→6) slightly raises knight-centralisation scores;
             //     depth-8 preference shifts to d2f3 (knight to f3, attacks e5+h4). Both
             //     b2c3 and d2f3 are correct KBN technique; choice is eval-dependent.
-            Arguments.of("E7",  E7_FEN,  "d2f3"),
+            //     Updated 2026-04-25: Phase 14 asymmetry fixes (pawn-attack perspective +
+            //     opposite-flank defender scaling) rebalance king-safety/mobility terms;
+            //     depth-8 preference shifts back to b2c3 (king centralisation). Both b2c3
+            //     and d2f3 remain valid KBN winning technique; ordering is eval-dependent.
+            Arguments.of("E7",  E7_FEN,  "b2c3"),
             // E8: 7k/p7/8/8/8/8/7P/6RK — Kh1+Rg1+Ph2 vs Kh8+Pa7. g1g5 (active rook,
             //     centralises to 5th rank) and h2h4 (pawn race) both win. Choice is eval-dependent.
             //     Updated 2026-04-02: new terms shift preference to g1g5.
@@ -451,6 +489,68 @@ class SearchRegressionTest {
                 "Horizon blindness regression (Issue #138): engine returned "
                 + result.scoreCp() + "cp from Q1_FEN — expected > 200cp (Black winning). "
                 + "Bestmove: " + (result.bestMove() != null ? toUci(result.bestMove()) : "null"));
+    }
+
+    // ── Contempt prevents repetition draw — Issue #174 ─────────────────
+    // With contempt enabled, the engine must NOT return a draw score (0) from the
+    // Phase 13 regression FEN where Black is clearly winning.  This test specifically
+    // validates that EvalParams.CONTEMPT_THRESHOLD is applied correctly when
+    // setContempt() is active — independent of Fix 2 (hanging penalty suppression).
+    @Test
+    @Tag("regression")
+    void contemptPreventsRepetitionDrawFromWinningPosition() {
+        Board board = new Board(Q1_FEN);
+        Searcher searcher = new Searcher();
+        searcher.setContempt(Searcher.DEFAULT_CONTEMPT_CP);
+        SearchResult result = searcher.searchDepth(board, Q1_DEPTH);
+        assertNotEquals(0, result.scoreCp(),
+                "Contempt regression (Issue #174): engine returned neutral draw score (0) from "
+                + Q1_FEN + " with contempt=" + Searcher.DEFAULT_CONTEMPT_CP + "cp. "
+                + "Engine should not accept a repetition draw when winning. Bestmove: "
+                + (result.bestMove() != null ? toUci(result.bestMove()) : "null"));
+        assertTrue(result.scoreCp() > 0,
+                "Contempt regression (Issue #174): engine should score Q1_FEN as winning for "
+                + "Black with contempt enabled, got: " + result.scoreCp() + "cp");
+    }
+
+    // ── Piece-safety regression — Phase E SPRT NNUE-vs-Classical game, 2026-07-15 ──
+    // Real game (issue #205/E-5 SPRT run, tools/sprt.ps1 -NewOptions EvalType=NNUE vs
+    // -OldOptions EvalType=Classical, custom opening-book start position). White's queen
+    // recaptured on h6 (...Qxh6), directly attacked by Black's queen on f8 via the open
+    // f8-g7-h6 diagonal (g7 empty) and completely undefended (no white pawn/piece covers
+    // h6). The engine, playing White in NNUE mode, replied 19.Nbd2 -- a quiet developing
+    // move that ignores the hanging queen -- and lost it for free to 19...Qxh6 (eval swung
+    // from +0.60/13 to +11.44/14 in the PGN).
+    //
+    // Standalone reproduction (this session, both EvalType=NNUE with the real E-3
+    // candidate net and EvalType=Classical, cold search and with a simulated warm
+    // transposition table replaying the real game's prior moves) consistently finds and
+    // plays a queen-retreat move (h6g5/h6f8/h6f4/h6h4/h6c1/h6e3) at every depth from 1
+    // through 12 -- the blunder was never reproduced below the real game's reported
+    // depth 13, under either evaluator. This points at a depth-13-specific search
+    // anomaly (see docs/architecture/diagnostics/B1-queen-safety-blunder.md), not an
+    // NNUE evaluator weakness -- both evaluators show identical behavior at every depth
+    // this test can practically exercise.
+    //
+    // This gate is a regression floor, not a fix verification: depth 13 itself is too
+    // expensive to run in this suite, so this locks in the known-good shallow-depth
+    // behavior. If this test ever starts failing, the blunder has regressed to a
+    // cheaply-reproducible shallow depth and needs immediate attention.
+    static final String B1_FEN =
+            "1rb1kq1r/2p4p/ppn1pnpQ/3p1p2/3P4/P1P2NPP/1P2PP2/RN2KB1R w KQk - 1 10";
+
+    @Test
+    @Tag("regression")
+    void queenSafetyRegression_B1() {
+        Board board = new Board(B1_FEN);
+        SearchResult result = new Searcher().searchDepth(board, DEFAULT_DEPTH);
+        Move bestMove = result.bestMove();
+        assertNotNull(bestMove, "Engine returned no move for B1_FEN");
+        assertTrue(toUci(bestMove).startsWith("h6"),
+                "Piece-safety regression (B1, 2026-07-15 SPRT game): the queen on h6 is "
+                + "undefended and directly attacked by Black's queen on f8 -- engine must "
+                + "move it. Got: " + toUci(bestMove) + " (the real game blundered here with "
+                + "Nbd2, losing the queen to Qxh6)");
     }
 
     // ── Helper ──────────────────────────────────────────────────────

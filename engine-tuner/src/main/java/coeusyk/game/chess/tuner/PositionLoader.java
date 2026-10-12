@@ -9,8 +9,11 @@ import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.AbstractList;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Random;
 
 /**
  * Parses position+outcome datasets in three formats:
@@ -372,19 +375,41 @@ public final class PositionLoader {
      */
     public static List<LabelledPosition> loadBalanced(Path file, int maxPositions) throws IOException {
         List<LabelledPosition> base = loadEpd(file, maxPositions);
-        List<LabelledPosition> result = new ArrayList<>(base.size() * 2);
-        for (LabelledPosition lp : base) {
-            result.add(lp);
-            String flippedFen = colorFlipFen(lp.pos().fen());
-            if (flippedFen == null) continue;
-            TunerPosition flipped = parseFen(flippedFen);
-            if (flipped != null) {
-                result.add(new LabelledPosition(flipped, 1.0 - lp.outcome()));
+
+        // Pre-validate flips once to determine which indices produce a valid
+        // color-flipped FEN.  We store only the source index, not the flipped
+        // TunerPosition — that is computed on demand in AbstractList.get().
+        int[] flipBuf = new int[base.size()];
+        int flipCount = 0;
+        for (int i = 0; i < base.size(); i++) {
+            if (colorFlipFen(base.get(i).pos().fen()) != null) {
+                flipBuf[flipCount++] = i;
             }
         }
+        final int[] validFlipIdx = java.util.Arrays.copyOf(flipBuf, flipCount);
+
         LOG.info("[PositionLoader] loadBalanced: {} base + {} flipped = {} total",
-                 base.size(), result.size() - base.size(), result.size());
-        return result;
+                 base.size(), validFlipIdx.length, base.size() + validFlipIdx.length);
+
+        return Collections.unmodifiableList(new AbstractList<LabelledPosition>() {
+            @Override
+            public LabelledPosition get(int i) {
+                if (i < base.size()) return base.get(i);
+                int srcIdx = validFlipIdx[i - base.size()];
+                LabelledPosition src = base.get(srcIdx);
+                String flippedFen = colorFlipFen(src.pos().fen()); // non-null by construction
+                TunerPosition flipped = parseFen(flippedFen);
+                if (flipped == null) {
+                    // Extremely rare: FEN was valid at validation time but failed now.
+                    // Fall back to the unflipped original to avoid NPE.
+                    return src;
+                }
+                return new LabelledPosition(flipped, 1.0 - src.outcome());
+            }
+
+            @Override
+            public int size() { return base.size() + validFlipIdx.length; }
+        });
     }
 
     /**
@@ -439,6 +464,114 @@ public final class PositionLoader {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Train / Val / Test split
+    // -----------------------------------------------------------------------
+
+    /**
+     * Splits the supplied positions into train, validation, and test partitions
+     * using a stratified shuffle.
+     *
+     * <p>Stratification buckets positions by outcome:
+     * <ul>
+     *   <li>win   — outcome within ±0.05 of 1.0</li>
+     *   <li>draw  — outcome within ±0.05 of 0.5</li>
+     *   <li>loss  — outcome within ±0.05 of 0.0</li>
+     *   <li>other — pseudo-WDL values that don't fall in the above buckets</li>
+     * </ul>
+     *
+     * <p>The split is performed by shuffling integer indices within each bucket
+     * (deterministic for the same {@code seed}) and then slicing them according
+     * to the requested fractions.  No position data is copied.
+     *
+     * @param positions the full labelled corpus
+     * @param trainFrac fraction of data for training (e.g. 0.80)
+     * @param valFrac   fraction of data for validation / K calibration (e.g. 0.10)
+     * @param seed      random seed for reproducibility
+     * @return a {@link CorpusPartition} with three unmodifiable list views
+     * @throws IllegalArgumentException if trainFrac + valFrac >= 1.0 or fractions are non-positive
+     */
+    public static CorpusPartition split(List<LabelledPosition> positions,
+                                        double trainFrac, double valFrac, long seed) {
+        if (trainFrac <= 0 || valFrac <= 0) {
+            throw new IllegalArgumentException(
+                    "trainFrac and valFrac must be positive, got "
+                    + trainFrac + " / " + valFrac);
+        }
+        if (trainFrac + valFrac >= 1.0) {
+            throw new IllegalArgumentException(
+                    "trainFrac + valFrac must be < 1.0, got "
+                    + (trainFrac + valFrac));
+        }
+
+        // Partition indices into outcome buckets
+        List<Integer> winIdx   = new ArrayList<>();
+        List<Integer> drawIdx  = new ArrayList<>();
+        List<Integer> lossIdx  = new ArrayList<>();
+        List<Integer> otherIdx = new ArrayList<>();
+
+        for (int i = 0; i < positions.size(); i++) {
+            double o = positions.get(i).outcome();
+            if (Math.abs(o - 1.0) <= 0.05)      winIdx.add(i);
+            else if (Math.abs(o - 0.5) <= 0.05) drawIdx.add(i);
+            else if (Math.abs(o - 0.0) <= 0.05) lossIdx.add(i);
+            else                                 otherIdx.add(i);
+        }
+
+        // Shuffle each bucket with the same seed (different per-bucket offset)
+        shuffle(winIdx,   new Random(seed));
+        shuffle(drawIdx,  new Random(seed + 1));
+        shuffle(lossIdx,  new Random(seed + 2));
+        shuffle(otherIdx, new Random(seed + 3));
+
+        // Collect per-bucket slices into global train/val/test index lists
+        List<Integer> trainIdx = new ArrayList<>();
+        List<Integer> valIdx   = new ArrayList<>();
+        List<Integer> testIdx  = new ArrayList<>();
+
+        for (List<Integer> bucket : List.of(winIdx, drawIdx, lossIdx, otherIdx)) {
+            int n        = bucket.size();
+            int nTrain   = (int) Math.round(n * trainFrac);
+            int nVal     = (int) Math.round(n * valFrac);
+            // Clamp to avoid going past end
+            nTrain = Math.min(nTrain, n);
+            nVal   = Math.min(nVal, n - nTrain);
+
+            trainIdx.addAll(bucket.subList(0, nTrain));
+            valIdx.addAll(bucket.subList(nTrain, nTrain + nVal));
+            testIdx.addAll(bucket.subList(nTrain + nVal, n));
+        }
+
+        return new CorpusPartition(
+                indexView(positions, Collections.unmodifiableList(trainIdx)),
+                indexView(positions, Collections.unmodifiableList(valIdx)),
+                indexView(positions, Collections.unmodifiableList(testIdx)));
+    }
+
+    /** Shuffle helper (Fisher-Yates on an ArrayList of integers). */
+    private static void shuffle(List<Integer> list, Random rng) {
+        for (int i = list.size() - 1; i > 0; i--) {
+            int j = rng.nextInt(i + 1);
+            int tmp = list.get(i);
+            list.set(i, list.get(j));
+            list.set(j, tmp);
+        }
+    }
+
+    /**
+     * Returns an unmodifiable view of {@code positions} restricted to the given index list.
+     * No position data is copied.
+     */
+    private static List<LabelledPosition> indexView(List<LabelledPosition> positions,
+                                                     List<Integer> indices) {
+        return new AbstractList<LabelledPosition>() {
+            @Override
+            public LabelledPosition get(int i) { return positions.get(indices.get(i)); }
+            @Override
+            public int size() { return indices.size(); }
+        };
     }
 
 }

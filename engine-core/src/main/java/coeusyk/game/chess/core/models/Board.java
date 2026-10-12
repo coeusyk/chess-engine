@@ -23,6 +23,7 @@ public class Board {
         final boolean[] previousCastlingRights = new boolean[4]; // pre-allocated, filled via arraycopy
         int previousHalfmoveClock;      // Halfmove clock before the move
         int previousFullMoves;          // Full move counter before the move
+        long previousZobristHash;       // Current-position hash before the move
         int packedMove;                 // The move encoded as a packed int (Move.of)
         int previousMgScore;            // Incremental material+PST MG score before the move
         int previousEgScore;            // Incremental material+PST EG score before the move
@@ -31,7 +32,8 @@ public class Board {
         UnmakeInfo() {}
 
         void set(int packed, int capturedPiece, int capturedEPPiece, int prevEP,
-                 boolean[] prevCastling, int prevHalf, int prevFull, int prevMg, int prevEg) {
+                 boolean[] prevCastling, int prevHalf, int prevFull, long prevZobrist,
+                 int prevMg, int prevEg) {
             this.packedMove = packed;
             this.capturedPiece = capturedPiece;
             this.capturedEPPiece = capturedEPPiece;
@@ -39,6 +41,7 @@ public class Board {
             System.arraycopy(prevCastling, 0, this.previousCastlingRights, 0, 4);
             this.previousHalfmoveClock = prevHalf;
             this.previousFullMoves = prevFull;
+            this.previousZobristHash = prevZobrist;
             this.previousMgScore = prevMg;
             this.previousEgScore = prevEg;
         }
@@ -53,8 +56,13 @@ public class Board {
     /**
      * Maximum depth of the unmake stack: max search ply (128) + max game length (512)
      * plus a safety margin. Pooled to avoid per-node GC pressure.
+     *
+     * <p>Public: {@code NnueEvaluator}'s accumulator stack is pushed/popped in lockstep
+     * with this pool and must never be sized independently of it — referencing this
+     * constant directly (rather than duplicating the literal) is load-bearing, not
+     * cosmetic.
      */
-    private static final int UNMAKE_POOL_SIZE = 768;
+    public static final int UNMAKE_POOL_SIZE = 768;
 
     /**
      * When {@code true}, {@link #makeMove} and {@link #unmakeMove} skip recording
@@ -95,6 +103,8 @@ public class Board {
 
     private static final long FILE_A = 0x0101010101010101L;
     private static final long FILE_H = 0x8080808080808080L;
+    private static final long RANK_8 = 0x00000000000000FFL;
+    private static final long RANK_1 = 0xFF00000000000000L;
 
     // Board Attributes:
     private int activeColor = Piece.White;  // The color to move
@@ -327,6 +337,11 @@ public class Board {
             }
         }
 
+        if (rankEmptySquares > 0) {
+            fenString.append(rankEmptySquares);
+            rankEmptySquares = 0;
+        }
+
         fenString.append(" ");
 
         // Adding the active color field:
@@ -364,6 +379,53 @@ public class Board {
         fenString.append(fullMoves);
 
         return new String(fenString);
+    }
+
+    /**
+     * Validates whether the provided FEN represents a legal chess position.
+     *
+     * <p>This performs stricter checks than basic FEN parsing:
+     * exactly one king per side, no pawns on first/eighth rank,
+     * kings not adjacent, and check-state consistency with side-to-move.
+     */
+    public static boolean isLegalFen(String fenString) {
+        try {
+            Board board = new Board(fenString);
+
+            if (Long.bitCount(board.whiteKing) != 1 || Long.bitCount(board.blackKing) != 1) {
+                return false;
+            }
+
+            long allPawns = board.whitePawns | board.blackPawns;
+            if ((allPawns & (RANK_1 | RANK_8)) != 0L) {
+                return false;
+            }
+
+            int whiteKingSquare = Long.numberOfTrailingZeros(board.whiteKing);
+            int blackKingSquare = Long.numberOfTrailingZeros(board.blackKing);
+            if ((AttackTables.KING_ATTACKS[whiteKingSquare] & (1L << blackKingSquare)) != 0L) {
+                return false;
+            }
+
+            boolean whiteInCheck = board.isSquareAttackedBy(whiteKingSquare, Piece.Black);
+            boolean blackInCheck = board.isSquareAttackedBy(blackKingSquare, Piece.White);
+
+            if (whiteInCheck && blackInCheck) {
+                return false;
+            }
+
+            // In a legal position, the side that just moved cannot have left its own king in check.
+            if (Piece.isWhite(board.activeColor) && blackInCheck) {
+                return false;
+            }
+            if (Piece.isBlack(board.activeColor) && whiteInCheck) {
+                return false;
+            }
+
+            return true;
+        } catch (RuntimeException ignored) {
+            return false;
+        }
     }
 
     private void checkEPTargetSquare(String epts) {
@@ -662,6 +724,7 @@ public class Board {
         UnmakeInfo unmakeInfo = unmakePool[unmakeSP++];
         unmakeInfo.set(packed, capturedPiece, capturedEPPiece,
                 epTargetSquare, castlingAvailability, halfmoveClock, fullMoves,
+                zobristHash,
                 incMgScore, incEgScore);
 
         // Update Zobrist hash for side-to-move
@@ -769,6 +832,18 @@ public class Board {
         zobristStack[zobristSP++] = zobristHash;
     }
 
+    /**
+     * Returns the piece captured by the most recently made move ({@link Piece#None} if
+     * none), or by the not-yet-unmade move at the top of the undo stack more generally.
+     * Valid only between a {@link #makeMove(int)} call returning and the matching
+     * {@link #unmakeMove()} — the same window {@code Searcher}'s make/unmake sites
+     * already observe for lifecycle hooks. Reads the existing pooled undo record;
+     * allocates nothing.
+     */
+    public int lastCapturedPiece() {
+        return unmakePool[unmakeSP - 1].capturedPiece;
+    }
+
     // Reversing the latest move made using efficient bitboard operations:
     public void unmakeMove() {
         if (unmakeSP == 0) {
@@ -829,14 +904,10 @@ public class Board {
         recomputeOccupancies();
         attackedSquaresValid = false;
 
-        // Restore Zobrist hash in O(1) from history instead of full recomputation.
-        // zobristStack[zobristSP-1] is the hash we just popped; [zobristSP-2] is the prior position.
-        if (zobristSP >= 2) {
-            zobristHash = zobristStack[zobristSP - 2];
-        } else {
-            // Edge case (unmaking the very first move): fall back to full recomputation.
-            zobristHash = recomputeZobristHash();
-        }
+        // Restore the exact current-position hash from the ordinary move's undo record.
+        // The preceding position may have been created by makeNullMove(), which deliberately
+        // does not add a null position to repetition history or advance zobristSP.
+        zobristHash = undoInfo.previousZobristHash;
         
         if (!searchMode) {
             movesPlayed.remove(movesPlayed.size() - 1);

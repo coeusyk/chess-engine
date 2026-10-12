@@ -1,0 +1,32 @@
+name: Trainer CI
+
+on:
+  push:
+    paths:
+      - 'trainer/**'
+      - 'docs/architecture/feature-spec/**'
+  pull_request:
+    paths:
+      - 'trainer/**'
+      - 'docs/architecture/feature-spec/**'
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: "Trainer unit tests (includes Java/Python feature parity D-3 #194, PyTorch model/training D-4 #195, Canonical Network/Quantizer D-5 #196, Exporter/Validator D-6 #197, reproducibility check D-7 #198)"
+        working-directory: trainer
+        # --extra train is required from D-4 onward: trainer.model, trainer.reproducibility,
+        # and (D-5) trainer.export/trainer.quantization import torch. A bare `--extra dev`
+        # passed collection locally only because this dev environment already had torch
+        # synced from an earlier `uv sync --extra train` -- a clean CI runner would fail
+        # ModuleNotFoundError on every torch-dependent test file without this.
+        run: uv run --extra dev --extra train pytest tests/ -v
+      # D-7 (#198): the reproducibility check (miniature end-to-end pipeline run twice,
+      # asserting quantization/export-writer determinism and manifest schema validity,
+      # NNUE_TRAINER_ARCHITECTURE.md Section 12) is trainer/tests/cli/test_reproducibility_check.py.
+      # It needs no separate job -- pytest's own auto-discovery already picks it up as
+      # part of the step above, so a second job would only duplicate environment setup
+      # for no benefit.

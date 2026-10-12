@@ -1,0 +1,51 @@
+{
+  "InvokingHead": "3564b5f55edc1a6ebe8e1ba28ede679636dde42d",
+  "Config": {
+    "ControlCommit": "d3a56ffadf0d9151a2b19fba4902a734a99bff96",
+    "CandidateCommit": "e90d3d4f90b244c46e8bbf75c33222bba7d58003",
+    "OpeningSha256": "2011193b4854e9a8cfdc05312ca2dbaffa6ceae3abbdee20e2ead2a18a603347",
+    "Elo0": 0,
+    "Elo1": 10,
+    "Alpha": 0.05,
+    "Beta": 0.05,
+    "BonferroniM": 1,
+    "MinGames": 0,
+    "MaxGames": 20000,
+    "TC": "5+0.05",
+    "Concurrency": 6,
+    "EngineThreads": 1,
+    "Options": [
+      "Hash=16",
+      "PawnHashSize=1",
+      "EvalType=Classical",
+      "MultiPV=1",
+      "Contempt=0",
+      "OwnBook=false",
+      "SyzygyOnline=false",
+      "SyzygyPath="
+    ]
+  },
+  "Sources": [
+    {
+      "Arm": "control",
+      "Commit": "d3a56ffadf0d9151a2b19fba4902a734a99bff96",
+      "Jar": "C:\\Users\\yashk\\WorkDir\\Projects\\ChessEngine\\chess-engine\\tools\\results\\phase21-stage6\\20261011T061318503Z-b5a507c6\\control.jar",
+      "JarSha256": "b54ed03dc6960352c299927a405c89a9b550b9583079aa6bcf883e4c1dc014f2",
+      "SourceClean": true
+    },
+    {
+      "Arm": "candidate",
+      "Commit": "e90d3d4f90b244c46e8bbf75c33222bba7d58003",
+      "Jar": "C:\\Users\\yashk\\WorkDir\\Projects\\ChessEngine\\chess-engine\\tools\\results\\phase21-stage6\\20261011T061318503Z-b5a507c6\\candidate.jar",
+      "JarSha256": "4018a032ca64b80b588a9d0912f5fdac366424089c6750a08c2ef6723665d875",
+      "SourceClean": true
+    }
+  ],
+  "OpeningSha256": "2011193b4854e9a8cfdc05312ca2dbaffa6ceae3abbdee20e2ead2a18a603347",
+  "RunnerSha256": "f1c408f9c2be8958be93a8376c9a7875a10593511ea6d994c37cd42f23589c0c",
+  "WrapperSha256": "9f10c98e94f8098aff3ec64c18caeff3687bedf630ddb6c7e88aff560f2540fc",
+  "CommonSha256": "75a357e27bcca033c8f4a5617354e0c69eb2592face0cde3ea3d62c620bb81dd",
+  "ParametersSha256": "02f1d61e1c4f316b72505fbf0f4de492ff0b0743ae72316d49e72b91c30e1af3",
+  "PreparedArgumentsSha256": "6dcbff215fa844f56f182d22adfbe70f34235167e0604dc4bae96fcd40ae2968",
+  "RandomSeed": "not exposed by existing runner; actual opening order retained in PGN"
+}

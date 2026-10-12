@@ -135,6 +135,7 @@ public class MovesGenerator {
         Iterator<Move> it = possibleMoves.iterator();
         while (it.hasNext()) {
             Move move = it.next();
+
             boolean isKingMove  = (move.startSquare == kingSq);
             boolean isSpecial   = "en-passant".equals(move.reaction)
                     || (move.reaction != null && move.reaction.startsWith("castle"));

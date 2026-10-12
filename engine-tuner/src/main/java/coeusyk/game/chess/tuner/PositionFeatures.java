@@ -8,7 +8,7 @@ import java.util.stream.Collectors;
  *
  * <p>At load time, each {@link LabelledPosition} is converted into a compact
  * representation that stores all positional features needed to compute both
- * the static evaluation and its gradient w.r.t. the 817 tuning parameters —
+ * the static evaluation and its gradient w.r.t. the 832 tuning parameters —
  * without any bitboard operation at iteration time.
  *
  * <h3>Evaluation decomposition</h3>
@@ -20,7 +20,7 @@ import java.util.stream.Collectors;
  * the tapered-eval phase weight already applied), and the non-linear king safety
  * term evaluates attacker pressure via a piecewise-linear safety table:
  * <pre>
- *   nonLinear = (-safetyEval(wW) + safetyEval(wBk)) × (phase/24)
+ *   nonLinear = (-safetyEval(wW) + safetyEval(wBk)) × (phase/24) × (KING_SAFETY_SCALE/100)
  *   wW  = wN×ATK_N + wB×ATK_B + wR×ATK_R + wQ×ATK_Q  (attackers on white king zone)
  *   wBk = bN×ATK_N + bB×ATK_B + bR×ATK_R + bQ×ATK_Q  (attackers on black king zone)
  *   safetyEval(w) — piecewise-linear interpolation of SAFETY_TABLE, mirrors KingSafety
@@ -80,9 +80,12 @@ public final class PositionFeatures {
     // Safety table helpers (piecewise-linear, mirrors KingSafety.SAFETY_TABLE)
     // =========================================================================
 
+    // Extended from 18 to 32 entries — see KingSafety.SAFETY_TABLE in engine-core for
+    // the full rationale (Phase 15 prerequisite: fixes zero-gradient saturation at w>=17).
     // Must match TunerEvaluator.SAFETY_TABLE and KingSafety.SAFETY_TABLE.
     private static final int[] SAFETY_TABLE = {
-        0, 0, 1, 2, 3, 5, 7, 9, 12, 15, 18, 22, 26, 30, 35, 40, 45, 50
+        0, 0, 1, 2, 3, 5, 7, 9, 12, 15, 18, 22, 26, 30, 35, 40, 45, 50,
+        56, 62, 68, 75, 82, 89, 97, 105, 113, 122, 131, 140, 150, 160
     };
 
     /**

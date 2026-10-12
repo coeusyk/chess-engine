@@ -72,16 +72,12 @@ public final class TunerPostRunValidator {
     /**
      * Configuration for the validator.
      *
-     * @param skipConvergenceCheck skip Gate 1
-     * @param skipSanityCheck      skip Gate 2
-     * @param skipSmokeTest        skip Gate 3
-     * @param smokeGames           number of self-play games (must be even; rounded up)
-     * @param smokeDepth           fixed search depth per move
-     * @param losRejectThreshold   LOS below this rejects the run (default 0.30)
+     * @param skipSmokeTest      skip Gate 3 (smoke test)
+     * @param smokeGames         number of self-play games (must be even; rounded up)
+     * @param smokeDepth         fixed search depth per move
+     * @param losRejectThreshold LOS below this rejects the run (default 0.30)
      */
     public record ValidatorConfig(
-            boolean skipConvergenceCheck,
-            boolean skipSanityCheck,
             boolean skipSmokeTest,
             int smokeGames,
             int smokeDepth,
@@ -89,7 +85,7 @@ public final class TunerPostRunValidator {
 
         /** Default: all gates enabled, 100 games, depth 3, LOS threshold 0.30. */
         public static ValidatorConfig defaults() {
-            return new ValidatorConfig(false, false, false, 100, 3, 0.30);
+            return new ValidatorConfig(false, 100, 3, 0.30);
         }
     }
 
@@ -126,12 +122,10 @@ public final class TunerPostRunValidator {
 
         boolean allPassed = true;
 
-        // --- Gate 1: Convergence ---
+        // --- Gate 1: Convergence (mandatory) ---
         String convergenceVerdict;
-        if (config.skipConvergenceCheck() || metrics == null) {
-            convergenceVerdict = metrics == null
-                    ? "[Convergence] SKIPPED — no metrics collected"
-                    : "[Convergence] SKIPPED — --skip-convergence flag set";
+        if (metrics == null) {
+            convergenceVerdict = "[Convergence] SKIPPED — no metrics collected";
         } else {
             convergenceVerdict = checkConvergence(metrics);
         }
@@ -150,15 +144,9 @@ public final class TunerPostRunValidator {
             report.append("[MaterialBounds] PASS\n");
         }
 
-        // --- Gate 2: Param sanity ---
-        String sanityVerdict;
-        if (config.skipSanityCheck()) {
-            sanityVerdict = "[Sanity] SKIPPED — --skip-sanity flag set";
-        } else {
-            sanityVerdict = checkSanity(tunedParams);
-        }
-        boolean sanityPassed = sanityVerdict.contains("PASS")
-                || sanityVerdict.contains("SKIPPED");
+        // --- Gate 2: Param sanity (mandatory) ---
+        String sanityVerdict = checkSanity(tunedParams);
+        boolean sanityPassed = sanityVerdict.contains("PASS");
         if (!sanityPassed) allPassed = false;
         report.append(sanityVerdict).append('\n');
 

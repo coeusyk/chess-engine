@@ -1,0 +1,37 @@
+{
+  "architecture_id": 1,
+  "created_at_epoch_seconds": 1784108373,
+  "dataset_composition": [
+    {
+      "identifier": "stage1-lichess-evals-2026-07-15",
+      "proportion": 0.49983333333333335,
+      "stage": "public"
+    },
+    {
+      "identifier": "stage2-sf-labeled-quiet-2026-07-15",
+      "proportion": 0.5001666666666666,
+      "stage": "sf-labeled"
+    }
+  ],
+  "feature_set_id": 1,
+  "format_version": 1,
+  "hidden_width": 256,
+  "label_engine_version": null,
+  "network_uuid": "dfffd3da-7f8f-4fc9-92dc-b3873c97fb21",
+  "nnue_sha256": "fca29285758e736c99e980ba754f288ef8347eb1d0ca0e265ca70bcf4e061e59",
+  "quant_version": 1,
+  "trainer_commit": "76db953fa2ffbe3c98186652b737bfa97590cecc",
+  "trainer_version": "0.1.0",
+  "training_config": {
+    "batch_size": 256,
+    "hidden_width": 256,
+    "k": 2.773456,
+    "learning_rate": 0.01,
+    "output_scale": 400,
+    "qa": 127,
+    "qb": 64,
+    "seed": 42,
+    "steps": 2000
+  },
+  "training_seed": 42
+}

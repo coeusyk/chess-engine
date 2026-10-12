@@ -10,7 +10,7 @@ jobs:
     runs-on: windows-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      CUTECHESS_VERSION: 'v1.4.0'
+      CUTECHESS_VERSION: 'v1.5.1'
 
     steps:
       - name: Checkout develop
@@ -73,8 +73,8 @@ jobs:
         shell: pwsh
         run: |
           # Resolve version from env
-          $version = $env:CUTECHESS_VERSION          # e.g. v1.4.0
-          $versionNum = $version.TrimStart('v')      # e.g. 1.4.0
+          $version = $env:CUTECHESS_VERSION          # e.g. v1.5.1
+          $versionNum = $version.TrimStart('v')      # e.g. 1.5.1
 
           $installDir = Join-Path $env:RUNNER_TEMP 'cutechess'
           $zipPath    = Join-Path $env:RUNNER_TEMP 'cutechess.zip'
@@ -90,6 +90,11 @@ jobs:
           $cliExe = Get-ChildItem -Path $installDir -Recurse -Filter 'cutechess-cli.exe' | Select-Object -First 1 -ExpandProperty FullName
           if (-not $cliExe) {
             throw "cutechess-cli.exe not found after extracting $zipUrl"
+          }
+
+          $reportedVersion = (& $cliExe --version 2>&1 | Out-String)
+          if ($reportedVersion -notmatch [regex]::Escape($versionNum)) {
+            throw "cutechess-cli version mismatch: expected $versionNum, got $reportedVersion"
           }
 
           Write-Host "Found cutechess-cli: $cliExe"
@@ -203,11 +208,11 @@ jobs:
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```'
 
           if ($verdict -eq 'H1_ACCEPTED') {
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '> H1 accepted - patch improves strength. Safe to merge.'
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '> H1 accepted: the evidence favors the elo1=+50 hypothesis over the elo0=0 hypothesis under this SPRT. This meets the project''s +50 Elo merge bar.'
           } elseif ($verdict -eq 'H0_ACCEPTED') {
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '> H0 accepted - regression detected. Do NOT merge.'
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '> H0 accepted: the evidence favors the elo0=0 hypothesis over the elo1=+50 hypothesis under this SPRT. This does not establish a regression; it means a +50 Elo gain was not demonstrated. Per project policy this build does not meet the merge bar. Do not read this as a confirmed negative Elo result.'
           } else {
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '> Inconclusive - game limit reached without SPRT decision.'
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '> Inconclusive: neither the elo0 nor the elo1 boundary was reached before the game cap.'
           }
 
       - name: Post skipped summary
@@ -220,8 +225,8 @@ jobs:
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ""
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "See ``tools/README.md`` for tagging instructions."
 
-      - name: Fail on regression
+      - name: Fail on unmet merge bar (H0 accepted)
         if: steps.baseline.outputs.skip != 'true' && steps.sprt.outputs.verdict == 'H0_ACCEPTED'
         shell: pwsh
         run: |
-          Write-Error "SPRT H0 accepted — regression confirmed against ${{ steps.baseline.outputs.tag }}. Investigate before merging."
+          Write-Error "SPRT H0 accepted for ${{ steps.baseline.outputs.tag }}: evidence favors elo0=0 over elo1=+50 under this SPRT. This does not confirm a regression, only that a +50 Elo gain was not demonstrated. Per project policy a demonstrated +50 Elo gain is required to merge, so this build does not meet that bar. Investigate before merging."

@@ -863,7 +863,7 @@ Both use 16 parallel threads. K (100k subset): 1.655876.
 - Fix #6 (incremental occupancy updates in `setBit`/`clearBit`, removing `recomputeOccupancies()` from makeMove/unmakeMove) was **implemented, measured, and reverted** because it caused a 10–20% NPS regression (see Measurements).
 - Root cause of Fix #6 regression: the two uses of `recomputeOccupancies()` per make/unmake pair (26 branchless OR ops total) are compiled by the JIT into efficient vectorized or pipelined code. Distributing the occupancy update into per-call `setBit`/`clearBit` introduces a branch per call (`if (Piece.isWhite(piece))`), extra method-dispatch overhead, and worse instruction-cache utilization in the hot loop — despite reducing raw op count from 26 to ~12.
 - The hypothesis "fewer total ops in make/unmake must be faster" was disproven by measurement. The terminal batch `recomputeOccupancies()` is already well-optimized by the JIT and should not be replaced.
-- cutechess-cli was not installed — was only present as `.zip` in Downloads. Extracted to `C:\Users\yashk\Downloads\cutechess\cutechess-1.4.0-win64\`. v0.4.9 fat JAR placed in `tools/engine-uci-0.4.9.jar` (1,067,724 bytes).
+- cutechess-cli was not installed — was only present as `.zip` in Downloads. Extracted to a local `cutechess\cutechess-1.4.0-win64\` directory. v0.4.9 fat JAR placed in `tools/engine-uci-0.4.9.jar` (1,067,724 bytes).
 
 **Broke / Fixed:**
 
@@ -1085,8 +1085,8 @@ Both use 16 parallel threads. K (100k subset): 1.655876.
   resolved via env var or PATH — scripts are portable across developer machines.
 
 **Broke / Fixed:**
-- Old `.bat` files contained hardcoded absolute paths to `C:\Users\yashk\...` — those
-  would silently fail on any other machine or after a home-directory rename.
+- Old `.bat` files contained hardcoded absolute paths to a developer's home directory —
+  those would silently fail on any other machine or after a home-directory rename.
 
 **Measurements:**
 - No engine changes. No perft or NPS measurements this cycle.

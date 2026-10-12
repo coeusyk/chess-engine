@@ -1,0 +1,23 @@
+{
+  "commit_sha": "b50d72d245ec8a28e0b5a4b2a4515558c6cdefdf",
+  "branch": "phase/17-pvs-experiment",
+  "jar_path": "C:\\Users\\yashk\\WorkDir\\Projects\\ChessEngine\\chess-engine\\engine-uci\\target\\engine-uci-0.6.0-SNAPSHOT.jar",
+  "jar_sha256": "FE740F5128DF9A10DB0DD1B5E11417474135CF689A441BD61DB59CDEAE8BFA67",
+  "java_version_raw": "openjdk version \"21.0.10\" 2026-01-20 LTS\r\nOpenJDK Runtime Environment Zulu21.48+17-CA (build 21.0.10+7-LTS)\r\nOpenJDK 64-Bit Server VM Zulu21.48+17-CA (build 21.0.10+7-LTS, mixed mode, sharing)",
+  "java_exe_resolved": "C:\\Tools\\Java\\zulu-21\\bin\\java.exe",
+  "os_caption": "Microsoft Windows 11 Pro",
+  "os_version": "10.0.26200",
+  "os_build_number": "26200",
+  "cpu_name": "AMD Ryzen 7 7700X 8-Core Processor             ",
+  "cpu_cores": 8,
+  "cpu_logical_processors": 16,
+  "cpu_max_clock_mhz": 4501,
+  "jvm_flags": "--add-modules jdk.incubator.vector",
+  "threads_uci_option": 1,
+  "hash_mb": "16 (BenchRunner.BENCH_HASH_MB, hardcoded; the CLI --bench/--bench-raw path does not read the UCI Hash setoption)",
+  "evaluator": "Classical",
+  "bench_depth": 13,
+  "bench_corpus": "BenchRunner.BENCH_FENS, 31 positions (Stockfish public-domain bench suite)",
+  "bench_corpus_source_sha256": "02630596D4CEB14E43E13BEFE971ED8E07CE5C68D33E9588369542B1BE682BB1",
+  "timestamp_utc": "20260920-082614"
+}

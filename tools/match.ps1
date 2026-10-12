@@ -15,7 +15,7 @@
     Time control string passed to cutechess-cli (default: 10+0.1).
 
 .EXAMPLE
-    .\tools\match.ps1 -Engine1 engine-uci\target\engine.jar -Engine2 tools\engine-uci-0.4.9.jar -Games 200
+    .\tools\match.ps1 -Engine1 engine-uci\target\engine.jar -Engine2 tools\results\some-baseline.jar -Games 200
 #>
 param(
     [Parameter(Mandatory)][string]$Engine1,
@@ -28,7 +28,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $Cutechess = $env:CUTECHESS
-if (-not $Cutechess) { $Cutechess = (Get-Command 'cutechess-cli' -ErrorAction SilentlyContinue)?.Source }
+if (-not $Cutechess) { $cmd = Get-Command 'cutechess-cli' -ErrorAction SilentlyContinue; if ($cmd) { $Cutechess = $cmd.Source } }
 if (-not $Cutechess -or -not (Test-Path $Cutechess)) {
     Write-Error "cutechess-cli not found. Set `$env:CUTECHESS or add cutechess-cli.exe to PATH."
     exit 1
@@ -54,8 +54,8 @@ Write-Host "PGN : $PgnOut"
 Write-Host ""
 
 & $Cutechess `
-    -engine "name=Vex-new" "cmd=$Java" "arg=-jar" "arg=$($E1.Path)" proto=uci `
-    -engine "name=Vex-old" "cmd=$Java" "arg=-jar" "arg=$($E2.Path)" proto=uci `
+    -engine "name=Vex-new" "cmd=$Java" "arg=--add-modules" "arg=jdk.incubator.vector" "arg=-jar" "arg=$($E1.Path)" proto=uci `
+    -engine "name=Vex-old" "cmd=$Java" "arg=--add-modules" "arg=jdk.incubator.vector" "arg=-jar" "arg=$($E2.Path)" proto=uci `
     -each tc=$TC `
     -games $Games `
     -repeat `
