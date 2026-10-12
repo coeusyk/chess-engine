@@ -90,6 +90,28 @@ class Analyzer(unittest.TestCase):
         self.assertEqual(r["pair_points_histogram_0_to_2"]["1.0"], 1)
         self.assertEqual(r["pair_points_histogram_0_to_2"]["2.0"], 1)
 
+    def test_a_third_game_on_one_opening_is_unpaired_and_never_overwrites_a_scored_game(self):
+        pgn = game("NEW", "1-0", "A w - - 0 1") + game("OLD", "1-0", "A w - - 0 1") + game("NEW", "0-1", "A w - - 0 1")
+        r = analyze.analyze("", pgn, 0, 20, 0.05, 0.05)
+        self.assertEqual((r["scored_games"], r["completed_pairs"], r["unpaired_games"]), (3, 0, 3))
+
+    def test_a_smoke_directory_uses_the_smoke_list_and_is_labelled(self):
+        import json as _json, tempfile
+        smoke_rows = (RESEARCH / "openings-smoke-v1.epd").read_text(encoding="ascii").split("\n")[:-1]
+        fen = smoke_rows[0].rsplit(" ", 2)[0] + " 0 1"
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "identity.json").write_text(_json.dumps({"Kind": "smoke"}), encoding="utf-8")
+            (d / "match.log").write_text("", encoding="utf-8")
+            (d / "match.pgn").write_text(game("NEW", "1/2-1/2", fen) + game("OLD", "1/2-1/2", fen), encoding="utf-8")
+            done = subprocess.run([sys.executable, "-I", str(ROOT / "tools/release-sprt-analyze.py"), str(d)], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        out = _json.loads(done.stdout)
+        self.assertEqual(out["attempt_kind"], "smoke")
+        self.assertIn("not a result", out["note"])
+        self.assertEqual(out["opening_reconciliation"]["unknown_openings"], 0)
+        self.assertFalse(out["opening_reconciliation"]["wrapped_or_repeated"])
+
     def test_a_one_sided_sample_does_not_crash(self):
         r = analyze.analyze("", game("NEW", "1-0", "A w - - 0 1") + game("OLD", "0-1", "A w - - 0 1"), 0, 20, 0.05, 0.05)
         self.assertIsNone(r["game_level"]["elo_95_high"])

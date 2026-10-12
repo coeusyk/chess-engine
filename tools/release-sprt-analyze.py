@@ -2,6 +2,9 @@
 
     python tools/release-sprt-analyze.py <run-dir> [--elo0 0 --elo1 20 --alpha 0.05 --beta 0.05] [--openings FILE]
 
+The opening list is chosen from the Kind recorded in the run's identity.json (production list for a run, smoke list for a
+smoke attempt). A smoke attempt is labelled as not a result.
+
 Cute Chess decides when the SPRT stops. Nothing here feeds back into that decision: this script reads archived
 files, prints JSON to stdout and writes nothing. It reconciles the archive against the Cute Chess log and reports
 statistics; a disagreement is reported, it does not overrule Cute Chess.
@@ -24,7 +27,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_OPENINGS = ROOT / "docs/architecture/research/release-strength-sprt-v0.5.7-v0.6.0/openings-v1.epd"
+RESEARCH = ROOT / "docs/architecture/research/release-strength-sprt-v0.5.7-v0.6.0"
+OPENINGS_BY_KIND = {"run": RESEARCH / "openings-v1.epd", "smoke": RESEARCH / "openings-smoke-v1.epd"}
 LLR_TOLERANCE = 0.01
 
 
@@ -120,14 +124,16 @@ def analyze(log_text, pgn_text, elo0, elo1, alpha, beta, opening_lines=None):
         new_white = g["White"] == "NEW"
         got = points[g["Result"]][0 if new_white else 1]
         game_counts[got] += 1
-        pairs[position_key(g["FEN"])]["W" if new_white else "B"] = got
+        pairs[position_key(g["FEN"])].setdefault("W" if new_white else "B", []).append(got)
     complete = {0.0: 0, 0.25: 0, 0.5: 0, 0.75: 0, 1.0: 0}
     unpaired = 0
     for sides in pairs.values():
-        if len(sides) == 2:
-            complete[(sides["W"] + sides["B"]) / 2] += 1
+        # Exactly one game per side is a pair. A third game on one opening is reuse: it is counted unpaired and
+        # opening_reconciliation flags it, but it never overwrites a scored game.
+        if len(sides.get("W", [])) == 1 and len(sides.get("B", [])) == 1:
+            complete[(sides["W"][0] + sides["B"][0]) / 2] += 1
         else:
-            unpaired += 1
+            unpaired += len(sides.get("W", [])) + len(sides.get("B", []))
     wins, draws, losses = game_counts[1.0], game_counts[0.5], game_counts[0.0]
     out = {"scored_games": wins + draws + losses, "cancelled_games": cancelled, "games_started": len(games),
            "wins": wins, "draws": draws, "losses": losses,
@@ -163,14 +169,21 @@ def main():
     p.add_argument("--elo1", type=float, default=20)
     p.add_argument("--alpha", type=float, default=0.05)
     p.add_argument("--beta", type=float, default=0.05)
-    p.add_argument("--openings", default=str(DEFAULT_OPENINGS))
+    p.add_argument("--openings", default=None)
     a = p.parse_args()
     d = Path(a.run_dir)
-    lines = Path(a.openings).read_text(encoding="ascii").split("\n")
+    kind = None
+    if (d / "identity.json").exists():
+        kind = json.loads((d / "identity.json").read_text(encoding="utf-8-sig")).get("Kind")
+    openings = Path(a.openings) if a.openings else OPENINGS_BY_KIND.get(kind, OPENINGS_BY_KIND["run"])
+    lines = openings.read_text(encoding="ascii").split("\n")
     lines = [l for l in lines if l]
     result = analyze((d / "match.log").read_text(encoding="utf-8", errors="replace"),
                      (d / "match.pgn").read_text(encoding="utf-8", errors="replace"),
                      a.elo0, a.elo1, a.alpha, a.beta, lines)
+    result["attempt_kind"] = kind
+    if kind == "smoke":
+        result["note"] = "SMOKE ATTEMPT: not a result. Statistics below describe a handful of games and are not an Elo estimate."
     json.dump(result, sys.stdout, indent=2)
     print()
 

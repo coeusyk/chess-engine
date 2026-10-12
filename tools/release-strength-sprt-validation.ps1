@@ -152,25 +152,36 @@ try {
     # The smoke test requires an intact passed preflight for this exact commit and scripts.
     $resultsRoot = Join-Path $temp 'results'
     $scriptHashes = [ordered]@{ 'a.ps1' = 'aaa'; 'b.ps1' = 'bbb' }
-    function New-FixturePreflight([string]$Name, [string]$Verdict = 'PREFLIGHT_PASSED', [string]$Head = 'head1', $Hashes = $scriptHashes, [switch]$NoSums) {
+    $fixtureNow = [datetime]::new(2026, 10, 12, 12, 0, 0, [DateTimeKind]::Utc)
+    function New-FixturePreflight([string]$Name, [string]$Verdict = 'PREFLIGHT_PASSED', [string]$Head = 'head1', $Hashes = $scriptHashes, [switch]$NoSums, [datetime]$StartedUtc = [datetime]::new(2026, 10, 12, 11, 0, 0, [DateTimeKind]::Utc)) {
         $dir = Join-Path $resultsRoot $Name; New-Item -ItemType Directory -Path $dir -Force | Out-Null
         Set-Content -LiteralPath (Join-Path $dir 'evidence.txt') -Value 'evidence'
         Save-Stage6Json @{ Verdict = $Verdict } (Join-Path $dir 'summary.json')
         Save-Stage6Json @{ InvokingHead = $Head; ScriptSha256 = $Hashes } (Join-Path $dir 'identity.json')
+        Save-Stage6Json @{ StartedUtc = $StartedUtc.ToString('o') } (Join-Path $dir 'attempt-start.json')
         if (-not $NoSums) { Get-ChildItem -LiteralPath $dir -File | Where-Object { $_.Name -ne 'SHA256SUMS' } | ForEach-Object { '{0}  {1}' -f (Get-Stage6Hash $_.FullName), $_.Name } | Set-Content -LiteralPath (Join-Path $dir 'SHA256SUMS') -Encoding ASCII }
         return $dir
     }
-    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight (Join-Path $temp 'no-such-root') 'head1' $scriptHashes)) 'no results directory means no qualifying preflight'
+    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight (Join-Path $temp 'no-such-root') 'head1' $scriptHashes $fixtureNow)) 'no results directory means no qualifying preflight'
     $null = New-FixturePreflight 'preflight-20261012T000001000Z-fail' 'PREFLIGHT_FAILED'
-    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $scriptHashes)) 'a failed preflight does not qualify'
+    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $scriptHashes $fixtureNow)) 'a failed preflight does not qualify'
     $null = New-FixturePreflight 'preflight-20261012T000002000Z-nosums' 'PREFLIGHT_PASSED' 'head1' $scriptHashes -NoSums
-    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $scriptHashes)) 'a preflight without SHA256SUMS does not qualify'
+    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $scriptHashes $fixtureNow)) 'a preflight without SHA256SUMS does not qualify'
+    $emptyDir = New-FixturePreflight 'preflight-20261012T000002500Z-empty'
+    Set-Content -LiteralPath (Join-Path $emptyDir 'SHA256SUMS') -Value '' -Encoding ASCII; Set-Content -LiteralPath (Join-Path $emptyDir 'evidence.txt') -Value 'tampered'
+    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $scriptHashes $fixtureNow)) 'an empty SHA256SUMS does not hide tampered evidence'
+    $extraDir = New-FixturePreflight 'preflight-20261012T000002600Z-extra'
+    Set-Content -LiteralPath (Join-Path $extraDir 'added-later.txt') -Value 'not in the manifest'
+    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $scriptHashes $fixtureNow)) 'a file missing from SHA256SUMS does not qualify'
+    $null = New-FixturePreflight 'preflight-20261011T000000000Z-old' 'PREFLIGHT_PASSED' 'head1' $scriptHashes -StartedUtc ([datetime]::new(2026, 10, 10, 9, 0, 0, [DateTimeKind]::Utc))
+    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $scriptHashes $fixtureNow)) 'a preflight older than the age limit does not qualify'
     $good1 = New-FixturePreflight 'preflight-20261012T000003000Z-good'
-    Assert-Check ((Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $scriptHashes) -ceq 'preflight-20261012T000003000Z-good') 'an intact passed preflight qualifies'
-    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head2' $scriptHashes)) 'a preflight from another commit does not qualify'
-    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' ([ordered]@{ 'a.ps1' = 'aaa'; 'b.ps1' = 'CHANGED' }))) 'a preflight from different scripts does not qualify'
+    Assert-Check ((Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $scriptHashes $fixtureNow) -ceq 'preflight-20261012T000003000Z-good') 'an intact recent passed preflight qualifies'
+    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head2' $scriptHashes $fixtureNow)) 'a preflight from another commit does not qualify'
+    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' ([ordered]@{ 'a.ps1' = 'aaa'; 'b.ps1' = 'CHANGED' }) $fixtureNow)) 'a preflight from different scripts does not qualify'
+    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $scriptHashes ($fixtureNow.AddHours(-3)))) 'a preflight that starts after the check time does not qualify'
     Set-Content -LiteralPath (Join-Path $good1 'evidence.txt') -Value 'tampered'
-    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $scriptHashes)) 'a preflight whose evidence no longer matches its checksums does not qualify'
+    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $scriptHashes $fixtureNow)) 'a preflight whose evidence no longer matches its checksums does not qualify'
 
     # Provenance contract in the wrapper source, and its syntax.
     $wrapperPath = Join-Path $PSScriptRoot 'release-strength-sprt.ps1'

@@ -18,7 +18,7 @@ function Get-ReleaseSprtConfig {
         SmokeOpeningSha256 = '51ed4dc523be6e29c28c6693ad6022478b142465b699df3397c53537cd6ca195'
         SmokeGames = 20
         PreregistrationRelativePath = 'docs/architecture/research/release-strength-sprt-v0.5.7-v0.6.0/preregistration.md'
-        PreregistrationSha256 = 'dc6c592737614ee746c175427fee532b74164182053e95da559caf03958efde3'
+        PreregistrationSha256 = '190326d037a7588258798d16c60d473c0c3c72e41a94aaa157a7c1b88072555c'
         Elo0 = 0; Elo1 = 20; Alpha = 0.05; Beta = 0.05; BonferroniM = 1
         MinGames = 0; MaxGames = 20000; TC = '5+0.05'; Concurrency = 6; EngineThreads = 1
         OpeningOrder = 'sequential'
@@ -26,6 +26,7 @@ function Get-ReleaseSprtConfig {
         NewOptions = @($shared[0..1] + 'EvalType=Classical' + $shared[2..6])
         OldOptions = @($shared)
         IdleCpuMeanLimitPercent = 5
+        MaxPreflightAgeHours = 24
     }
 }
 
@@ -170,23 +171,32 @@ function Get-ReleaseSprtSmokeVerdict($Result) {
 
 # The smoke test is only allowed after a native preflight passed on this exact code. Returns the qualifying preflight
 # directory name, or $null. The preflight's own evidence must still verify against its SHA256SUMS.
-function Find-ReleaseSprtPassedPreflight([string]$ResultsRoot, [string]$Head, $ScriptHashes) {
+function Find-ReleaseSprtPassedPreflight([string]$ResultsRoot, [string]$Head, $ScriptHashes, [datetime]$Now = [datetime]::UtcNow) {
     if (-not (Test-Path -LiteralPath $ResultsRoot)) { return $null }
     foreach ($dir in @(Get-ChildItem -LiteralPath $ResultsRoot -Directory -Filter 'preflight-*' | Sort-Object Name -Descending)) {
-        $summary = Join-Path $dir.FullName 'summary.json'; $identity = Join-Path $dir.FullName 'identity.json'; $sums = Join-Path $dir.FullName 'SHA256SUMS'
-        if (-not ((Test-Path -LiteralPath $summary) -and (Test-Path -LiteralPath $identity) -and (Test-Path -LiteralPath $sums))) { continue }
+        $summary = Join-Path $dir.FullName 'summary.json'; $identity = Join-Path $dir.FullName 'identity.json'; $sums = Join-Path $dir.FullName 'SHA256SUMS'; $started = Join-Path $dir.FullName 'attempt-start.json'
+        if (-not ((Test-Path -LiteralPath $summary) -and (Test-Path -LiteralPath $identity) -and (Test-Path -LiteralPath $sums) -and (Test-Path -LiteralPath $started))) { continue }
+        $startedUtc = [datetime]::Parse((Get-Content -LiteralPath $started -Raw | ConvertFrom-Json).StartedUtc, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind)
+        if (($Now - $startedUtc.ToUniversalTime()).TotalHours -gt (Get-ReleaseSprtConfig).MaxPreflightAgeHours -or $startedUtc -gt $Now.AddMinutes(5)) { continue }
         if ((Get-Content -LiteralPath $summary -Raw | ConvertFrom-Json).Verdict -cne 'PREFLIGHT_PASSED') { continue }
         $id = Get-Content -LiteralPath $identity -Raw | ConvertFrom-Json
         if ($id.InvokingHead -cne $Head) { continue }
         $same = $true
         foreach ($name in $ScriptHashes.Keys) { if ($id.ScriptSha256.$name -cne $ScriptHashes[$name]) { $same = $false } }
         if (-not $same) { continue }
-        $intact = $true
-        foreach ($line in @(Get-Content -LiteralPath $sums)) {
+        # The manifest must be non-empty and list every file present, or a truncated manifest would hide tampering.
+        $lines = @(Get-Content -LiteralPath $sums | Where-Object { $_ -ne '' })
+        $intact = $lines.Count -gt 0
+        $listed = @()
+        foreach ($line in $lines) {
             $parts = $line -split '  ', 2
+            if ($parts.Count -ne 2) { $intact = $false; continue }
+            $listed += $parts[1]
             $file = Join-Path $dir.FullName $parts[1]
             if (-not (Test-Path -LiteralPath $file) -or (Get-Stage6Hash $file) -cne $parts[0]) { $intact = $false }
         }
+        $present = @(Get-ChildItem -LiteralPath $dir.FullName -File | Where-Object { $_.Name -ne 'SHA256SUMS' } | ForEach-Object { $_.Name })
+        if (@($present | Where-Object { $listed -cnotcontains $_ }).Count -gt 0) { $intact = $false }
         if ($intact) { return $dir.Name }
     }
     return $null
