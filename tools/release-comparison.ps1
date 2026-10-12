@@ -30,6 +30,7 @@ param(
     [string]$ExpectedCommitB = "bc3dc380e759526e8aa19cd8385af16ab22ac502",
     [int]$Pairs = 7,
     [int]$TimeoutSec = 1200,
+    [int]$WarmupDepth = 8,
     [double]$MaxIdleCpuPercent = 5,
     [string]$JavaHome = $env:JAVA_HOME,
     [switch]$ValidateOnly
@@ -65,6 +66,10 @@ function Get-ClassListing([string]$jarPath) {   # same lines as: find . -name '*
             "{0}  ./{1}" -f (([BitConverter]::ToString([Security.Cryptography.SHA256]::HashData($ms.ToArray())) -replace "-", "").ToLower()), $n
         }
     } finally { $zip.Dispose() }
+}
+function Write-Manifest {
+    Get-ChildItem $OutDir -File -Recurse | Where-Object { $_.Name -ne "SHA256SUMS" -and $_.FullName -notlike "*$([IO.Path]::DirectorySeparatorChar)work$([IO.Path]::DirectorySeparatorChar)*" } |
+        ForEach-Object { "{0}  {1}" -f (Sha256File $_.FullName), $_.FullName.Substring($OutDir.Length + 1).Replace("\", "/") } | Set-Content (Join-Path $OutDir "SHA256SUMS")
 }
 function Get-Median($v) { $s = @($v | Sort-Object); $n = $s.Count; if ($n % 2) { $s[($n - 1) / 2] } else { ($s[$n / 2 - 1] + $s[$n / 2]) / 2 } }
 
@@ -123,6 +128,7 @@ function Log([string]$m) { $line = "$([DateTime]::UtcNow.ToString('o')) $m"; Add
 $arms = [ordered]@{ A = @{ ref = $TagA; commit = $commitA }; B = @{ ref = $TagB; commit = $commitB } }
 $identity = [ordered]@{}
 $trees = @()
+$leftover = @()
 try {
     foreach ($arm in $arms.Keys) {
         $tree = Join-Path $work $arm
@@ -131,7 +137,7 @@ try {
         try {
             if ((git rev-parse HEAD).Trim() -ne $arms[$arm].commit) { Fail "Worktree $arm is not at the expected commit." }
             Log "building $arm at $($arms[$arm].commit)"
-            mvn -B -q -pl engine-core, engine-uci -am package -DskipTests
+            mvn -B -q -pl "engine-core,engine-uci" -am package -DskipTests
             if ($LASTEXITCODE -ne 0) { Fail "Maven build failed for $arm." }
             if (git status --porcelain) { Fail "Worktree $arm changed during the build." }
             $jar = Get-ChildItem "engine-uci/target/engine-uci-*.jar" | Where-Object { $_.Name -notlike "original-*" } | Select-Object -First 1
@@ -153,19 +159,39 @@ try {
     & $javac --add-modules jdk.incubator.vector -cp $identity.B.jar_path -d $classes tools/ReleaseComparisonHarness.java
     if ($LASTEXITCODE -ne 0) { Fail "Harness compile failed." }
 
+    # Environment and build identity are recorded before any timing, so a failed run still leaves them behind.
+    $recorded = [ordered]@{}
+    foreach ($k in $identity.Keys) { $o = [ordered]@{}; foreach ($f in $identity[$k].Keys) { if ($f -ne "jar_path") { $o[$f] = $identity[$k][$f] } }; $recorded[$k] = $o }
+    $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+    [ordered]@{
+        utc = [DateTime]::UtcNow.ToString("o"); machine = [Environment]::MachineName; os = [Runtime.InteropServices.RuntimeInformation]::OSDescription
+        cpu = $cpu.Name.Trim(); logical_processors = $cpu.NumberOfLogicalProcessors
+        ram_gb = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 1)
+        power_scheme = ((powercfg /getactivescheme) -replace '^.*:\s*[0-9a-f-]+\s*', '').Trim()
+        powershell = $PSVersionTable.PSVersion.ToString(); java = $javaVersionLine; java_vendor = (& $java -XshowSettings:properties -version 2>&1 | Where-Object { $_ -match 'java.vendor =' } | Select-Object -First 1).ToString().Trim()
+        maven = ((mvn -v | Select-Object -First 1) -replace '\s*\(.*$', ''); git = (git --version); jvm_flags = ($jvm -join " ")
+        idle_check = [ordered]@{ mean_cpu_percent = $cpuMean; max_cpu_percent = $cpuMax; samples = 15; limit_percent = $MaxIdleCpuPercent }
+        repo_head = (git rev-parse HEAD).Trim(); repo_clean_at_start = $true
+        script_sha256 = (Sha256File "tools/release-comparison.ps1"); harness_sha256 = (Sha256File "tools/ReleaseComparisonHarness.java")
+        corpus_sha256_lf = $CorpusSha256; expected_main_nodes = $ExpectedNodes; pairs = $Pairs; timeout_sec = $TimeoutSec; warmup_depth = $WarmupDepth
+        arms = $recorded
+    } | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $OutDir "environment.json")
+
     function Invoke-Run([string]$arm, [string]$label) {
         $tsv = Join-Path $raw "$label-$arm.tsv"; $err = Join-Path $raw "$label-$arm.stderr.txt"
         $psi = [Diagnostics.ProcessStartInfo]::new($java)
-        foreach ($a in $jvm + @("-cp", ($classes + [IO.Path]::PathSeparator + $identity[$arm].jar_path), "ReleaseComparisonHarness", $corpusPath, "$Depth", "$HashMb")) { $psi.ArgumentList.Add($a) }
+        foreach ($a in $jvm + @("-cp", ($classes + [IO.Path]::PathSeparator + $identity[$arm].jar_path), "ReleaseComparisonHarness", $corpusPath, "$Depth", "$HashMb", "$WarmupDepth")) { $psi.ArgumentList.Add($a) }
         $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.UseShellExecute = $false
         $p = [Diagnostics.Process]::Start($psi)
         $out = $p.StandardOutput.ReadToEndAsync(); $errText = $p.StandardError.ReadToEndAsync()
-        if (-not $p.WaitForExit($TimeoutSec * 1000)) { $p.Kill($true); Fail "Run $label-$arm exceeded $TimeoutSec s and was killed." }
+        $timedOut = -not $p.WaitForExit($TimeoutSec * 1000)
+        if ($timedOut) { $p.Kill($true) }
         $p.WaitForExit()
-        [IO.File]::WriteAllText($tsv, $out.Result); [IO.File]::WriteAllText($err, $errText.Result)
+        [IO.File]::WriteAllText($tsv, $out.Result); [IO.File]::WriteAllText($err, $errText.Result)   # keep partial output even when the run failed
+        if ($timedOut) { Fail "Run $label-$arm exceeded $TimeoutSec s and was killed; partial output is in raw/." }
         if ($p.ExitCode -ne 0) { Fail "Run $label-$arm exited with code $($p.ExitCode)." }
         $cfg = ($errText.Result -split "`r?`n" | Where-Object { $_ -like "CONFIG *" } | Select-Object -First 1)
-        $want = "CONFIG depth=$Depth hash_mb=$HashMb contempt=0 threads=1 evaluator=$($ExpectedEvaluator[$arm]) instrumentation=*positions=$CorpusPositions"
+        $want = "CONFIG depth=$Depth hash_mb=$HashMb contempt=0 threads=1 evaluator=$($ExpectedEvaluator[$arm]) instrumentation=* positions=$CorpusPositions warmup_depth=$WarmupDepth"
         if (-not $cfg -or $cfg -notlike $want) { Fail "Run $label-$arm reported an unexpected configuration: '$cfg'" }
         $rows = Import-Csv -Delimiter "`t" $tsv
         if ($rows.Count -ne $CorpusPositions) { Fail "Run $label-$arm returned $($rows.Count) positions." }
@@ -198,29 +224,22 @@ try {
     $summary["pair_elapsed_ratios_B_over_A"] = @($ratios | ForEach-Object { [math]::Round($_, 4) })
     $summary | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $OutDir "summary.json")
 
-    foreach ($v in $identity.Values) { $v.Remove("jar_path") }
-    $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
-    [ordered]@{
-        utc = [DateTime]::UtcNow.ToString("o"); machine = [Environment]::MachineName; os = [Runtime.InteropServices.RuntimeInformation]::OSDescription
-        cpu = $cpu.Name.Trim(); logical_processors = $cpu.NumberOfLogicalProcessors
-        ram_gb = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 1)
-        power_scheme = ((powercfg /getactivescheme) -replace '^.*:\s*[0-9a-f-]+\s*', '').Trim()
-        powershell = $PSVersionTable.PSVersion.ToString(); java = $javaVersionLine; java_vendor = (& $java -XshowSettings:properties -version 2>&1 | Where-Object { $_ -match 'java.vendor =' } | Select-Object -First 1).ToString().Trim()
-        maven = ((mvn -v | Select-Object -First 1) -replace '\s*\(.*$', ''); git = (git --version); jvm_flags = ($jvm -join " ")
-        idle_check = [ordered]@{ mean_cpu_percent = $cpuMean; max_cpu_percent = $cpuMax; samples = 15; limit_percent = $MaxIdleCpuPercent }
-        repo_head = (git rev-parse HEAD).Trim(); repo_clean_at_start = $true
-        script_sha256 = (Sha256File "tools/release-comparison.ps1"); harness_sha256 = (Sha256File "tools/ReleaseComparisonHarness.java")
-        corpus_sha256_lf = $CorpusSha256; expected_main_nodes = $ExpectedNodes; pairs = $Pairs; timeout_sec = $TimeoutSec
-        arms = $identity
-    } | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $OutDir "environment.json")
-    Get-ChildItem $OutDir -File -Recurse | Where-Object { $_.Name -ne "SHA256SUMS" -and $_.FullName -notlike "*$([IO.Path]::DirectorySeparatorChar)work$([IO.Path]::DirectorySeparatorChar)*" } |
-        ForEach-Object { "{0}  {1}" -f (Sha256File $_.FullName), $_.FullName.Substring($OutDir.Length + 1).Replace("\", "/") } | Set-Content (Join-Path $OutDir "SHA256SUMS")
     Log "done"
+    Write-Manifest   # last write to the directory: run.log must not change after this
     $summary | ConvertTo-Json -Depth 5
 } catch {
     Set-Content (Join-Path $OutDir "FAILED.txt") $_.Exception.Message
+    Write-Manifest
     throw
 } finally {
-    foreach ($t in $trees) { git worktree remove --force $t 2>$null }
+    foreach ($t in $trees) {
+        $removal = git worktree remove --force $t 2>&1
+        if ($LASTEXITCODE -ne 0) { $leftover += "$t : $removal" }
+    }
     git worktree prune
+}
+if ($leftover) {
+    Set-Content (Join-Path $OutDir "CLEANUP-FAILED.txt") ($leftover -join "`n")   # written after the manifest, so it is not listed there
+    Write-Warning "Could not remove $($leftover.Count) temporary worktree(s). See CLEANUP-FAILED.txt and remove them with 'git worktree remove --force' before another run."
+    exit 1
 }

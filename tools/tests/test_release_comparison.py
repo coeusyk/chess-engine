@@ -84,6 +84,37 @@ class ReleaseComparisonContract(unittest.TestCase):
         self.assertNotRegex(SCRIPT.lower(), r"speedup\s*=")
         self.assertIn("Not a strength measurement", SCRIPT)
 
+    def test_maven_project_list_is_a_single_argument(self):
+        self.assertIn('-pl "engine-core,engine-uci"', SCRIPT)
+        self.assertNotRegex(SCRIPT, r"-pl\s+engine-core,\s")
+
+    def test_failed_and_timed_out_runs_keep_their_evidence(self):
+        timeout = SCRIPT.index("$timedOut = -not $p.WaitForExit")
+        saved = SCRIPT.index("[IO.File]::WriteAllText($tsv", timeout)
+        failed = SCRIPT.index('if ($timedOut) { Fail', saved)
+        self.assertLess(timeout, saved)
+        self.assertLess(saved, failed)
+        # environment and build identity are written before the first run, the manifest after the last log line
+        self.assertLess(SCRIPT.index('"environment.json"'), SCRIPT.index("Log \"warm-up A\""))
+        self.assertLess(SCRIPT.index('Log "done"'), SCRIPT.index("    Write-Manifest   #"))
+        start = SCRIPT.index("} catch {")
+        catch = SCRIPT[start:SCRIPT.index("} finally {", start)]
+        self.assertIn("FAILED.txt", catch)
+        self.assertIn("Write-Manifest", catch)
+
+    def test_cleanup_failures_are_reported(self):
+        self.assertIn("git worktree remove --force $t 2>&1", SCRIPT)
+        self.assertIn("CLEANUP-FAILED.txt", SCRIPT)
+        self.assertIn("exit 1", SCRIPT)
+
+    def test_in_process_warmup_is_configured_and_does_not_change_the_search(self):
+        self.assertIn("[int]$WarmupDepth = 8", SCRIPT)
+        self.assertIn('"$HashMb", "$WarmupDepth"', SCRIPT)
+        self.assertIn("warmup_depth=$WarmupDepth", SCRIPT)
+        self.assertIn("warmup_depth=", HARNESS)
+        # every search, warm-up or timed, builds a fresh Searcher so the transposition table starts empty
+        self.assertEqual(HARNESS.count("newSearcher(hashMb)"), 3)
+
     def test_no_absolute_local_paths(self):
         for text in (SCRIPT, HARNESS, (RESEARCH / "native-run-instructions.md").read_text(encoding="utf-8")):
             self.assertNotRegex(text, r"[A-Za-z]:\\(Users|Tools|Windows)|/home/|/mnt/|/Users/")
