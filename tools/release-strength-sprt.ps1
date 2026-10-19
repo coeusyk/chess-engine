@@ -199,6 +199,7 @@ try {
         $launch = @'
 $ErrorActionPreference='Stop'
 $PSNativeCommandUseErrorActionPreference=$false
+try {
 function Get-ChildSha([string]$Path) { return [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([IO.File]::ReadAllBytes($Path))).Replace('-','').ToLowerInvariant() }
 $childScriptHashes=@{ __SCRIPTHASHES__ }
 foreach ($childName in $childScriptHashes.Keys) { if ((Get-ChildSha (Join-Path '__SCRIPTDIR__' $childName)) -ne $childScriptHashes[$childName]) { throw "Script changed before the match runner started: $childName" } }
@@ -212,6 +213,7 @@ Assert-ReleaseSprtParameters $argsTable -Smoke:__SMOKE__
 if ((Get-FileHash -LiteralPath $argsTable.ExpectedArgumentManifestPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne '__PREPARED_SHA__') { throw 'Expected argument manifest changed before launch.' }
 if ((Get-ChildSha $argsTable.New) -ne '__CANDIDATE_SHA__' -or (Get-ChildSha $argsTable.Old) -ne '__BASELINE_SHA__') { throw 'A JAR changed before the match runner started.' }
 if ((Get-Process -Id $PID).ProcessorAffinity.ToInt64() -ne __AFFINITY__) { throw 'Child runner does not have frozen full affinity.' }
+} catch { Write-Error $_ -ErrorAction Continue; exit 97 }
 try { & '__RUNNER__' @argsTable; exit 0 } catch { Write-Error $_ -ErrorAction Continue; exit 1 }
 '@
         $scriptTable = (@($scripts.Keys | ForEach-Object { "'$_'='$($scripts[$_])'" }) -join '; ')
@@ -235,7 +237,11 @@ try { & '__RUNNER__' @argsTable; exit 0 } catch { Write-Error $_ -ErrorAction Co
             }
             $child.WaitForExit()
             if ($null -eq $child.ExitCode) { throw 'Owned runner exit code is unavailable; result cannot be accepted.' }
-            $exitCode = $child.ExitCode; $matchCompleted = $true
+            $exitCode = $child.ExitCode
+            # Exit code 97 is the child refusing before it invoked the match runner (a changed script or JAR, the match lock taken, a parameter
+            # mismatch). No game was played, so the attempt is recorded as not started, like any other refusal.
+            if ($exitCode -eq 97) { $matchStarted = $false; throw 'The launched child refused to start the match runner and no game was played (see console.stderr.log).' }
+            $matchCompleted = $true
         }
         finally { $reader.Dispose() }
     }

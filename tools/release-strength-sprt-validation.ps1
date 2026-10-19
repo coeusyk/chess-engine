@@ -493,6 +493,18 @@ try {
     Assert-Check ($source.Contains('-cne $parametersSha') -and $source.Contains('-cne $preparedSha') -and $source -notmatch 'Get-Content[^\r\n]*identity\.json') 'launch digests are held in memory and in the child command line, not re-read from identity.json'
     $childScripts = $source.IndexOf('Script changed before the match runner started'); $childDot = $source.IndexOf(". '__COMMON__'")
     Assert-Check ($childScripts -gt 0 -and $childDot -gt $childScripts -and $source.IndexOf('A JAR changed before the match runner started') -gt $childDot -and $source.Contains("Enter-ReleaseSprtLock 'Global\VexReleaseSprtMatch' ''")) 'the launched child verifies every hashed script before it loads one, checks both JARs, and holds the match lock'
+    # The child is never executed here, so at least require that it is valid PowerShell once its placeholders are filled in, and that no placeholder is left.
+    $childStart = $source.IndexOf('$launch = @''') + '$launch = @'''.Length; $childEnd = $source.IndexOf([Environment]::NewLine + '''@', $childStart)
+    if ($childEnd -lt 0) { $childEnd = $source.IndexOf("`
+'@", $childStart) }
+    $childText = $source.Substring($childStart, $childEnd - $childStart)
+    $filled = $childText.Replace('__SCRIPTHASHES__', "'a.ps1'='0'").Replace('__SCRIPTDIR__', 'C:\x').Replace('__CANDIDATE_SHA__', '0').Replace('__BASELINE_SHA__', '0').Replace('__PARAMETERS_SHA__', '0').Replace('__PREPARED_SHA__', '0').Replace('__COMMON__', 'C:\x\c.ps1').Replace('__SMOKE__', '$false').Replace('__PARAMETERS__', 'C:\x\p.json').Replace('__RUNNER__', 'C:\x\r.ps1').Replace('__AFFINITY__', '65535')
+    $childErrors = $null; $childTokens = $null
+    $null = [Management.Automation.Language.Parser]::ParseInput($filled, [ref]$childTokens, [ref]$childErrors)
+    Assert-Check ($childErrors.Count -eq 0 -and $filled -notmatch '__[A-Z_]+__') 'the launched child script is valid PowerShell with every placeholder replaced'
+    foreach ($token in [regex]::Matches($childText, '__[A-Z_]+__') | ForEach-Object { $_.Value } | Select-Object -Unique) { Assert-Check ($source.Contains("Replace('$token'")) "the wrapper fills the child placeholder $token" }
+    $childTry = $source.IndexOf('try {', $source.IndexOf('$PSNativeCommandUseErrorActionPreference=$false', $source.IndexOf('$launch = @'''))); $childRefuse = $source.IndexOf('exit 97'); $childRunner = $source.IndexOf("try { & '__RUNNER__'")
+    Assert-Check ($childTry -gt 0 -and $childRefuse -gt $childTry -and $childRunner -gt $childRefuse -and $childScripts -gt $childTry -and $source.IndexOf('A JAR changed before the match runner started') -lt $childRefuse -and $source.Contains('if ($exitCode -eq 97) { $matchStarted = $false; throw')) 'every check in the launched child runs inside a guard that exits 97 before the runner, and the wrapper records that exit as not started'
     $idleAfter = $source.IndexOf('$idleAfter = Get-ReleaseSprtIdleReading')
     Assert-Check ($idleAfter -gt $source.IndexOf('Read-Host') -and $idleAfter -lt $source.IndexOf('Start-Process')) 'the idle CPU is measured again after the confirmation and before launch'
     $recheck = $source.IndexOf('no longer verifies')
