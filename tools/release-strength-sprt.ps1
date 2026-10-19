@@ -251,9 +251,11 @@ try { & '__RUNNER__' @argsTable; exit 0 } catch { Write-Error $_ -ErrorAction Co
 }
 catch { $failure = $_.ToString(); Write-Warning $failure }
 finally {
-    try { Stop-Stage6OwnedProcess $child $output } catch { $failure += "`n$_" }
-    # The launch marker is the only evidence that games could have started: the child writes it immediately before it invokes the runner.
-    if ($launchesGames) { $matchStarted = [bool](Test-ReleaseSprtLaunchMarker $launchMarker $launchMarkerText) }
+    $stopFailed = $false
+    try { Stop-Stage6OwnedProcess $child $output } catch { $failure += "`n$_"; $stopFailed = $true }
+    # The launch marker is the evidence that the match runner was invoked: the child writes it immediately before it does. If the child could not
+    # be stopped it may still be about to write the marker and start, so an absent marker proves nothing then and the attempt counts as started.
+    if ($launchesGames) { $matchStarted = [bool]((Test-ReleaseSprtLaunchMarker $launchMarker $launchMarkerText) -or ($stopFailed -and $null -ne $child)) }
     $env:JAVA = $oldJava; $env:CUTECHESS = $oldCute
     try { Exit-ReleaseSprtLock $runLock } catch { $failure += "`n$_" }
     try {

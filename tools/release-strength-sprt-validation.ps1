@@ -519,16 +519,17 @@ try {
         $exitOk = $exits.Count -eq 1 -and $exits[0].Pipeline.Extent.Text -ceq '97' -and $guard.CatchClauses.Count -eq 1
         $guardShapeOk = $markerOk -and $exitOk -and
             $guard.Body.Extent.Text -match 'Script changed before' -and $guard.Body.Extent.Text -match 'A JAR changed before' -and $guard.Body.Extent.Text -match 'Enter-ReleaseSprtLock' -and
-            $runnerTry.Body.Extent.Text -match '&\s+''C:\\x\\r\.ps1''' -and $runnerTry.Body.Extent.Text -notmatch 'WriteAllText'
+            $runnerTry.Body.Statements.Count -eq 2 -and $runnerTry.Body.Statements[0].Extent.Text -match '^&\s+''C:\\x\\r\.ps1''\s+@argsTable$' -and
+            $runnerTry.Body.Statements[1] -is [Management.Automation.Language.ExitStatementAst] -and $runnerTry.Body.Statements[1].Pipeline.Extent.Text -ceq '0'
     }
     Assert-Check ($guardShapeOk) 'the launched child is: setup, one guard (every check, then the launch marker as a top-level statement, exit 97 on refusal), then the runner call'
     # The wrapper: the marker is checked after the child has exited, before the match counts as completed, and MatchStarted is decided from the marker alone.
     $waited = $source.IndexOf('$child.WaitForExit()'); $markerCheck = $source.IndexOf('if (-not (Test-ReleaseSprtLaunchMarker $launchMarker $launchMarkerText)) { throw'); $completed = $source.IndexOf('$matchCompleted = $true')
-    $finalStart = $source.IndexOf('finally {', $completed); $derive = $source.IndexOf('$matchStarted = [bool](Test-ReleaseSprtLaunchMarker $launchMarker $launchMarkerText)'); $parsed = $source.IndexOf('Read-Stage6Results')
-    Assert-Check ($waited -gt $source.IndexOf('Start-Process') -and $markerCheck -gt $waited -and $completed -gt $markerCheck -and $derive -gt $finalStart -and $derive -lt $parsed -and ([regex]::Matches($source, '\$matchStarted = \$true')).Count -eq 0) 'a child exit without the launch marker is not a completed match, and MatchStarted comes from the marker alone, decided before the verdict'
+    $outerCatch = $source.IndexOf('catch { $failure = $_.ToString(); Write-Warning $failure }'); $finalStart = $source.IndexOf('finally {', $outerCatch); $derive = $source.IndexOf('$matchStarted = [bool]((Test-ReleaseSprtLaunchMarker $launchMarker $launchMarkerText)'); $parsed = $source.IndexOf('Read-Stage6Results')
+    Assert-Check ($waited -gt $source.IndexOf('Start-Process') -and $markerCheck -gt $waited -and $completed -gt $markerCheck -and $outerCatch -gt $completed -and $derive -gt $finalStart -and $derive -lt $parsed -and ([regex]::Matches($source, '\$matchStarted = \$true')).Count -eq 0) 'a child exit without the launch marker is not a completed match, and MatchStarted comes from the marker alone, decided before the verdict'
     # Each closing step is guarded on its own so a failure in one cannot skip the attempt record or the manifest.
     $closing = $source.Substring($source.IndexOf('# Each closing step is guarded on its own'))
-    Assert-Check ($closing -match '(?s)try \{\s*Save-Stage6Json \(\[ordered\]@\{ RunId.*?attempt-end\.json''\)\s*\}\s*catch' -and $closing -match 'try \{ Stop-Transcript \| Out-Null \} catch' -and $closing -match '(?s)try \{\s*Get-ChildItem -LiteralPath \$output -File.*?SHA256SUMS''\) -Encoding ASCII\s*\}\s*catch') 'the attempt record, the transcript close and the manifest are each written in their own guarded step'
+    Assert-Check ($source -match 'try \{ Save-Stage6Json @\{ Verdict = ''SUMMARY_FAILED''[^\r\n]*\} catch \{ \$failure \+=' -and $source.Contains('$stopFailed -and $null -ne $child') -and $closing -match '(?s)try \{\s*Save-Stage6Json \(\[ordered\]@\{ RunId.*?attempt-end\.json''\)\s*\}\s*catch' -and $closing -match 'try \{ Stop-Transcript \| Out-Null \} catch' -and $closing -match '(?s)try \{\s*Get-ChildItem -LiteralPath \$output -File.*?SHA256SUMS''\) -Encoding ASCII\s*\}\s*catch') 'the attempt record, the transcript close and the manifest are each written in their own guarded step'
     # The marker helper: only exactly the text the child writes counts.
     $markerFile = Join-Path $temp 'marker-test.txt'
     Assert-Check (-not (Test-ReleaseSprtLaunchMarker $markerFile 'marker text') -and -not (Test-ReleaseSprtLaunchMarker $null 'marker text')) 'a missing marker file is not a marker'
