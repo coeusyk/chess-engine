@@ -42,7 +42,26 @@ def sha256(data):
     return hashlib.sha256(data).hexdigest()
 
 
+# The preregistered smoke command line, copied from the arguments.json of the native smoke attempt (62 arguments). It is a literal on purpose:
+# the audit's expected_arguments() and the fixture both build this list, so only an independent copy can notice if that function drifts.
+GOLDEN_ARGUMENTS = (
+    "-engine name=NEW cmd={JAVA} arg=--add-modules arg=jdk.incubator.vector arg=-jar arg={NEW} proto=uci option.Threads=1 option.Hash=16 "
+    "option.PawnHashSize=1 option.EvalType=Classical option.MultiPV=1 option.Contempt=0 option.OwnBook=false option.SyzygyOnline=false option.SyzygyPath= "
+    "-engine name=OLD cmd={JAVA} arg=--add-modules arg=jdk.incubator.vector arg=-jar arg={OLD} proto=uci option.Threads=1 option.Hash=16 "
+    "option.PawnHashSize=1 option.MultiPV=1 option.Contempt=0 option.OwnBook=false option.SyzygyOnline=false option.SyzygyPath= "
+    "-each tc=5+0.05 -games 20 -repeat -recover -resign movecount=5 score=400 -draw movenumber=40 movecount=8 score=10 "
+    "-sprt elo0=0 elo1=20 alpha=0.05 beta=0.05 -concurrency 6 -ratinginterval 10 -pgnout {PGN} -openings file={OPEN} format=epd order=sequential plies=4"
+)
+
+
 class PinnedToThePowerShellRunner(unittest.TestCase):
+    def test_expected_arguments_equal_the_golden_smoke_command_line(self):
+        fill = {"JAVA": "J", "NEW": "N", "OLD": "O", "PGN": "P", "OPEN": "E"}
+        golden = [re.sub(r"\{(\w+)\}", lambda m: fill[m.group(1)], part) for part in GOLDEN_ARGUMENTS.split(" ")]
+        built = audit.expected_arguments("J", ("N", "O"), (audit.FROZEN["new_options"], audit.FROZEN["old_options"]), 20, "P", "E")
+        self.assertEqual(len(golden), 62)
+        self.assertEqual(built, golden)
+
     """The audit keeps its own copy of the frozen identities. These tests stop the two copies drifting apart."""
 
     def test_frozen_hashes_equal_the_runner_pins(self):
@@ -209,6 +228,19 @@ class AuditCriteria(unittest.TestCase):
         self.assertEqual(record["AuditTool"]["Sha256"], sha256((ROOT / "tools" / audit.TOOL_NAME).read_bytes()))
         self.assertEqual(record["Counts"]["games"], 20)
 
+    def test_players_in_the_pgn_must_match_the_log(self):
+        pgn = (self.fx.dir / "match.pgn").read_text(encoding="utf-8")
+        (self.fx.dir / "match.pgn").write_text(pgn.replace('[Black "OLD"]', '[Black "OTHER"]').replace('[Black "NEW"]', '[Black "OTHER"]'), encoding="utf-8")
+        record = self.fx.audit()
+        self.assertIn("results-reconcile", failed(record))
+        self.assertIn("PGN players or result differ from the log", " ".join(c["Detail"] for c in record["Criteria"]))
+
+    def test_the_fixture_arguments_equal_the_golden_command_line(self):
+        arguments = self.fx.read_json("arguments.json")["Arguments"]
+        fill = {"JAVA": Fixture.JAVA, "NEW": self.fx.windows("candidate-v0.6.0.jar"), "OLD": self.fx.windows("baseline-v0.5.7.jar"),
+                "PGN": self.fx.windows("match.pgn"), "OPEN": self.fx.windows("openings-smoke-v1.epd")}
+        self.assertEqual(arguments, [re.sub(r"\{(\w+)\}", lambda m: fill[m.group(1)], part) for part in GOLDEN_ARGUMENTS.split(" ")])
+
     def test_the_record_has_the_fields_the_powershell_gate_reads(self):
         record = self.fx.audit()
         for key in ("Schema", "Verdict", "AuditedUtc", "AuditTool", "Smoke", "Criteria"):
@@ -263,6 +295,19 @@ class AuditCriteria(unittest.TestCase):
         pgn = (self.fx.dir / "match.pgn").read_text(encoding="utf-8")
         (self.fx.dir / "match.pgn").write_text(pgn.replace('[Result "1-0"]', '[Result "0-1"]', 1), encoding="utf-8")
         self.assertIn("results-reconcile", failed(self.fx.audit()))
+
+    def test_results_swapped_between_two_games_are_rejected_although_the_totals_still_agree(self):
+        # Games 1 and 5 have opposite outcomes for NEW. Swapping their PGN results keeps W/L/D, the score line and the LLR intact,
+        # so only the per-game comparison of log and PGN can notice.
+        games = [g for g in re.split(r"(?m)^(?=\[Event )", (self.fx.dir / "match.pgn").read_text(encoding="utf-8")) if g.strip()]
+        first, fifth = re.search(r'\[Result "([^"]+)"\]', games[0]).group(1), re.search(r'\[Result "([^"]+)"\]', games[4]).group(1)
+        self.assertNotEqual(first, fifth)
+        games[0] = games[0].replace(f'[Result "{first}"]', f'[Result "{fifth}"]')
+        games[4] = games[4].replace(f'[Result "{fifth}"]', f'[Result "{first}"]')
+        (self.fx.dir / "match.pgn").write_text("".join(games), encoding="utf-8")
+        record = self.fx.audit()
+        self.assertEqual(failed(record), ["results-reconcile"])
+        self.assertIn("PGN players or result differ from the log", " ".join(c["Detail"] for c in record["Criteria"]))
 
     def test_a_logged_score_that_disagrees_with_the_games_is_rejected(self):
         log = (self.fx.dir / "match.log").read_text(encoding="utf-8")

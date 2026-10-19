@@ -84,7 +84,8 @@ try {
     $power = Invoke-Stage6Checked 'powercfg.exe' @('/getactivescheme') $repo (Join-Path $output 'power-plan.log')
     $javaRaw = Invoke-Stage6Checked $java @('-XshowSettings:properties', '-version') $repo (Join-Path $output 'java-version.log')
     $cuteRaw = Invoke-Stage6Checked $cute @('--version') $repo (Join-Path $output 'cutechess-version.log')
-    $idle = (Get-Counter '\Processor Information(_Total)\% Processor Time' -SampleInterval 1 -MaxSamples 15).CounterSamples.CookedValue
+    $idle = @((Get-Counter '\Processor Information(_Total)\% Processor Time' -SampleInterval 1 -MaxSamples 15).CounterSamples.CookedValue)
+    if ($idle.Count -lt 15) { throw "The idle CPU sample is incomplete: $($idle.Count) of 15 readings." }
     $facts = [pscustomobject]@{
         Platform = [Environment]::OSVersion.Platform.ToString(); ComputerName = $env:COMPUTERNAME; CpuName = $cpu.Name
         OsCaption = $os.Caption; OsBuild = $os.BuildNumber; OsVersion = $os.Version
@@ -169,10 +170,12 @@ try {
     $parameters.ExpectedArgumentManifestPath = $prepared
     $parameterPath = Join-Path $output 'runner-parameters.json'
     Save-Stage6Json $parameters $parameterPath
+    # Held in memory and in the child's command line, not read back from files a writer to the attempt directory could also edit.
+    $parametersSha = Get-Stage6Hash $parameterPath; $preparedSha = Get-Stage6Hash $prepared
     $priorAttempts = @(Get-ChildItem -LiteralPath (Split-Path -Parent $output) -Directory | Where-Object { $_.Name -ne $runId } | Sort-Object Name | ForEach-Object { $_.Name })
     Save-Stage6Json ([ordered]@{ Kind = $kind; QualifyingPreflight = $qualifyingPreflight; ApprovedSmoke = $approvedSmoke; LockRecoveredFromAbandoned = $runLock.Recovered; PriorAttempts = $priorAttempts
         InvokingHead = Get-Stage6Git $repo @('rev-parse', 'HEAD'); Config = $config; Assets = $assets
-        ScriptSha256 = $scripts; ParametersSha256 = Get-Stage6Hash $parameterPath; PreparedArgumentsSha256 = Get-Stage6Hash $prepared
+        ScriptSha256 = $scripts; ParametersSha256 = $parametersSha; PreparedArgumentsSha256 = $preparedSha
         RandomSeed = 'none: sequential opening order, no cutechess -srand' }) (Join-Path $output 'identity.json')
     $preflightPassed = $true
     if ($PreflightNative) { Write-Host "Preflight passed. No games were started. Evidence: $output" }
@@ -186,7 +189,7 @@ try {
         if ((Get-Stage6Git $repo @('rev-parse', 'HEAD')) -cne $head) { throw 'The commit changed while waiting for confirmation; nothing was started.' }
         if (-not (Find-ReleaseSprtPassedPreflight $resultsDirectory $head $scripts)) { throw 'The qualifying preflight no longer verifies; nothing was started.' }
         if ($ExecuteNative -and -not (Find-ReleaseSprtApprovedSmoke $resultsDirectory $head $scripts)) { throw 'The audited smoke attempt no longer verifies; nothing was started.' }
-        if ((Get-Stage6Hash $openingCopy) -cne $openingExpected -or (Get-Stage6Hash $parameterPath) -cne (Get-Content -LiteralPath (Join-Path $output 'identity.json') -Raw | ConvertFrom-Json).ParametersSha256 -or
+        if ((Get-Stage6Hash $openingCopy) -cne $openingExpected -or (Get-Stage6Hash $parameterPath) -cne $parametersSha -or (Get-Stage6Hash $prepared) -cne $preparedSha -or
             (Get-Stage6Hash $java) -cne $facts.JavaSha256 -or (Get-Stage6Hash $cute) -cne $facts.CutechessSha256) { throw 'Frozen input or tool changed before launch.' }
         $facts.PowerPlanRaw = Invoke-Stage6Checked 'powercfg.exe' @('/getactivescheme') $repo (Join-Path $output 'launch-power-plan.log')
         $facts.AffinityMask = (Get-Process -Id $PID).ProcessorAffinity.ToInt64()
@@ -195,12 +198,17 @@ try {
         $launch = @'
 $ErrorActionPreference='Stop'
 $PSNativeCommandUseErrorActionPreference=$false
-$p=Get-Content -LiteralPath '__PARAMETERS__' -Raw | ConvertFrom-Json
+. '__COMMON__'
+$bytes=[IO.File]::ReadAllBytes('__PARAMETERS__')
+if ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($bytes)).Replace('-','').ToLowerInvariant() -ne '__PARAMETERS_SHA__') { throw 'Runner parameters changed before launch.' }
+$p=[Text.Encoding]::UTF8.GetString($bytes).TrimStart([char]0xFEFF) | ConvertFrom-Json
 $argsTable=@{}; foreach($property in $p.psobject.Properties){$argsTable[$property.Name]=$property.Value}
+Assert-ReleaseSprtParameters $argsTable -Smoke:__SMOKE__
+if ((Get-FileHash -LiteralPath $argsTable.ExpectedArgumentManifestPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne '__PREPARED_SHA__') { throw 'Expected argument manifest changed before launch.' }
 if ((Get-Process -Id $PID).ProcessorAffinity.ToInt64() -ne __AFFINITY__) { throw 'Child runner does not have frozen full affinity.' }
 try { & '__RUNNER__' @argsTable; exit 0 } catch { Write-Error $_ -ErrorAction Continue; exit 1 }
 '@
-        $launch = $launch.Replace('__PARAMETERS__', $parameterPath.Replace("'", "''")).Replace('__RUNNER__', $runner.Replace("'", "''")).Replace('__AFFINITY__', [string]$facts.FullAffinityMask)
+        $launch = $launch.Replace('__PARAMETERS_SHA__', $parametersSha).Replace('__PREPARED_SHA__', $preparedSha).Replace('__COMMON__', (Join-Path $PSScriptRoot 'release-strength-sprt-common.ps1').Replace("'", "''")).Replace('__SMOKE__', $(if ($SmokeNative) { '$true' } else { '$false' })).Replace('__PARAMETERS__', $parameterPath.Replace("'", "''")).Replace('__RUNNER__', $runner.Replace("'", "''")).Replace('__AFFINITY__', [string]$facts.FullAffinityMask)
         $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($launch))
         Set-Content -LiteralPath $parameters.LogPath -Value '' -NoNewline -Encoding UTF8
         $child = Start-Process -FilePath $facts.PowerShellExecutable -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded) -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $output 'console.stdout.log') -RedirectStandardError (Join-Path $output 'console.stderr.log')

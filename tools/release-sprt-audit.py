@@ -323,16 +323,16 @@ class Audit:
         started = {int(a): (b, c) for a, _, b, c in STARTED.findall(log)}
         finished = {int(a): (b, c, r) for a, b, c, r, _ in FINISHED.findall(log)}
         epd = [self.analyzer.position_key(l) for l in self.text(f["smoke_openings"][0]).split("\n") if l]
-        pgn_results = {}
+        pgn_games = {}  # (opening, White) -> (Black, Result), so both player tags are compared with the log
         for g in games:
-            pgn_results[(self.analyzer.position_key(g["FEN"]), g["White"])] = g["Result"]
+            pgn_games[(self.analyzer.position_key(g["FEN"]), g["White"])] = (g["Black"], g["Result"])
         for k in range(1, len(epd) + 1):
             for game in (2 * k - 1, 2 * k):
                 if game not in finished or game not in started or started[game] != finished[game][:2]:
                     problems.append(f"game {game}: start/finish lines disagree")
                     continue
-                if pgn_results.get((epd[k - 1], finished[game][0])) != finished[game][2]:
-                    problems.append(f"game {game}: PGN result differs from the log")
+                if pgn_games.get((epd[k - 1], finished[game][0])) != (finished[game][1], finished[game][2]):
+                    problems.append(f"game {game}: PGN players or result differ from the log")
             if 2 * k - 1 in finished and 2 * k in finished and finished[2 * k - 1][0] == finished[2 * k][0]:
                 problems.append(f"opening {k}: both games have the same White engine")
         result = self.analyzer.analyze(log, pgn, 0.0, 20.0, 0.05, 0.05, [l for l in self.text(f["smoke_openings"][0]).split("\n") if l])

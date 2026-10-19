@@ -79,6 +79,11 @@ try {
     $bad = $facts.Clone(); $bad.AffinityMask = 1; Assert-Rejected { Assert-ReleaseSprtHostFacts $bad } 'reject restricted affinity'
     $bad = $facts.Clone(); $bad.HardwareLogicalProcessors = 8; Assert-Rejected { Assert-ReleaseSprtHostFacts $bad } 'reject SMT off or a different processor count'
     $bad = $facts.Clone(); $bad.IdleCpuMean = 5.5; Assert-Rejected { Assert-ReleaseSprtHostFacts $bad } 'reject a busy host'
+    # NaN compares false with everything and $null -ge 0 is true, so a plain 'greater than the limit' test let both through.
+    foreach ($value in @([double]::NaN, [double]::PositiveInfinity, [double]::NegativeInfinity, $null, '2.5', -1, 5.01)) {
+        $bad = $facts.Clone(); $bad.IdleCpuMean = $value; Assert-Rejected { Assert-ReleaseSprtHostFacts $bad } "reject idle CPU reading '$value'"
+    }
+    foreach ($value in @(0, 5, 0.0, 4.99)) { $ok = $facts.Clone(); $ok.IdleCpuMean = $value; Assert-ReleaseSprtHostFacts $ok; $script:checks++ }
 
     # UCI handshake contract.
     $baseOpts = Get-ReleaseSprtOptionNames $config.OldOptions
@@ -287,6 +292,8 @@ try {
     Assert-PreflightRefused 'ended before it started' 'ended before it started' { param($n) New-FixtureAttempt $n -Ended $fixtureNow.AddHours(-3) }
     Assert-PreflightRefused 'start record from another attempt mixed in' 'different attempt than this directory' { param($n) $d = New-FixtureAttempt $n; Edit-FixtureJson $d 'attempt-start.json' { param($j) $j.RunId = 'preflight-20261020T000000000Z-other' }; $d }
     Assert-PreflightRefused 'end record from another attempt mixed in' 'different attempt than this directory' { param($n) $d = New-FixtureAttempt $n; Edit-FixtureJson $d 'attempt-end.json' { param($j) $j.RunId = 'preflight-20261020T000000000Z-other' }; $d }
+    Assert-PreflightRefused 'start time has no time zone' 'no time zone' { param($n) $d = New-FixtureAttempt $n; Edit-FixtureJson $d 'attempt-start.json' { param($j) $j.StartedUtc = '2026-10-20T10:00:00' }; $d }
+    Assert-PreflightRefused 'end time is not ISO 8601' 'not ISO 8601' { param($n) $d = New-FixtureAttempt $n; Edit-FixtureJson $d 'attempt-end.json' { param($j) $j.EndedUtc = 'Oct 20 2026 10:00' }; $d }
     Assert-PreflightRefused 'different commit' 'different commit' { param($n) New-FixtureAttempt $n -Head 'head2' }
     Assert-PreflightRefused 'different script hashes' 'script hashes differ: sprt.ps1' { param($n) $h = Copy-FixtureScripts; $h['sprt.ps1'] = 'f' * 64; New-FixtureAttempt $n -Hashes $h }
     Assert-PreflightRefused 'script hash not recorded (runner before the audit tool existed)' 'script hashes differ: release-sprt-audit.py' { param($n) $h = [ordered]@{}; foreach ($k in $fxScripts.Keys) { if ($k -ne 'release-sprt-audit.py') { $h[$k] = $fxScripts[$k] } }; New-FixtureAttempt $n -Hashes $h }
@@ -398,6 +405,28 @@ try {
     Assert-Check ((Get-ReleaseSprtAuditCriteria).Count -eq 12 -and ((Get-ReleaseSprtAuditCriteria | Select-Object -Unique).Count -eq 12)) 'twelve distinct audit criteria'
 
     # Provenance contract in the wrapper source, and its syntax.
+    # Timestamps: zone-qualified forms are read as the same instant, zone-less ones are refused rather than read in local time.
+    $instant = [datetime]::new(2026, 10, 20, 10, 0, 0, [DateTimeKind]::Utc)
+    foreach ($text in @('2026-10-20T10:00:00Z', '2026-10-20T10:00:00.0000000Z', '2026-10-20T15:30:00+05:30', '2026-10-20T03:00:00-07:00')) {
+        Assert-Check ((ConvertTo-ReleaseSprtUtc $text) -eq $instant) "timestamp $text is read as the same instant"
+    }
+    Assert-Check ((ConvertTo-ReleaseSprtUtc $instant) -eq $instant -and (ConvertTo-ReleaseSprtUtc $instant.ToLocalTime()) -eq $instant) 'DateTime values with a kind are read as the same instant'
+    foreach ($text in @('2026-10-20T10:00:00', '2026-10-20 10:00:00Z', '10/20/2026 10:00:00', '', 'yesterday')) { Assert-Rejected { ConvertTo-ReleaseSprtUtc $text } "reject timestamp '$text'" }
+    Assert-Rejected { ConvertTo-ReleaseSprtUtc ([datetime]::new(2026, 10, 20, 10, 0, 0, [DateTimeKind]::Unspecified)) } 'reject a DateTime with no kind'
+
+    # The child process re-reads the parameter file after the confirmation. After a JSON round trip it must still equal the frozen experiment,
+    # and an edit to it must be rejected by the frozen assertions even if every digest file were edited to match.
+    foreach ($case in @(@($parameters, $false), @($smokeParameters, $true))) {
+        $isSmoke = $case[1]; $roundTrip = Join-Path $temp 'roundtrip-parameters.json'
+        Save-Stage6Json $case[0] $roundTrip
+        $table = @{}; foreach ($property in ([Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($roundTrip)).TrimStart([char]0xFEFF) | ConvertFrom-Json).psobject.Properties) { $table[$property.Name] = $property.Value }
+        Assert-ReleaseSprtParameters $table -Smoke:$isSmoke; $script:checks++
+        foreach ($edit in @(@('Elo1', 25), @('MaxGames', 999999), @('TC', '10+0.1'), @('Concurrency', 8), @('OpeningOrder', 'random'))) {
+            $changed = $table.Clone(); $changed[$edit[0]] = $edit[1]
+            Assert-Rejected { Assert-ReleaseSprtParameters $changed -Smoke:$isSmoke } "a parameter file edited after confirmation is rejected: $($edit[0]) (smoke=$isSmoke)"
+        }
+    }
+
     $wrapperPath = Join-Path $PSScriptRoot 'release-strength-sprt.ps1'
     $parseErrors = $null; $tokens = $null
     $null = [Management.Automation.Language.Parser]::ParseFile($wrapperPath, [ref]$tokens, [ref]$parseErrors)
@@ -414,9 +443,12 @@ try {
     $executeBlock = $source.IndexOf('if ($ExecuteNative) {', $preflightGate)
     Assert-Check ($source.Contains('if ($launchesGames) {') -and $source.IndexOf('if ($launchesGames) {') -lt $preflightGate -and $executeBlock -gt $preflightGate -and $executeBlock -lt $auditGate) 'the preflight gate covers smoke and production; the audit gate covers production only'
     Assert-Check ($source.IndexOf('attempt-end.json') -gt $source.IndexOf('finally {') -and $source.IndexOf('SHA256SUMS') -gt $source.IndexOf('attempt-end.json')) 'every outcome, refusals included, ends with attempt-end.json and SHA256SUMS'
-    Assert-Check ($source.IndexOf('Script changed after the identity record') -gt $source.IndexOf('RUN-RELEASE-SPRT') -and $source.IndexOf('Script changed after the identity record') -lt $source.IndexOf('Start-Process')) 'script hashes are rechecked after the confirmation and before launch'
+    Assert-Check ($source.IndexOf('Script changed after the identity record') -gt $source.IndexOf('Read-Host') -and $source.IndexOf('Script changed after the identity record') -lt $source.IndexOf('Start-Process')) 'script hashes are rechecked after the confirmation and before launch'
     Assert-Check ($source -notmatch 'Remove-Item|git(\.exe)?[^\r\n]*(clean|reset|checkout)') 'wrapper never deletes or resets anything'
     Assert-Check ($source.Contains('Assert-ReleaseSprtHandshake') -and $source.Contains('-PrepareOnly') -and $source.Contains('Assert-ReleaseSprtArguments')) 'preflight handshakes both JARs and prepares the exact arguments'
+    $childHash = $source.IndexOf('''Runner parameters changed before launch.'''); $childAssert = $source.IndexOf('Assert-ReleaseSprtParameters $argsTable'); $childRun = $source.IndexOf('& ''__RUNNER__''')
+    Assert-Check ($childHash -gt 0 -and $childAssert -gt $childHash -and $childRun -gt $childAssert) 'the launched child checks the parameter file hash and the frozen parameters before it invokes the match runner'
+    Assert-Check ($source.Contains('-cne $parametersSha') -and $source.Contains('-cne $preparedSha') -and $source -notmatch 'Get-Content[^\r\n]*identity\.json') 'launch digests are held in memory and in the child command line, not re-read from identity.json'
     $recheck = $source.IndexOf('no longer verifies')
     Assert-Check ($recheck -gt $source.IndexOf('Read-Host') -and $recheck -gt $source.IndexOf('Script changed after the identity record') -and $recheck -lt $source.IndexOf('Start-Process') -and $source.Contains('Find-ReleaseSprtApprovedSmoke $resultsDirectory $head $scripts)')) 'both gates are checked again after the confirmation and before launch'
     Assert-Check ($source.Contains('RUN-RELEASE-SMOKE') -and $source.Contains('RUN-RELEASE-SPRT') -and $source.Contains('-SmokeNative')) 'smoke and production keep their own confirmation phrases'

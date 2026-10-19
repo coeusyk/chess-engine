@@ -92,7 +92,9 @@ function Assert-ReleaseSprtHostFacts($Facts) {
         $Facts.JavaVendor -notmatch 'Azul') { throw 'Wrong JDK.' }
     if ($Facts.CutechessVersion -ne '1.5.1') { throw 'Requires cutechess-cli 1.5.1.' }
     if ($Facts.HardwareLogicalProcessors -ne 16) { throw "Requires 16 logical processors, found $($Facts.HardwareLogicalProcessors)." }
-    if ($Facts.IdleCpuMean -gt (Get-ReleaseSprtConfig).IdleCpuMeanLimitPercent) { throw "Host is not idle: mean CPU $($Facts.IdleCpuMean)%." }
+    # Written so that NaN, infinity, a missing value and a string all fail: every comparison with NaN is false, and $null -ge 0 is true.
+    $idle = $Facts.IdleCpuMean
+    if (-not (($idle -is [double] -or $idle -is [int]) -and $idle -ge 0 -and $idle -le (Get-ReleaseSprtConfig).IdleCpuMeanLimitPercent)) { throw "Host is not idle (or the reading is not a number): mean CPU $idle%." }
 }
 
 function Test-ReleaseSprtFaultLine([string]$Line) {
@@ -217,8 +219,13 @@ function Exit-ReleaseSprtLock($Lock) {
 }
 
 # ConvertFrom-Json turns an ISO timestamp into a [datetime] in PowerShell 7 and leaves a string in 5.1; accept both.
+# A timestamp with no zone is refused: ToUniversalTime would read it in this machine's local zone and shift the 24-hour check.
 function ConvertTo-ReleaseSprtUtc($Value) {
-    if ($Value -is [datetime]) { return $Value.ToUniversalTime() }
+    if ($Value -is [datetime]) {
+        if ($Value.Kind -eq [DateTimeKind]::Unspecified) { throw "Timestamp has no time zone: $Value" }
+        return $Value.ToUniversalTime()
+    }
+    if ([string]$Value -cnotmatch '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)$') { throw "Timestamp is not ISO 8601 with a time zone: $Value" }
     return [datetime]::Parse([string]$Value, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
 }
 
