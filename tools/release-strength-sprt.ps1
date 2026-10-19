@@ -213,11 +213,13 @@ Assert-ReleaseSprtParameters $argsTable -Smoke:__SMOKE__
 if ((Get-FileHash -LiteralPath $argsTable.ExpectedArgumentManifestPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne '__PREPARED_SHA__') { throw 'Expected argument manifest changed before launch.' }
 if ((Get-ChildSha $argsTable.New) -ne '__CANDIDATE_SHA__' -or (Get-ChildSha $argsTable.Old) -ne '__BASELINE_SHA__') { throw 'A JAR changed before the match runner started.' }
 if ((Get-Process -Id $PID).ProcessorAffinity.ToInt64() -ne __AFFINITY__) { throw 'Child runner does not have frozen full affinity.' }
+[IO.File]::WriteAllText('__MARKER__', 'The match runner is about to be invoked.')
 } catch { Write-Error $_ -ErrorAction Continue; exit 97 }
 try { & '__RUNNER__' @argsTable; exit 0 } catch { Write-Error $_ -ErrorAction Continue; exit 1 }
 '@
         $scriptTable = (@($scripts.Keys | ForEach-Object { "'$_'='$($scripts[$_])'" }) -join '; ')
-        $launch = $launch.Replace('__SCRIPTHASHES__', $scriptTable).Replace('__SCRIPTDIR__', $PSScriptRoot.Replace("'", "''")).Replace('__CANDIDATE_SHA__', $config.CandidateSha256).Replace('__BASELINE_SHA__', $config.BaselineSha256).Replace('__PARAMETERS_SHA__', $parametersSha).Replace('__PREPARED_SHA__', $preparedSha).Replace('__COMMON__', (Join-Path $PSScriptRoot 'release-strength-sprt-common.ps1').Replace("'", "''")).Replace('__SMOKE__', $(if ($SmokeNative) { '$true' } else { '$false' })).Replace('__PARAMETERS__', $parameterPath.Replace("'", "''")).Replace('__RUNNER__', $runner.Replace("'", "''")).Replace('__AFFINITY__', [string]$facts.FullAffinityMask)
+        $launchMarker = Join-Path $output 'match-launched.txt'
+        $launch = $launch.Replace('__MARKER__', $launchMarker.Replace("'", "''")).Replace('__SCRIPTHASHES__', $scriptTable).Replace('__SCRIPTDIR__', $PSScriptRoot.Replace("'", "''")).Replace('__CANDIDATE_SHA__', $config.CandidateSha256).Replace('__BASELINE_SHA__', $config.BaselineSha256).Replace('__PARAMETERS_SHA__', $parametersSha).Replace('__PREPARED_SHA__', $preparedSha).Replace('__COMMON__', (Join-Path $PSScriptRoot 'release-strength-sprt-common.ps1').Replace("'", "''")).Replace('__SMOKE__', $(if ($SmokeNative) { '$true' } else { '$false' })).Replace('__PARAMETERS__', $parameterPath.Replace("'", "''")).Replace('__RUNNER__', $runner.Replace("'", "''")).Replace('__AFFINITY__', [string]$facts.FullAffinityMask)
         $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($launch))
         Set-Content -LiteralPath $parameters.LogPath -Value '' -NoNewline -Encoding UTF8
         $child = Start-Process -FilePath $facts.PowerShellExecutable -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded) -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $output 'console.stdout.log') -RedirectStandardError (Join-Path $output 'console.stderr.log')
@@ -238,9 +240,10 @@ try { & '__RUNNER__' @argsTable; exit 0 } catch { Write-Error $_ -ErrorAction Co
             $child.WaitForExit()
             if ($null -eq $child.ExitCode) { throw 'Owned runner exit code is unavailable; result cannot be accepted.' }
             $exitCode = $child.ExitCode
-            # Exit code 97 is the child refusing before it invoked the match runner (a changed script or JAR, the match lock taken, a parameter
-            # mismatch). No game was played, so the attempt is recorded as not started, like any other refusal.
-            if ($exitCode -eq 97) { $matchStarted = $false; throw 'The launched child refused to start the match runner and no game was played (see console.stderr.log).' }
+            # The child writes match-launched.txt as the last step before it invokes the match runner. An exit without it means the child never
+            # got that far (a refusal it caught and exited 97 for, a script that failed to parse, a startup failure, a kill), so no game was played
+            # and the attempt is recorded as not started like any other refusal. With the file present the match counts as started.
+            if (-not (Test-Path -LiteralPath $launchMarker -PathType Leaf)) { $matchStarted = $false; throw "The launched child never reached the match runner (exit code $exitCode) and no game was played (see console.stderr.log)." }
             $matchCompleted = $true
         }
         finally { $reader.Dispose() }

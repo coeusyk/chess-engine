@@ -498,13 +498,24 @@ try {
     if ($childEnd -lt 0) { $childEnd = $source.IndexOf("`
 '@", $childStart) }
     $childText = $source.Substring($childStart, $childEnd - $childStart)
-    $filled = $childText.Replace('__SCRIPTHASHES__', "'a.ps1'='0'").Replace('__SCRIPTDIR__', 'C:\x').Replace('__CANDIDATE_SHA__', '0').Replace('__BASELINE_SHA__', '0').Replace('__PARAMETERS_SHA__', '0').Replace('__PREPARED_SHA__', '0').Replace('__COMMON__', 'C:\x\c.ps1').Replace('__SMOKE__', '$false').Replace('__PARAMETERS__', 'C:\x\p.json').Replace('__RUNNER__', 'C:\x\r.ps1').Replace('__AFFINITY__', '65535')
+    $filled = $childText.Replace('__SCRIPTHASHES__', "'a.ps1'='0'").Replace('__SCRIPTDIR__', 'C:\x').Replace('__CANDIDATE_SHA__', '0').Replace('__BASELINE_SHA__', '0').Replace('__PARAMETERS_SHA__', '0').Replace('__PREPARED_SHA__', '0').Replace('__COMMON__', 'C:\x\c.ps1').Replace('__MARKER__', 'C:\x\m.txt').Replace('__SMOKE__', '$false').Replace('__PARAMETERS__', 'C:\x\p.json').Replace('__RUNNER__', 'C:\x\r.ps1').Replace('__AFFINITY__', '65535')
     $childErrors = $null; $childTokens = $null
-    $null = [Management.Automation.Language.Parser]::ParseInput($filled, [ref]$childTokens, [ref]$childErrors)
+    $childAst = [Management.Automation.Language.Parser]::ParseInput($filled, [ref]$childTokens, [ref]$childErrors)
     Assert-Check ($childErrors.Count -eq 0 -and $filled -notmatch '__[A-Z_]+__') 'the launched child script is valid PowerShell with every placeholder replaced'
     foreach ($token in [regex]::Matches($childText, '__[A-Z_]+__') | ForEach-Object { $_.Value } | Select-Object -Unique) { Assert-Check ($source.Contains("Replace('$token'")) "the wrapper fills the child placeholder $token" }
-    $childTry = $source.IndexOf('try {', $source.IndexOf('$PSNativeCommandUseErrorActionPreference=$false', $source.IndexOf('$launch = @'''))); $childRefuse = $source.IndexOf('exit 97'); $childRunner = $source.IndexOf("try { & '__RUNNER__'")
-    Assert-Check ($childTry -gt 0 -and $childRefuse -gt $childTry -and $childRunner -gt $childRefuse -and $childScripts -gt $childTry -and $source.IndexOf('A JAR changed before the match runner started') -lt $childRefuse -and $source.Contains('if ($exitCode -eq 97) { $matchStarted = $false; throw')) 'every check in the launched child runs inside a guard that exits 97 before the runner, and the wrapper records that exit as not started'
+    # Shape of the launched child: two setup statements, one guard that does every pre-runner check and ends by writing the launch marker, and the runner call.
+    # Nothing may sit between the guard and the runner, so a new check cannot be added outside the guard by accident.
+    $childStatements = @($childAst.EndBlock.Statements)
+    $guardShapeOk = $childStatements.Count -eq 4 -and $childStatements[2] -is [Management.Automation.Language.TryStatementAst] -and $childStatements[3] -is [Management.Automation.Language.TryStatementAst]
+    if ($guardShapeOk) {
+        $guard = $childStatements[2]; $runnerTry = $childStatements[3]
+        $guardShapeOk = $guard.CatchClauses.Count -eq 1 -and $guard.CatchClauses[0].Body.Extent.Text -match 'exit 97' -and $guard.Body.Statements[-1].Extent.Text -match 'WriteAllText\(''C:\\x\\m\.txt''' -and
+            $guard.Body.Extent.Text -match 'Script changed before' -and $guard.Body.Extent.Text -match 'A JAR changed before' -and $guard.Body.Extent.Text -match 'Enter-ReleaseSprtLock' -and
+            $runnerTry.Body.Extent.Text -match '&\s+''C:\\x\\r\.ps1''' -and $runnerTry.Body.Extent.Text -notmatch 'WriteAllText'
+    }
+    Assert-Check ($guardShapeOk) 'the launched child is: setup, one guard (every check, then the launch marker, exit 97 on refusal), then the runner call'
+    $markerCheck = $source.IndexOf('if (-not (Test-Path -LiteralPath $launchMarker'); $completed = $source.IndexOf('$matchCompleted = $true')
+    Assert-Check ($markerCheck -gt $source.IndexOf('Start-Process') -and $completed -gt $markerCheck -and $source.Contains('$matchStarted = $false; throw "The launched child never reached the match runner')) 'a child exit without the launch marker is recorded as not started, before the match is marked completed'
     $idleAfter = $source.IndexOf('$idleAfter = Get-ReleaseSprtIdleReading')
     Assert-Check ($idleAfter -gt $source.IndexOf('Read-Host') -and $idleAfter -lt $source.IndexOf('Start-Process')) 'the idle CPU is measured again after the confirmation and before launch'
     $recheck = $source.IndexOf('no longer verifies')
