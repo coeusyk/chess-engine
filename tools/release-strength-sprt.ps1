@@ -12,9 +12,14 @@
     production list) with both published JARs. Refuses to start unless a native preflight passed on this exact code. It is
     not a result and never leads to production games: the production SPRT is a separate invocation.
 .PARAMETER ExecuteNative
-    Everything in PreflightNative, then an operator confirmation, then the one preregistered SPRT.
+    Everything in PreflightNative, then an operator confirmation, then the one preregistered SPRT. Refuses to start unless
+    (1) a native preflight from this exact commit and scripts, with the same JARs, opening corpus and preregistration, started
+    and completed within the last 24 hours still verifies, and (2) a smoke attempt from this exact commit and scripts has an
+    AUDIT_APPROVED record written by tools/release-sprt-audit.py whose evidence manifest still verifies. SMOKE_PASSED alone is
+    not enough. Every refusal leaves a complete attempt directory. Procedure: docs/architecture/research/release-strength-sprt-v0.5.7-v0.6.0/runner-qualification.md.
 .PARAMETER AssetDirectory
-    Directory holding engine-uci-0.6.0.jar and engine-uci-0.5.7.jar exactly as published.
+    Directory holding engine-uci-0.6.0.jar and engine-uci-0.5.7.jar exactly as published. May be relative to the current
+    PowerShell location; it is resolved to a full path once, at the start.
 #>
 [CmdletBinding()]
 param([switch]$ValidateOnly, [switch]$PreflightNative, [switch]$SmokeNative, [switch]$ExecuteNative, [string]$AssetDirectory = '')
@@ -49,20 +54,20 @@ function Get-AttemptGit([string[]]$Arguments) { try { return Get-Stage6Git $repo
 Save-Stage6Json ([ordered]@{ RunId = $runId; Kind = $kind; StartedUtc = [DateTime]::UtcNow.ToString('o'); Status = 'STARTED'
     InvokingHead = (Get-AttemptGit @('rev-parse', 'HEAD')); Branch = (Get-AttemptGit @('branch', '--show-current')) }) (Join-Path $output 'attempt-start.json')
 
-$mutex = $null; $child = $null; $exitCode = -1; $failure = ''; $matchStarted = $false; $matchCompleted = $false; $transcript = $false; $preflightPassed = $false
+$runLock = $null; $child = $null; $exitCode = -1; $failure = ''; $matchStarted = $false; $matchCompleted = $false; $transcript = $false; $preflightPassed = $false
 $oldJava = $env:JAVA; $oldCute = $env:CUTECHESS
 try {
     Start-Transcript -LiteralPath (Join-Path $output 'runner.log') | Out-Null; $transcript = $true
     Save-Stage6Json $config (Join-Path $output 'approved-config.json')
 
     if ($env:WSL_INTEROP -or $env:WSL_DISTRO_NAME -or [Environment]::OSVersion.Platform -ne 'Win32NT') { throw 'Run from native Windows PowerShell, never WSL/interop.' }
-    if (-not $AssetDirectory) { throw 'Pass -AssetDirectory with the two published JARs.' }
+    # Resolved once, before anything else reads it: a relative path means different directories to PowerShell and to .NET.
+    $AssetDirectory = Resolve-ReleaseSprtDirectory $AssetDirectory (Get-Location).ProviderPath
     if ($repo -notmatch '^[A-Za-z]:\\' -or $repo -match '(?i)wsl') { throw 'The checkout must be on a native Windows drive.' }
     if ($config.PreregistrationSha256 -ceq 'PENDING') { throw 'Preregistration is not frozen: PreregistrationSha256 is still PENDING.' }
-    # One attempt at a time on this machine: a second concurrent run would change the host load the preregistration assumes.
-    # The mutex is released by the OS if this process is killed, so a dead attempt never blocks the next one.
-    $mutex = New-Object Threading.Mutex($false, 'Global\VexReleaseSprt')
-    if (-not $mutex.WaitOne(0)) { $mutex.Dispose(); $mutex = $null; throw 'Another release SPRT attempt is running on this machine.' }
+    # One attempt at a time on this machine. The OS releases the lock if this process is killed; a lock left abandoned is taken over and noted.
+    $runLock = Enter-ReleaseSprtLock
+    if ($runLock.Recovered) { Write-Warning 'The machine-wide lock was abandoned by an earlier attempt that died without releasing it; it is now held by this attempt.' }
     # The attempts directory itself is allowed to be untracked; anything else dirty blocks the run.
     $resultsRoot = 'tools/results/release-strength-sprt/'
     $status = Get-Stage6Git $repo @('status', '--porcelain=v1', '--untracked-files=all')
@@ -118,13 +123,24 @@ try {
     if ((Get-Stage6Hash $openingCopy) -cne $openingExpected) { throw 'Opening archive copy differs.' }
 
     $scripts = [ordered]@{}
-    foreach ($name in @('release-strength-sprt.ps1', 'release-strength-sprt-common.ps1', 'release-strength-sprt-validation.ps1', 'phase21-stage6-common.ps1', 'phase21-stage6.ps1', 'sprt.ps1', 'release-sprt-analyze.py', 'release-sprt-openings.py')) {
+    foreach ($name in Get-ReleaseSprtScriptNames) {
         $scripts[$name] = Get-Stage6Hash (Join-Path $PSScriptRoot $name)
     }
-    $qualifyingPreflight = $null
-    if ($SmokeNative) {
-        $qualifyingPreflight = Find-ReleaseSprtPassedPreflight (Join-Path $repo 'tools\results\release-strength-sprt') (Get-Stage6Git $repo @('rev-parse', 'HEAD')) $scripts
-        if (-not $qualifyingPreflight) { throw 'No passed native preflight with intact evidence exists for this exact commit and scripts. Run -PreflightNative first.' }
+    # Both games-launching modes need a native preflight from this commit and these scripts within the age limit. Production also
+    # needs the smoke attempt's independent audit. A refusal here is an ordinary failure: the attempt record is completed and no
+    # Cute Chess process exists yet.
+    $qualifyingPreflight = $null; $approvedSmoke = $null
+    if ($launchesGames) {
+        $resultsDirectory = Join-Path $repo 'tools\results\release-strength-sprt'
+        $head = Get-Stage6Git $repo @('rev-parse', 'HEAD')
+        $rejections = New-Object Collections.Generic.List[string]
+        $qualifyingPreflight = Find-ReleaseSprtPassedPreflight $resultsDirectory $head $scripts -Rejections $rejections
+        if (-not $qualifyingPreflight) { throw "No passed native preflight with intact evidence exists for this exact commit and scripts, completed within the last $($config.MaxPreflightAgeHours) hours. Run -PreflightNative first.$(Format-ReleaseSprtRejections $rejections)" }
+        if ($ExecuteNative) {
+            $rejections = New-Object Collections.Generic.List[string]
+            $approvedSmoke = Find-ReleaseSprtApprovedSmoke $resultsDirectory $head $scripts -Rejections $rejections
+            if (-not $approvedSmoke) { throw "No audited smoke attempt exists for this exact commit and scripts. Run -SmokeNative, then run tools/release-sprt-audit.py on that smoke directory (see runner-qualification.md); it must report AUDIT_APPROVED. SMOKE_PASSED alone does not authorize production.$(Format-ReleaseSprtRejections $rejections)" }
+        }
     }
 
     $arms = @(@{ Name = 'candidate'; Asset = $config.CandidateAsset; Sha = $config.CandidateSha256; Copy = 'candidate-v0.6.0.jar'; Options = $config.NewOptions; Forbidden = @() },
@@ -154,7 +170,7 @@ try {
     $parameterPath = Join-Path $output 'runner-parameters.json'
     Save-Stage6Json $parameters $parameterPath
     $priorAttempts = @(Get-ChildItem -LiteralPath (Split-Path -Parent $output) -Directory | Where-Object { $_.Name -ne $runId } | Sort-Object Name | ForEach-Object { $_.Name })
-    Save-Stage6Json ([ordered]@{ Kind = $kind; QualifyingPreflight = $qualifyingPreflight; PriorAttempts = $priorAttempts
+    Save-Stage6Json ([ordered]@{ Kind = $kind; QualifyingPreflight = $qualifyingPreflight; ApprovedSmoke = $approvedSmoke; LockRecoveredFromAbandoned = $runLock.Recovered; PriorAttempts = $priorAttempts
         InvokingHead = Get-Stage6Git $repo @('rev-parse', 'HEAD'); Config = $config; Assets = $assets
         ScriptSha256 = $scripts; ParametersSha256 = Get-Stage6Hash $parameterPath; PreparedArgumentsSha256 = Get-Stage6Hash $prepared
         RandomSeed = 'none: sequential opening order, no cutechess -srand' }) (Join-Path $output 'identity.json')
@@ -166,6 +182,10 @@ try {
         if ((Read-Host "Confirm idle native host: type $phrase to start the first game") -cne $phrase) { throw 'Operator did not confirm. No games started.' }
         foreach ($arm in $arms) { if ((Get-Stage6Hash (Join-Path $output $arm.Copy)) -cne $arm.Sha) { throw 'Frozen binary changed before launch.' } }
         foreach ($name in $scripts.Keys) { if ((Get-Stage6Hash (Join-Path $PSScriptRoot $name)) -cne $scripts[$name]) { throw "Script changed after the identity record: $name" } }
+        # The gates passed before the prompt, which can stay open for a long time. Check them again right before launching.
+        if ((Get-Stage6Git $repo @('rev-parse', 'HEAD')) -cne $head) { throw 'The commit changed while waiting for confirmation; nothing was started.' }
+        if (-not (Find-ReleaseSprtPassedPreflight $resultsDirectory $head $scripts)) { throw 'The qualifying preflight no longer verifies; nothing was started.' }
+        if ($ExecuteNative -and -not (Find-ReleaseSprtApprovedSmoke $resultsDirectory $head $scripts)) { throw 'The audited smoke attempt no longer verifies; nothing was started.' }
         if ((Get-Stage6Hash $openingCopy) -cne $openingExpected -or (Get-Stage6Hash $parameterPath) -cne (Get-Content -LiteralPath (Join-Path $output 'identity.json') -Raw | ConvertFrom-Json).ParametersSha256 -or
             (Get-Stage6Hash $java) -cne $facts.JavaSha256 -or (Get-Stage6Hash $cute) -cne $facts.CutechessSha256) { throw 'Frozen input or tool changed before launch.' }
         $facts.PowerPlanRaw = Invoke-Stage6Checked 'powercfg.exe' @('/getactivescheme') $repo (Join-Path $output 'launch-power-plan.log')
@@ -209,7 +229,7 @@ catch { $failure = $_.ToString(); Write-Warning $failure }
 finally {
     try { Stop-Stage6OwnedProcess $child $output } catch { $failure += "`n$_" }
     $env:JAVA = $oldJava; $env:CUTECHESS = $oldCute
-    if ($null -ne $mutex) { $mutex.ReleaseMutex(); $mutex.Dispose() }
+    try { Exit-ReleaseSprtLock $runLock } catch { $failure += "`n$_" }
     try {
         if ($PreflightNative) {
             $verdict = if ($preflightPassed -and -not $failure) { 'PREFLIGHT_PASSED' } else { 'PREFLIGHT_FAILED' }

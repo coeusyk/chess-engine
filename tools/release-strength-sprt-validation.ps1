@@ -149,39 +149,253 @@ try {
         Assert-Check ((Get-ReleaseSprtSmokeVerdict $bad) -eq 'SMOKE_FAILED') 'smoke fails on fault, no games, unfinished match, audit issue, exit code, unpaired games or no pair'
     }
 
-    # The smoke test requires an intact passed preflight for this exact commit and scripts.
-    $resultsRoot = Join-Path $temp 'results'
-    $scriptHashes = [ordered]@{ 'a.ps1' = 'aaa'; 'b.ps1' = 'bbb' }
-    $fixtureNow = [datetime]::new(2026, 10, 12, 12, 0, 0, [DateTimeKind]::Utc)
-    function New-FixturePreflight([string]$Name, [string]$Verdict = 'PREFLIGHT_PASSED', [string]$Head = 'head1', $Hashes = $scriptHashes, [switch]$NoSums, [datetime]$StartedUtc = [datetime]::new(2026, 10, 12, 11, 0, 0, [DateTimeKind]::Utc)) {
-        $dir = Join-Path $resultsRoot $Name; New-Item -ItemType Directory -Path $dir -Force | Out-Null
-        Set-Content -LiteralPath (Join-Path $dir 'evidence.txt') -Value 'evidence'
-        Save-Stage6Json @{ Verdict = $Verdict } (Join-Path $dir 'summary.json')
-        Save-Stage6Json @{ InvokingHead = $Head; ScriptSha256 = $Hashes } (Join-Path $dir 'identity.json')
-        Save-Stage6Json @{ StartedUtc = $StartedUtc.ToString('o') } (Join-Path $dir 'attempt-start.json')
-        if (-not $NoSums) { Get-ChildItem -LiteralPath $dir -File | Where-Object { $_.Name -ne 'SHA256SUMS' } | ForEach-Object { '{0}  {1}' -f (Get-Stage6Hash $_.FullName), $_.Name } | Set-Content -LiteralPath (Join-Path $dir 'SHA256SUMS') -Encoding ASCII }
+    # AssetDirectory: PowerShell and .NET disagree about a relative path when the session's location and the process directory differ.
+    $psDirectory = Join-Path $temp 'psdir'; $netDirectory = Join-Path $temp 'netdir'; $assetsDirectory = Join-Path $psDirectory 'assets'
+    New-Item -ItemType Directory -Path $assetsDirectory, $netDirectory | Out-Null
+    [IO.File]::WriteAllBytes((Join-Path $assetsDirectory 'asset.bin'), [byte[]](1, 2, 3))
+    $savedLocation = (Get-Location).Path; $savedDirectory = [Environment]::CurrentDirectory
+    try {
+        Set-Location -LiteralPath $psDirectory; [Environment]::CurrentDirectory = $netDirectory
+        Assert-Check ($null -ne (Get-FileHash -LiteralPath (Join-Path 'assets' 'asset.bin'))) 'PowerShell resolves a relative path against its own location'
+        Assert-Rejected { [IO.File]::OpenRead((Join-Path 'assets' 'asset.bin')).Dispose() } 'a .NET API resolves the same relative path against the process directory and misses it (the defect)'
+        $resolved = Resolve-ReleaseSprtDirectory 'assets' (Get-Location).ProviderPath
+        Assert-Check ([IO.Path]::IsPathRooted($resolved) -and $resolved -match '^[A-Za-z]:\\') 'a relative asset directory resolves to a full drive path'
+        [IO.File]::OpenRead((Join-Path $resolved 'asset.bin')).Dispose(); $script:checks++
+        Assert-Check ($null -ne (Get-FileHash -LiteralPath (Join-Path $resolved 'asset.bin'))) 'the resolved path works for both PowerShell and .NET'
+        Assert-Check ((Resolve-ReleaseSprtDirectory $assetsDirectory (Get-Location).ProviderPath) -ceq $resolved) 'an absolute path resolves to the same directory as the relative one'
+        Assert-Check ((Resolve-ReleaseSprtDirectory '..\psdir\assets' (Get-Location).ProviderPath) -ceq $resolved) 'dot-dot segments are collapsed'
+        Assert-Check ((Resolve-ReleaseSprtDirectory ($assetsDirectory + '\') (Get-Location).ProviderPath).TrimEnd('\') -ceq $resolved.TrimEnd('\')) 'a trailing separator does not change the directory'
+        Set-Location -LiteralPath $netDirectory
+        Assert-Check ((Resolve-ReleaseSprtDirectory $assetsDirectory (Get-Location).ProviderPath) -ceq $resolved) 'an absolute path does not depend on the current location'
+        foreach ($bad in @('', '   ', '\\server\share\assets', '\assets', 'C:assets', 'no-such-directory', '..\psdir\assets\asset.bin')) {
+            Assert-Rejected { Resolve-ReleaseSprtDirectory $bad (Get-Location).ProviderPath } "reject asset directory '$bad'"
+        }
+        Assert-Rejected { Resolve-ReleaseSprtDirectory 'assets' 'relative-base' } 'reject a relative base directory'
+    }
+    finally { Set-Location -LiteralPath $savedLocation; [Environment]::CurrentDirectory = $savedDirectory }
+
+    # Machine-wide lock, with real second processes and a private lock name (never the production one). No engine or game is involved.
+    $lockName = 'Global\VexReleaseSprtValidation-' + [guid]::NewGuid().ToString('N')
+    $powerShellPath = (Get-Process -Id $PID).Path
+    $readyFile = Join-Path $temp 'lock-holder-ready'
+    function Start-LockChild([string]$Command) {
+        $psi = New-Object Diagnostics.ProcessStartInfo
+        $psi.FileName = $powerShellPath; $psi.Arguments = '-NoProfile -NonInteractive -Command "' + $Command + '"'
+        $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+        return [Diagnostics.Process]::Start($psi)
+    }
+    # 0: another process could take the lock (so nobody holds it), 1: it was held, 2: it saw an abandoned lock.
+    function Get-LockProbe {
+        $child = Start-LockChild ("`$m = New-Object Threading.Mutex(`$false, '$lockName'); try { if (`$m.WaitOne(0)) { `$m.ReleaseMutex(); exit 0 } else { exit 1 } } catch { exit 2 }")
+        if (-not $child.WaitForExit(60000)) { $child.Kill(); throw 'Lock probe timed out.' }
+        return $child.ExitCode
+    }
+    $holder = $null
+    try {
+        Assert-Check ((Get-LockProbe) -eq 0) 'the private lock starts free'
+        $holder = Start-LockChild ("`$m = New-Object Threading.Mutex(`$false, '$lockName'); if (-not `$m.WaitOne(0)) { exit 3 }; Set-Content -LiteralPath '$readyFile' -Value held; Start-Sleep -Seconds 300")
+        $deadline = [DateTime]::UtcNow.AddSeconds(60)
+        while (-not (Test-Path -LiteralPath $readyFile) -and [DateTime]::UtcNow -lt $deadline -and -not $holder.HasExited) { Start-Sleep -Milliseconds 100 }
+        Assert-Check (Test-Path -LiteralPath $readyFile) 'another process took the lock'
+        Assert-Check ((Get-LockProbe) -eq 1) 'a third process sees the lock as held'
+        $refusal = ''
+        try { $null = Enter-ReleaseSprtLock $lockName } catch { $refusal = $_.ToString() }
+        Assert-Check ($refusal -match 'Another release SPRT attempt is running') 'a second attempt is refused while the lock is held'
+        $holder.Kill(); $null = $holder.WaitForExit(30000)
+        $recovered = Enter-ReleaseSprtLock $lockName
+        # .NET 10 hands a mutex left by a killed process to the next waiter without raising AbandonedMutexException, so Recovered is not asserted here.
+        Assert-Check ($null -ne $recovered.Mutex) 'a lock held by a killed process is acquired by the next attempt: a dead attempt never blocks the next'
+        Assert-Check ((Get-LockProbe) -eq 1) 'the recovering attempt now holds the lock'
+        Exit-ReleaseSprtLock $recovered
+        Assert-Check ((Get-LockProbe) -eq 0) 'releasing the recovered lock frees it for the next process'
+        $normal = Enter-ReleaseSprtLock $lockName
+        Assert-Check ($normal.Recovered -eq $false) 'an ordinary acquisition is not reported as recovered'
+        Exit-ReleaseSprtLock $normal
+        Assert-Check ((Get-LockProbe) -eq 0) 'the lock is free after an ordinary release'
+        Exit-ReleaseSprtLock $null; $script:checks++
+    }
+    finally { if ($null -ne $holder -and -not $holder.HasExited) { $holder.Kill() } }
+    # Where the runtime does signal abandonment (a thread that exits holding the lock), the attempt takes the lock over and says so.
+    Add-Type -TypeDefinition 'using System.Threading; public static class ReleaseSprtLockAbandoner { public static void Hold(string name) { var t = new Thread(() => { var m = new Mutex(false, name); m.WaitOne(); }); t.Start(); t.Join(); } }'
+    $threadLockName = 'Global\VexReleaseSprtValidation-' + [guid]::NewGuid().ToString('N')
+    [ReleaseSprtLockAbandoner]::Hold($threadLockName)
+    $takenOver = Enter-ReleaseSprtLock $threadLockName
+    Assert-Check ($takenOver.Recovered -eq $true) 'a lock abandoned by an exited owner is taken over and reported as recovered'
+    Exit-ReleaseSprtLock $takenOver
+    $again = Enter-ReleaseSprtLock $threadLockName
+    Assert-Check ($again.Recovered -eq $false) 'recovery is reported once: the next acquisition is ordinary'
+    Exit-ReleaseSprtLock $again
+
+    # Gates. Fixture attempts use a config whose pinned hashes belong to small inert files, so every identity comparison is real.
+    $inputs = Join-Path $temp 'gate-inputs'; New-Item -ItemType Directory -Path $inputs | Out-Null
+    foreach ($name in @('candidate-v0.6.0.jar', 'baseline-v0.5.7.jar', 'openings-v1.epd', 'openings-smoke-v1.epd', 'preregistration.md')) { [IO.File]::WriteAllText((Join-Path $inputs $name), "fixture $name`n") }
+    $fxConfig = Get-ReleaseSprtConfig
+    $fxConfig.CandidateSha256 = Get-Stage6Hash (Join-Path $inputs 'candidate-v0.6.0.jar'); $fxConfig.BaselineSha256 = Get-Stage6Hash (Join-Path $inputs 'baseline-v0.5.7.jar')
+    $fxConfig.OpeningSha256 = Get-Stage6Hash (Join-Path $inputs 'openings-v1.epd'); $fxConfig.SmokeOpeningSha256 = Get-Stage6Hash (Join-Path $inputs 'openings-smoke-v1.epd')
+    $fxConfig.PreregistrationSha256 = Get-Stage6Hash (Join-Path $inputs 'preregistration.md')
+    $fxScripts = [ordered]@{}; $counter = 0
+    foreach ($name in Get-ReleaseSprtScriptNames) { $counter++; $fxScripts[$name] = ('{0:x}' -f $counter).PadLeft(64, 'a') }
+    function Copy-FixtureScripts { $copy = [ordered]@{}; foreach ($key in $fxScripts.Keys) { $copy[$key] = $fxScripts[$key] }; return $copy }
+    $resultsRoot = Join-Path $temp 'results'; New-Item -ItemType Directory -Path $resultsRoot | Out-Null
+    $fixtureNow = [datetime]::new(2026, 10, 20, 12, 0, 0, [DateTimeKind]::Utc)
+    function Write-FixtureSums([string]$Dir) {
+        Get-ChildItem -LiteralPath $Dir -File | Where-Object { $_.Name -ne 'SHA256SUMS' } | Sort-Object Name |
+            ForEach-Object { '{0}  {1}' -f (Get-Stage6Hash $_.FullName), $_.Name } | Set-Content -LiteralPath (Join-Path $Dir 'SHA256SUMS') -Encoding ASCII
+    }
+    # Change a JSON file the way a bug or a careless edit would, then regenerate the manifest so only the identity comparison can object.
+    function Edit-FixtureJson([string]$Dir, [string]$File, [scriptblock]$Change) {
+        $json = Get-Content -LiteralPath (Join-Path $Dir $File) -Raw | ConvertFrom-Json
+        $null = & $Change $json
+        Save-Stage6Json $json (Join-Path $Dir $File); Write-FixtureSums $Dir
+    }
+    function New-FixtureAttempt([string]$Name, [string]$Kind = 'preflight', $Started = $fixtureNow.AddHours(-2), $Ended = $null, [string]$Head = 'head1', $Hashes = $fxScripts, [string]$Verdict = 'PREFLIGHT_PASSED') {
+        if ($null -eq $Ended) { $Ended = $Started.AddMinutes(1) }
+        $smoke = $Kind -eq 'smoke'
+        $dir = Join-Path $resultsRoot $Name; New-Item -ItemType Directory -Path $dir | Out-Null
+        foreach ($file in @('candidate-v0.6.0.jar', 'baseline-v0.5.7.jar', 'preregistration.md', $(if ($smoke) { 'openings-smoke-v1.epd' } else { 'openings-v1.epd' }))) { Copy-Item -LiteralPath (Join-Path $inputs $file) -Destination $dir }
+        Save-Stage6Json ([ordered]@{ RunId = $Name; Kind = $Kind; StartedUtc = $Started.ToString('o'); Status = 'STARTED'; InvokingHead = $Head; Branch = '' }) (Join-Path $dir 'attempt-start.json')
+        Save-Stage6Json ([ordered]@{ RunId = $Name; Kind = $Kind; EndedUtc = $Ended.ToString('o'); MatchStarted = $smoke; MatchCompleted = $smoke; ExitCode = $(if ($smoke) { 0 } else { -1 }); Failure = '' }) (Join-Path $dir 'attempt-end.json')
+        Save-Stage6Json ([ordered]@{ Verdict = $Verdict; Failure = ''; GamesStarted = 0 }) (Join-Path $dir 'summary.json')
+        Save-Stage6Json ([ordered]@{ Kind = $Kind; InvokingHead = $Head; Config = $fxConfig; ScriptSha256 = $Hashes
+            Assets = @([ordered]@{ Arm = 'candidate'; Sha256 = $fxConfig.CandidateSha256 }, [ordered]@{ Arm = 'baseline'; Sha256 = $fxConfig.BaselineSha256 }) }) (Join-Path $dir 'identity.json')
+        Write-FixtureSums $dir
         return $dir
     }
-    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight (Join-Path $temp 'no-such-root') 'head1' $scriptHashes $fixtureNow)) 'no results directory means no qualifying preflight'
-    $null = New-FixturePreflight 'preflight-20261012T000001000Z-fail' 'PREFLIGHT_FAILED'
-    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $scriptHashes $fixtureNow)) 'a failed preflight does not qualify'
-    $null = New-FixturePreflight 'preflight-20261012T000002000Z-nosums' 'PREFLIGHT_PASSED' 'head1' $scriptHashes -NoSums
-    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $scriptHashes $fixtureNow)) 'a preflight without SHA256SUMS does not qualify'
-    $emptyDir = New-FixturePreflight 'preflight-20261012T000002500Z-empty'
-    Set-Content -LiteralPath (Join-Path $emptyDir 'SHA256SUMS') -Value '' -Encoding ASCII; Set-Content -LiteralPath (Join-Path $emptyDir 'evidence.txt') -Value 'tampered'
-    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $scriptHashes $fixtureNow)) 'an empty SHA256SUMS does not hide tampered evidence'
-    $extraDir = New-FixturePreflight 'preflight-20261012T000002600Z-extra'
-    Set-Content -LiteralPath (Join-Path $extraDir 'added-later.txt') -Value 'not in the manifest'
-    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $scriptHashes $fixtureNow)) 'a file missing from SHA256SUMS does not qualify'
-    $null = New-FixturePreflight 'preflight-20261011T000000000Z-old' 'PREFLIGHT_PASSED' 'head1' $scriptHashes -StartedUtc ([datetime]::new(2026, 10, 10, 9, 0, 0, [DateTimeKind]::Utc))
-    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $scriptHashes $fixtureNow)) 'a preflight older than the age limit does not qualify'
-    $good1 = New-FixturePreflight 'preflight-20261012T000003000Z-good'
-    Assert-Check ((Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $scriptHashes $fixtureNow) -ceq 'preflight-20261012T000003000Z-good') 'an intact recent passed preflight qualifies'
-    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head2' $scriptHashes $fixtureNow)) 'a preflight from another commit does not qualify'
-    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' ([ordered]@{ 'a.ps1' = 'aaa'; 'b.ps1' = 'CHANGED' }) $fixtureNow)) 'a preflight from different scripts does not qualify'
-    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $scriptHashes ($fixtureNow.AddHours(-3)))) 'a preflight that starts after the check time does not qualify'
-    Set-Content -LiteralPath (Join-Path $good1 'evidence.txt') -Value 'tampered'
-    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $scriptHashes $fixtureNow)) 'a preflight whose evidence no longer matches its checksums does not qualify'
+    function Get-PreflightRefusal([string]$Name, [scriptblock]$Make) {
+        $dir = @(& $Make $Name)[-1]
+        $why = New-Object Collections.Generic.List[string]
+        $found = Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $fxScripts $fixtureNow $fxConfig $why
+        Remove-Item -LiteralPath $dir -Recurse -Force
+        return [pscustomobject]@{ Found = $found; Why = ($why -join "`n") }
+    }
+    function Assert-PreflightRefused([string]$Because, [string]$Pattern, [scriptblock]$Make) {
+        $r = Get-PreflightRefusal 'preflight-20261020T100000000Z-case' $Make
+        Assert-Check ($null -eq $r.Found -and $r.Why -match $Pattern) "preflight refused: $Because"
+    }
+    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight (Join-Path $temp 'no-such-root') 'head1' $fxScripts $fixtureNow $fxConfig)) 'no results directory means no qualifying preflight'
+    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $fxScripts $fixtureNow $fxConfig)) 'an empty results directory means no qualifying preflight'
+    Assert-PreflightRefused 'failed verdict' 'PREFLIGHT_FAILED' { param($n) New-FixtureAttempt $n -Verdict 'PREFLIGHT_FAILED' }
+    Assert-PreflightRefused 'no SHA256SUMS' 'SHA256SUMS is missing' { param($n) $d = New-FixtureAttempt $n; Remove-Item (Join-Path $d 'SHA256SUMS'); $d }
+    Assert-PreflightRefused 'older runner record without attempt-end' 'attempt-end.json is missing|SHA256SUMS' { param($n) $d = New-FixtureAttempt $n; Remove-Item (Join-Path $d 'attempt-end.json'); Write-FixtureSums $d; $d }
+    Assert-PreflightRefused 'empty SHA256SUMS hiding tampered evidence' 'SHA256SUMS is empty' { param($n) $d = New-FixtureAttempt $n; Set-Content -LiteralPath (Join-Path $d 'SHA256SUMS') -Value '' -Encoding ASCII; $d }
+    Assert-PreflightRefused 'file missing from SHA256SUMS' 'file not in SHA256SUMS: added-later.txt' { param($n) $d = New-FixtureAttempt $n; Set-Content -LiteralPath (Join-Path $d 'added-later.txt') -Value 'x'; $d }
+    Assert-PreflightRefused 'evidence changed after the manifest was written' 'hash mismatch: summary.json' { param($n) $d = New-FixtureAttempt $n; Set-Content -LiteralPath (Join-Path $d 'summary.json') -Value '{"Verdict":"PREFLIGHT_PASSED","GamesStarted":0} ' ; $d }
+    Assert-PreflightRefused 'manifest names a path outside the directory' 'malformed SHA256SUMS line' { param($n) $d = New-FixtureAttempt $n; Add-Content -LiteralPath (Join-Path $d 'SHA256SUMS') -Value ('{0}  ..\summary.json' -f ('a' * 64)); $d }
+    Assert-PreflightRefused 'subdirectory the manifest cannot cover' 'unverifiable subdirectory' { param($n) $d = New-FixtureAttempt $n; New-Item -ItemType Directory -Path (Join-Path $d 'extra') | Out-Null; $d }
+    Assert-PreflightRefused 'started 24 h 1 min ago' 'stale' { param($n) New-FixtureAttempt $n -Started $fixtureNow.AddHours(-24).AddMinutes(-1) }
+    Assert-PreflightRefused 'starts after the check time' 'future' { param($n) New-FixtureAttempt $n -Started $fixtureNow.AddMinutes(30) }
+    Assert-PreflightRefused 'ended before it started' 'ended before it started' { param($n) New-FixtureAttempt $n -Ended $fixtureNow.AddHours(-3) }
+    Assert-PreflightRefused 'start record from another attempt mixed in' 'different attempt than this directory' { param($n) $d = New-FixtureAttempt $n; Edit-FixtureJson $d 'attempt-start.json' { param($j) $j.RunId = 'preflight-20261020T000000000Z-other' }; $d }
+    Assert-PreflightRefused 'end record from another attempt mixed in' 'different attempt than this directory' { param($n) $d = New-FixtureAttempt $n; Edit-FixtureJson $d 'attempt-end.json' { param($j) $j.RunId = 'preflight-20261020T000000000Z-other' }; $d }
+    Assert-PreflightRefused 'different commit' 'different commit' { param($n) New-FixtureAttempt $n -Head 'head2' }
+    Assert-PreflightRefused 'different script hashes' 'script hashes differ: sprt.ps1' { param($n) $h = Copy-FixtureScripts; $h['sprt.ps1'] = 'f' * 64; New-FixtureAttempt $n -Hashes $h }
+    Assert-PreflightRefused 'script hash not recorded (runner before the audit tool existed)' 'script hashes differ: release-sprt-audit.py' { param($n) $h = [ordered]@{}; foreach ($k in $fxScripts.Keys) { if ($k -ne 'release-sprt-audit.py') { $h[$k] = $fxScripts[$k] } }; New-FixtureAttempt $n -Hashes $h }
+    Assert-PreflightRefused 'recorded candidate identity differs' 'CandidateSha256' { param($n) $d = New-FixtureAttempt $n; Edit-FixtureJson $d 'identity.json' { param($j) $j.Config.CandidateSha256 = '0' * 64 }; $d }
+    Assert-PreflightRefused 'recorded baseline asset hash differs' 'recorded JAR identities differ' { param($n) $d = New-FixtureAttempt $n; Edit-FixtureJson $d 'identity.json' { param($j) $j.Assets[1].Sha256 = '0' * 64 }; $d }
+    Assert-PreflightRefused 'recorded opening corpus hash differs' 'OpeningSha256' { param($n) $d = New-FixtureAttempt $n; Edit-FixtureJson $d 'identity.json' { param($j) $j.Config.OpeningSha256 = '0' * 64 }; $d }
+    Assert-PreflightRefused 'recorded preregistration hash differs' 'PreregistrationSha256' { param($n) $d = New-FixtureAttempt $n; Edit-FixtureJson $d 'identity.json' { param($j) $j.Config.PreregistrationSha256 = '0' * 64 }; $d }
+    Assert-PreflightRefused 'frozen SPRT bound changed' 'frozen configuration differs: Elo1' { param($n) $d = New-FixtureAttempt $n; Edit-FixtureJson $d 'identity.json' { param($j) $j.Config.Elo1 = 25 }; $d }
+    Assert-PreflightRefused 'frozen game cap changed' 'MaxGames' { param($n) $d = New-FixtureAttempt $n; Edit-FixtureJson $d 'identity.json' { param($j) $j.Config.MaxGames = 30000 }; $d }
+    Assert-PreflightRefused 'frozen engine option changed' 'NewOptions' { param($n) $d = New-FixtureAttempt $n; Edit-FixtureJson $d 'identity.json' { param($j) $j.Config.NewOptions[0] = 'Hash=32' }; $d }
+    Assert-PreflightRefused 'archived JAR replaced and manifest regenerated' 'archived candidate-v0.6.0.jar differs' { param($n) $d = New-FixtureAttempt $n; Set-Content -LiteralPath (Join-Path $d 'candidate-v0.6.0.jar') -Value 'other'; Write-FixtureSums $d; $d }
+    Assert-PreflightRefused 'archived opening list replaced and manifest regenerated' 'archived openings-v1.epd differs' { param($n) $d = New-FixtureAttempt $n; Set-Content -LiteralPath (Join-Path $d 'openings-v1.epd') -Value 'other'; Write-FixtureSums $d; $d }
+    Assert-PreflightRefused 'archived preregistration replaced and manifest regenerated' 'archived preregistration.md differs' { param($n) $d = New-FixtureAttempt $n; Set-Content -LiteralPath (Join-Path $d 'preregistration.md') -Value 'other'; Write-FixtureSums $d; $d }
+    Assert-PreflightRefused 'archived JAR missing' 'archived baseline-v0.5.7.jar is missing' { param($n) $d = New-FixtureAttempt $n; Remove-Item (Join-Path $d 'baseline-v0.5.7.jar'); Write-FixtureSums $d; $d }
+    Assert-PreflightRefused 'attempt-end records a failure' 'failure or a started match' { param($n) $d = New-FixtureAttempt $n; Edit-FixtureJson $d 'attempt-end.json' { param($j) $j.Failure = 'boom' }; $d }
+    Assert-PreflightRefused 'a match was started' 'failure or a started match' { param($n) $d = New-FixtureAttempt $n; Edit-FixtureJson $d 'attempt-end.json' { param($j) $j.MatchStarted = $true }; $d }
+    Assert-PreflightRefused 'games were started' 'not PREFLIGHT_PASSED with no games' { param($n) $d = New-FixtureAttempt $n; Edit-FixtureJson $d 'summary.json' { param($j) $j.GamesStarted = 2 }; $d }
+    Assert-PreflightRefused 'a smoke attempt is not a preflight' 'not a preflight attempt' { param($n) New-FixtureAttempt $n -Kind 'smoke' }
+    Assert-PreflightRefused 'corrupted identity.json' 'could not be evaluated' { param($n) $d = New-FixtureAttempt $n; Set-Content -LiteralPath (Join-Path $d 'identity.json') -Value '{ not json'; Write-FixtureSums $d; $d }
+    Assert-PreflightRefused 'corrupted timestamps' 'could not be evaluated' { param($n) $d = New-FixtureAttempt $n; Edit-FixtureJson $d 'attempt-start.json' { param($j) $j.StartedUtc = 'yesterday-ish' }; $d }
+    $accepted = Get-PreflightRefusal 'preflight-20261020T100000000Z-case' { param($n) New-FixtureAttempt $n }
+    Assert-Check ($accepted.Found -ceq 'preflight-20261020T100000000Z-case') 'an intact preflight from this commit, scripts and frozen experiment qualifies'
+    $edge = Get-PreflightRefusal 'preflight-20261020T100000000Z-case' { param($n) New-FixtureAttempt $n -Started $fixtureNow.AddHours(-24).AddMinutes(1) }
+    Assert-Check ($edge.Found -ceq 'preflight-20261020T100000000Z-case') 'a preflight that started 23 h 59 min ago still qualifies'
+    $goodPreflight = New-FixtureAttempt 'preflight-20261020T090000000Z-good'
+    $null = New-FixtureAttempt 'preflight-20261020T110000000Z-failed' -Verdict 'PREFLIGHT_FAILED'
+    $null = New-FixtureAttempt 'preflight-20261020T111000000Z-other-commit' -Head 'head2'
+    $why = New-Object Collections.Generic.List[string]
+    Assert-Check ((Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $fxScripts $fixtureNow $fxConfig $why) -ceq 'preflight-20261020T090000000Z-good' -and $why.Count -eq 2) 'newer failed or foreign preflights are skipped and reported; the qualifying one is found'
+    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $fxScripts $fixtureNow.AddHours(23) $fxConfig)) 'the same preflight no longer qualifies once it is past the limit'
+    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $fxScripts $fixtureNow.AddHours(-3) $fxConfig)) 'a preflight that starts after the check time does not qualify'
+    Set-Content -LiteralPath (Join-Path $goodPreflight 'summary.json') -Value 'tampered'
+    Assert-Check ($null -eq (Find-ReleaseSprtPassedPreflight $resultsRoot 'head1' $fxScripts $fixtureNow $fxConfig)) 'a preflight whose evidence no longer matches its checksums does not qualify'
+    Get-ChildItem -LiteralPath $resultsRoot -Directory | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force }
+
+    # Production also needs an independently audited smoke attempt. SMOKE_PASSED from the runner alone must never be enough.
+    $smokeName = 'smoke-20261020T100000000Z-aaaaaaaa'; $auditName = 'audit-20261020T101000000Z-bbbbbbbb'
+    function New-FixtureAudit([string]$Name, [string]$SmokeName, [scriptblock]$Change = $null) {
+        $smokeDirectory = Join-Path $resultsRoot $SmokeName
+        $record = [ordered]@{ Schema = 1; Verdict = 'AUDIT_APPROVED'; AuditedUtc = $fixtureNow.AddHours(-1).ToString('o')
+            AuditTool = [ordered]@{ Name = 'release-sprt-audit.py'; Sha256 = $fxScripts['release-sprt-audit.py']; AnalyzerSha256 = $fxScripts['release-sprt-analyze.py'] }
+            Smoke = [ordered]@{ RunId = $SmokeName; ManifestSha256 = (Get-Stage6Hash (Join-Path $smokeDirectory 'SHA256SUMS')); InvokingHead = 'head1'; ScriptSha256 = $fxScripts
+                StartedUtc = $fixtureNow.AddHours(-2).ToString('o'); EndedUtc = $fixtureNow.AddHours(-2).AddMinutes(1).ToString('o') }
+            Counts = [ordered]@{}; Criteria = @(Get-ReleaseSprtAuditCriteria | ForEach-Object { [ordered]@{ Id = $_; Passed = $true; Detail = 'fixture' } }) }
+        if ($Change) { $null = & $Change $record }
+        $dir = Join-Path $resultsRoot $Name; New-Item -ItemType Directory -Path $dir | Out-Null
+        Save-Stage6Json $record (Join-Path $dir 'smoke-audit.json'); Write-FixtureSums $dir
+        return $dir
+    }
+    function Get-SmokeGateResult([scriptblock]$Before = $null, [scriptblock]$Change = $null, [scriptblock]$After = $null, $Hashes = $fxScripts, [string]$Head = 'head1', [switch]$NoAudit) {
+        $smokeDirectory = New-FixtureAttempt $smokeName 'smoke'
+        if ($Before) { $null = & $Before $smokeDirectory }
+        $auditDirectory = if ($NoAudit) { $null } else { New-FixtureAudit $auditName $smokeName $Change }
+        if ($After) { $null = & $After $smokeDirectory $auditDirectory }
+        $why = New-Object Collections.Generic.List[string]
+        $found = Find-ReleaseSprtApprovedSmoke $resultsRoot $Head $Hashes $fixtureNow $fxConfig $why
+        Get-ChildItem -LiteralPath $resultsRoot -Directory | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force }
+        return [pscustomobject]@{ Found = $found; Why = ($why -join "`n") }
+    }
+    function Assert-SmokeRefused([string]$Because, [string]$Pattern, [hashtable]$Arguments) {
+        $r = Get-SmokeGateResult @Arguments
+        Assert-Check ($null -eq $r.Found -and $r.Why -match $Pattern) "audited smoke refused: $Because"
+    }
+    $r = Get-SmokeGateResult
+    Assert-Check ($r.Found.Audit -ceq $auditName -and $r.Found.Smoke -ceq $smokeName -and $r.Found.ManifestSha256 -match '^[0-9a-f]{64}$') 'an approved audit of an intact smoke attempt from this commit and scripts authorizes production'
+    $r = Get-SmokeGateResult -NoAudit
+    Assert-Check ($null -eq $r.Found) 'a clean smoke attempt with no audit record does not authorize production (SMOKE_PASSED alone is not enough)'
+    Assert-SmokeRefused 'audit verdict is rejected' 'audit verdict is AUDIT_REJECTED' @{ Change = { param($r) $r.Verdict = 'AUDIT_REJECTED' } }
+    Assert-SmokeRefused 'unknown schema' 'unknown audit schema' @{ Change = { param($r) $r.Schema = 2 } }
+    Assert-SmokeRefused 'a criterion failed' 'criterion failed: opening-pairs' @{ Change = { param($r) $r.Criteria[7].Passed = $false } }
+    Assert-SmokeRefused 'a criterion was not audited' 'criterion not audited: no-faults' @{ Change = { param($r) $r.Criteria = @($r.Criteria | Where-Object { $_.Id -ne 'no-faults' }) } }
+    Assert-SmokeRefused 'an unexpected extra criterion' 'unexpected criteria' @{ Change = { param($r) $r.Criteria = @($r.Criteria) + [ordered]@{ Id = 'extra'; Passed = $true; Detail = '' } } }
+    Assert-SmokeRefused 'a criterion marked passed with a string' 'criterion failed: games-complete' @{ Change = { param($r) $r.Criteria[6].Passed = 'yes' } }
+    Assert-SmokeRefused 'audited by a different audit program' 'different audit program' @{ Change = { param($r) $r.AuditTool.Sha256 = 'e' * 64 } }
+    Assert-SmokeRefused 'audited with a different analyzer' 'different analyzer' @{ Change = { param($r) $r.AuditTool.AnalyzerSha256 = 'e' * 64 } }
+    Assert-SmokeRefused 'audit record without an analyzer hash' 'different analyzer' @{ Change = { param($r) $r.AuditTool.Remove('AnalyzerSha256') } }
+    Assert-SmokeRefused 'smoke attempt records from another attempt mixed in' 'different attempt than this directory' @{ Before = { param($s) Edit-FixtureJson $s 'attempt-end.json' { param($j) $j.RunId = 'smoke-20261020T000000000Z-cccccccc' } } }
+    Assert-SmokeRefused 'audited smoke ran on another commit' 'different commit' @{ Change = { param($r) $r.Smoke.InvokingHead = 'head2' } }
+    Assert-SmokeRefused 'audited smoke ran on other scripts' 'different scripts: sprt.ps1' @{ Change = { param($r) $h = Copy-FixtureScripts; $h['sprt.ps1'] = 'f' * 64; $r.Smoke.ScriptSha256 = $h } }
+    Assert-SmokeRefused 'this checkout is on another commit' 'different commit' @{ Head = 'head2' }
+    $changedScripts = Copy-FixtureScripts; $changedScripts['release-strength-sprt.ps1'] = 'd' * 64
+    Assert-SmokeRefused 'this checkout has different scripts' 'different scripts: release-strength-sprt.ps1' @{ Hashes = $changedScripts }
+    Assert-SmokeRefused 'manifest differs from the one audited' 'not the one that was audited' @{ Change = { param($r) $r.Smoke.ManifestSha256 = '0' * 64 } }
+    Assert-SmokeRefused 'smoke evidence changed and re-manifested after the audit' 'not the one that was audited' @{ After = { param($s, $a) Set-Content -LiteralPath (Join-Path $s 'extra.txt') -Value 'late'; Write-FixtureSums $s } }
+    Assert-SmokeRefused 'smoke file changed after the audit' 'hash mismatch: summary.json' @{ After = { param($s, $a) Set-Content -LiteralPath (Join-Path $s 'summary.json') -Value 'edited' } }
+    Assert-SmokeRefused 'audit record changed after it was written' 'hash mismatch: smoke-audit.json' @{ After = { param($s, $a) $p = Join-Path $a 'smoke-audit.json'; Set-Content -LiteralPath $p -Value ((Get-Content -LiteralPath $p -Raw) + ' ') } }
+    Assert-SmokeRefused 'audit record without a manifest' 'SHA256SUMS is missing' @{ After = { param($s, $a) Remove-Item (Join-Path $a 'SHA256SUMS') } }
+    Assert-SmokeRefused 'audit record that is not JSON' 'could not be evaluated' @{ After = { param($s, $a) Set-Content -LiteralPath (Join-Path $a 'smoke-audit.json') -Value 'nope'; Write-FixtureSums $a } }
+    Assert-SmokeRefused 'audited smoke attempt is gone' 'audited smoke attempt is missing' @{ After = { param($s, $a) Remove-Item -LiteralPath $s -Recurse -Force } }
+    Assert-SmokeRefused 'run id that escapes the results directory' 'malformed smoke run id' @{ Change = { param($r) $r.Smoke.RunId = '..\preflight-x' } }
+    Assert-SmokeRefused 'audited before the smoke ended' 'before the smoke ended' @{ Change = { param($r) $r.AuditedUtc = $fixtureNow.AddHours(-3).ToString('o') } }
+    Assert-SmokeRefused 'smoke attempt did not exit cleanly' 'completed, clean match' @{ Before = { param($s) Edit-FixtureJson $s 'attempt-end.json' { param($j) $j.ExitCode = 1 } } }
+    Assert-SmokeRefused 'smoke attempt reports a failure' 'completed, clean match' @{ Before = { param($s) Edit-FixtureJson $s 'attempt-end.json' { param($j) $j.Failure = 'x' } } }
+    Assert-SmokeRefused 'smoke archived JAR differs' 'archived candidate-v0.6.0.jar differs' @{ Before = { param($s) Set-Content -LiteralPath (Join-Path $s 'candidate-v0.6.0.jar') -Value 'other'; Write-FixtureSums $s } }
+    Assert-SmokeRefused 'smoke used a different opening list' 'archived openings-smoke-v1.epd differs' @{ Before = { param($s) Set-Content -LiteralPath (Join-Path $s 'openings-smoke-v1.epd') -Value 'other'; Write-FixtureSums $s } }
+    Assert-SmokeRefused 'smoke frozen configuration differs' 'frozen configuration differs: TC' @{ Before = { param($s) Edit-FixtureJson $s 'identity.json' { param($j) $j.Config.TC = '10+0.1' } } }
+    # A preflight directory cannot stand in for the smoke attempt.
+    $null = New-FixtureAttempt 'preflight-20261020T100000000Z-pre'
+    $null = New-FixtureAudit $auditName 'preflight-20261020T100000000Z-pre'
+    $why = New-Object Collections.Generic.List[string]
+    Assert-Check ($null -eq (Find-ReleaseSprtApprovedSmoke $resultsRoot 'head1' $fxScripts $fixtureNow $fxConfig $why) -and (($why -join '') -match 'malformed smoke run id')) 'an audit that names a preflight directory is refused'
+    Get-ChildItem -LiteralPath $resultsRoot -Directory | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force }
+
+    $listed = New-Object Collections.Generic.List[string]; 1..5 | ForEach-Object { $listed.Add("candidate-$_`: reason") }
+    Assert-Check ((Format-ReleaseSprtRejections $null) -match 'No candidate attempt directory exists' -and (Format-ReleaseSprtRejections $listed) -match 'Rejected \(5\): candidate-1: reason \| candidate-2: reason \| candidate-3: reason$') 'refusal messages name the first three rejected candidates and the total'
+
+    # The runner's list of hashed files and the criteria list match what the audit program is documented to check.
+    foreach ($name in Get-ReleaseSprtScriptNames) { Assert-Check (Test-Path -LiteralPath (Join-Path $PSScriptRoot $name)) "hashed script exists: $name" }
+    Assert-Check ((Get-ReleaseSprtAuditCriteria).Count -eq 12 -and ((Get-ReleaseSprtAuditCriteria | Select-Object -Unique).Count -eq 12)) 'twelve distinct audit criteria'
 
     # Provenance contract in the wrapper source, and its syntax.
     $wrapperPath = Join-Path $PSScriptRoot 'release-strength-sprt.ps1'
@@ -189,15 +403,26 @@ try {
     $null = [Management.Automation.Language.Parser]::ParseFile($wrapperPath, [ref]$tokens, [ref]$parseErrors)
     Assert-Check ($parseErrors.Count -eq 0) 'wrapper syntax'
     $source = Get-Content -LiteralPath $wrapperPath -Raw
+    $commonSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'release-strength-sprt-common.ps1') -Raw
     $at = $source.IndexOf('attempt-start.json')
-    Assert-Check ($at -ge 0 -and $at -lt $source.IndexOf('Start-Transcript') -and $at -lt $source.IndexOf('WSL_INTEROP') -and $at -lt $source.IndexOf('Dirty checkout') -and $at -lt $source.IndexOf('Threading.Mutex') -and $source.IndexOf('Start-Transcript') -lt $source.IndexOf('Get-Counter')) 'attempt record is written before any platform, dirty-tree, mutex or host probe'
-    Assert-Check ($source.Contains('Global\VexReleaseSprt') -and $source.Contains('ReleaseMutex')) 'single-instance mutex is taken and released'
+    Assert-Check ($at -ge 0 -and $at -lt $source.IndexOf('Start-Transcript') -and $at -lt $source.IndexOf('WSL_INTEROP') -and $at -lt $source.IndexOf('Dirty checkout') -and $at -lt $source.IndexOf('Enter-ReleaseSprtLock') -and $source.IndexOf('Start-Transcript') -lt $source.IndexOf('Get-Counter')) 'attempt record is written before any platform, dirty-tree, lock or host probe'
+    Assert-Check ($source.Contains('Enter-ReleaseSprtLock') -and $source.Contains('Exit-ReleaseSprtLock') -and $commonSource.Contains('[string]$Name = ''Global\VexReleaseSprt''') -and $commonSource.Contains('AbandonedMutexException')) 'single-instance machine-wide lock is taken, recovered when abandoned and released'
+    Assert-Check ($source.IndexOf('Resolve-ReleaseSprtDirectory') -gt 0 -and $source.IndexOf('Resolve-ReleaseSprtDirectory') -lt $source.IndexOf('Join-Path $AssetDirectory') -and $source.IndexOf('Resolve-ReleaseSprtDirectory') -gt $source.IndexOf('try {')) 'the asset directory is resolved to a full path, inside the recorded attempt, before any JAR is opened'
+    Assert-Check ($source.Contains('(Get-Location).ProviderPath')) 'a relative asset directory is resolved against the PowerShell location'
+    $preflightGate = $source.IndexOf('Find-ReleaseSprtPassedPreflight'); $auditGate = $source.IndexOf('Find-ReleaseSprtApprovedSmoke')
+    Assert-Check ($preflightGate -gt $source.IndexOf('try {') -and $auditGate -gt $preflightGate -and $auditGate -lt $source.IndexOf('Read-Host') -and $auditGate -lt $source.IndexOf('Start-Process') -and $source.IndexOf('finally {') -gt $auditGate) 'both gates run inside the recorded attempt, before the confirmation prompt and before any process is launched'
+    $executeBlock = $source.IndexOf('if ($ExecuteNative) {', $preflightGate)
+    Assert-Check ($source.Contains('if ($launchesGames) {') -and $source.IndexOf('if ($launchesGames) {') -lt $preflightGate -and $executeBlock -gt $preflightGate -and $executeBlock -lt $auditGate) 'the preflight gate covers smoke and production; the audit gate covers production only'
+    Assert-Check ($source.IndexOf('attempt-end.json') -gt $source.IndexOf('finally {') -and $source.IndexOf('SHA256SUMS') -gt $source.IndexOf('attempt-end.json')) 'every outcome, refusals included, ends with attempt-end.json and SHA256SUMS'
     Assert-Check ($source.IndexOf('Script changed after the identity record') -gt $source.IndexOf('RUN-RELEASE-SPRT') -and $source.IndexOf('Script changed after the identity record') -lt $source.IndexOf('Start-Process')) 'script hashes are rechecked after the confirmation and before launch'
     Assert-Check ($source -notmatch 'Remove-Item|git(\.exe)?[^\r\n]*(clean|reset|checkout)') 'wrapper never deletes or resets anything'
     Assert-Check ($source.Contains('Assert-ReleaseSprtHandshake') -and $source.Contains('-PrepareOnly') -and $source.Contains('Assert-ReleaseSprtArguments')) 'preflight handshakes both JARs and prepares the exact arguments'
-    Assert-Check ($source.Contains('RUN-RELEASE-SMOKE') -and $source.Contains('-SmokeNative') -and $source.IndexOf('Find-ReleaseSprtPassedPreflight') -lt $source.IndexOf('Start-Process')) 'smoke has its own confirmation phrase and checks the preflight before launching'
+    $recheck = $source.IndexOf('no longer verifies')
+    Assert-Check ($recheck -gt $source.IndexOf('Read-Host') -and $recheck -gt $source.IndexOf('Script changed after the identity record') -and $recheck -lt $source.IndexOf('Start-Process') -and $source.Contains('Find-ReleaseSprtApprovedSmoke $resultsDirectory $head $scripts)')) 'both gates are checked again after the confirmation and before launch'
+    Assert-Check ($source.Contains('RUN-RELEASE-SMOKE') -and $source.Contains('RUN-RELEASE-SPRT') -and $source.Contains('-SmokeNative')) 'smoke and production keep their own confirmation phrases'
     Assert-Check ($source -notmatch '\$PSCommandPath|&\s+\$MyInvocation|Invoke-Expression|-ExecuteNative\s+-') 'no mode can start another mode'
     Assert-Check ($source.Contains('$config.SmokeOpeningRelativePath') -and $source.Contains('$config.OpeningRelativePath') -and ([regex]::Matches($source, 'Join-Path \$repo ''[^'']*openings')).Count -eq 0) 'opening lists are selected through the config only'
+    Assert-Check ($source.Contains('Get-ReleaseSprtScriptNames') -and $source -notmatch "'release-sprt-openings.py'") 'the hashed script list has one definition'
     Write-Host "Release SPRT synthetic validation PASS: $script:checks checks. No engines, Cute Chess or games launched."
 }
 finally {

@@ -497,3 +497,36 @@ An independent read-only review found five gaps, all fixed and re-reviewed: Powe
 - The runner's Read-Stage6Results calls the cap INCONCLUSIVE only when 20,000 games were scored. The cap is on game starts, so a run ending with 19,998 scored and 2 cancelled would have been INCOMPLETE. `Get-ReleaseSprtVerdict` fixes that, and the validation checks that neither the cap nor an interruption can become H0 or H1.
 - Added `-SmokeNative`: 20 games on a separate 10-position list (the ranks after the production list, no shared position), the production command line otherwise, its own directory and confirmation phrase, refused unless an intact passed preflight exists for the same commit and scripts, and no path from it to production.
 - A second independent review (Codex gpt-6-luna, xhigh) of the smoke and reconciliation work found no blocker and four items, all fixed. The smoke gate accepted an empty `SHA256SUMS`, which would let a truncated manifest hide tampered evidence; it now needs a non-empty manifest that lists every file, and a preflight started within 24 hours. The analyzer picks the opening list from the attempt's recorded kind and labels a smoke attempt as not a result. A third game on one opening no longer overwrites a scored game in the pair statistics. The review confirmed the model port against `sprt.cpp` at v1.5.1, including the NEW-side perspective and the draw-Elo scaling.
+
+### [2026-10-19] Release SPRT smoke audited, runner hardened before production, nothing run in production
+
+**Built:**
+
+- An audit of the native smoke attempt `smoke-20261019T065359346Z-7b3787d4` (commit `c9816ae`): checksums, script, JAR, opening and argument identity, an independent reconciliation of PGN against log by opening pair and colour, and the lock and attempt-record behaviour. Verdict: infrastructure GO, conditional on the gaps below being closed.
+- [`tools/release-sprt-audit.py`](../tools/release-sprt-audit.py), an independent audit of an archived smoke attempt against twelve explicit criteria. It writes `audit-<UTC>-<random>/smoke-audit.json` with its own `SHA256SUMS`, naming the evidence manifest and runner commit it approved, and never writes into the smoke directory.
+- Runner changes in `tools/release-strength-sprt.ps1` and `tools/release-strength-sprt-common.ps1`: `-AssetDirectory` resolved once to a full path; the preflight gate now covers `-ExecuteNative` as well as `-SmokeNative` and binds the whole frozen configuration and archived inputs; a second gate for production that requires an approved audit; lock acquisition moved into `Enter-ReleaseSprtLock` and `Exit-ReleaseSprtLock`.
+- 108 new validation checks (111 to 219), 45 new Python tests, and [`runner-qualification.md`](../docs/architecture/research/release-strength-sprt-v0.5.7-v0.6.0/runner-qualification.md), the revised qualification procedure.
+
+**Decisions Made:**
+
+- Do not trust `SMOKE_PASSED`. The runner that plays the games also writes that label, so production would be authorizing itself. The audit is a separate program that re-derives the verdict from raw files and keeps its own copy of the frozen identities, pinned to the PowerShell config by a test. The runner's summary is corroboration only.
+- The audit record lives in its own `audit-*` directory, not inside the smoke attempt, because the existing smoke and preflight evidence must stay byte-for-byte unchanged. At production time the gate re-verifies the record's checksums, the audit program and analyzer hashes, the commit and script hashes, and the smoke attempt's manifest hash and every file in it, and does not accept the stored verdict alone. It repeats both gates right before launch, after the confirmation prompt.
+- Bind the audit program into `identity.json` by adding it to the hashed script list. As a consequence the existing preflight and smoke cannot authorize production: they recorded the old scripts, and the audit program did not exist. A fresh preflight, smoke and audit on the commit carrying this change are required.
+- Keep the 24-hour rule as in section 17 of the preregistration (started within 24 hours) and also require completion within 24 hours. The preregistration, the frozen openings, the hypotheses and every experiment parameter are untouched.
+- Skip a time limit on the smoke attempt. It is bound to the exact commit and scripts, and the 24-hour preflight covers host conditions. Add one only if the maintainer wants it.
+- Test the machine-wide lock with real second processes and a private lock name, never the production name.
+- Left alone: `Assert-Stage6Jar` in `phase21-stage6.ps1`, which is where the relative-path failure surfaced. It is shared with the frozen Phase 21 runner, so the fix is at the entry point instead.
+
+**Broke / Fixed:**
+
+- A relative `-AssetDirectory` failed with `Could not find a part of the path 'C:\Users\release-sprt-assets\engine-uci-0.6.0.jar'` on 2026-10-12 and 2026-10-19. `Get-FileHash` resolves against the PowerShell location and `ZipFile.OpenRead` against the .NET process directory. Fixed by resolving once at the entry point. The preregistration's example commands (`..\release-sprt-assets`) work now.
+- `-ExecuteNative` had no preflight check. Fixed.
+- The validation suite's mutex test only searched the source text. Replaced by cross-process tests.
+- The first version of the abandoned-lock test asserted that a lock left by a killed process is reported as recovered. It was not: on .NET 10.0.12 the next waiter gets the lock with no `AbandonedMutexException`. The test now asserts what matters (the next attempt acquires the lock) and checks the take-over path with a thread that exits holding the lock, where the runtime does signal it. A `LockRecoveredFromAbandoned` of false is therefore not proof of a clean predecessor.
+
+**Measurements:**
+
+- Smoke audit: 20 games started and finished once each, 10 color-reversed pairs, NEW 13-4-3 (7-2-1 as White, 6-2-2 as Black), 17 adjudications and 3 threefold repetitions, no fault, logged LLR 0.603 against 0.6034 recomputed. This is a plumbing check, not a result.
+- The new audit program run read-only on that attempt: 11 of 12 criteria pass; `script-identity` fails because the old runner never recorded the audit program's hash. The smoke evidence verified against its checksums before and after.
+- Mutation check of the new gates: disabling each of five checks (age limit, commit comparison, criterion result, audit manifest hash, script hash comparison) made the validation fail.
+- Not tested: Windows PowerShell 5.1, and `-ExecuteNative` itself (the audit gate is covered by unit tests and a source-order check). No game, benchmark or SPRT was started.
