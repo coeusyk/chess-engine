@@ -62,6 +62,18 @@ At production time the runner does not accept the record on its word alone. It r
 
 This does not make forgery impossible. Someone with write access to `tools/results` could fabricate both directories. The gate protects against mistakes and against evidence changing after the fact, and it makes a bad run hard to start by accident. It is not a security boundary.
 
+## Launch state in attempt-end.json
+
+A games-launching attempt (`smoke` or `execute`) records `LaunchState` next to `MatchStarted`. The launched child writes `match-launched.txt` as the last statement before it invokes the match runner, and the wrapper decides the state once, after it has tried to stop the child.
+
+| LaunchState | Evidence | MatchStarted |
+|---|---|---|
+| `STARTED` | a launch marker holding exactly the expected text | `true` |
+| `NOT_STARTED` | no valid marker, and the child was stopped or was never created (a parse failure, a refusal that exited 97, a startup failure) | `false` |
+| `UNKNOWN_INTERRUPTED` | no valid marker, but the child exists and could not be stopped, so it may still be about to write the marker and start | `null` |
+
+`STARTED` means the match runner was invoked, not that a game was played. `UNKNOWN_INTERRUPTED` is incomplete and keeps its evidence. It reads as `INTERRUPTED` in the summary, never gets the smoke verdict, and is never eligible for promotion. Every consumer requires `MatchStarted` to be `true` (the production smoke gate and the audit) or `false` (the preflight gate), so a `null` is rejected by all of them. Older `attempt-end.json` files have no `LaunchState` and are read as before.
+
 ## Qualification procedure on RENEGADE
 
 Run from the repository root in native Windows PowerShell 7, on the commit that will be used for production, with a clean checkout, nothing else running and no `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`, `_JAVA_OPTIONS` or `MAVEN_OPTS` set. The asset directory may now be relative or absolute.

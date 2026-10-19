@@ -104,6 +104,14 @@ function Test-ReleaseSprtLaunchMarker($Path, [string]$Text) {
     try { return ([IO.File]::ReadAllText($Path) -ceq $Text) } catch { return $false }
 }
 
+# How far a launch got. STARTED needs a valid launch marker. A child that could not be stopped and left no marker may still be about to write it and
+# start, so that is UNKNOWN_INTERRUPTED: neither started nor proven not started. Anything else is NOT_STARTED.
+function Get-ReleaseSprtLaunchState([bool]$MarkerValid, [bool]$StopFailed, [bool]$ChildExists) {
+    if ($MarkerValid) { return 'STARTED' }
+    if ($StopFailed -and $ChildExists) { return 'UNKNOWN_INTERRUPTED' }
+    return 'NOT_STARTED'
+}
+
 # Mean and maximum of the idle CPU readings. Only a full set of finite numbers is accepted, so an empty or broken counter cannot read as an idle host.
 function Measure-ReleaseSprtIdle($Samples, [int]$Expected = 15) {
     $values = @($Samples)

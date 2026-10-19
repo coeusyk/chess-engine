@@ -431,6 +431,14 @@ class AuditCriteria(unittest.TestCase):
         self.fx.dump("attempt-end.json", end)
         self.assertIn("attempt-completed", failed(self.fx.audit()))
 
+    def test_an_unknown_interrupted_launch_is_not_a_completed_smoke(self):
+        end = self.fx.read_json("attempt-end.json")
+        end["MatchStarted"] = None
+        end["LaunchState"] = "UNKNOWN_INTERRUPTED"
+        end["MatchCompleted"] = False
+        self.fx.dump("attempt-end.json", end)
+        self.assertIn("attempt-completed", failed(self.fx.audit()))
+
     def test_an_end_before_the_start_within_one_microsecond_is_rejected(self):
         self.assertGreater(audit.parse_utc_ns("2026-10-19T06:53:59.0000002Z"), audit.parse_utc_ns("2026-10-19T06:53:59.0000001Z"))
         self.assertEqual(audit.parse_utc_ns("2026-10-19T06:53:59Z") % 10**9, 0)

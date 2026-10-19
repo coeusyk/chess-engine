@@ -55,7 +55,7 @@ Save-Stage6Json ([ordered]@{ RunId = $runId; Kind = $kind; StartedUtc = [DateTim
     InvokingHead = (Get-AttemptGit @('rev-parse', 'HEAD')); Branch = (Get-AttemptGit @('branch', '--show-current')) }) (Join-Path $output 'attempt-start.json')
 
 $launchMarker = $null; $launchMarkerText = 'The match runner is about to be invoked.'
-$runLock = $null; $child = $null; $exitCode = -1; $failure = ''; $matchStarted = $false; $matchCompleted = $false; $transcript = $false; $preflightPassed = $false
+$runLock = $null; $child = $null; $exitCode = -1; $failure = ''; $matchStarted = $false; $launchState = 'NOT_STARTED'; $matchCompleted = $false; $transcript = $false; $preflightPassed = $false
 $oldJava = $env:JAVA; $oldCute = $env:CUTECHESS
 try {
     Start-Transcript -LiteralPath (Join-Path $output 'runner.log') | Out-Null; $transcript = $true
@@ -254,8 +254,12 @@ finally {
     $stopFailed = $false
     try { Stop-Stage6OwnedProcess $child $output } catch { $failure += "`n$_"; $stopFailed = $true }
     # The launch marker is the evidence that the match runner was invoked: the child writes it immediately before it does. If the child could not
-    # be stopped it may still be about to write the marker and start, so an absent marker proves nothing then and the attempt counts as started.
-    if ($launchesGames) { $matchStarted = [bool]((Test-ReleaseSprtLaunchMarker $launchMarker $launchMarkerText) -or ($stopFailed -and $null -ne $child)) }
+    # be stopped it may still be about to write the marker and start, so an absent marker proves nothing then. That is UNKNOWN_INTERRUPTED and MatchStarted
+    # is null (unknown), which every consumer that requires true rejects.
+    if ($launchesGames) {
+        $launchState = Get-ReleaseSprtLaunchState (Test-ReleaseSprtLaunchMarker $launchMarker $launchMarkerText) $stopFailed ($null -ne $child)
+        $matchStarted = switch ($launchState) { 'STARTED' { $true } 'UNKNOWN_INTERRUPTED' { $null } default { $false } }
+    }
     $env:JAVA = $oldJava; $env:CUTECHESS = $oldCute
     try { Exit-ReleaseSprtLock $runLock } catch { $failure += "`n$_" }
     try {
@@ -267,11 +271,11 @@ finally {
             $logPath = Join-Path $output 'match.log'; $pgnPath = Join-Path $output 'match.pgn'
             $log = if (Test-Path -LiteralPath $logPath) { [string](Get-Content -LiteralPath $logPath -Raw -Encoding UTF8) } else { '' }
             $pgn = if (Test-Path -LiteralPath $pgnPath) { [string](Get-Content -LiteralPath $pgnPath -Raw -Encoding UTF8) } else { '' }
-            $result = Read-Stage6Results $log $pgn $exitCode ($matchStarted -and -not $matchCompleted)
+            $result = Read-Stage6Results $log $pgn $exitCode (($launchState -cne 'NOT_STARTED') -and -not $matchCompleted)
             if ($failure -and $result.Verdict -ne 'INTERRUPTED') { $result.Verdict = 'SETUP_PROTOCOL_FAULT'; $result.EligibleForPromotion = $false }
             if (-not $failure) { $result.Verdict = Get-ReleaseSprtVerdict $result }
-            if ($SmokeNative -and $matchStarted) { $result.Verdict = Get-ReleaseSprtSmokeVerdict $result; $result.EligibleForPromotion = $false }
-            if (-not $matchStarted -and $failure) { $result.Verdict = 'NOT_STARTED' }
+            if ($SmokeNative -and $launchState -ceq 'STARTED') { $result.Verdict = Get-ReleaseSprtSmokeVerdict $result; $result.EligibleForPromotion = $false }
+            if ($launchState -ceq 'NOT_STARTED' -and $failure) { $result.Verdict = 'NOT_STARTED' }
             $result | Add-Member -NotePropertyName Kind -NotePropertyValue $kind
             $result | Add-Member -NotePropertyName Failure -NotePropertyValue $failure
             $result.PairAudit | Export-Csv -LiteralPath (Join-Path $output 'pair-audit.csv') -NoTypeInformation -Encoding UTF8
@@ -285,7 +289,7 @@ finally {
     }
     # Each closing step is guarded on its own, so one that fails cannot stop the attempt record or the manifest from being written.
     try {
-        Save-Stage6Json ([ordered]@{ RunId = $runId; Kind = $kind; EndedUtc = [DateTime]::UtcNow.ToString('o'); MatchStarted = $matchStarted; MatchCompleted = $matchCompleted
+        Save-Stage6Json ([ordered]@{ RunId = $runId; Kind = $kind; EndedUtc = [DateTime]::UtcNow.ToString('o'); MatchStarted = $matchStarted; LaunchState = $launchState; MatchCompleted = $matchCompleted
             ExitCode = $exitCode; Failure = $failure }) (Join-Path $output 'attempt-end.json')
     }
     catch { $failure += "`n$_" }
