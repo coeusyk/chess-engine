@@ -190,8 +190,8 @@ try {
         return [Diagnostics.Process]::Start($psi)
     }
     # 0: another process could take the lock (so nobody holds it), 1: it was held, 2: it saw an abandoned lock.
-    function Get-LockProbe {
-        $child = Start-LockChild ("`$m = New-Object Threading.Mutex(`$false, '$lockName'); try { if (`$m.WaitOne(0)) { `$m.ReleaseMutex(); exit 0 } else { exit 1 } } catch { exit 2 }")
+    function Get-LockProbe([string]$Name = $lockName) {
+        $child = Start-LockChild ("`$m = New-Object Threading.Mutex(`$false, '$Name'); try { if (`$m.WaitOne(0)) { `$m.ReleaseMutex(); exit 0 } else { exit 1 } } catch { exit 2 }")
         if (-not $child.WaitForExit(60000)) { $child.Kill(); throw 'Lock probe timed out.' }
         return $child.ExitCode
     }
@@ -204,16 +204,16 @@ try {
         Assert-Check (Test-Path -LiteralPath $readyFile) 'another process took the lock'
         Assert-Check ((Get-LockProbe) -eq 1) 'a third process sees the lock as held'
         $refusal = ''
-        try { $null = Enter-ReleaseSprtLock $lockName } catch { $refusal = $_.ToString() }
+        try { $null = Enter-ReleaseSprtLock $lockName '' } catch { $refusal = $_.ToString() }
         Assert-Check ($refusal -match 'Another release SPRT attempt is running') 'a second attempt is refused while the lock is held'
         $holder.Kill(); $null = $holder.WaitForExit(30000)
-        $recovered = Enter-ReleaseSprtLock $lockName
+        $recovered = Enter-ReleaseSprtLock $lockName ''
         # .NET 10 hands a mutex left by a killed process to the next waiter without raising AbandonedMutexException, so Recovered is not asserted here.
         Assert-Check ($null -ne $recovered.Mutex) 'a lock held by a killed process is acquired by the next attempt: a dead attempt never blocks the next'
         Assert-Check ((Get-LockProbe) -eq 1) 'the recovering attempt now holds the lock'
         Exit-ReleaseSprtLock $recovered
         Assert-Check ((Get-LockProbe) -eq 0) 'releasing the recovered lock frees it for the next process'
-        $normal = Enter-ReleaseSprtLock $lockName
+        $normal = Enter-ReleaseSprtLock $lockName ''
         Assert-Check ($normal.Recovered -eq $false) 'an ordinary acquisition is not reported as recovered'
         Exit-ReleaseSprtLock $normal
         Assert-Check ((Get-LockProbe) -eq 0) 'the lock is free after an ordinary release'
@@ -224,12 +224,43 @@ try {
     Add-Type -TypeDefinition 'using System.Threading; public static class ReleaseSprtLockAbandoner { public static void Hold(string name) { var t = new Thread(() => { var m = new Mutex(false, name); m.WaitOne(); }); t.Start(); t.Join(); } }'
     $threadLockName = 'Global\VexReleaseSprtValidation-' + [guid]::NewGuid().ToString('N')
     [ReleaseSprtLockAbandoner]::Hold($threadLockName)
-    $takenOver = Enter-ReleaseSprtLock $threadLockName
+    $takenOver = Enter-ReleaseSprtLock $threadLockName ''
     Assert-Check ($takenOver.Recovered -eq $true) 'a lock abandoned by an exited owner is taken over and reported as recovered'
     Exit-ReleaseSprtLock $takenOver
-    $again = Enter-ReleaseSprtLock $threadLockName
+    $again = Enter-ReleaseSprtLock $threadLockName ''
     Assert-Check ($again.Recovered -eq $false) 'recovery is reported once: the next acquisition is ordinary'
     Exit-ReleaseSprtLock $again
+
+    # The match runs in a child that outlives a wrapper killed outright. The child holds the match lock, so the next attempt must refuse to start.
+    $matchName = 'Global\VexReleaseSprtValidationMatch-' + [guid]::NewGuid().ToString('N')
+    $matchReady = Join-Path $temp 'match-holder-ready'
+    $matchHolder = $null
+    try {
+        $matchHolder = Start-LockChild ("`$m = New-Object Threading.Mutex(`$false, '$matchName'); if (-not `$m.WaitOne(0)) { exit 3 }; Set-Content -LiteralPath '$matchReady' -Value held; Start-Sleep -Seconds 300")
+        $deadline = [DateTime]::UtcNow.AddSeconds(60)
+        while (-not (Test-Path -LiteralPath $matchReady) -and [DateTime]::UtcNow -lt $deadline -and -not $matchHolder.HasExited) { Start-Sleep -Milliseconds 100 }
+        Assert-Check (Test-Path -LiteralPath $matchReady) 'a child process holds the match lock'
+        $refusal = ''
+        try { $null = Enter-ReleaseSprtLock $lockName $matchName } catch { $refusal = $_.ToString() }
+        Assert-Check ($refusal -match 'still running') 'an attempt is refused while a match from an earlier attempt is still running'
+        Assert-Check ((Get-LockProbe $lockName) -eq 0) 'the refused attempt released the main lock again'
+        $matchHolder.Kill(); $null = $matchHolder.WaitForExit(30000)
+        $afterKill = Enter-ReleaseSprtLock $lockName $matchName
+        Assert-Check ($null -ne $afterKill.Mutex) 'once the match process is gone the next attempt can start'
+        Exit-ReleaseSprtLock $afterKill
+        Assert-Check ((Get-LockProbe $matchName) -eq 0 -and (Get-LockProbe $lockName) -eq 0) 'probing the match lock leaves neither lock held'
+    }
+    finally { if ($null -ne $matchHolder -and -not $matchHolder.HasExited) { $matchHolder.Kill() } }
+
+    # The idle reading: only a full set of finite numbers counts.
+    $steady = @(1..15 | ForEach-Object { [double]2.0 })
+    $measured = Measure-ReleaseSprtIdle $steady
+    Assert-Check ($measured.Mean -eq 2 -and $measured.Max -eq 2) 'a full steady idle sample is measured'
+    Assert-Check ((Measure-ReleaseSprtIdle (@($steady[0..13]) + @([double]9.5))).Max -eq 9.5) 'the maximum of the sample is reported'
+    foreach ($case in @(@('14 readings', @($steady[0..13])), @('empty', @()), @('NaN reading', (@($steady[0..13]) + @([double]::NaN))), @('infinite reading', (@($steady[0..13]) + @([double]::PositiveInfinity))),
+                        @('null reading', (@($steady[0..13]) + @($null))), @('string reading', (@($steady[0..13]) + @('2.0'))))) {
+        $bad = $case[1]; Assert-Rejected { Measure-ReleaseSprtIdle $bad } "reject an idle sample with $($case[0])"
+    }
 
     # Gates. Fixture attempts use a config whose pinned hashes belong to small inert files, so every identity comparison is real.
     $inputs = Join-Path $temp 'gate-inputs'; New-Item -ItemType Directory -Path $inputs | Out-Null
@@ -294,6 +325,13 @@ try {
     Assert-PreflightRefused 'end record from another attempt mixed in' 'different attempt than this directory' { param($n) $d = New-FixtureAttempt $n; Edit-FixtureJson $d 'attempt-end.json' { param($j) $j.RunId = 'preflight-20261020T000000000Z-other' }; $d }
     Assert-PreflightRefused 'start time has no time zone' 'no time zone' { param($n) $d = New-FixtureAttempt $n; Edit-FixtureJson $d 'attempt-start.json' { param($j) $j.StartedUtc = '2026-10-20T10:00:00' }; $d }
     Assert-PreflightRefused 'end time is not ISO 8601' 'not ISO 8601' { param($n) $d = New-FixtureAttempt $n; Edit-FixtureJson $d 'attempt-end.json' { param($j) $j.EndedUtc = 'Oct 20 2026 10:00' }; $d }
+    $linkProbe = Join-Path $temp 'link-probe'
+    $canLink = $true; try { $null = New-Item -ItemType SymbolicLink -Path $linkProbe -Target (Join-Path $inputs 'preregistration.md') -ErrorAction Stop } catch { $canLink = $false }
+    if ($canLink) {
+        Assert-PreflightRefused 'a listed file replaced by a link to a file outside the directory' 'link' { param($n) $d = New-FixtureAttempt $n; $outside = Join-Path $temp 'outside-summary.json'; Copy-Item (Join-Path $d 'summary.json') $outside; Remove-Item (Join-Path $d 'summary.json'); $null = New-Item -ItemType SymbolicLink -Path (Join-Path $d 'summary.json') -Target $outside; Write-FixtureSums $d; $d }
+    }
+    # A junction needs no privilege and carries the same reparse-point attribute as a symbolic link.
+    Assert-PreflightRefused 'a junction inside the evidence directory' 'link in the evidence directory: pointing-out' { param($n) $d = New-FixtureAttempt $n; $null = New-Item -ItemType Junction -Path (Join-Path $d 'pointing-out') -Target $inputs; $d }
     Assert-PreflightRefused 'different commit' 'different commit' { param($n) New-FixtureAttempt $n -Head 'head2' }
     Assert-PreflightRefused 'different script hashes' 'script hashes differ: sprt.ps1' { param($n) $h = Copy-FixtureScripts; $h['sprt.ps1'] = 'f' * 64; New-FixtureAttempt $n -Hashes $h }
     Assert-PreflightRefused 'script hash not recorded (runner before the audit tool existed)' 'script hashes differ: release-sprt-audit.py' { param($n) $h = [ordered]@{}; foreach ($k in $fxScripts.Keys) { if ($k -ne 'release-sprt-audit.py') { $h[$k] = $fxScripts[$k] } }; New-FixtureAttempt $n -Hashes $h }
@@ -336,7 +374,7 @@ try {
         $record = [ordered]@{ Schema = 1; Verdict = 'AUDIT_APPROVED'; AuditedUtc = $fixtureNow.AddHours(-1).ToString('o')
             AuditTool = [ordered]@{ Name = 'release-sprt-audit.py'; Sha256 = $fxScripts['release-sprt-audit.py']; AnalyzerSha256 = $fxScripts['release-sprt-analyze.py'] }
             Smoke = [ordered]@{ RunId = $SmokeName; ManifestSha256 = (Get-Stage6Hash (Join-Path $smokeDirectory 'SHA256SUMS')); InvokingHead = 'head1'; ScriptSha256 = $fxScripts
-                StartedUtc = $fixtureNow.AddHours(-2).ToString('o'); EndedUtc = $fixtureNow.AddHours(-2).AddMinutes(1).ToString('o') }
+                StartedUtc = $fixtureNow.AddHours(-2).ToString('o'); EndedUtc = $fixtureNow.AddHours(-2).AddMinutes(1).ToString('o'); LocationVerified = $true }
             Counts = [ordered]@{}; Criteria = @(Get-ReleaseSprtAuditCriteria | ForEach-Object { [ordered]@{ Id = $_; Passed = $true; Detail = 'fixture' } }) }
         if ($Change) { $null = & $Change $record }
         $dir = Join-Path $resultsRoot $Name; New-Item -ItemType Directory -Path $dir | Out-Null
@@ -368,6 +406,10 @@ try {
     Assert-SmokeRefused 'an unexpected extra criterion' 'unexpected criteria' @{ Change = { param($r) $r.Criteria = @($r.Criteria) + [ordered]@{ Id = 'extra'; Passed = $true; Detail = '' } } }
     Assert-SmokeRefused 'a criterion marked passed with a string' 'criterion failed: games-complete' @{ Change = { param($r) $r.Criteria[6].Passed = 'yes' } }
     Assert-SmokeRefused 'audited by a different audit program' 'different audit program' @{ Change = { param($r) $r.AuditTool.Sha256 = 'e' * 64 } }
+    Assert-SmokeRefused 'audit could not verify the location' 'could not confirm that the recorded paths' @{ Change = { param($r) $r.Smoke.LocationVerified = $false } }
+    Assert-SmokeRefused 'audit has no location flag' 'could not confirm that the recorded paths' @{ Change = { param($r) $r.Smoke.Remove('LocationVerified') } }
+    Assert-SmokeRefused 'location flag is a string' 'could not confirm that the recorded paths' @{ Change = { param($r) $r.Smoke.LocationVerified = 'True' } }
+    Assert-SmokeRefused 'smoke ended before it started' 'ended before it started' @{ Before = { param($s) Edit-FixtureJson $s 'attempt-end.json' { param($j) $j.EndedUtc = $fixtureNow.AddHours(-5).ToString('o') } } }
     Assert-SmokeRefused 'audited with a different analyzer' 'different analyzer' @{ Change = { param($r) $r.AuditTool.AnalyzerSha256 = 'e' * 64 } }
     Assert-SmokeRefused 'audit record without an analyzer hash' 'different analyzer' @{ Change = { param($r) $r.AuditTool.Remove('AnalyzerSha256') } }
     Assert-SmokeRefused 'smoke attempt records from another attempt mixed in' 'different attempt than this directory' @{ Before = { param($s) Edit-FixtureJson $s 'attempt-end.json' { param($j) $j.RunId = 'smoke-20261020T000000000Z-cccccccc' } } }
@@ -434,7 +476,7 @@ try {
     $source = Get-Content -LiteralPath $wrapperPath -Raw
     $commonSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'release-strength-sprt-common.ps1') -Raw
     $at = $source.IndexOf('attempt-start.json')
-    Assert-Check ($at -ge 0 -and $at -lt $source.IndexOf('Start-Transcript') -and $at -lt $source.IndexOf('WSL_INTEROP') -and $at -lt $source.IndexOf('Dirty checkout') -and $at -lt $source.IndexOf('Enter-ReleaseSprtLock') -and $source.IndexOf('Start-Transcript') -lt $source.IndexOf('Get-Counter')) 'attempt record is written before any platform, dirty-tree, lock or host probe'
+    Assert-Check ($at -ge 0 -and $at -lt $source.IndexOf('Start-Transcript') -and $at -lt $source.IndexOf('WSL_INTEROP') -and $at -lt $source.IndexOf('Dirty checkout') -and $at -lt $source.IndexOf('Enter-ReleaseSprtLock') -and $source.IndexOf('Start-Transcript') -lt $source.IndexOf('Get-ReleaseSprtIdleReading')) 'attempt record is written before any platform, dirty-tree, lock or host probe'
     Assert-Check ($source.Contains('Enter-ReleaseSprtLock') -and $source.Contains('Exit-ReleaseSprtLock') -and $commonSource.Contains('[string]$Name = ''Global\VexReleaseSprt''') -and $commonSource.Contains('AbandonedMutexException')) 'single-instance machine-wide lock is taken, recovered when abandoned and released'
     Assert-Check ($source.IndexOf('Resolve-ReleaseSprtDirectory') -gt 0 -and $source.IndexOf('Resolve-ReleaseSprtDirectory') -lt $source.IndexOf('Join-Path $AssetDirectory') -and $source.IndexOf('Resolve-ReleaseSprtDirectory') -gt $source.IndexOf('try {')) 'the asset directory is resolved to a full path, inside the recorded attempt, before any JAR is opened'
     Assert-Check ($source.Contains('(Get-Location).ProviderPath')) 'a relative asset directory is resolved against the PowerShell location'
@@ -449,6 +491,10 @@ try {
     $childHash = $source.IndexOf('''Runner parameters changed before launch.'''); $childAssert = $source.IndexOf('Assert-ReleaseSprtParameters $argsTable'); $childRun = $source.IndexOf('& ''__RUNNER__''')
     Assert-Check ($childHash -gt 0 -and $childAssert -gt $childHash -and $childRun -gt $childAssert) 'the launched child checks the parameter file hash and the frozen parameters before it invokes the match runner'
     Assert-Check ($source.Contains('-cne $parametersSha') -and $source.Contains('-cne $preparedSha') -and $source -notmatch 'Get-Content[^\r\n]*identity\.json') 'launch digests are held in memory and in the child command line, not re-read from identity.json'
+    $childScripts = $source.IndexOf('Script changed before the match runner started'); $childDot = $source.IndexOf(". '__COMMON__'")
+    Assert-Check ($childScripts -gt 0 -and $childDot -gt $childScripts -and $source.IndexOf('A JAR changed before the match runner started') -gt $childDot -and $source.Contains("Enter-ReleaseSprtLock 'Global\VexReleaseSprtMatch' ''")) 'the launched child verifies every hashed script before it loads one, checks both JARs, and holds the match lock'
+    $idleAfter = $source.IndexOf('$idleAfter = Get-ReleaseSprtIdleReading')
+    Assert-Check ($idleAfter -gt $source.IndexOf('Read-Host') -and $idleAfter -lt $source.IndexOf('Start-Process')) 'the idle CPU is measured again after the confirmation and before launch'
     $recheck = $source.IndexOf('no longer verifies')
     Assert-Check ($recheck -gt $source.IndexOf('Read-Host') -and $recheck -gt $source.IndexOf('Script changed after the identity record') -and $recheck -lt $source.IndexOf('Start-Process') -and $source.Contains('Find-ReleaseSprtApprovedSmoke $resultsDirectory $head $scripts)')) 'both gates are checked again after the confirmation and before launch'
     Assert-Check ($source.Contains('RUN-RELEASE-SMOKE') -and $source.Contains('RUN-RELEASE-SPRT') -and $source.Contains('-SmokeNative')) 'smoke and production keep their own confirmation phrases'

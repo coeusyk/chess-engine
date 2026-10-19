@@ -7,6 +7,7 @@ thing, rewrites the manifest so only the audit's own criterion can object, and e
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import shutil
 import tempfile
@@ -410,6 +411,51 @@ class AuditCriteria(unittest.TestCase):
                 self.assertIn("script-identity", failed(record))
                 self.assertIn("is not the one the smoke attempt recorded", " ".join(c["Detail"] for c in record["Criteria"]))
 
+    def test_booleans_do_not_satisfy_numeric_frozen_values(self):
+        self.assertFalse(audit.same(True, 1))
+        self.assertFalse(audit.same(0, False))
+        self.assertTrue(audit.same(0, 0.0))
+        self.assertFalse(audit.same([1, True], [1, 1]))
+        for key, value in (("BonferroniM", True), ("Elo0", False), ("MinGames", False)):
+            with self.subTest(key=key):
+                fx = Fixture(tempfile.mkdtemp())
+                self.addCleanup(shutil.rmtree, fx.dir.parent, True)
+                identity = fx.read_json("identity.json")
+                identity["Config"][key] = value
+                fx.dump("identity.json", identity)
+                self.assertIn("frozen-identities", failed(fx.audit()))
+
+    def test_an_exit_code_of_false_is_not_a_clean_exit(self):
+        end = self.fx.read_json("attempt-end.json")
+        end["ExitCode"] = False
+        self.fx.dump("attempt-end.json", end)
+        self.assertIn("attempt-completed", failed(self.fx.audit()))
+
+    def test_an_end_before_the_start_within_one_microsecond_is_rejected(self):
+        self.assertGreater(audit.parse_utc_ns("2026-10-19T06:53:59.0000002Z"), audit.parse_utc_ns("2026-10-19T06:53:59.0000001Z"))
+        self.assertEqual(audit.parse_utc_ns("2026-10-19T06:53:59Z") % 10**9, 0)
+        start = self.fx.read_json("attempt-start.json"); end = self.fx.read_json("attempt-end.json")
+        start["StartedUtc"] = "2026-10-19T06:55:12.4835002Z"; end["EndedUtc"] = "2026-10-19T06:55:12.4835001Z"
+        self.fx.dump("attempt-start.json", start); self.fx.dump("attempt-end.json", end)
+        record = self.fx.audit()
+        self.assertIn("attempt-completed", failed(record))
+        self.assertIn("ends before it starts", " ".join(c["Detail"] for c in record["Criteria"]))
+        for text in ("2026-10-19T06:55:12", "2026-10-19 06:55:12Z", "2026-10-19T06:55:12+00:00", ""):
+            with self.assertRaises(ValueError):
+                audit.parse_utc_ns(text)
+
+    def test_the_recorded_attempt_directory_must_be_the_audited_directory_on_windows(self):
+        self.assertIsNone(audit.location_matches(self.fx.dir, Fixture.ATTEMPT_DIR, native_windows=False))
+        here = os.path.normcase(os.path.realpath(self.fx.dir))
+        self.assertTrue(audit.location_matches(self.fx.dir, here, native_windows=True))
+        self.assertFalse(audit.location_matches(self.fx.dir, here + "-other", native_windows=True))
+        off_windows = self.fx.audit()
+        self.assertFalse(off_windows["Smoke"]["LocationVerified"], "an audit that could not check the location says so")
+        record = audit.build_record(self.fx.dir, frozen=self.fx.frozen, repo_root=ROOT, native_windows=True)
+        self.assertIn("cutechess-arguments", failed(record))
+        self.assertIn("not the directory being audited", " ".join(c["Detail"] for c in record["Criteria"]))
+        self.assertFalse(record["Smoke"]["LocationVerified"])
+
     def test_a_short_commit_id_is_rejected(self):
         identity = self.fx.read_json("identity.json")
         identity["InvokingHead"] = "c9816ae"
@@ -462,6 +508,21 @@ class AuditCriteria(unittest.TestCase):
         (self.fx.dir / "summary.json").write_text("{}", encoding="utf-8")
         record = audit.build_record(self.fx.dir, frozen=self.fx.frozen, repo_root=ROOT)
         self.assertIn("evidence-manifest", failed(record))
+
+    def test_a_symbolic_link_is_not_a_plain_file(self):
+        self.fx.reseal()
+        outside = Path(self.base) / "outside.txt"
+        outside.write_text("elsewhere", encoding="utf-8")
+        link = self.fx.dir / "console.stdout.log"
+        link.unlink()
+        try:
+            link.symlink_to(outside)
+        except (OSError, NotImplementedError):
+            self.skipTest("symbolic links are not available here")
+        self.assertIn("symbolic link", " ".join(audit.manifest_problems(self.fx.dir)))
+        extra = self.fx.dir / "extra-link.txt"
+        extra.symlink_to(outside)
+        self.assertIn("symbolic link in the evidence directory: extra-link.txt", audit.manifest_problems(self.fx.dir))
 
     def test_an_unlisted_file_or_a_subdirectory_is_rejected(self):
         self.fx.reseal()

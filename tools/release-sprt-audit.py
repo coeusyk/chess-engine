@@ -15,12 +15,15 @@ runner commit and script hashes it approved. The production gate in release-stre
 attempt cannot authorize production. Exit code 0 means AUDIT_APPROVED, 1 means AUDIT_REJECTED (the record is still written).
 """
 import argparse
+import calendar
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import secrets
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
 
@@ -83,12 +86,30 @@ def read_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8-sig"), parse_constant=_reject_constant)
 
 
-def parse_utc(text):
-    """ISO-8601 with up to 7 fractional digits (the runner writes 7) and a Z suffix."""
-    m = re.fullmatch(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d+))?Z", text)
+def parse_utc_ns(text):
+    """Nanoseconds since the epoch for an ISO-8601 UTC timestamp with up to 9 fractional digits. The runner writes 7 (100 ns ticks),
+    so truncating to the microseconds of datetime would call two instants 100 ns apart equal and miss an end before its start."""
+    m = re.fullmatch(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d{1,9}))?Z", text)
     if not m:
         raise ValueError(f"not a UTC timestamp: {text!r}")
-    return datetime.fromisoformat(m.group(1) + "." + (m.group(2) or "0").ljust(6, "0")[:6]).replace(tzinfo=timezone.utc)
+    return calendar.timegm(time.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S")) * 10**9 + int((m.group(2) or "0").ljust(9, "0"))
+
+
+def same(a, b):
+    """Equality that does not let True match 1 or False match 0 (Python treats bool as an int)."""
+    if isinstance(a, bool) or isinstance(b, bool):
+        return type(a) is type(b) and a == b
+    if isinstance(a, list) or isinstance(b, list):
+        return isinstance(a, list) and isinstance(b, list) and len(a) == len(b) and all(same(x, y) for x, y in zip(a, b))
+    return a == b
+
+
+def location_matches(directory, recorded, native_windows):
+    """On native Windows the attempt directory the runner recorded must be the directory being audited. From anywhere else it cannot
+    be checked, which returns None; the production gate then refuses the record."""
+    if not native_windows:
+        return None
+    return os.path.normcase(os.path.realpath(directory)) == os.path.normcase(str(recorded))
 
 
 def utc_text(moment):
@@ -114,14 +135,18 @@ def manifest_problems(directory):
             problems.append(f"duplicate manifest entry: {name}")
         listed.append(name)
         target = directory / name
-        if not target.is_file():
+        if target.is_symlink():
+            problems.append(f"listed file is a symbolic link: {name}")
+        elif not target.is_file():
             problems.append(f"listed file is missing: {name}")
         elif sha256_file(target) != digest:
             problems.append(f"hash mismatch: {name}")
     for entry in sorted(directory.iterdir()):
         if entry.name == "SHA256SUMS":
             continue
-        if entry.is_dir():
+        if entry.is_symlink():
+            problems.append(f"symbolic link in the evidence directory: {entry.name}")
+        elif entry.is_dir():
             problems.append(f"unverifiable subdirectory: {entry.name}")
         elif entry.name not in listed:
             problems.append(f"file not in manifest: {entry.name}")
@@ -142,7 +167,9 @@ def expected_arguments(java, jars, options, games, pgn, openings):
 
 
 class Audit:
-    def __init__(self, smoke_dir, frozen, repo_root):
+    def __init__(self, smoke_dir, frozen, repo_root, native_windows=None):
+        self.native_windows = os.name == "nt" if native_windows is None else native_windows
+        self.location_verified = False
         self.dir = Path(smoke_dir)
         self.frozen = frozen
         self.repo_root = Path(repo_root)
@@ -174,9 +201,9 @@ class Audit:
                 problems.append(f"{label} RunId/Kind does not match the directory")
         if ident.get("Kind") != "smoke":
             problems.append("identity Kind is not smoke")
-        if not (end.get("MatchStarted") is True and end.get("MatchCompleted") is True and end.get("ExitCode") == 0 and end.get("Failure") == ""):
+        if not (end.get("MatchStarted") is True and end.get("MatchCompleted") is True and same(end.get("ExitCode"), 0) and end.get("Failure") == ""):
             problems.append("attempt-end does not show a completed, clean match")
-        if parse_utc(end["EndedUtc"]) < parse_utc(start["StartedUtc"]):
+        if parse_utc_ns(end["EndedUtc"]) < parse_utc_ns(start["StartedUtc"]):
             problems.append("attempt ends before it starts")
         return not problems, "; ".join(problems) or "smoke attempt started, ran and ended cleanly with exit code 0"
 
@@ -198,7 +225,7 @@ class Audit:
                   "Elo0": 0, "Elo1": 20, "Alpha": 0.05, "Beta": 0.05, "BonferroniM": 1, "MinGames": 0, "MaxGames": 20000, "TC": "5+0.05",
                   "Concurrency": 6, "EngineThreads": 1, "OpeningOrder": "sequential", "NewOptions": f["new_options"], "OldOptions": f["old_options"]}
         for key, want in checks.items():
-            if cfg.get(key) != want:
+            if not same(cfg.get(key), want):
                 problems.append(f"config {key} differs from the frozen value")
         return not problems, "; ".join(problems) or "JARs, opening lists, preregistration and SPRT configuration equal the frozen identities"
 
@@ -241,6 +268,10 @@ class Audit:
             problems.append("the recorded attempt directory is not under tools\\results\\release-strength-sprt")
         if not re.search(r"(?m)^Evidence and frozen inputs: " + re.escape(str(attempt)) + r"\s*$", self.text("runner.log")):
             problems.append("the runner transcript does not name this directory as the attempt directory")
+        where = location_matches(self.dir, attempt, self.native_windows)
+        if where is False:
+            problems.append("the recorded attempt directory is not the directory being audited")
+        self.location_verified = where is True
         runner = self.json("runner-parameters.json")
         for key, field in (("new", "New"), ("old", "Old"), ("pgn", "PgnPath"), ("openings", "OpeningsFile")):
             if runner.get(field) != paths[key]:
@@ -409,13 +440,13 @@ class Audit:
         return results
 
 
-def build_record(smoke_dir, frozen=FROZEN, repo_root=None, now=None):
+def build_record(smoke_dir, frozen=FROZEN, repo_root=None, now=None, native_windows=None):
     smoke_dir = Path(smoke_dir)
     repo_root = Path(repo_root) if repo_root else HERE.parent
-    audit = Audit(smoke_dir, frozen, repo_root)
+    audit = Audit(smoke_dir, frozen, repo_root, native_windows)
     criteria = audit.run()
     approved = all(c["Passed"] for c in criteria)
-    smoke = {"RunId": smoke_dir.name}
+    smoke = {"RunId": smoke_dir.name, "LocationVerified": audit.location_verified}
     try:
         ident, start, end = read_json(smoke_dir / "identity.json"), read_json(smoke_dir / "attempt-start.json"), read_json(smoke_dir / "attempt-end.json")
         smoke.update({"ManifestSha256": sha256_file(smoke_dir / "SHA256SUMS"), "InvokingHead": ident["InvokingHead"],

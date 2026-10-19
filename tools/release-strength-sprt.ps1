@@ -84,8 +84,7 @@ try {
     $power = Invoke-Stage6Checked 'powercfg.exe' @('/getactivescheme') $repo (Join-Path $output 'power-plan.log')
     $javaRaw = Invoke-Stage6Checked $java @('-XshowSettings:properties', '-version') $repo (Join-Path $output 'java-version.log')
     $cuteRaw = Invoke-Stage6Checked $cute @('--version') $repo (Join-Path $output 'cutechess-version.log')
-    $idle = @((Get-Counter '\Processor Information(_Total)\% Processor Time' -SampleInterval 1 -MaxSamples 15).CounterSamples.CookedValue)
-    if ($idle.Count -lt 15) { throw "The idle CPU sample is incomplete: $($idle.Count) of 15 readings." }
+    $idleReading = Get-ReleaseSprtIdleReading
     $facts = [pscustomobject]@{
         Platform = [Environment]::OSVersion.Platform.ToString(); ComputerName = $env:COMPUTERNAME; CpuName = $cpu.Name
         OsCaption = $os.Caption; OsBuild = $os.BuildNumber; OsVersion = $os.Version
@@ -99,7 +98,7 @@ try {
         JavaHome = [regex]::Match($javaRaw, '(?m)^\s*java\.home\s*=\s*(.+?)\s*$').Groups[1].Value
         CutechessExecutable = $cute; CutechessSha256 = Get-Stage6Hash $cute
         CutechessVersion = [regex]::Match($cuteRaw, '(?m)^cutechess-cli (\d+\.\d+\.\d+)(?:\s|$)').Groups[1].Value
-        IdleCpuMean = [math]::Round(($idle | Measure-Object -Average).Average, 2); IdleCpuMax = [math]::Round(($idle | Measure-Object -Maximum).Maximum, 2)
+        IdleCpuMean = $idleReading.Mean; IdleCpuMax = $idleReading.Max
         CapturedUtc = [DateTime]::UtcNow.ToString('o'); InheritedJvmOptions = 'all four checked variables unset'
     }
     Save-Stage6Json $facts (Join-Path $output 'environment.json')
@@ -193,22 +192,30 @@ try {
             (Get-Stage6Hash $java) -cne $facts.JavaSha256 -or (Get-Stage6Hash $cute) -cne $facts.CutechessSha256) { throw 'Frozen input or tool changed before launch.' }
         $facts.PowerPlanRaw = Invoke-Stage6Checked 'powercfg.exe' @('/getactivescheme') $repo (Join-Path $output 'launch-power-plan.log')
         $facts.AffinityMask = (Get-Process -Id $PID).ProcessorAffinity.ToInt64()
+        # The idle reading from before the prompt says nothing about the load while the prompt was open. Measure again.
+        $idleAfter = Get-ReleaseSprtIdleReading; $facts.IdleCpuMean = $idleAfter.Mean; $facts.IdleCpuMax = $idleAfter.Max
         Assert-ReleaseSprtHostFacts $facts
         Save-Stage6Json @{ ConfirmedUtc = [DateTime]::UtcNow.ToString('o'); IdleHostConfirmed = $true } (Join-Path $output 'launch-confirmation.json')
         $launch = @'
 $ErrorActionPreference='Stop'
 $PSNativeCommandUseErrorActionPreference=$false
+function Get-ChildSha([string]$Path) { return [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([IO.File]::ReadAllBytes($Path))).Replace('-','').ToLowerInvariant() }
+$childScriptHashes=@{ __SCRIPTHASHES__ }
+foreach ($childName in $childScriptHashes.Keys) { if ((Get-ChildSha (Join-Path '__SCRIPTDIR__' $childName)) -ne $childScriptHashes[$childName]) { throw "Script changed before the match runner started: $childName" } }
 . '__COMMON__'
+$matchLock = Enter-ReleaseSprtLock 'Global\VexReleaseSprtMatch' ''
 $bytes=[IO.File]::ReadAllBytes('__PARAMETERS__')
 if ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($bytes)).Replace('-','').ToLowerInvariant() -ne '__PARAMETERS_SHA__') { throw 'Runner parameters changed before launch.' }
 $p=[Text.Encoding]::UTF8.GetString($bytes).TrimStart([char]0xFEFF) | ConvertFrom-Json
 $argsTable=@{}; foreach($property in $p.psobject.Properties){$argsTable[$property.Name]=$property.Value}
 Assert-ReleaseSprtParameters $argsTable -Smoke:__SMOKE__
 if ((Get-FileHash -LiteralPath $argsTable.ExpectedArgumentManifestPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne '__PREPARED_SHA__') { throw 'Expected argument manifest changed before launch.' }
+if ((Get-ChildSha $argsTable.New) -ne '__CANDIDATE_SHA__' -or (Get-ChildSha $argsTable.Old) -ne '__BASELINE_SHA__') { throw 'A JAR changed before the match runner started.' }
 if ((Get-Process -Id $PID).ProcessorAffinity.ToInt64() -ne __AFFINITY__) { throw 'Child runner does not have frozen full affinity.' }
 try { & '__RUNNER__' @argsTable; exit 0 } catch { Write-Error $_ -ErrorAction Continue; exit 1 }
 '@
-        $launch = $launch.Replace('__PARAMETERS_SHA__', $parametersSha).Replace('__PREPARED_SHA__', $preparedSha).Replace('__COMMON__', (Join-Path $PSScriptRoot 'release-strength-sprt-common.ps1').Replace("'", "''")).Replace('__SMOKE__', $(if ($SmokeNative) { '$true' } else { '$false' })).Replace('__PARAMETERS__', $parameterPath.Replace("'", "''")).Replace('__RUNNER__', $runner.Replace("'", "''")).Replace('__AFFINITY__', [string]$facts.FullAffinityMask)
+        $scriptTable = (@($scripts.Keys | ForEach-Object { "'$_'='$($scripts[$_])'" }) -join '; ')
+        $launch = $launch.Replace('__SCRIPTHASHES__', $scriptTable).Replace('__SCRIPTDIR__', $PSScriptRoot.Replace("'", "''")).Replace('__CANDIDATE_SHA__', $config.CandidateSha256).Replace('__BASELINE_SHA__', $config.BaselineSha256).Replace('__PARAMETERS_SHA__', $parametersSha).Replace('__PREPARED_SHA__', $preparedSha).Replace('__COMMON__', (Join-Path $PSScriptRoot 'release-strength-sprt-common.ps1').Replace("'", "''")).Replace('__SMOKE__', $(if ($SmokeNative) { '$true' } else { '$false' })).Replace('__PARAMETERS__', $parameterPath.Replace("'", "''")).Replace('__RUNNER__', $runner.Replace("'", "''")).Replace('__AFFINITY__', [string]$facts.FullAffinityMask)
         $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($launch))
         Set-Content -LiteralPath $parameters.LogPath -Value '' -NoNewline -Encoding UTF8
         $child = Start-Process -FilePath $facts.PowerShellExecutable -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded) -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $output 'console.stdout.log') -RedirectStandardError (Join-Path $output 'console.stderr.log')

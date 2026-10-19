@@ -97,6 +97,21 @@ function Assert-ReleaseSprtHostFacts($Facts) {
     if (-not (($idle -is [double] -or $idle -is [int]) -and $idle -ge 0 -and $idle -le (Get-ReleaseSprtConfig).IdleCpuMeanLimitPercent)) { throw "Host is not idle (or the reading is not a number): mean CPU $idle%." }
 }
 
+# Mean and maximum of the idle CPU readings. Only a full set of finite numbers is accepted, so an empty or broken counter cannot read as an idle host.
+function Measure-ReleaseSprtIdle($Samples, [int]$Expected = 15) {
+    $values = @($Samples)
+    if ($values.Count -lt $Expected) { throw "The idle CPU sample is incomplete: $($values.Count) of $Expected readings." }
+    foreach ($value in $values) {
+        if (-not (($value -is [double] -or $value -is [int]) -and -not [double]::IsNaN([double]$value) -and -not [double]::IsInfinity([double]$value))) { throw "The idle CPU sample holds a reading that is not a finite number: '$value'." }
+    }
+    $measured = $values | Measure-Object -Average -Maximum
+    return [pscustomobject]@{ Mean = [math]::Round($measured.Average, 2); Max = [math]::Round($measured.Maximum, 2) }
+}
+
+function Get-ReleaseSprtIdleReading {
+    return (Measure-ReleaseSprtIdle @((Get-Counter '\Processor Information(_Total)\% Processor Time' -SampleInterval 1 -MaxSamples 15).CounterSamples.CookedValue))
+}
+
 function Test-ReleaseSprtFaultLine([string]$Line) {
     if (Test-Stage6FaultLine $Line) { return $true }
     # Wording of cutechess-cli's unsupported-option warning was not verified; match the plausible forms.
@@ -203,14 +218,30 @@ function Resolve-ReleaseSprtDirectory([string]$Path, [string]$BaseDirectory) {
 # The OS marks a mutex abandoned when the process that owns it dies without releasing it. WaitOne then throws
 # AbandonedMutexException but still hands the mutex to the caller, so a killed attempt does not block the next one; the
 # lock records that it recovered so the attempt can say so. The name is a parameter only so tests never touch the real lock.
-function Enter-ReleaseSprtLock([string]$Name = 'Global\VexReleaseSprt') {
+#
+# The wrapper holds $Name, but the match itself runs in a child process that outlives a wrapper which is killed outright. The child
+# holds $MatchName for as long as it lives, so an attempt that finds it taken refuses to start: the main lock alone would have been
+# released with the dead wrapper while Cute Chess was still playing. The child passes '' as $MatchName because it is the holder.
+# What this does not cover: a Cute Chess process that outlives its killed child.
+function Enter-ReleaseSprtLock([string]$Name = 'Global\VexReleaseSprt', [string]$MatchName = 'Global\VexReleaseSprtMatch') {
     $mutex = New-Object Threading.Mutex($false, $Name)
     $recovered = $false
     try { $acquired = $mutex.WaitOne(0) }
     catch [Threading.AbandonedMutexException] { $acquired = $true; $recovered = $true }
     catch { $mutex.Dispose(); throw }
     if (-not $acquired) { $mutex.Dispose(); throw 'Another release SPRT attempt is running on this machine.' }
-    return [pscustomobject]@{ Mutex = $mutex; Recovered = $recovered }
+    $lock = [pscustomobject]@{ Mutex = $mutex; Recovered = $recovered }
+    if ($MatchName) {
+        $probe = New-Object Threading.Mutex($false, $MatchName)
+        $free = $false
+        try {
+            try { $free = $probe.WaitOne(0) } catch [Threading.AbandonedMutexException] { $free = $true }
+            if ($free) { $probe.ReleaseMutex() }
+        }
+        finally { $probe.Dispose() }
+        if (-not $free) { Exit-ReleaseSprtLock $lock; throw 'A match started by an earlier attempt is still running on this machine.' }
+    }
+    return $lock
 }
 
 function Exit-ReleaseSprtLock($Lock) {
@@ -252,11 +283,13 @@ function Get-ReleaseSprtEvidenceProblems([string]$Directory) {
         $listed.Add($parts[1])
         $file = Join-Path $Directory $parts[1]
         if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { $problems.Add("listed file is missing: $($parts[1])") }
+        elseif ((Get-Item -LiteralPath $file -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { $problems.Add("listed file is a link, not a plain file: $($parts[1])") }
         elseif ((Get-Stage6Hash $file) -cne $parts[0]) { $problems.Add("hash mismatch: $($parts[1])") }
     }
     foreach ($entry in @(Get-ChildItem -LiteralPath $Directory -Force)) {
         if ($entry.Name -ceq 'SHA256SUMS') { continue }
-        if ($entry.PSIsContainer) { $problems.Add("unverifiable subdirectory: $($entry.Name)") }
+        if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { $problems.Add("link in the evidence directory: $($entry.Name)") }
+        elseif ($entry.PSIsContainer) { $problems.Add("unverifiable subdirectory: $($entry.Name)") }
         elseif (-not $listed.Contains($entry.Name)) { $problems.Add("file not in SHA256SUMS: $($entry.Name)") }
     }
     return $problems.ToArray()
@@ -357,6 +390,7 @@ function Get-ReleaseSprtSmokeProblems([string]$Directory, [string]$Head, $Script
         $leaf = Split-Path -Leaf $Directory
         if ($start.RunId -cne $leaf -or $end.RunId -cne $leaf) { $problems.Add('attempt-start and attempt-end belong to a different attempt than this directory') }
         if ($end.MatchStarted -ne $true -or $end.MatchCompleted -ne $true -or $end.ExitCode -ne 0 -or $end.Failure -cne '') { $problems.Add('attempt-end does not show a completed, clean match') }
+        if ((ConvertTo-ReleaseSprtUtc $end.EndedUtc) -lt (ConvertTo-ReleaseSprtUtc $start.StartedUtc)) { $problems.Add('ended before it started') }
         foreach ($p in @(Get-ReleaseSprtIdentityProblems $identity $start $Head $ScriptHashes $Config)) { $problems.Add($p) }
         foreach ($p in @(Get-ReleaseSprtArchivedInputProblems $Directory $Config $Config.SmokeOpeningRelativePath $Config.SmokeOpeningSha256)) { $problems.Add($p) }
     }
@@ -374,6 +408,7 @@ function Get-ReleaseSprtAuditProblems([string]$Directory, [string]$ResultsRoot, 
         if ($record.Verdict -cne 'AUDIT_APPROVED') { $problems.Add("audit verdict is $($record.Verdict)") }
         if ($record.AuditTool.Name -cne 'release-sprt-audit.py' -or $null -eq $ScriptHashes['release-sprt-audit.py'] -or $record.AuditTool.Sha256 -cne $ScriptHashes['release-sprt-audit.py']) { $problems.Add('audited by a different audit program than the one in this checkout') }
         if ($null -eq $ScriptHashes['release-sprt-analyze.py'] -or $null -eq $record.AuditTool.psobject.Properties['AnalyzerSha256'] -or $record.AuditTool.AnalyzerSha256 -cne $ScriptHashes['release-sprt-analyze.py']) { $problems.Add('audited with a different analyzer than the one in this checkout') }
+        if ($null -eq $record.Smoke.psobject.Properties['LocationVerified'] -or $record.Smoke.LocationVerified -isnot [bool] -or $record.Smoke.LocationVerified -ne $true) { $problems.Add('the audit could not confirm that the recorded paths are the audited directory (run the audit from the native Windows checkout)') }
         $byId = @{}; foreach ($c in @($record.Criteria)) { $byId[[string]$c.Id] = $c }
         foreach ($id in @(Get-ReleaseSprtAuditCriteria)) {
             if (-not $byId.ContainsKey($id)) { $problems.Add("criterion not audited: $id") }
