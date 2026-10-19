@@ -97,6 +97,13 @@ function Assert-ReleaseSprtHostFacts($Facts) {
     if (-not (($idle -is [double] -or $idle -is [int]) -and $idle -ge 0 -and $idle -le (Get-ReleaseSprtConfig).IdleCpuMeanLimitPercent)) { throw "Host is not idle (or the reading is not a number): mean CPU $idle%." }
 }
 
+# The launch marker proves the child reached the point just before the match runner. It must hold exactly the text the child writes: a write that
+# failed part way leaves a file that exists but is not the marker.
+function Test-ReleaseSprtLaunchMarker($Path, [string]$Text) {
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+    try { return ([IO.File]::ReadAllText($Path) -ceq $Text) } catch { return $false }
+}
+
 # Mean and maximum of the idle CPU readings. Only a full set of finite numbers is accepted, so an empty or broken counter cannot read as an idle host.
 function Measure-ReleaseSprtIdle($Samples, [int]$Expected = 15) {
     $values = @($Samples)

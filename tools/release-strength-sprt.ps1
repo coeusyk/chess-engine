@@ -54,6 +54,7 @@ function Get-AttemptGit([string[]]$Arguments) { try { return Get-Stage6Git $repo
 Save-Stage6Json ([ordered]@{ RunId = $runId; Kind = $kind; StartedUtc = [DateTime]::UtcNow.ToString('o'); Status = 'STARTED'
     InvokingHead = (Get-AttemptGit @('rev-parse', 'HEAD')); Branch = (Get-AttemptGit @('branch', '--show-current')) }) (Join-Path $output 'attempt-start.json')
 
+$launchMarker = $null; $launchMarkerText = 'The match runner is about to be invoked.'
 $runLock = $null; $child = $null; $exitCode = -1; $failure = ''; $matchStarted = $false; $matchCompleted = $false; $transcript = $false; $preflightPassed = $false
 $oldJava = $env:JAVA; $oldCute = $env:CUTECHESS
 try {
@@ -213,17 +214,16 @@ Assert-ReleaseSprtParameters $argsTable -Smoke:__SMOKE__
 if ((Get-FileHash -LiteralPath $argsTable.ExpectedArgumentManifestPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne '__PREPARED_SHA__') { throw 'Expected argument manifest changed before launch.' }
 if ((Get-ChildSha $argsTable.New) -ne '__CANDIDATE_SHA__' -or (Get-ChildSha $argsTable.Old) -ne '__BASELINE_SHA__') { throw 'A JAR changed before the match runner started.' }
 if ((Get-Process -Id $PID).ProcessorAffinity.ToInt64() -ne __AFFINITY__) { throw 'Child runner does not have frozen full affinity.' }
-[IO.File]::WriteAllText('__MARKER__', 'The match runner is about to be invoked.')
+[IO.File]::WriteAllText('__MARKER__', '__MARKER_TEXT__')
 } catch { Write-Error $_ -ErrorAction Continue; exit 97 }
 try { & '__RUNNER__' @argsTable; exit 0 } catch { Write-Error $_ -ErrorAction Continue; exit 1 }
 '@
         $scriptTable = (@($scripts.Keys | ForEach-Object { "'$_'='$($scripts[$_])'" }) -join '; ')
         $launchMarker = Join-Path $output 'match-launched.txt'
-        $launch = $launch.Replace('__MARKER__', $launchMarker.Replace("'", "''")).Replace('__SCRIPTHASHES__', $scriptTable).Replace('__SCRIPTDIR__', $PSScriptRoot.Replace("'", "''")).Replace('__CANDIDATE_SHA__', $config.CandidateSha256).Replace('__BASELINE_SHA__', $config.BaselineSha256).Replace('__PARAMETERS_SHA__', $parametersSha).Replace('__PREPARED_SHA__', $preparedSha).Replace('__COMMON__', (Join-Path $PSScriptRoot 'release-strength-sprt-common.ps1').Replace("'", "''")).Replace('__SMOKE__', $(if ($SmokeNative) { '$true' } else { '$false' })).Replace('__PARAMETERS__', $parameterPath.Replace("'", "''")).Replace('__RUNNER__', $runner.Replace("'", "''")).Replace('__AFFINITY__', [string]$facts.FullAffinityMask)
+        $launch = $launch.Replace('__MARKER__', $launchMarker.Replace("'", "''")).Replace('__MARKER_TEXT__', $launchMarkerText).Replace('__SCRIPTHASHES__', $scriptTable).Replace('__SCRIPTDIR__', $PSScriptRoot.Replace("'", "''")).Replace('__CANDIDATE_SHA__', $config.CandidateSha256).Replace('__BASELINE_SHA__', $config.BaselineSha256).Replace('__PARAMETERS_SHA__', $parametersSha).Replace('__PREPARED_SHA__', $preparedSha).Replace('__COMMON__', (Join-Path $PSScriptRoot 'release-strength-sprt-common.ps1').Replace("'", "''")).Replace('__SMOKE__', $(if ($SmokeNative) { '$true' } else { '$false' })).Replace('__PARAMETERS__', $parameterPath.Replace("'", "''")).Replace('__RUNNER__', $runner.Replace("'", "''")).Replace('__AFFINITY__', [string]$facts.FullAffinityMask)
         $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($launch))
         Set-Content -LiteralPath $parameters.LogPath -Value '' -NoNewline -Encoding UTF8
         $child = Start-Process -FilePath $facts.PowerShellExecutable -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded) -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $output 'console.stdout.log') -RedirectStandardError (Join-Path $output 'console.stderr.log')
-        $matchStarted = $true
         Save-Stage6Json @{ ProcessId = $child.Id; StartedUtc = [DateTime]::UtcNow.ToString('o') } (Join-Path $output 'owned-runner.json')
         $reader = New-Object IO.StreamReader([IO.File]::Open($parameters.LogPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite))
         $pending = ''
@@ -241,9 +241,9 @@ try { & '__RUNNER__' @argsTable; exit 0 } catch { Write-Error $_ -ErrorAction Co
             if ($null -eq $child.ExitCode) { throw 'Owned runner exit code is unavailable; result cannot be accepted.' }
             $exitCode = $child.ExitCode
             # The child writes match-launched.txt as the last step before it invokes the match runner. An exit without it means the child never
-            # got that far (a refusal it caught and exited 97 for, a script that failed to parse, a startup failure, a kill), so no game was played
-            # and the attempt is recorded as not started like any other refusal. With the file present the match counts as started.
-            if (-not (Test-Path -LiteralPath $launchMarker -PathType Leaf)) { $matchStarted = $false; throw "The launched child never reached the match runner (exit code $exitCode) and no game was played (see console.stderr.log)." }
+            # got that far (a refusal it caught and exited 97 for, a script that failed to parse, a startup failure, a kill), so no game was played.
+            # The finally block below decides MatchStarted from the same marker alone, so no earlier exception can mark a match as started.
+            if (-not (Test-ReleaseSprtLaunchMarker $launchMarker $launchMarkerText)) { throw "The launched child never reached the match runner (exit code $exitCode) and no game was played (see console.stderr.log)." }
             $matchCompleted = $true
         }
         finally { $reader.Dispose() }
@@ -252,6 +252,8 @@ try { & '__RUNNER__' @argsTable; exit 0 } catch { Write-Error $_ -ErrorAction Co
 catch { $failure = $_.ToString(); Write-Warning $failure }
 finally {
     try { Stop-Stage6OwnedProcess $child $output } catch { $failure += "`n$_" }
+    # The launch marker is the only evidence that games could have started: the child writes it immediately before it invokes the runner.
+    if ($launchesGames) { $matchStarted = [bool](Test-ReleaseSprtLaunchMarker $launchMarker $launchMarkerText) }
     $env:JAVA = $oldJava; $env:CUTECHESS = $oldCute
     try { Exit-ReleaseSprtLock $runLock } catch { $failure += "`n$_" }
     try {
@@ -275,11 +277,21 @@ finally {
             Write-Host "Result: $($result.Verdict). Evidence review required; analyze with tools/release-sprt-analyze.py."
         }
     }
-    catch { $failure += "`n$_"; Save-Stage6Json @{ Verdict = 'SUMMARY_FAILED'; Failure = $failure } (Join-Path $output 'summary.json') }
-    Save-Stage6Json ([ordered]@{ RunId = $runId; Kind = $kind; EndedUtc = [DateTime]::UtcNow.ToString('o'); MatchStarted = $matchStarted; MatchCompleted = $matchCompleted
-        ExitCode = $exitCode; Failure = $failure }) (Join-Path $output 'attempt-end.json')
-    if ($transcript) { Stop-Transcript | Out-Null }
-    Get-ChildItem -LiteralPath $output -File | Where-Object { $_.Name -ne 'SHA256SUMS' } | Sort-Object Name |
-        ForEach-Object { '{0}  {1}' -f (Get-Stage6Hash $_.FullName), $_.Name } | Set-Content -LiteralPath (Join-Path $output 'SHA256SUMS') -Encoding ASCII
+    catch {
+        $failure += "`n$_"
+        try { Save-Stage6Json @{ Verdict = 'SUMMARY_FAILED'; Failure = $failure } (Join-Path $output 'summary.json') } catch { $failure += "`n$_" }
+    }
+    # Each closing step is guarded on its own, so one that fails cannot stop the attempt record or the manifest from being written.
+    try {
+        Save-Stage6Json ([ordered]@{ RunId = $runId; Kind = $kind; EndedUtc = [DateTime]::UtcNow.ToString('o'); MatchStarted = $matchStarted; MatchCompleted = $matchCompleted
+            ExitCode = $exitCode; Failure = $failure }) (Join-Path $output 'attempt-end.json')
+    }
+    catch { $failure += "`n$_" }
+    if ($transcript) { try { Stop-Transcript | Out-Null } catch { $failure += "`n$_" } }
+    try {
+        Get-ChildItem -LiteralPath $output -File | Where-Object { $_.Name -ne 'SHA256SUMS' } | Sort-Object Name |
+            ForEach-Object { '{0}  {1}' -f (Get-Stage6Hash $_.FullName), $_.Name } | Set-Content -LiteralPath (Join-Path $output 'SHA256SUMS') -Encoding ASCII
+    }
+    catch { $failure += "`n$_"; Write-Warning "SHA256SUMS could not be written: $_" }
 }
 if ($failure) { throw "Stopped. Evidence retained at $output. $failure" }

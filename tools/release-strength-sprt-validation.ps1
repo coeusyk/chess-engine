@@ -498,7 +498,7 @@ try {
     if ($childEnd -lt 0) { $childEnd = $source.IndexOf("`
 '@", $childStart) }
     $childText = $source.Substring($childStart, $childEnd - $childStart)
-    $filled = $childText.Replace('__SCRIPTHASHES__', "'a.ps1'='0'").Replace('__SCRIPTDIR__', 'C:\x').Replace('__CANDIDATE_SHA__', '0').Replace('__BASELINE_SHA__', '0').Replace('__PARAMETERS_SHA__', '0').Replace('__PREPARED_SHA__', '0').Replace('__COMMON__', 'C:\x\c.ps1').Replace('__MARKER__', 'C:\x\m.txt').Replace('__SMOKE__', '$false').Replace('__PARAMETERS__', 'C:\x\p.json').Replace('__RUNNER__', 'C:\x\r.ps1').Replace('__AFFINITY__', '65535')
+    $filled = $childText.Replace('__SCRIPTHASHES__', "'a.ps1'='0'").Replace('__SCRIPTDIR__', 'C:\x').Replace('__CANDIDATE_SHA__', '0').Replace('__BASELINE_SHA__', '0').Replace('__PARAMETERS_SHA__', '0').Replace('__PREPARED_SHA__', '0').Replace('__COMMON__', 'C:\x\c.ps1').Replace('__MARKER__', 'C:\x\m.txt').Replace('__MARKER_TEXT__', 'marker text').Replace('__SMOKE__', '$false').Replace('__PARAMETERS__', 'C:\x\p.json').Replace('__RUNNER__', 'C:\x\r.ps1').Replace('__AFFINITY__', '65535')
     $childErrors = $null; $childTokens = $null
     $childAst = [Management.Automation.Language.Parser]::ParseInput($filled, [ref]$childTokens, [ref]$childErrors)
     Assert-Check ($childErrors.Count -eq 0 -and $filled -notmatch '__[A-Z_]+__') 'the launched child script is valid PowerShell with every placeholder replaced'
@@ -509,13 +509,31 @@ try {
     $guardShapeOk = $childStatements.Count -eq 4 -and $childStatements[2] -is [Management.Automation.Language.TryStatementAst] -and $childStatements[3] -is [Management.Automation.Language.TryStatementAst]
     if ($guardShapeOk) {
         $guard = $childStatements[2]; $runnerTry = $childStatements[3]
-        $guardShapeOk = $guard.CatchClauses.Count -eq 1 -and $guard.CatchClauses[0].Body.Extent.Text -match 'exit 97' -and $guard.Body.Statements[-1].Extent.Text -match 'WriteAllText\(''C:\\x\\m\.txt''' -and
+        # The marker write must be a top-level statement of the guard, not one wrapped in a condition that never runs.
+        $lastGuard = $guard.Body.Statements[-1]
+        $markerCall = if ($lastGuard -is [Management.Automation.Language.PipelineAst]) { $lastGuard.PipelineElements[0].Expression } else { $null }
+        $markerOk = $markerCall -is [Management.Automation.Language.InvokeMemberExpressionAst] -and $markerCall.Static -and $markerCall.Member.Value -ceq 'WriteAllText' -and
+            $markerCall.Expression.TypeName.Name -ceq 'IO.File' -and $markerCall.Arguments.Count -eq 2 -and $markerCall.Arguments[0].Extent.Text -ceq "'C:\x\m.txt'" -and $markerCall.Arguments[1].Extent.Text -ceq "'marker text'"
+        # The refusal must leave through exit 97 itself, not through text that merely contains it.
+        $exits = @($guard.CatchClauses[0].Body.FindAll({ param($node) $node -is [Management.Automation.Language.ExitStatementAst] }, $true))
+        $exitOk = $exits.Count -eq 1 -and $exits[0].Pipeline.Extent.Text -ceq '97' -and $guard.CatchClauses.Count -eq 1
+        $guardShapeOk = $markerOk -and $exitOk -and
             $guard.Body.Extent.Text -match 'Script changed before' -and $guard.Body.Extent.Text -match 'A JAR changed before' -and $guard.Body.Extent.Text -match 'Enter-ReleaseSprtLock' -and
             $runnerTry.Body.Extent.Text -match '&\s+''C:\\x\\r\.ps1''' -and $runnerTry.Body.Extent.Text -notmatch 'WriteAllText'
     }
-    Assert-Check ($guardShapeOk) 'the launched child is: setup, one guard (every check, then the launch marker, exit 97 on refusal), then the runner call'
-    $markerCheck = $source.IndexOf('if (-not (Test-Path -LiteralPath $launchMarker'); $completed = $source.IndexOf('$matchCompleted = $true')
-    Assert-Check ($markerCheck -gt $source.IndexOf('Start-Process') -and $completed -gt $markerCheck -and $source.Contains('$matchStarted = $false; throw "The launched child never reached the match runner')) 'a child exit without the launch marker is recorded as not started, before the match is marked completed'
+    Assert-Check ($guardShapeOk) 'the launched child is: setup, one guard (every check, then the launch marker as a top-level statement, exit 97 on refusal), then the runner call'
+    # The wrapper: the marker is checked after the child has exited, before the match counts as completed, and MatchStarted is decided from the marker alone.
+    $waited = $source.IndexOf('$child.WaitForExit()'); $markerCheck = $source.IndexOf('if (-not (Test-ReleaseSprtLaunchMarker $launchMarker $launchMarkerText)) { throw'); $completed = $source.IndexOf('$matchCompleted = $true')
+    $finalStart = $source.IndexOf('finally {', $completed); $derive = $source.IndexOf('$matchStarted = [bool](Test-ReleaseSprtLaunchMarker $launchMarker $launchMarkerText)'); $parsed = $source.IndexOf('Read-Stage6Results')
+    Assert-Check ($waited -gt $source.IndexOf('Start-Process') -and $markerCheck -gt $waited -and $completed -gt $markerCheck -and $derive -gt $finalStart -and $derive -lt $parsed -and ([regex]::Matches($source, '\$matchStarted = \$true')).Count -eq 0) 'a child exit without the launch marker is not a completed match, and MatchStarted comes from the marker alone, decided before the verdict'
+    # Each closing step is guarded on its own so a failure in one cannot skip the attempt record or the manifest.
+    $closing = $source.Substring($source.IndexOf('# Each closing step is guarded on its own'))
+    Assert-Check ($closing -match '(?s)try \{\s*Save-Stage6Json \(\[ordered\]@\{ RunId.*?attempt-end\.json''\)\s*\}\s*catch' -and $closing -match 'try \{ Stop-Transcript \| Out-Null \} catch' -and $closing -match '(?s)try \{\s*Get-ChildItem -LiteralPath \$output -File.*?SHA256SUMS''\) -Encoding ASCII\s*\}\s*catch') 'the attempt record, the transcript close and the manifest are each written in their own guarded step'
+    # The marker helper: only exactly the text the child writes counts.
+    $markerFile = Join-Path $temp 'marker-test.txt'
+    Assert-Check (-not (Test-ReleaseSprtLaunchMarker $markerFile 'marker text') -and -not (Test-ReleaseSprtLaunchMarker $null 'marker text')) 'a missing marker file is not a marker'
+    foreach ($content in @('', 'marker', 'marker tex', 'marker text ', "marker text`n", 'MARKER TEXT')) { [IO.File]::WriteAllText($markerFile, $content); Assert-Check (-not (Test-ReleaseSprtLaunchMarker $markerFile 'marker text')) "a marker file holding '$content' is not the marker" }
+    [IO.File]::WriteAllText($markerFile, 'marker text'); Assert-Check (Test-ReleaseSprtLaunchMarker $markerFile 'marker text') 'a marker file holding exactly the text is the marker'
     $idleAfter = $source.IndexOf('$idleAfter = Get-ReleaseSprtIdleReading')
     Assert-Check ($idleAfter -gt $source.IndexOf('Read-Host') -and $idleAfter -lt $source.IndexOf('Start-Process')) 'the idle CPU is measured again after the confirmation and before launch'
     $recheck = $source.IndexOf('no longer verifies')
