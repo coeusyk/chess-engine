@@ -12,9 +12,14 @@
     production list) with both published JARs. Refuses to start unless a native preflight passed on this exact code. It is
     not a result and never leads to production games: the production SPRT is a separate invocation.
 .PARAMETER ExecuteNative
-    Everything in PreflightNative, then an operator confirmation, then the one preregistered SPRT.
+    Everything in PreflightNative, then an operator confirmation, then the one preregistered SPRT. Refuses to start unless
+    (1) a native preflight from this exact commit and scripts, with the same JARs, opening corpus and preregistration, started
+    and completed within the last 24 hours still verifies, and (2) a smoke attempt from this exact commit and scripts has an
+    AUDIT_APPROVED record written by tools/release-sprt-audit.py whose evidence manifest still verifies. SMOKE_PASSED alone is
+    not enough. Every refusal leaves a complete attempt directory. Procedure: docs/architecture/research/release-strength-sprt-v0.5.7-v0.6.0/runner-qualification.md.
 .PARAMETER AssetDirectory
-    Directory holding engine-uci-0.6.0.jar and engine-uci-0.5.7.jar exactly as published.
+    Directory holding engine-uci-0.6.0.jar and engine-uci-0.5.7.jar exactly as published. May be relative to the current
+    PowerShell location; it is resolved to a full path once, at the start.
 #>
 [CmdletBinding()]
 param([switch]$ValidateOnly, [switch]$PreflightNative, [switch]$SmokeNative, [switch]$ExecuteNative, [string]$AssetDirectory = '')
@@ -49,20 +54,21 @@ function Get-AttemptGit([string[]]$Arguments) { try { return Get-Stage6Git $repo
 Save-Stage6Json ([ordered]@{ RunId = $runId; Kind = $kind; StartedUtc = [DateTime]::UtcNow.ToString('o'); Status = 'STARTED'
     InvokingHead = (Get-AttemptGit @('rev-parse', 'HEAD')); Branch = (Get-AttemptGit @('branch', '--show-current')) }) (Join-Path $output 'attempt-start.json')
 
-$mutex = $null; $child = $null; $exitCode = -1; $failure = ''; $matchStarted = $false; $matchCompleted = $false; $transcript = $false; $preflightPassed = $false
+$launchMarker = $null; $launchMarkerText = 'The match runner is about to be invoked.'
+$runLock = $null; $child = $null; $exitCode = -1; $failure = ''; $matchStarted = $false; $launchState = 'NOT_STARTED'; $matchCompleted = $false; $transcript = $false; $preflightPassed = $false
 $oldJava = $env:JAVA; $oldCute = $env:CUTECHESS
 try {
     Start-Transcript -LiteralPath (Join-Path $output 'runner.log') | Out-Null; $transcript = $true
     Save-Stage6Json $config (Join-Path $output 'approved-config.json')
 
     if ($env:WSL_INTEROP -or $env:WSL_DISTRO_NAME -or [Environment]::OSVersion.Platform -ne 'Win32NT') { throw 'Run from native Windows PowerShell, never WSL/interop.' }
-    if (-not $AssetDirectory) { throw 'Pass -AssetDirectory with the two published JARs.' }
+    # Resolved once, before anything else reads it: a relative path means different directories to PowerShell and to .NET.
+    $AssetDirectory = Resolve-ReleaseSprtDirectory $AssetDirectory (Get-Location).ProviderPath
     if ($repo -notmatch '^[A-Za-z]:\\' -or $repo -match '(?i)wsl') { throw 'The checkout must be on a native Windows drive.' }
     if ($config.PreregistrationSha256 -ceq 'PENDING') { throw 'Preregistration is not frozen: PreregistrationSha256 is still PENDING.' }
-    # One attempt at a time on this machine: a second concurrent run would change the host load the preregistration assumes.
-    # The mutex is released by the OS if this process is killed, so a dead attempt never blocks the next one.
-    $mutex = New-Object Threading.Mutex($false, 'Global\VexReleaseSprt')
-    if (-not $mutex.WaitOne(0)) { $mutex.Dispose(); $mutex = $null; throw 'Another release SPRT attempt is running on this machine.' }
+    # One attempt at a time on this machine. The OS releases the lock if this process is killed; a lock left abandoned is taken over and noted.
+    $runLock = Enter-ReleaseSprtLock
+    if ($runLock.Recovered) { Write-Warning 'The machine-wide lock was abandoned by an earlier attempt that died without releasing it; it is now held by this attempt.' }
     # The attempts directory itself is allowed to be untracked; anything else dirty blocks the run.
     $resultsRoot = 'tools/results/release-strength-sprt/'
     $status = Get-Stage6Git $repo @('status', '--porcelain=v1', '--untracked-files=all')
@@ -79,7 +85,7 @@ try {
     $power = Invoke-Stage6Checked 'powercfg.exe' @('/getactivescheme') $repo (Join-Path $output 'power-plan.log')
     $javaRaw = Invoke-Stage6Checked $java @('-XshowSettings:properties', '-version') $repo (Join-Path $output 'java-version.log')
     $cuteRaw = Invoke-Stage6Checked $cute @('--version') $repo (Join-Path $output 'cutechess-version.log')
-    $idle = (Get-Counter '\Processor Information(_Total)\% Processor Time' -SampleInterval 1 -MaxSamples 15).CounterSamples.CookedValue
+    $idleReading = Get-ReleaseSprtIdleReading
     $facts = [pscustomobject]@{
         Platform = [Environment]::OSVersion.Platform.ToString(); ComputerName = $env:COMPUTERNAME; CpuName = $cpu.Name
         OsCaption = $os.Caption; OsBuild = $os.BuildNumber; OsVersion = $os.Version
@@ -93,7 +99,7 @@ try {
         JavaHome = [regex]::Match($javaRaw, '(?m)^\s*java\.home\s*=\s*(.+?)\s*$').Groups[1].Value
         CutechessExecutable = $cute; CutechessSha256 = Get-Stage6Hash $cute
         CutechessVersion = [regex]::Match($cuteRaw, '(?m)^cutechess-cli (\d+\.\d+\.\d+)(?:\s|$)').Groups[1].Value
-        IdleCpuMean = [math]::Round(($idle | Measure-Object -Average).Average, 2); IdleCpuMax = [math]::Round(($idle | Measure-Object -Maximum).Maximum, 2)
+        IdleCpuMean = $idleReading.Mean; IdleCpuMax = $idleReading.Max
         CapturedUtc = [DateTime]::UtcNow.ToString('o'); InheritedJvmOptions = 'all four checked variables unset'
     }
     Save-Stage6Json $facts (Join-Path $output 'environment.json')
@@ -118,13 +124,24 @@ try {
     if ((Get-Stage6Hash $openingCopy) -cne $openingExpected) { throw 'Opening archive copy differs.' }
 
     $scripts = [ordered]@{}
-    foreach ($name in @('release-strength-sprt.ps1', 'release-strength-sprt-common.ps1', 'release-strength-sprt-validation.ps1', 'phase21-stage6-common.ps1', 'phase21-stage6.ps1', 'sprt.ps1', 'release-sprt-analyze.py', 'release-sprt-openings.py')) {
+    foreach ($name in Get-ReleaseSprtScriptNames) {
         $scripts[$name] = Get-Stage6Hash (Join-Path $PSScriptRoot $name)
     }
-    $qualifyingPreflight = $null
-    if ($SmokeNative) {
-        $qualifyingPreflight = Find-ReleaseSprtPassedPreflight (Join-Path $repo 'tools\results\release-strength-sprt') (Get-Stage6Git $repo @('rev-parse', 'HEAD')) $scripts
-        if (-not $qualifyingPreflight) { throw 'No passed native preflight with intact evidence exists for this exact commit and scripts. Run -PreflightNative first.' }
+    # Both games-launching modes need a native preflight from this commit and these scripts within the age limit. Production also
+    # needs the smoke attempt's independent audit. A refusal here is an ordinary failure: the attempt record is completed and no
+    # Cute Chess process exists yet.
+    $qualifyingPreflight = $null; $approvedSmoke = $null
+    if ($launchesGames) {
+        $resultsDirectory = Join-Path $repo 'tools\results\release-strength-sprt'
+        $head = Get-Stage6Git $repo @('rev-parse', 'HEAD')
+        $rejections = New-Object Collections.Generic.List[string]
+        $qualifyingPreflight = Find-ReleaseSprtPassedPreflight $resultsDirectory $head $scripts -Rejections $rejections
+        if (-not $qualifyingPreflight) { throw "No passed native preflight with intact evidence exists for this exact commit and scripts, completed within the last $($config.MaxPreflightAgeHours) hours. Run -PreflightNative first.$(Format-ReleaseSprtRejections $rejections)" }
+        if ($ExecuteNative) {
+            $rejections = New-Object Collections.Generic.List[string]
+            $approvedSmoke = Find-ReleaseSprtApprovedSmoke $resultsDirectory $head $scripts -Rejections $rejections
+            if (-not $approvedSmoke) { throw "No audited smoke attempt exists for this exact commit and scripts. Run -SmokeNative, then run tools/release-sprt-audit.py on that smoke directory (see runner-qualification.md); it must report AUDIT_APPROVED. SMOKE_PASSED alone does not authorize production.$(Format-ReleaseSprtRejections $rejections)" }
+        }
     }
 
     $arms = @(@{ Name = 'candidate'; Asset = $config.CandidateAsset; Sha = $config.CandidateSha256; Copy = 'candidate-v0.6.0.jar'; Options = $config.NewOptions; Forbidden = @() },
@@ -153,10 +170,12 @@ try {
     $parameters.ExpectedArgumentManifestPath = $prepared
     $parameterPath = Join-Path $output 'runner-parameters.json'
     Save-Stage6Json $parameters $parameterPath
+    # Held in memory and in the child's command line, not read back from files a writer to the attempt directory could also edit.
+    $parametersSha = Get-Stage6Hash $parameterPath; $preparedSha = Get-Stage6Hash $prepared
     $priorAttempts = @(Get-ChildItem -LiteralPath (Split-Path -Parent $output) -Directory | Where-Object { $_.Name -ne $runId } | Sort-Object Name | ForEach-Object { $_.Name })
-    Save-Stage6Json ([ordered]@{ Kind = $kind; QualifyingPreflight = $qualifyingPreflight; PriorAttempts = $priorAttempts
+    Save-Stage6Json ([ordered]@{ Kind = $kind; QualifyingPreflight = $qualifyingPreflight; ApprovedSmoke = $approvedSmoke; LockRecoveredFromAbandoned = $runLock.Recovered; PriorAttempts = $priorAttempts
         InvokingHead = Get-Stage6Git $repo @('rev-parse', 'HEAD'); Config = $config; Assets = $assets
-        ScriptSha256 = $scripts; ParametersSha256 = Get-Stage6Hash $parameterPath; PreparedArgumentsSha256 = Get-Stage6Hash $prepared
+        ScriptSha256 = $scripts; ParametersSha256 = $parametersSha; PreparedArgumentsSha256 = $preparedSha
         RandomSeed = 'none: sequential opening order, no cutechess -srand' }) (Join-Path $output 'identity.json')
     $preflightPassed = $true
     if ($PreflightNative) { Write-Host "Preflight passed. No games were started. Evidence: $output" }
@@ -166,25 +185,45 @@ try {
         if ((Read-Host "Confirm idle native host: type $phrase to start the first game") -cne $phrase) { throw 'Operator did not confirm. No games started.' }
         foreach ($arm in $arms) { if ((Get-Stage6Hash (Join-Path $output $arm.Copy)) -cne $arm.Sha) { throw 'Frozen binary changed before launch.' } }
         foreach ($name in $scripts.Keys) { if ((Get-Stage6Hash (Join-Path $PSScriptRoot $name)) -cne $scripts[$name]) { throw "Script changed after the identity record: $name" } }
-        if ((Get-Stage6Hash $openingCopy) -cne $openingExpected -or (Get-Stage6Hash $parameterPath) -cne (Get-Content -LiteralPath (Join-Path $output 'identity.json') -Raw | ConvertFrom-Json).ParametersSha256 -or
+        # The gates passed before the prompt, which can stay open for a long time. Check them again right before launching.
+        if ((Get-Stage6Git $repo @('rev-parse', 'HEAD')) -cne $head) { throw 'The commit changed while waiting for confirmation; nothing was started.' }
+        if (-not (Find-ReleaseSprtPassedPreflight $resultsDirectory $head $scripts)) { throw 'The qualifying preflight no longer verifies; nothing was started.' }
+        if ($ExecuteNative -and -not (Find-ReleaseSprtApprovedSmoke $resultsDirectory $head $scripts)) { throw 'The audited smoke attempt no longer verifies; nothing was started.' }
+        if ((Get-Stage6Hash $openingCopy) -cne $openingExpected -or (Get-Stage6Hash $parameterPath) -cne $parametersSha -or (Get-Stage6Hash $prepared) -cne $preparedSha -or
             (Get-Stage6Hash $java) -cne $facts.JavaSha256 -or (Get-Stage6Hash $cute) -cne $facts.CutechessSha256) { throw 'Frozen input or tool changed before launch.' }
         $facts.PowerPlanRaw = Invoke-Stage6Checked 'powercfg.exe' @('/getactivescheme') $repo (Join-Path $output 'launch-power-plan.log')
         $facts.AffinityMask = (Get-Process -Id $PID).ProcessorAffinity.ToInt64()
+        # The idle reading from before the prompt says nothing about the load while the prompt was open. Measure again.
+        $idleAfter = Get-ReleaseSprtIdleReading; $facts.IdleCpuMean = $idleAfter.Mean; $facts.IdleCpuMax = $idleAfter.Max
         Assert-ReleaseSprtHostFacts $facts
         Save-Stage6Json @{ ConfirmedUtc = [DateTime]::UtcNow.ToString('o'); IdleHostConfirmed = $true } (Join-Path $output 'launch-confirmation.json')
         $launch = @'
 $ErrorActionPreference='Stop'
 $PSNativeCommandUseErrorActionPreference=$false
-$p=Get-Content -LiteralPath '__PARAMETERS__' -Raw | ConvertFrom-Json
+try {
+function Get-ChildSha([string]$Path) { return [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([IO.File]::ReadAllBytes($Path))).Replace('-','').ToLowerInvariant() }
+$childScriptHashes=@{ __SCRIPTHASHES__ }
+foreach ($childName in $childScriptHashes.Keys) { if ((Get-ChildSha (Join-Path '__SCRIPTDIR__' $childName)) -ne $childScriptHashes[$childName]) { throw "Script changed before the match runner started: $childName" } }
+. '__COMMON__'
+$matchLock = Enter-ReleaseSprtLock 'Global\VexReleaseSprtMatch' ''
+$bytes=[IO.File]::ReadAllBytes('__PARAMETERS__')
+if ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($bytes)).Replace('-','').ToLowerInvariant() -ne '__PARAMETERS_SHA__') { throw 'Runner parameters changed before launch.' }
+$p=[Text.Encoding]::UTF8.GetString($bytes).TrimStart([char]0xFEFF) | ConvertFrom-Json
 $argsTable=@{}; foreach($property in $p.psobject.Properties){$argsTable[$property.Name]=$property.Value}
+Assert-ReleaseSprtParameters $argsTable -Smoke:__SMOKE__
+if ((Get-FileHash -LiteralPath $argsTable.ExpectedArgumentManifestPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne '__PREPARED_SHA__') { throw 'Expected argument manifest changed before launch.' }
+if ((Get-ChildSha $argsTable.New) -ne '__CANDIDATE_SHA__' -or (Get-ChildSha $argsTable.Old) -ne '__BASELINE_SHA__') { throw 'A JAR changed before the match runner started.' }
 if ((Get-Process -Id $PID).ProcessorAffinity.ToInt64() -ne __AFFINITY__) { throw 'Child runner does not have frozen full affinity.' }
+[IO.File]::WriteAllText('__MARKER__', '__MARKER_TEXT__')
+} catch { Write-Error $_ -ErrorAction Continue; exit 97 }
 try { & '__RUNNER__' @argsTable; exit 0 } catch { Write-Error $_ -ErrorAction Continue; exit 1 }
 '@
-        $launch = $launch.Replace('__PARAMETERS__', $parameterPath.Replace("'", "''")).Replace('__RUNNER__', $runner.Replace("'", "''")).Replace('__AFFINITY__', [string]$facts.FullAffinityMask)
+        $scriptTable = (@($scripts.Keys | ForEach-Object { "'$_'='$($scripts[$_])'" }) -join '; ')
+        $launchMarker = Join-Path $output 'match-launched.txt'
+        $launch = $launch.Replace('__MARKER__', $launchMarker.Replace("'", "''")).Replace('__MARKER_TEXT__', $launchMarkerText).Replace('__SCRIPTHASHES__', $scriptTable).Replace('__SCRIPTDIR__', $PSScriptRoot.Replace("'", "''")).Replace('__CANDIDATE_SHA__', $config.CandidateSha256).Replace('__BASELINE_SHA__', $config.BaselineSha256).Replace('__PARAMETERS_SHA__', $parametersSha).Replace('__PREPARED_SHA__', $preparedSha).Replace('__COMMON__', (Join-Path $PSScriptRoot 'release-strength-sprt-common.ps1').Replace("'", "''")).Replace('__SMOKE__', $(if ($SmokeNative) { '$true' } else { '$false' })).Replace('__PARAMETERS__', $parameterPath.Replace("'", "''")).Replace('__RUNNER__', $runner.Replace("'", "''")).Replace('__AFFINITY__', [string]$facts.FullAffinityMask)
         $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($launch))
         Set-Content -LiteralPath $parameters.LogPath -Value '' -NoNewline -Encoding UTF8
         $child = Start-Process -FilePath $facts.PowerShellExecutable -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded) -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $output 'console.stdout.log') -RedirectStandardError (Join-Path $output 'console.stderr.log')
-        $matchStarted = $true
         Save-Stage6Json @{ ProcessId = $child.Id; StartedUtc = [DateTime]::UtcNow.ToString('o') } (Join-Path $output 'owned-runner.json')
         $reader = New-Object IO.StreamReader([IO.File]::Open($parameters.LogPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite))
         $pending = ''
@@ -200,16 +239,29 @@ try { & '__RUNNER__' @argsTable; exit 0 } catch { Write-Error $_ -ErrorAction Co
             }
             $child.WaitForExit()
             if ($null -eq $child.ExitCode) { throw 'Owned runner exit code is unavailable; result cannot be accepted.' }
-            $exitCode = $child.ExitCode; $matchCompleted = $true
+            $exitCode = $child.ExitCode
+            # The child writes match-launched.txt as the last step before it invokes the match runner. An exit without it means the child never
+            # got that far (a refusal it caught and exited 97 for, a script that failed to parse, a startup failure, a kill), so no game was played.
+            # The finally block below decides MatchStarted from the same marker alone, so no earlier exception can mark a match as started.
+            if (-not (Test-ReleaseSprtLaunchMarker $launchMarker $launchMarkerText)) { throw "The launched child never reached the match runner (exit code $exitCode) and no game was played (see console.stderr.log)." }
+            $matchCompleted = $true
         }
         finally { $reader.Dispose() }
     }
 }
 catch { $failure = $_.ToString(); Write-Warning $failure }
 finally {
-    try { Stop-Stage6OwnedProcess $child $output } catch { $failure += "`n$_" }
+    $stopFailed = $false
+    try { Stop-Stage6OwnedProcess $child $output } catch { $failure += "`n$_"; $stopFailed = $true }
+    # The launch marker is the evidence that the match runner was invoked: the child writes it immediately before it does. If the child could not
+    # be stopped it may still be about to write the marker and start, so an absent marker proves nothing then. That is UNKNOWN_INTERRUPTED and MatchStarted
+    # is null (unknown), which every consumer that requires true rejects.
+    if ($launchesGames) {
+        $launchState = Get-ReleaseSprtLaunchState (Test-ReleaseSprtLaunchMarker $launchMarker $launchMarkerText) $stopFailed ($null -ne $child)
+        $matchStarted = switch ($launchState) { 'STARTED' { $true } 'UNKNOWN_INTERRUPTED' { $null } default { $false } }
+    }
     $env:JAVA = $oldJava; $env:CUTECHESS = $oldCute
-    if ($null -ne $mutex) { $mutex.ReleaseMutex(); $mutex.Dispose() }
+    try { Exit-ReleaseSprtLock $runLock } catch { $failure += "`n$_" }
     try {
         if ($PreflightNative) {
             $verdict = if ($preflightPassed -and -not $failure) { 'PREFLIGHT_PASSED' } else { 'PREFLIGHT_FAILED' }
@@ -219,11 +271,11 @@ finally {
             $logPath = Join-Path $output 'match.log'; $pgnPath = Join-Path $output 'match.pgn'
             $log = if (Test-Path -LiteralPath $logPath) { [string](Get-Content -LiteralPath $logPath -Raw -Encoding UTF8) } else { '' }
             $pgn = if (Test-Path -LiteralPath $pgnPath) { [string](Get-Content -LiteralPath $pgnPath -Raw -Encoding UTF8) } else { '' }
-            $result = Read-Stage6Results $log $pgn $exitCode ($matchStarted -and -not $matchCompleted)
+            $result = Read-Stage6Results $log $pgn $exitCode (($launchState -cne 'NOT_STARTED') -and -not $matchCompleted)
             if ($failure -and $result.Verdict -ne 'INTERRUPTED') { $result.Verdict = 'SETUP_PROTOCOL_FAULT'; $result.EligibleForPromotion = $false }
             if (-not $failure) { $result.Verdict = Get-ReleaseSprtVerdict $result }
-            if ($SmokeNative -and $matchStarted) { $result.Verdict = Get-ReleaseSprtSmokeVerdict $result; $result.EligibleForPromotion = $false }
-            if (-not $matchStarted -and $failure) { $result.Verdict = 'NOT_STARTED' }
+            if ($SmokeNative -and $launchState -ceq 'STARTED') { $result.Verdict = Get-ReleaseSprtSmokeVerdict $result; $result.EligibleForPromotion = $false }
+            if ($launchState -ceq 'NOT_STARTED' -and $failure) { $result.Verdict = 'NOT_STARTED' }
             $result | Add-Member -NotePropertyName Kind -NotePropertyValue $kind
             $result | Add-Member -NotePropertyName Failure -NotePropertyValue $failure
             $result.PairAudit | Export-Csv -LiteralPath (Join-Path $output 'pair-audit.csv') -NoTypeInformation -Encoding UTF8
@@ -231,11 +283,21 @@ finally {
             Write-Host "Result: $($result.Verdict). Evidence review required; analyze with tools/release-sprt-analyze.py."
         }
     }
-    catch { $failure += "`n$_"; Save-Stage6Json @{ Verdict = 'SUMMARY_FAILED'; Failure = $failure } (Join-Path $output 'summary.json') }
-    Save-Stage6Json ([ordered]@{ RunId = $runId; Kind = $kind; EndedUtc = [DateTime]::UtcNow.ToString('o'); MatchStarted = $matchStarted; MatchCompleted = $matchCompleted
-        ExitCode = $exitCode; Failure = $failure }) (Join-Path $output 'attempt-end.json')
-    if ($transcript) { Stop-Transcript | Out-Null }
-    Get-ChildItem -LiteralPath $output -File | Where-Object { $_.Name -ne 'SHA256SUMS' } | Sort-Object Name |
-        ForEach-Object { '{0}  {1}' -f (Get-Stage6Hash $_.FullName), $_.Name } | Set-Content -LiteralPath (Join-Path $output 'SHA256SUMS') -Encoding ASCII
+    catch {
+        $failure += "`n$_"
+        try { Save-Stage6Json @{ Verdict = 'SUMMARY_FAILED'; Failure = $failure } (Join-Path $output 'summary.json') } catch { $failure += "`n$_" }
+    }
+    # Each closing step is guarded on its own, so one that fails cannot stop the attempt record or the manifest from being written.
+    try {
+        Save-Stage6Json ([ordered]@{ RunId = $runId; Kind = $kind; EndedUtc = [DateTime]::UtcNow.ToString('o'); MatchStarted = $matchStarted; LaunchState = $launchState; MatchCompleted = $matchCompleted
+            ExitCode = $exitCode; Failure = $failure }) (Join-Path $output 'attempt-end.json')
+    }
+    catch { $failure += "`n$_" }
+    if ($transcript) { try { Stop-Transcript | Out-Null } catch { $failure += "`n$_" } }
+    try {
+        Get-ChildItem -LiteralPath $output -File | Where-Object { $_.Name -ne 'SHA256SUMS' } | Sort-Object Name |
+            ForEach-Object { '{0}  {1}' -f (Get-Stage6Hash $_.FullName), $_.Name } | Set-Content -LiteralPath (Join-Path $output 'SHA256SUMS') -Encoding ASCII
+    }
+    catch { $failure += "`n$_"; Write-Warning "SHA256SUMS could not be written: $_" }
 }
 if ($failure) { throw "Stopped. Evidence retained at $output. $failure" }
