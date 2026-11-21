@@ -5,10 +5,12 @@ on:
     paths:
       - 'trainer/**'
       - 'docs/architecture/feature-spec/**'
+      - '.github/workflows/trainer-ci.yml'
   pull_request:
     paths:
       - 'trainer/**'
       - 'docs/architecture/feature-spec/**'
+      - '.github/workflows/trainer-ci.yml'
 
 jobs:
   parity:
@@ -23,7 +25,14 @@ jobs:
         # passed collection locally only because this dev environment already had torch
         # synced from an earlier `uv sync --extra train` -- a clean CI runner would fail
         # ModuleNotFoundError on every torch-dependent test file without this.
-        run: uv run --extra dev --extra train pytest tests/ -v
+        # --extra acquire (issue #269): zstandard is required by
+        # tests/scripts/test_acquire_stage1_lichess.py. Without it every Stage 1 test
+        # *skipped silently* (pytest.importorskip), which is how the Black-to-move
+        # label-perspective bug (#263) shipped with a green CI. REQUIRE_ACQUIRE_TESTS=1
+        # turns a missing zstandard into a hard collection error instead of a skip.
+        env:
+          REQUIRE_ACQUIRE_TESTS: "1"
+        run: uv run --extra dev --extra train --extra acquire pytest tests/ -v -rs
       # D-7 (#198): the reproducibility check (miniature end-to-end pipeline run twice,
       # asserting quantization/export-writer determinism and manifest schema validity,
       # NNUE_TRAINER_ARCHITECTURE.md Section 12) is trainer/tests/cli/test_reproducibility_check.py.

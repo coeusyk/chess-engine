@@ -30,3 +30,45 @@ convention the Java side already uses for `TestNetworks.synthetic()`.
 
 **`DatasetMetadata` for this source**, once acquisition exists: `stage="public"`,
 `identifier="lichess-evals-<version>"`, `source_ref="https://database.lichess.org/#evals"`.
+
+
+## Label perspective and historical shards (issue #263)
+
+Lichess publishes `cp`/`mate` from **White's perspective**; the trainer's label contract
+(`PositionLabel`, `batching.py`, Java `NnueEvaluator`) is **mover-relative**.
+`scripts/acquire_stage1_lichess.py` now negates both values for Black-to-move positions
+(via `trainer/dataset/lichess_perspective.py`) and writes `label_perspective:
+mover-relative` into the manifest. Readers (`TextDatasetProvider`) are deliberately
+unchanged: Stage 2/3 sources are already mover-relative.
+
+Shards acquired before the fix have no `label_perspective` field and are
+White-perspective. They are never modified in place. Audit and version them with:
+
+```
+python -m scripts.repair_stage1_perspective audit  outputs/datasets/stage1-lichess
+python -m scripts.repair_stage1_perspective repair outputs/datasets/stage1-lichess \
+    outputs/datasets/stage1-lichess-v2 stage1-lichess-v2 --confirm-white-perspective
+```
+
+`repair` writes a new directory (refusing existing/overlapping paths and already
+normalized inputs), preserves White-to-move rows and extra columns, and records the
+original manifest/shard SHA-256 in `repaired_from`. Mixed-source artifacts (mmap shards
+built from Stage 1 + Stage 2, trained checkpoints) have no per-row source tag and must
+be rebuilt from a repaired Stage 1 directory; results trained on the old data were
+trained on corrupted Stage 1 labels and should be treated accordingly.
+
+### Safe publication and the training gate
+
+`acquire` only writes into a fresh or empty directory. It refuses a directory that already
+holds `stage1.csv`, `manifest.json` or a leftover `.stage1.csv.tmp`, so re-acquiring can
+never truncate a legacy CSV while its old unmarked manifest stays behind. Rows are written
+to a temp file and renamed into place once the stream ends, and the manifest is written
+last. If a run dies in between, the directory has a CSV but no manifest, which `repair` and
+the training gate below both refuse. Pick a new output directory after any interrupted run.
+
+`scripts/train_candidate_net.py::combine_and_split` (the entry every phase script goes
+through) calls `require_mover_relative_stage1` on the Stage 1 directory only. Training
+proceeds only if `manifest.json` declares `label_perspective: mover-relative`. A missing or
+unreadable manifest, a manifest with no marker (legacy, White-perspective), or any other
+marker value is refused with the repair command in the message. There is no override flag.
+Stage 2/3 directories and `TextDatasetProvider` itself are not affected.

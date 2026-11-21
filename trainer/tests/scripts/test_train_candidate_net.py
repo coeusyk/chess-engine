@@ -1,4 +1,9 @@
-from scripts.train_candidate_net import report_dataset_quality
+import json
+
+import pytest
+
+from scripts.train_candidate_net import combine_and_split, report_dataset_quality
+from trainer.dataset.lichess_perspective import UnsafeStage1PerspectiveError
 from trainer.contracts import PositionLabel, PositionMetadata, PositionRecord
 
 
@@ -32,3 +37,12 @@ def test_report_dataset_quality_prints_expected_counts(capsys):
     assert "'endgame': 2" in output
     assert "'w': 3" in output
     assert "'b': 1" in output
+
+
+def test_combine_and_split_refuses_legacy_stage1_before_reading_any_label(tmp_path):
+    stage1, stage2 = tmp_path / "s1", tmp_path / "s2"
+    stage1.mkdir()
+    (stage1 / "manifest.json").write_text(json.dumps({"stage": "public"}))  # legacy: no marker
+    # stage2_dir deliberately does not exist: the Stage 1 gate must fire first.
+    with pytest.raises(UnsafeStage1PerspectiveError, match="legacy White-perspective"):
+        combine_and_split(stage1, stage2, seed=1)

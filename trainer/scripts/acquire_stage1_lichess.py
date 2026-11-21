@@ -26,6 +26,14 @@ depth, and use its first PV"), this driver picks the `evals` entry with the high
 `fen,eval_cp[,eval_mate]` CSV rows (empty field = absent) -- this module does not
 touch `TextDatasetProvider`'s own logic (issue #202's Explicit Non-Scope), it only
 produces input for it.
+
+**Label perspective (issue #263).** Lichess publishes `cp`/`mate` from White's
+perspective; the trainer's label contract is mover-relative. `_to_record` therefore
+negates both for Black-to-move positions (`trainer/dataset/lichess_perspective.py`),
+and the manifest records `label_perspective: mover-relative`. Shards acquired before
+this fix have no such field and are White-perspective; audit/repair them with
+`scripts/repair_stage1_perspective.py` (writes a new versioned directory, never
+modifies the original).
 """
 
 from __future__ import annotations
@@ -35,6 +43,7 @@ import csv
 import hashlib
 import io
 import json
+import os
 import time
 import urllib.request
 from dataclasses import dataclass
@@ -52,6 +61,11 @@ import zstandard
 # `trainer/reproducibility/__init__.py` do not export these names -- consistent with
 # `stockfish_label.py`'s own established pattern for this exact problem, this module
 # follows it rather than inventing a second, divergent way to solve the same problem.
+from trainer.dataset.lichess_perspective import (
+    LABEL_PERSPECTIVE_FIELD,
+    MOVER_RELATIVE,
+    to_mover_relative,
+)
 from trainer.export.exporter import _atomic_write
 from trainer.reproducibility.experiment_metadata import _trainer_commit
 
@@ -87,7 +101,13 @@ def _to_record(raw: Dict[str, Any]) -> Optional[NormalizedRecord]:
     eval_cp, eval_mate = pv.get("cp"), pv.get("mate")
     if eval_cp is None and eval_mate is None:
         return None
-    return NormalizedRecord(fen=raw["fen"], eval_cp=eval_cp, eval_mate=eval_mate)
+    # Lichess scores are White-perspective; the trainer's label contract is
+    # mover-relative (issue #263). Normalize here, at the one adapter that knows the
+    # source convention -- never in a reader, which would also flip the already
+    # mover-relative Stage 2/3 sources.
+    fen = raw["fen"]
+    eval_cp, eval_mate = to_mover_relative(fen, eval_cp, eval_mate)
+    return NormalizedRecord(fen=fen, eval_cp=eval_cp, eval_mate=eval_mate)
 
 
 def _open_source_stream(source: str) -> io.TextIOWrapper:
@@ -150,26 +170,51 @@ def acquire(source: str, target_count: int, output_dir: Path, dataset_identifier
 
     output_dir.mkdir(parents=True, exist_ok=True)
     csv_path = output_dir / "stage1.csv"
+    manifest_path = output_dir / "manifest.json"
+    tmp_csv_path = output_dir / ".stage1.csv.tmp"
 
+    # Never reuse a directory that already holds (or half-holds) a dataset. Re-acquiring
+    # over a legacy directory used to truncate its White-perspective CSV while the old,
+    # unmarked manifest stayed until the very end; an interruption then left normalized
+    # rows beside a manifest that `repair --confirm-white-perspective` would accept and
+    # double-flip. Refusing reuse makes that pairing impossible (issue #263 review).
+    leftovers = [p.name for p in (csv_path, manifest_path, tmp_csv_path) if p.exists()]
+    if leftovers:
+        raise FileExistsError(
+            f"{output_dir} already contains {leftovers}; acquire only writes into a fresh or empty "
+            "directory. Choose a new output_dir (an interrupted earlier run leaves a partial directory "
+            "that must be inspected, not reused)."
+        )
+
+    # Rows go to a temp file and are published by rename only after the stream finished,
+    # so a crash can never leave a partially written `stage1.csv`. The manifest is
+    # written last: an interruption in between leaves a CSV with no manifest, which both
+    # `repair` and the training entry (`require_mover_relative_stage1`) refuse.
     position_count = 0
-    with open(csv_path, "w", newline="", encoding="ascii") as f, _open_source_stream(source) as stream:
-        writer = csv.writer(f)
-        for record in _iter_records(stream):
-            cp = "" if record.eval_cp is None else str(record.eval_cp)
-            mate = "" if record.eval_mate is None else str(record.eval_mate)
-            writer.writerow([record.fen, cp, mate])
-            position_count += 1
-            if position_count >= target_count:
-                break
+    try:
+        with open(tmp_csv_path, "x", newline="", encoding="ascii") as f, _open_source_stream(source) as stream:
+            writer = csv.writer(f)
+            for record in _iter_records(stream):
+                cp = "" if record.eval_cp is None else str(record.eval_cp)
+                mate = "" if record.eval_mate is None else str(record.eval_mate)
+                writer.writerow([record.fen, cp, mate])
+                position_count += 1
+                if position_count >= target_count:
+                    break
+        os.replace(tmp_csv_path, csv_path)
+    except BaseException:
+        tmp_csv_path.unlink(missing_ok=True)
+        raise
     # `with` block above closes `stream` here deterministically -- on the `break`
     # above just as much as on normal exhaustion or an exception, since it exits in
     # this same frame (not inside a generator whose cleanup depends on GC timing).
 
     output_sha256 = hashlib.sha256(csv_path.read_bytes()).hexdigest()
-    manifest_path = output_dir / "manifest.json"
     manifest = {
         "dataset_identifier": dataset_identifier,
         "stage": "public",
+        # Absent on every pre-#263 manifest (those shards are White-perspective).
+        LABEL_PERSPECTIVE_FIELD: MOVER_RELATIVE,
         "source_url": source,
         "output_sha256": output_sha256,
         "trainer_commit": _trainer_commit(),
