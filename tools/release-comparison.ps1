@@ -6,8 +6,8 @@
   Builds each release from its own detached git worktree, checks that each build matches the
   published JAR class by class, compiles tools/ReleaseComparisonHarness.java once, then runs it over
   the 30-position corpus shared by both releases (depth 13, Hash=16 MB, one thread, Classical
-  evaluation, Contempt=0, fixed JVM flags). One discarded warm-up per version, then -Pairs measured
-  pairs in alternating order (A,B then B,A ...). Raw per-run output is kept.
+  evaluation, Contempt=0, fixed JVM flags). Warm-ups run A then B. Measured pairs alternate from
+  -StartWith (A by default). Raw per-run output is kept.
 
   The script times fixed-depth search work. It does not measure playing strength, and it does not
   turn node counts into a speedup: the summary reports measured elapsed time only.
@@ -21,6 +21,7 @@
 .EXAMPLE
   pwsh -NoProfile -File tools/release-comparison.ps1 -ValidateOnly
   pwsh -NoProfile -File tools/release-comparison.ps1 -OutDir tools/results/release-comparison-20261013
+  pwsh -NoProfile -File tools/release-comparison.ps1 -OutDir tools/results/release-comparison-20261013-bfirst -StartWith B
 #>
 param(
     [string]$OutDir = ("tools/results/release-comparison-" + (Get-Date -Format "yyyyMMddTHHmmss")),
@@ -29,6 +30,7 @@ param(
     [string]$TagB = "v0.6.0",
     [string]$ExpectedCommitB = "bc3dc380e759526e8aa19cd8385af16ab22ac502",
     [int]$Pairs = 7,
+    [ValidateSet("A", "B")][string]$StartWith = "A",
     [int]$TimeoutSec = 1200,
     [int]$WarmupDepth = 8,
     [double]$MaxIdleCpuPercent = 5,
@@ -173,7 +175,7 @@ try {
         idle_check = [ordered]@{ mean_cpu_percent = $cpuMean; max_cpu_percent = $cpuMax; samples = 15; limit_percent = $MaxIdleCpuPercent }
         repo_head = (git rev-parse HEAD).Trim(); repo_clean_at_start = $true
         script_sha256 = (Sha256File "tools/release-comparison.ps1"); harness_sha256 = (Sha256File "tools/ReleaseComparisonHarness.java")
-        corpus_sha256_lf = $CorpusSha256; expected_main_nodes = $ExpectedNodes; pairs = $Pairs; timeout_sec = $TimeoutSec; warmup_depth = $WarmupDepth
+        corpus_sha256_lf = $CorpusSha256; expected_main_nodes = $ExpectedNodes; pairs = $Pairs; measured_start_with = $StartWith; timeout_sec = $TimeoutSec; warmup_depth = $WarmupDepth
         arms = $recorded
     } | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $OutDir "environment.json")
 
@@ -204,11 +206,14 @@ try {
     Log "warm-up A"; Invoke-Run "A" "warmup" | Out-Null
     Log "warm-up B"; Invoke-Run "B" "warmup" | Out-Null
     $runs = @()
+    $firstArm = $StartWith
+    $secondArm = if ($StartWith -eq "A") { "B" } else { "A" }
     for ($i = 1; $i -le $Pairs; $i++) {
-        foreach ($arm in $(if ($i % 2 -eq 1) { "A", "B" } else { "B", "A" })) {
+        foreach ($arm in @($firstArm, $secondArm)) {
             $label = "pair{0:D2}" -f $i; Log "run $label $arm"
             $runs += Invoke-Run $arm $label
         }
+        $firstArm, $secondArm = $secondArm, $firstArm
     }
     $runs | Export-Csv -NoTypeInformation (Join-Path $OutDir "runs.csv")
 

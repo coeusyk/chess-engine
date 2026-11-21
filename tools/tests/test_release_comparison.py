@@ -79,8 +79,22 @@ class ReleaseComparisonContract(unittest.TestCase):
         for var in ("JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS", "MAVEN_OPTS"):
             self.assertIn(var, SCRIPT)
 
-    def test_order_alternates_and_no_speedup_from_nodes(self):
-        self.assertIn('if ($i % 2 -eq 1) { "A", "B" } else { "B", "A" }', SCRIPT)
+    def test_order_alternates_from_selected_arm_and_no_speedup_from_nodes(self):
+        self.assertIn('[ValidateSet("A", "B")][string]$StartWith = "A"', SCRIPT)
+        self.assertIn('$firstArm = $StartWith', SCRIPT)
+        self.assertIn('$secondArm = if ($StartWith -eq "A") { "B" } else { "A" }', SCRIPT)
+        self.assertIn('foreach ($arm in @($firstArm, $secondArm))', SCRIPT)
+        self.assertIn('$firstArm, $secondArm = $secondArm, $firstArm', SCRIPT)
+        self.assertIn('measured_start_with = $StartWith', SCRIPT)
+        self.assertIn('Log "warm-up A"; Invoke-Run "A" "warmup"', SCRIPT)
+        self.assertIn('Log "warm-up B"; Invoke-Run "B" "warmup"', SCRIPT)
+        for start, first_pair in (("A", ("A", "B")), ("B", ("B", "A"))):
+            first, second = start, first_pair[1]
+            pairs = []
+            for _ in range(4):
+                pairs.append((first, second))
+                first, second = second, first
+            self.assertEqual(pairs, [first_pair, first_pair[::-1], first_pair, first_pair[::-1]])
         self.assertNotRegex(SCRIPT.lower(), r"speedup\s*=")
         self.assertIn("Not a strength measurement", SCRIPT)
 

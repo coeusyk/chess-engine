@@ -43,6 +43,12 @@ This should print `ValidateOnly OK` with the two commits, the corpus hash and th
 pwsh -NoProfile -File tools/release-comparison.ps1 -OutDir tools/results/release-comparison-<yyyymmdd>
 ```
 
+Warm-up runs always occur A then B. They do not determine the measured-pair order. Pair 1 starts with `-StartWith` (A by default), and the arms alternate in every pair. To start the measured sequence B-first, choose a new output directory and pass `-StartWith B`:
+
+```powershell
+pwsh -NoProfile -File tools/release-comparison.ps1 -OutDir tools/results/release-comparison-20261012-repeat-bfirst -StartWith B
+```
+
 Each timed run is a fresh JVM that first searches the whole corpus once at depth 8 (`-WarmupDepth`, untimed and discarded) and then times the depth-13 pass, so cold-JIT cost is not in the measured time. This is different from the Stage 5 procedure, which timed a whole cold `--bench` process, so absolute seconds here are not comparable with the Phase 21 Stage 5 numbers. The warm-up does not change any search result: node counts, scores, moves and PVs were identical with and without it on four positions on both JARs. The two discarded full runs still precede the timed pairs, to settle file caches.
 
 Leave the machine alone until it prints the summary. The script stops, with the reason in `FAILED.txt`, if a build fails, a rebuilt JAR differs from the published one class by class, a run exceeds 20 minutes (`-TimeoutSec`), a run reports a different configuration than expected, or a run's node count differs from the recorded total (59,793,662 for v0.5.7 and 20,540,625 for v0.6.0). A failed run is evidence too: its partial output, `environment.json` (written before the first run) and a checksum manifest are kept. Do not delete the directory, and do not reuse it (the script refuses an existing non-empty output directory). If a temporary worktree cannot be removed at the end, the script writes `CLEANUP-FAILED.txt` and exits with code 1; remove the listed worktrees with `git worktree remove --force <path>` before another run.
@@ -52,7 +58,7 @@ Leave the machine alone until it prints the summary. The script stops, with the 
 In the output directory:
 
 1. `FAILED.txt` must not exist.
-2. `run.log` shows both class-listing matches, then warm-up A, warm-up B and 14 timed runs (`pair01` to `pair07`, each arm once), with A first in odd pairs and B first in even pairs.
+2. `run.log` shows both class-listing matches, warm-up A, warm-up B and 14 timed runs (`pair01` to `pair07`, each arm once). `pair01` begins with the arm in `environment.json`'s `measured_start_with` field, and each pair alternates.
 3. `runs.csv` has 14 rows. Every A row has `nodes` 59793662 and every B row 20540625.
 4. `raw/` holds 16 TSV files (two warm-ups and 14 timed runs) and 16 `.stderr.txt` files. Each stderr file contains a `CONFIG` line: depth 13, hash_mb 16, contempt 0, threads 1, evaluator `Evaluator` (A) or `ClassicalEvaluator` (B), warmup_depth 8.
 5. `environment.json` has `class_listing_matches_published: true` for both arms, the right commits, the idle-check numbers, the Java and Maven versions, the power scheme and the hashes of the script, harness and corpus. It contains no local paths.
