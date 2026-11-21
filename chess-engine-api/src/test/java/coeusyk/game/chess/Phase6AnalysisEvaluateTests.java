@@ -99,6 +99,29 @@ class Phase6AnalysisEvaluateTests {
     }
 
     @Test
+    void checkmatedRootReportsTheTerminalMateScore() throws Exception {
+        // Issue #261: the terminal result is mate 0 (the side to move is already mated), not "cp 0".
+        String checkmateFen = "r1bqkb1r/pppp1Qpp/2n2n2/4p3/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 0 4";
+        mockMvc.perform(post("/api/analysis/evaluate")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"fen\":\"" + checkmateFen + "\",\"depth\":3,\"multiPv\":1}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.score.type").value("mate"))
+                .andExpect(jsonPath("$.score.value").value(0));
+    }
+
+    @Test
+    void stalematedRootReportsADrawScore() throws Exception {
+        String stalemateFen = "k7/2Q5/1K6/8/8/8/8/8 b - - 0 1";
+        mockMvc.perform(post("/api/analysis/evaluate")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"fen\":\"" + stalemateFen + "\",\"depth\":3,\"multiPv\":1}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.score.type").value("cp"))
+                .andExpect(jsonPath("$.score.value").value(0));
+    }
+
+    @Test
     void scoreTypeIsEitherCpOrMate() throws Exception {
         mockMvc.perform(post("/api/analysis/evaluate")
                         .contentType(MediaType.APPLICATION_JSON)

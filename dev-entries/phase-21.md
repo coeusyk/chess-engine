@@ -534,3 +534,30 @@ An independent read-only review found five gaps, all fixed and re-reviewed: Powe
 - Mutation check of the new gates: disabling each of five checks (age limit, commit comparison, criterion result, audit manifest hash, script hash comparison) made the validation fail.
 - Not tested: Windows PowerShell 5.1, and `-ExecuteNative` itself (the audit gate is covered by unit tests and a source-order check). No game, benchmark or SPRT was started.
 - Final correction before merge: a child that could not be stopped and left no launch marker was recorded as `MatchStarted=true`, which overstated what the evidence showed. It is now `LaunchState=UNKNOWN_INTERRUPTED` with `MatchStarted` null. A valid marker is `STARTED`, a confirmed pre-launch failure is `NOT_STARTED`. All gates and the audit already required a strict true or false, so they reject the unknown state. Validation went from 302 to 312 checks and the audit tests gained one case; disabling the helper branch, the null assignment or the NOT_STARTED verdict condition each failed the suite.
+
+### [2026-11-21] Checkmate precedence at the fifty-move threshold and terminal root results (#261)
+
+**Built:**
+
+- `Searcher.alphaBeta`: on the fifty-move branch (`halfmoveClock >= 100`) the node now returns `-MATE_SCORE + ply` when the side to move is in check and has no legal move, and the contempt-adjusted draw otherwise. Before, `isRepetitionDraw() || isFiftyMoveRuleDraw()` returned the draw score first, so `Qg7#` played at clock 99 scored as a draw.
+- `Searcher.searchRoot` records `rootTerminal` (no legal moves at all, before the `searchmoves` and MultiPV filters). Iterative deepening treats a terminal root as a completed result: score is the terminal score (`-MATE_SCORE` or 0), `bestMove` stays null, `aborted` is false, and the depth loop stops after that iteration instead of deepening a position with no moves.
+- New `TerminalAdjudicationTest` (11 tests) and two API tests asserting the terminal score of a checkmated root (`mate 0`) and a stalemated root (`cp 0`).
+
+**Decisions Made:**
+
+- The legal-move check sits behind `isActiveColorInCheck()` inside the clock >= 100 branch, so ordinary nodes pay nothing new and even a clock >= 100 node only runs move generation when it is in check. `Board.isCheckmate()` allocates a generator, which is acceptable on a path this rare.
+- Repetition draws were left on the old path. The issue is about the fifty-move threshold and the code did not change repetition adjudication.
+- A terminal root is distinguished with a field set in `searchRoot` rather than by inspecting the result, because an empty move list after the `searchmoves` filter (nothing matched) or the MultiPV exclusion list (no more lines) is not a terminal position and keeps its old behavior. A test pins the `searchmoves` case.
+- A cancelled search still reports `aborted == true`, including on a terminal root when the stop request is already set, because the soft-stop check runs before the root is searched.
+- `depthReached` for a terminal root is the depth of the iteration that produced it (1 in practice). The API reports a checkmated root as `mate 0` where it used to report `cp 0`.
+
+**Broke / Fixed:**
+
+- First version of the "genuine draw with a legal evasion" test used a position where the white king guarded g8, so `Qg8` was mate and the assertion failed. That was a test fixture error, not a search bug. The replacement uses a king-far position where `Kxg8` is legal, and a paired test shows the guarded and unguarded cases differ only in the mate score.
+- With the `Searcher.java` change reverted, 5 of the 11 new tests fail (mate at clock 99 scores 0, and checkmated and stalemated roots report `aborted == true`), so they do reproduce the reported behavior.
+
+**Measurements:**
+
+- engine-core 443 tests, engine-uci 47, chess-engine-api 29, all with 0 failures. The node-count regression test passes unchanged.
+- No bench and no NPS run: WSL NPS is not a valid regression signal here and the change only adds a branch that executes at halfmove clock >= 100. The native-Windows NPS gate has not been re-run for this change.
+- Not covered: how often this occurs in play, and any Elo effect (the issue marks both as unmeasured). Interaction with the transposition table across halfmove clocks is #259 and was not touched.
