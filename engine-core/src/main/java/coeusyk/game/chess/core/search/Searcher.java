@@ -196,6 +196,9 @@ public class Searcher {
     private boolean syzygy50MoveRule = true;
 
     private boolean aborted;
+    // Set by searchRoot when the root position itself has no legal moves (checkmate or
+    // stalemate), so iterative deepening can tell a terminal root from a cancelled search.
+    private boolean rootTerminal;
 
     // Penalty applied to draw-by-repetition and 50-move-rule draws when the side to move
     // has a clear material advantage (> CONTEMPT_THRESHOLD cp).  A positive value makes the
@@ -534,6 +537,7 @@ public class Searcher {
             int maxCheckExtensions = getMaxCheckExtensionsForDepth(depth);
             List<Move> excludedMoves = new ArrayList<>();
             boolean depthAborted = false;
+            boolean terminalRoot = false;
 
             long nodesBeforeDepth = totalNodes;
             for (int pvIndex = 0; pvIndex < multiPV; pvIndex++) {
@@ -625,7 +629,15 @@ public class Searcher {
 
                 if (iteration.bestMove == null) {
                     if (pvIndex == 0) {
-                        depthAborted = true;
+                        if (rootTerminal && !iteration.aborted) {
+                            // Checkmated or stalemated root (#261): the terminal score is the
+                            // exact result. Report it as completed, not as an aborted search.
+                            bestScore = iteration.bestScore;
+                            depthReached = depth;
+                            terminalRoot = true;
+                        } else {
+                            depthAborted = true;
+                        }
                     }
                     break;
                 }
@@ -667,6 +679,10 @@ public class Searcher {
 
             if (depthAborted) {
                 aborted = true;
+                break;
+            }
+
+            if (terminalRoot) {
                 break;
             }
 
@@ -827,6 +843,9 @@ public class Searcher {
         ArrayList<Move> moves = rootMoveList;
         moves.clear();
         new MovesGenerator(board, moves);
+        // Terminal only if the position has no legal moves at all; an empty list after the
+        // searchmoves / MultiPV exclusion filters below is not a terminal position.
+        rootTerminal = moves.isEmpty() && excludedRootMoves.isEmpty();
         TranspositionTable.Entry rootEntry = transpositionTable.probe(board.getZobristHash());
 
         if (!searchMoves.isEmpty()) {
@@ -1022,7 +1041,16 @@ public class Searcher {
             if (board.isInsufficientMaterial()) {
                 return 0; // genuine draw — always neutral
             }
-            if (board.isRepetitionDraw() || board.isFiftyMoveRuleDraw()) {
+            if (board.isFiftyMoveRuleDraw()) {
+                // FIDE 9.6.2: a move that delivers checkmate wins even when it reaches the
+                // 100th halfmove. Only the rare checked-and-clock>=100 node pays for the
+                // legal-move check; ordinary nodes keep the O(1) draw test.
+                if (board.isActiveColorInCheck() && board.isCheckmate()) {
+                    return -MATE_SCORE + ply;
+                }
+                return contemptScore(board);
+            }
+            if (board.isRepetitionDraw()) {
                 return contemptScore(board);
             }
         }
