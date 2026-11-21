@@ -13,6 +13,7 @@ coincidence, the two must agree for the K-calibrated loss (train.py) to be meani
 
 from __future__ import annotations
 
+import math
 from typing import Tuple
 
 import torch
@@ -30,7 +31,27 @@ MAX_ACTIVE_FEATURES = 32
 INT16_MAX = 32767
 
 
-def derive_weight_clip_bounds(qa: float) -> Tuple[float, float]:
+def validate_qa(qa: float) -> int:
+    """Validate that `qa` is a finite integer in `[1, INT16_MAX]`."""
+    if isinstance(qa, bool) or not isinstance(qa, (int, float)) or not math.isfinite(qa) or qa != int(qa):
+        raise ValueError(f"qa must be a finite integer in [1, {INT16_MAX}], got {qa!r}")
+    qa_int = int(qa)
+    if qa_int < 1 or qa_int > INT16_MAX:
+        raise ValueError(f"qa must be in [1, {INT16_MAX}], got {qa_int}")
+    return qa_int
+
+
+def validate_qb(qb: float) -> int:
+    """Validate that `qb` is a finite integer >= 1."""
+    if isinstance(qb, bool) or not isinstance(qb, (int, float)) or not math.isfinite(qb) or qb != int(qb):
+        raise ValueError(f"qb must be a finite integer >= 1, got {qb!r}")
+    qb_int = int(qb)
+    if qb_int < 1:
+        raise ValueError(f"qb must be >= 1, got {qb_int}")
+    return qb_int
+
+
+def derive_weight_clip_bounds(qa: float) -> Tuple[int, int]:
     """Overflow-safety clipping bounds for the FT layer (architecture doc Section 7:
     "(bias + Sigma weights of the worst-case ~32 active features) cannot exceed int16
     range after quantization... derived from QA, not hardcoded").
@@ -42,16 +63,16 @@ def derive_weight_clip_bounds(qa: float) -> Tuple[float, float]:
     for the FT layer, not an additional x qa scale -- so INT16_MAX is the real overflow
     budget these float weights/bias must respect.
 
-    Reserves exactly `qa` worth of that budget for the bias (the bias operates on the
-    same natural scale as the qa-bounded activation itself) and splits the remainder
-    evenly across up to `MAX_ACTIVE_FEATURES` weight contributions, so the worst case
-    (bias_clip + MAX_ACTIVE_FEATURES * weight_clip) exactly saturates INT16_MAX without
-    exceeding it.
+    Reserves `qa` worth of that budget for the bias and uses integer floor division
+    across `MAX_ACTIVE_FEATURES` weight contributions, so after round-to-nearest
+    quantization the worst-case sum (`|bias| + MAX_ACTIVE_FEATURES * |w|`) never
+    exceeds `INT16_MAX`.
 
-    Returns (bias_clip, weight_clip).
+    Returns `(bias_clip, weight_clip)` as exact integers.
     """
-    bias_clip = qa
-    weight_clip = (INT16_MAX - qa) / MAX_ACTIVE_FEATURES
+    qa_int = validate_qa(qa)
+    bias_clip = qa_int
+    weight_clip = (INT16_MAX - qa_int) // MAX_ACTIVE_FEATURES
     return bias_clip, weight_clip
 
 
@@ -72,6 +93,8 @@ class NnueNet(nn.Module):
     def __init__(self, hidden_width: int, qa: float, qb: float, output_scale: float,
                   with_aux_wdl_head: bool = False, aux_rms_norm: bool = False):
         super().__init__()
+        validate_qa(qa)
+        validate_qb(qb)
         self.hidden_width = hidden_width
         self.qa = qa
         self.qb = qb
