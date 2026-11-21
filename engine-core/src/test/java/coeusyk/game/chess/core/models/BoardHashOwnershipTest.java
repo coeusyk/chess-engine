@@ -1,5 +1,6 @@
 package coeusyk.game.chess.core.models;
 
+import coeusyk.game.chess.core.book.PolyglotKey;
 import coeusyk.game.chess.core.movegen.MovesGenerator;
 import org.junit.jupiter.api.Test;
 
@@ -10,6 +11,69 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class BoardHashOwnershipTest {
+
+    @Test
+    void searchSnapshotsDistinguishGameHistoryFromSearchCycles() {
+        Board played = new Board();
+        int[] cycle = {Move.of(62, 45), Move.of(6, 21), Move.of(45, 62), Move.of(21, 6)};
+        for (int i = 0; i < 3; i++) played.makeMove(cycle[i]);
+
+        Board.SearchSnapshot snapshot = played.snapshotForSearch();
+        Board worker = snapshot.newBoard();
+        Board helper = snapshot.newBoard();
+        worker.makeMove(cycle[3]);
+        assertFalse(worker.isThreefoldRepetition());
+        assertFalse(worker.isRepetitionDraw(), "one occurrence before the root is not a draw");
+        assertEquals(played.toFen(), helper.toFen(), "workers own independent board state");
+        for (int move : cycle) worker.makeMove(move);
+        assertTrue(worker.isThreefoldRepetition());
+        assertTrue(worker.isRepetitionDraw());
+
+        helper.makeMove(cycle[3]);
+        for (int i = 0; i < 3; i++) helper.makeMove(cycle[i]);
+        assertFalse(helper.isThreefoldRepetition());
+        assertTrue(helper.isRepetitionDraw(), "revisiting the root is a search cycle");
+        var nullMove = helper.makeNullMove();
+        assertFalse(helper.isRepetitionDraw());
+        helper.unmakeNullMove(nullMove);
+        assertTrue(helper.isRepetitionDraw());
+    }
+
+    @Test
+    void doublePushOnlyHashesEnPassantWhenACaptureIsLegal() {
+        verifyEnPassantHash("k3r3/3p4/8/4P3/8/8/8/4K3 b - - 0 1", 11, 27, 28, 19, false);
+        verifyEnPassantHash("k7/3p4/8/4P3/8/8/8/4K3 b - - 0 1", 11, 27, 28, 19, true);
+        verifyEnPassantHash("k7/3p4/8/4P3/4K3/8/8/8 b - - 0 1", 11, 27, 28, 19, true);
+        verifyEnPassantHash("k7/8/8/r4pPK/8/8/8/8 w - f6 0 2");
+        verifyEnPassantHash("4k3/8/8/8/4p3/8/3P4/K3R3 w - - 0 1", 51, 35, 36, 43, false);
+        verifyEnPassantHash("k3r3/3p4/8/2P1P3/8/8/8/4K3 b - - 0 1", 11, 27, 26, 19, true);
+    }
+
+    private static void verifyEnPassantHash(String before, int from, int to, int capturer, int target, boolean legal) {
+        Board board = new Board(before);
+        board.makeMove(Move.of(from, to, Move.FLAG_EP_TARGET));
+        Board rebuilt = new Board(board.toFen());
+        assertEquals(rebuilt.getZobristHash(), board.getZobristHash());
+        Board withoutEp = new Board(board.toFen().replaceFirst(" [a-h][36] ", " - "));
+        assertEquals(legal, withoutEp.getZobristHash() != board.getZobristHash());
+        assertNotEquals(PolyglotKey.compute(withoutEp), PolyglotKey.compute(board));
+        if (legal) {
+            long beforeCapture = board.getZobristHash();
+            board.makeMove(Move.of(capturer, target, Move.FLAG_EN_PASSANT));
+            assertEquals(new Board(board.toFen()).getZobristHash(), board.getZobristHash());
+            board.unmakeMove();
+            assertEquals(beforeCapture, board.getZobristHash());
+        }
+        board.unmakeMove();
+        assertEquals(new Board(before).getZobristHash(), board.getZobristHash());
+    }
+
+    private static void verifyEnPassantHash(String pinned) {
+        Board board = new Board(pinned);
+        Board withoutEp = new Board(pinned.replaceFirst(" [a-h][36] ", " - "));
+        assertEquals(withoutEp.getZobristHash(), board.getZobristHash());
+        assertNotEquals(PolyglotKey.compute(withoutEp), PolyglotKey.compute(board));
+    }
 
     @Test
     void ordinaryMakeUnmakeRestoresCurrentPositionHash() {

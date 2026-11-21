@@ -453,6 +453,7 @@ public class Searcher {
 
         // Root change: every public entry point funnels through here, so this is the
         // single place to rebuild any incremental evaluator state from scratch.
+        board.markSearchRoot();
         evaluator.reset(board);
 
         Move previousBestMove = null;
@@ -1799,6 +1800,11 @@ public class Searcher {
         if (shouldStopHard.getAsBoolean()) {
             aborted = true;
             return alpha;
+        }
+
+        // Alpha-beta checks repetition at entry to quiescence. Evasions can repeat deeper in the line.
+        if (qPly > 0 && board.isRepetitionDraw()) {
+            return contemptScore(board);
         }
 
         boolean inCheck = board.isActiveColorInCheck(); // O(1) — no move generation

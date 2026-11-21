@@ -12,7 +12,7 @@ import java.util.*;
 
 public class Board {
     public record NullMoveState(int previousActiveColor, int previousEpTargetSquare, int previousHalfmoveClock,
-                                int previousFullMoves, long previousZobristHash) {
+                                int previousFullMoves, long previousZobristHash, int previousRepetitionFloor) {
     }
 
     // Inner class to store move undo information for efficient unmake without FEN parsing
@@ -126,6 +126,8 @@ public class Board {
     // Size matches UNMAKE_POOL_SIZE: one entry per make, cleared on initWithFEN.
     private final long[] zobristStack = new long[UNMAKE_POOL_SIZE];
     private int zobristSP = 0;
+    private int searchRootIndex;
+    private int repetitionFloor;
 
     // Pre-allocated pool of UnmakeInfo objects — reused per make/unmake to avoid GC pressure.
     // unmakeSP is the next-free index (stack pointer). Pool entries are filled via set().
@@ -148,6 +150,37 @@ public class Board {
         if (!boardStates.contains(fenString)) {
             boardStates.add(fenString);
         }
+    }
+
+    /** Captures a played position and its reversible history for independent search workers. */
+    public SearchSnapshot snapshotForSearch() {
+        int first = Math.max(repetitionFloor, zobristSP - 1 - Math.max(0, halfmoveClock));
+        return new SearchSnapshot(toFen(), Arrays.copyOfRange(zobristStack, first, zobristSP));
+    }
+
+    public static final class SearchSnapshot {
+        private final String fen;
+        private final long[] history;
+
+        private SearchSnapshot(String fen, long[] history) {
+            this.fen = fen;
+            this.history = history;
+        }
+
+        public Board newBoard() {
+            Board board = new Board(fen);
+            if (history.length > 0) {
+                System.arraycopy(history, 0, board.zobristStack, 0, history.length);
+                board.zobristSP = history.length;
+            }
+            board.setSearchMode(true);
+            board.markSearchRoot();
+            return board;
+        }
+    }
+
+    public void markSearchRoot() {
+        searchRootIndex = zobristSP - 1;
     }
 
     private void initUnmakePool() {
@@ -581,24 +614,30 @@ public class Board {
      * which avoids false non-repetitions in threefold-repetition detection.</p>
      */
     private boolean isEnPassantCapturePossible(int capturingColor) {
-        if (epTargetSquare < 0) return false;
-        // The pawn that was double-pushed is one step away from the EP target square,
-        // in the direction opposite to the capturing side's pawn advance.
-        //   White captures (black pushed): moved pawn is at epTarget + 8 (one "down" in 0=a8 indexing)
-        //   Black captures (white pushed): moved pawn is at epTarget - 8 (one "up")
-        int movedPawnSquare = Piece.isWhite(capturingColor) ? epTargetSquare + 8 : epTargetSquare - 8;
-        int file = movedPawnSquare % 8;
-        if (file > 0) {
-            int piece = getPiece(movedPawnSquare - 1);
-            if (Piece.isColor(piece, capturingColor) && Piece.type(piece) == Piece.Pawn) return true;
-        }
-        if (file < 7) {
-            int piece = getPiece(movedPawnSquare + 1);
-            if (Piece.isColor(piece, capturingColor) && Piece.type(piece) == Piece.Pawn) return true;
+        boolean white = Piece.isWhite(capturingColor);
+        if (epTargetSquare / 8 != (white ? 2 : 5)) return false;
+        int opponent = white ? Piece.Black : Piece.White;
+        int capturedSquare = epTargetSquare + (white ? 8 : -8);
+        long enemyPawns = white ? blackPawns : whitePawns;
+        long friendlyPawns = white ? whitePawns : blackPawns;
+        long captured = 1L << capturedSquare;
+        long target = 1L << epTargetSquare;
+        if ((enemyPawns & captured) == 0 || (allOccupancy & target) != 0) return false;
+
+        int file = capturedSquare % 8;
+        long adjacent = (file > 0 ? captured >>> 1 : 0) | (file < 7 ? captured << 1 : 0);
+        long candidates = adjacent & friendlyPawns;
+        while (candidates != 0) {
+            long pawn = Long.lowestOneBit(candidates);
+            long afterCapture = (allOccupancy & ~(pawn | captured)) | target;
+            if (!isSquareAttackedBy(getKingSquare(capturingColor), opponent, afterCapture, enemyPawns & ~captured)) {
+                return true;
+            }
+            candidates ^= pawn;
         }
         return false;
     }
-    
+
     private int castlingAvailabilityToInt() {
         int rights = 0;
         if (castlingAvailability[0]) rights |= 0x1; // White kingside
@@ -733,6 +772,10 @@ public class Board {
         // Save old castling rights for hash
         int oldCastlingRights = castlingAvailabilityToInt();
 
+        if (epTargetSquare >= 0 && isEnPassantCapturePossible(activeColor)) {
+            zobristHash ^= ZobristHash.getKeyForEnPassantFile(epTargetSquare % 8);
+        }
+
         switch (flag) {
             case Move.FLAG_CASTLING_K -> {
                 int rookSquare = startSquare + 3;
@@ -768,16 +811,6 @@ public class Board {
             case Move.FLAG_PROMO_R -> pieceOnTarget = Piece.color(movingPiece) | Piece.Rook;
             case Move.FLAG_PROMO_B -> pieceOnTarget = Piece.color(movingPiece) | Piece.Bishop;
             case Move.FLAG_PROMO_N -> pieceOnTarget = Piece.color(movingPiece) | Piece.Knight;
-        }
-
-        // Update hash for en passant file.
-        if (epTargetSquare >= 0 && isEnPassantCapturePossible(activeColor)) {
-            zobristHash ^= ZobristHash.getKeyForEnPassantFile(epTargetSquare % 8);
-        }
-        epTargetSquare = newEpTargetSquare;
-        int opponentColor = Piece.isWhite(activeColor) ? Piece.Black : Piece.White;
-        if (newEpTargetSquare >= 0 && isEnPassantCapturePossible(opponentColor)) {
-            zobristHash ^= ZobristHash.getKeyForEnPassantFile(newEpTargetSquare % 8);
         }
 
         // Clear captured piece if any
@@ -823,6 +856,10 @@ public class Board {
 
         // Update occupancy masks; invalidate lazy attacked-squares cache.
         recomputeOccupancies();
+        epTargetSquare = newEpTargetSquare;
+        if (epTargetSquare >= 0 && isEnPassantCapturePossible(activeColor)) {
+            zobristHash ^= ZobristHash.getKeyForEnPassantFile(epTargetSquare % 8);
+        }
         attackedSquaresValid = false;
 
         if (!searchMode) {
@@ -977,7 +1014,8 @@ public class Board {
     }
 
     public NullMoveState makeNullMove() {
-        NullMoveState state = new NullMoveState(activeColor, epTargetSquare, halfmoveClock, fullMoves, zobristHash);
+        NullMoveState state = new NullMoveState(activeColor, epTargetSquare, halfmoveClock, fullMoves, zobristHash, repetitionFloor);
+        repetitionFloor = zobristSP;
 
         // Side to move always toggles in Zobrist on a null move.
         zobristHash ^= ZobristHash.getKeyForBlackToMove();
@@ -1008,6 +1046,7 @@ public class Board {
         halfmoveClock = state.previousHalfmoveClock();
         fullMoves = state.previousFullMoves();
         zobristHash = state.previousZobristHash();
+        repetitionFloor = state.previousRepetitionFloor();
     }
 
     // Function for converting an index to a chess square notation (e5, d4, etc.):
@@ -1045,14 +1084,18 @@ public class Board {
      * O(1) — no move generation involved.
      */
     public boolean isSquareAttackedBy(int sq, int byColor) {
-        long occ = allOccupancy;
+        long pawns = byColor == Piece.White ? whitePawns : blackPawns;
+        return isSquareAttackedBy(sq, byColor, allOccupancy, pawns);
+    }
+
+    private boolean isSquareAttackedBy(int sq, int byColor, long occ, long pawns) {
         if (byColor == Piece.White) {
             if ((MagicBitboards.getRookAttacks(sq, occ)   & (whiteRooks | whiteQueens))   != 0) return true;
             if ((MagicBitboards.getBishopAttacks(sq, occ) & (whiteBishops | whiteQueens)) != 0) return true;
             if ((AttackTables.KNIGHT_ATTACKS[sq]          & whiteKnights)                 != 0) return true;
             if ((AttackTables.KING_ATTACKS[sq]            & whiteKing)                    != 0) return true;
             // White pawns attack diagonally upward (toward smaller indices)
-            long pawnAttacks = ((whitePawns & ~FILE_A) >> 9) | ((whitePawns & ~FILE_H) >> 7);
+            long pawnAttacks = ((pawns & ~FILE_A) >>> 9) | ((pawns & ~FILE_H) >>> 7);
             return (pawnAttacks & (1L << sq)) != 0;
         } else {
             if ((MagicBitboards.getRookAttacks(sq, occ)   & (blackRooks | blackQueens))   != 0) return true;
@@ -1060,7 +1103,7 @@ public class Board {
             if ((AttackTables.KNIGHT_ATTACKS[sq]          & blackKnights)                 != 0) return true;
             if ((AttackTables.KING_ATTACKS[sq]            & blackKing)                    != 0) return true;
             // Black pawns attack diagonally downward (toward larger indices)
-            long pawnAttacks = ((blackPawns & ~FILE_A) << 7) | ((blackPawns & ~FILE_H) << 9);
+            long pawnAttacks = ((pawns & ~FILE_A) << 7) | ((pawns & ~FILE_H) << 9);
             return (pawnAttacks & (1L << sq)) != 0;
         }
     }
@@ -1089,27 +1132,15 @@ public class Board {
         return repetitions >= 3;
     }
 
-    /**
-     * Returns true if the current position has appeared at least once before in the
-     * current search path (2-fold repetition detection for use inside alphaBeta).
-     *
-     * <p>The look-back window is bounded by {@code halfmoveClock + 1}: positions after
-     * an irreversible move (capture or pawn push) can never be repetitions, so scanning
-     * beyond the halfmove-clock window is both unnecessary and incorrect.
-     *
-     * <p>{@code zobristHistory} always contains the current position as its last element
-     * (added by {@code makeMove()} before returning), so the first match is the "current"
-     * occurrence and a second match indicates a true repetition.
-     */
+    /** A search cycle or a third occurrence across game history and the current line. */
     public boolean isRepetitionDraw() {
-        // Repetitions can only occur among same-side-to-move positions, i.e., every 2 plies.
-        // Bound the window by the halfmove clock (reset on any irreversible move).
-        int limit = Math.min(zobristSP, halfmoveClock + 1);
-        int count = 0;
-        for (int i = zobristSP - limit; i < zobristSP; i++) {
-            if (zobristStack[i] == zobristHash) {
-                count++;
-                if (count >= 2) return true;
+        int current = zobristSP - 1;
+        if (current < repetitionFloor) return false; // A null move has no history entry.
+        int first = Math.max(repetitionFloor, current - Math.max(0, halfmoveClock));
+        int earlierMatches = 0;
+        for (int i = current - 2; i >= first; i -= 2) {
+            if (zobristStack[i] == zobristHash && (i >= searchRootIndex || ++earlierMatches == 2)) {
+                return true;
             }
         }
         return false;
