@@ -668,12 +668,11 @@ public class UciApplication {
             ponderBtime = parseLongArg(goParts, "btime", 0L);
             ponderWinc  = parseLongArg(goParts, "winc",  0L);
             ponderBinc  = parseLongArg(goParts, "binc",  0L);
-            ponderMoveNumber = (board.boardStates.size() - 1) / 2;
+            ponderMoveNumber = Math.max(1, board.getFullMoves()) - 1;
         }
 
-        String positionSnapshot = board.boardStates.get(board.boardStates.size() - 1);
-        Board searchBoard = new Board(positionSnapshot);
-        searchBoard.setSearchMode(true);
+        Board.SearchSnapshot snapshot = board.snapshotForSearch();
+        Board searchBoard = snapshot.newBoard();
 
         // Forced move detection: if exactly one legal move exists, play it
         // immediately without entering the search. Saves clock time in positions
@@ -702,13 +701,15 @@ public class UciApplication {
         }
 
         searchRunning = true;
-        Thread worker = new Thread(() -> runSearch(command, searchBoard, searchId, legalMoves), "uci-search-thread");
+        Thread worker = new Thread(() -> runSearch(command, snapshot, searchBoard, searchId, legalMoves),
+                "uci-search-thread");
         worker.setDaemon(true);
         searchThread = worker;
         worker.start();
     }
 
-    private void runSearch(String command, Board searchBoard, long searchId, List<Move> rootLegalMoves) {
+    private void runSearch(String command, Board.SearchSnapshot snapshot, Board searchBoard, long searchId,
+                           List<Move> rootLegalMoves) {
         // Per-search abort flag for Lazy SMP helper threads.
         // Separate from the global stopRequested so setting it to true at the end
         // of this search does not bleed into the next search cycle.
@@ -749,9 +750,6 @@ public class UciApplication {
             // instance — never the same instance shared across threads.
             NnueNetwork nnueNetworkForSearch = resolveNnueNetworkForSearch();
             if (effectiveHelpers > 0) {
-                // Snapshot the current position string from the board so each
-                // helper can create an independent Board without sharing state.
-                String positionFen = searchBoard.boardStates.get(searchBoard.boardStates.size() - 1);
                 for (int i = 1; i <= effectiveHelpers; i++) {
                     // Stagger start depths per spec:
                     //   odd-indexed helpers (1, 3, 5,...) start at depth (i/2)+2
@@ -786,10 +784,8 @@ public class UciApplication {
                             if (nnueNetworkForSearch != null) {
                                 helper.setEvaluatorStrategy(newSearchNnueEvaluator(nnueNetworkForSearch));
                             }
-                            Board helperBoard = new Board(positionFen);
-                            helperBoard.setSearchMode(true);
                             helperResult = helper.iterativeDeepening(
-                                    helperBoard,
+                                    snapshot.newBoard(),
                                     MAX_SEARCH_DEPTH,
                                     startDepth,
                                     () -> helperAbort.get() || stopRequested.get(),
@@ -861,8 +857,9 @@ public class UciApplication {
             // Opening book probe — skip when pondering (we're searching the opponent's position).
             // Book is guaranteed open if handlePosition() ran before this go (see reopen guard there).
             if (ownBook && !isPonder) {
-                int halfMoves = searchBoard.boardStates.size() - 1;
-                if (halfMoves < bookDepth * 2) {
+                long halfMoves = 2L * (Math.max(1, searchBoard.getFullMoves()) - 1)
+                        + (Piece.isWhite(searchBoard.getActiveColor()) ? 0 : 1);
+                if (halfMoves < bookDepth * 2L) {
                     Move bookMove = openingBook.probe(searchBoard);
                     if (bookMove != null) {
                         bestMoveToEmit = bookMove;
@@ -918,7 +915,7 @@ public class UciApplication {
 
                 TimeManager manager = new TimeManager();
                 manager.setMoveOverheadMs(moveOverheadMs);
-                int moveNumber = (searchBoard.boardStates.size() - 1) / 2;
+                int moveNumber = Math.max(1, searchBoard.getFullMoves()) - 1;
                 manager.configureClock(searchBoard.getActiveColor(), wtime, btime, winc, binc, moveNumber);
                 if (isPonder) {
                     manager.configurePonder();

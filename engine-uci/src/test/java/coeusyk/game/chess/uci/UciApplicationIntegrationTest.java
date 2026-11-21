@@ -1,5 +1,6 @@
 package coeusyk.game.chess.uci;
 
+import coeusyk.game.chess.core.book.PolyglotKey;
 import coeusyk.game.chess.core.eval.nnue.NnueEvaluator;
 import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Move;
@@ -12,6 +13,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -46,6 +48,88 @@ class UciApplicationIntegrationTest {
         if (harness != null) {
             harness.close();
         }
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {1, 2})
+    void replayedThirdOccurrenceIsScoredAsDraw(int threads) throws Exception {
+        if (threads == 2) Assumptions.assumeTrue(Runtime.getRuntime().availableProcessors() >= 2);
+        harness = UciHarness.startWithDiagnostics();
+        harness.send("setoption name Threads value " + threads);
+        harness.send("position startpos moves g1f3 g8f6 f3g1 f6g8 g1f3 g8f6 f3g1");
+        harness.send("go depth 1 searchmoves f6g8");
+        String info = harness.awaitLine(line -> line.startsWith("info depth 1 "), Duration.ofSeconds(5));
+        assertNotNull(info);
+        assertTrue(info.contains(" score cp 0 "), info);
+        assertNotNull(harness.awaitLine("bestmove f6g8", Duration.ofSeconds(5)));
+        if (threads == 2) {
+            assertNotNull(harness.awaitDiagnostic(line -> line.contains("event=start helper=1"), Duration.ofSeconds(5)));
+        }
+    }
+
+    @Test
+    void quiescenceEvasionCanReachThirdOccurrence() throws Exception {
+        harness = UciHarness.start();
+        harness.send("position fen 7k/R7/8/8/1B6/8/8/K5R1 w - - 0 1 moves g1h1 h8g8 h1g1 g8h8 g1h1 h8g8");
+        harness.send("go depth 1 searchmoves h1g1");
+        String info = harness.awaitLine(line -> line.startsWith("info depth 1 "), Duration.ofSeconds(5));
+        assertNotNull(info);
+        assertTrue(info.contains(" score cp 0 "), info);
+    }
+
+    @Test
+    void clockUsesGameAgeForBareAndReplayedFen(@TempDir Path tempDir) throws Exception {
+        Path logging = tempDir.resolve("logback.xml");
+        Files.writeString(logging, """
+                <configuration>
+                  <appender name="stderr" class="ch.qos.logback.core.ConsoleAppender">
+                    <target>System.err</target>
+                    <encoder><pattern>%msg%n</pattern></encoder>
+                  </appender>
+                  <logger name="coeusyk.game.chess.core.search.TimeManager" level="DEBUG"/>
+                  <root level="INFO"><appender-ref ref="stderr"/></root>
+                </configuration>
+                """);
+        harness = UciHarness.start(true, "-Dlogback.configurationFile=" + logging);
+        harness.send("setoption name OwnBook value false");
+        String fen = new Board().toFen();
+        harness.send("position fen " + fen.replaceFirst(" 1$", " 35"));
+        harness.send("go wtime 1000 btime 1000");
+        assertNotNull(harness.awaitDiagnostic(line -> line.contains("[TIME] move=34 divisor=16"), Duration.ofSeconds(5)));
+        assertNotNull(harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(5)));
+
+        harness.send("position fen " + fen.replaceFirst(" 1$", " 29") + " moves g1f3 g8f6");
+        harness.send("go ponder wtime 1000 btime 1000");
+        String ponderClock = "[TIME] move=29 divisor=21";
+        assertNotNull(harness.awaitDiagnostic(line -> line.contains(ponderClock), Duration.ofSeconds(5)));
+        assertNotNull(harness.awaitLine(line -> line.startsWith("info depth "), Duration.ofSeconds(5)));
+        harness.send("ponderhit");
+        assertNotNull(harness.awaitDiagnostic(line -> line.contains(ponderClock)
+                && harness.diagnosticHistory.stream().filter(entry -> entry.contains(ponderClock)).count() == 2,
+                Duration.ofSeconds(5)));
+        assertNotNull(harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(5)));
+    }
+
+    @Test
+    void bookDepthUsesFullmoveNumberFromFen(@TempDir Path tempDir) throws Exception {
+        Path book = tempDir.resolve("book.bin");
+        Board start = new Board();
+        try (DataOutputStream out = new DataOutputStream(Files.newOutputStream(book))) {
+            out.writeLong(PolyglotKey.compute(start));
+            out.writeShort((12 << 6) | 28); // e2e4
+            out.writeShort(1);
+            out.writeInt(0);
+        }
+        harness = UciHarness.startWithDiagnostics();
+        harness.send("setoption name BookFile value " + book);
+        harness.send("setoption name OwnBook value true");
+        harness.send("setoption name BookDepth value 1");
+        harness.send("position startpos");
+        harness.send("go depth 1");
+        assertNotNull(harness.awaitDiagnostic(line -> line.contains("event=bestmove source=book"), Duration.ofSeconds(5)));
+        harness.send("position fen " + start.toFen().replaceFirst(" 1$", " 35"));
+        harness.send("go depth 1");
+        assertNotNull(harness.awaitDiagnostic(line -> line.contains("event=bestmove source=main-result"), Duration.ofSeconds(5)));
     }
 
     @Test
@@ -769,7 +853,7 @@ class UciApplicationIntegrationTest {
             return start(true);
         }
 
-        private static UciHarness start(boolean withDiagnostics) throws IOException {
+        private static UciHarness start(boolean withDiagnostics, String... vmOptions) throws IOException {
             String javaBinary = System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win")
                     ? "java.exe"
                     : "java";
@@ -778,6 +862,7 @@ class UciApplicationIntegrationTest {
 
             List<String> command = new java.util.ArrayList<>();
             command.add(javaExec);
+            command.addAll(List.of(vmOptions));
             if (withDiagnostics) command.add("-Dvex.smp.diagnostics=true");
             command.add("-cp");
             command.add(classpath);
