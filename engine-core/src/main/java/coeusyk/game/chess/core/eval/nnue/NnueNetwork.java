@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 
 /**
  * Immutable NNUE network weights: (768 -&gt; hiddenWidth) x2 -&gt; 1, feature-transformer
@@ -48,6 +49,9 @@ public final class NnueNetwork {
     // or hostile header must be rejected before it can force a huge allocation.
     private static final int MAX_HIDDEN_WIDTH = 4096;
     private static final int MAX_QA = Short.MAX_VALUE;
+    // A legal position has at most 32 pieces (FeatureExtractor's own buffer), hence at most
+    // 32 active features per perspective. Must match the trainer's MAX_ACTIVE_FEATURES.
+    static final int MAX_ACTIVE_FEATURES = 32;
 
     private final int hiddenWidth;
     private final short[] ftWeights;
@@ -166,8 +170,55 @@ public final class NnueNetwork {
         short[] outputWeights = readShorts(in, 2 * hiddenWidth);
         int outputBias = in.readInt();
 
+        validateAccumulatorBounds(hiddenWidth, ftWeights, ftBiases);
+
         return new NnueNetwork(hiddenWidth, ftWeights, ftBiases, outputWeights, outputBias,
                 qa, qb, outputScale, networkUuid, trainerCommit, createdAtEpochSeconds);
+    }
+
+    /**
+     * Rejects weights/biases whose feature-transformer accumulator could leave the signed
+     * int16 range for some position (issue #264). {@code NnueEvaluator} accumulates in
+     * {@code short} without saturation, so an out-of-range sum would wrap silently into a
+     * garbage evaluation. For each hidden neuron the worst case over at most
+     * {@link #MAX_ACTIVE_FEATURES} simultaneously active features is
+     * {@code bias + (sum of the 32 largest positive weights)} on the high side and
+     * {@code bias + (sum of the 32 most negative weights)} on the low side; both must stay
+     * inside [-32768, 32767]. This ignores which feature sets can actually co-occur, so it is
+     * conservative, but it is never stricter than the trainer's own check
+     * ({@code bias + 32 * max|w|}): any net the Python quantizer accepts loads here.
+     * Runs once at load time; nothing here is on the search path.
+     */
+    private static void validateAccumulatorBounds(int hiddenWidth, short[] ftWeights, short[] ftBiases)
+            throws IOException {
+        int features = FeatureExtractor.FEATURES_PER_PERSPECTIVE;
+        int[] column = new int[features];
+        for (int j = 0; j < hiddenWidth; j++) {
+            for (int f = 0; f < features; f++) {
+                column[f] = ftWeights[f * hiddenWidth + j];
+            }
+            Arrays.sort(column);
+            long positive = 0;
+            long negative = 0;
+            for (int k = 0; k < MAX_ACTIVE_FEATURES; k++) {
+                positive += Math.max(0, column[features - 1 - k]);
+                negative += Math.min(0, column[k]);
+            }
+            long worstHigh = ftBiases[j] + positive;
+            long worstLow = ftBiases[j] + negative;
+            if (worstHigh > Short.MAX_VALUE) {
+                throw new IOException("accumulator overflow risk at hidden neuron " + j + ": bias "
+                        + ftBiases[j] + " plus the " + MAX_ACTIVE_FEATURES + " largest feature weights reaches "
+                        + worstHigh + ", above the int16 maximum " + Short.MAX_VALUE
+                        + " (network was not exported with clipped feature-transformer weights)");
+            }
+            if (worstLow < Short.MIN_VALUE) {
+                throw new IOException("accumulator overflow risk at hidden neuron " + j + ": bias "
+                        + ftBiases[j] + " plus the " + MAX_ACTIVE_FEATURES + " most negative feature weights reaches "
+                        + worstLow + ", below the int16 minimum " + Short.MIN_VALUE
+                        + " (network was not exported with clipped feature-transformer weights)");
+            }
+        }
     }
 
     private static short[] readShorts(DataInputStream in, int count) throws IOException {

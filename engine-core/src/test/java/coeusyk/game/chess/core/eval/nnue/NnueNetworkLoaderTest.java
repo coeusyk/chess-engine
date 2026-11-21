@@ -61,11 +61,11 @@ class NnueNetworkLoaderTest {
         int width = 256;
         short[] ftWeights = new short[FeatureExtractor.FEATURES_PER_PERSPECTIVE * width];
         for (int i = 0; i < ftWeights.length; i++) {
-            ftWeights[i] = (short) (i % 65536 - 32768);
+            ftWeights[i] = (short) (i % 2041 - 1020);   // within the qa=127 weight clip (issue #264)
         }
         short[] ftBiases = new short[width];
         for (int i = 0; i < ftBiases.length; i++) {
-            ftBiases[i] = (short) (i % 65536 - 32768);
+            ftBiases[i] = (short) (i % 255 - 127);      // within the qa=127 bias clip
         }
         short[] outputWeights = new short[2 * width];
         for (int i = 0; i < outputWeights.length; i++) {
@@ -320,6 +320,129 @@ class NnueNetworkLoaderTest {
 
         IOException thrown = assertThrows(IOException.class, () -> NnueNetwork.load(truncated));
         assertTrue(thrown.getMessage().contains("does not match expected size"));
+    }
+
+    // ---- Issue #264: load-time int16 accumulator bound (<= 32 active features) ----
+
+    /** Width-2 network where neuron 0 carries {@code weight} on {@code count} features and {@code bias}. */
+    private static byte[] netWithNeuron0(int count, short weight, short bias) throws IOException {
+        int width = 2;
+        short[] ftWeights = new short[FeatureExtractor.FEATURES_PER_PERSPECTIVE * width];
+        for (int f = 0; f < count; f++) {
+            ftWeights[f * width] = weight;
+        }
+        short[] ftBiases = {bias, 0};
+        return writeNetwork(width, ftWeights, ftBiases, new short[2 * width], 0, 127, 64, 400, "u", "c", 0L);
+    }
+
+    private static void assertRejectedAsOverflow(byte[] bytes, String direction) {
+        IOException thrown = assertThrows(IOException.class, () -> NnueNetwork.load(new ByteArrayInputStream(bytes)));
+        assertTrue(thrown.getMessage().contains("accumulator overflow risk"), thrown.getMessage());
+        assertTrue(thrown.getMessage().contains("hidden neuron 0"), thrown.getMessage());
+        assertTrue(thrown.getMessage().contains(direction), thrown.getMessage());
+    }
+
+    @Test
+    void loadAcceptsExactPositiveInt16Boundary() throws IOException {
+        // 767 + 32 * 1000 == 32767 exactly.
+        NnueNetwork.load(new ByteArrayInputStream(netWithNeuron0(32, (short) 1000, (short) 767)));
+    }
+
+    @Test
+    void loadRejectsOneAbovePositiveInt16Boundary() throws IOException {
+        // 768 + 32 * 1000 == 32768.
+        assertRejectedAsOverflow(netWithNeuron0(32, (short) 1000, (short) 768), "above the int16 maximum");
+    }
+
+    @Test
+    void loadAcceptsExactNegativeInt16Boundary() throws IOException {
+        // -768 + 32 * -1000 == -32768, representable, so not an overflow.
+        NnueNetwork.load(new ByteArrayInputStream(netWithNeuron0(32, (short) -1000, (short) -768)));
+    }
+
+    @Test
+    void loadRejectsOneBelowNegativeInt16Boundary() throws IOException {
+        // -769 + 32 * -1000 == -32769.
+        assertRejectedAsOverflow(netWithNeuron0(32, (short) -1000, (short) -769), "below the int16 minimum");
+    }
+
+    @Test
+    void loadOnlyCountsThirtyTwoFeaturesNotEveryLargeWeight() throws IOException {
+        // 40 large weights exist but at most 32 features can be active, so only 32 count.
+        NnueNetwork.load(new ByteArrayInputStream(netWithNeuron0(40, (short) 1000, (short) 767)));
+        // The 33rd weight being large does not rescue a net whose 32 largest already overflow.
+        assertRejectedAsOverflow(netWithNeuron0(40, (short) 1000, (short) 768), "above the int16 maximum");
+    }
+
+    @Test
+    void loadIgnoresOppositeSignWeightsWhenBoundingEachDirection() throws IOException {
+        // Negative weights cannot reduce the worst positive sum (fewer features may be active).
+        int width = 2;
+        short[] ftWeights = new short[FeatureExtractor.FEATURES_PER_PERSPECTIVE * width];
+        for (int f = 0; f < 32; f++) {
+            ftWeights[f * width] = 1000;
+        }
+        for (int f = 32; f < 64; f++) {
+            ftWeights[f * width] = -3000;
+        }
+        byte[] bytes = writeNetwork(width, ftWeights, new short[] {768, 0}, new short[2 * width], 0,
+                127, 64, 400, "u", "c", 0L);
+        assertRejectedAsOverflow(bytes, "above the int16 maximum");
+    }
+
+    @Test
+    void loadChecksEveryHiddenNeuronNotJustTheFirst() throws IOException {
+        int width = 3;
+        short[] ftWeights = new short[FeatureExtractor.FEATURES_PER_PERSPECTIVE * width];
+        for (int f = 0; f < 32; f++) {
+            ftWeights[f * width + 2] = 1000;
+        }
+        byte[] bytes = writeNetwork(width, ftWeights, new short[] {0, 0, 768}, new short[2 * width], 0,
+                127, 64, 400, "u", "c", 0L);
+        IOException thrown = assertThrows(IOException.class, () -> NnueNetwork.load(new ByteArrayInputStream(bytes)));
+        assertTrue(thrown.getMessage().contains("hidden neuron 2"), thrown.getMessage());
+    }
+
+    @Test
+    void loadRejectsExternallyGeneratedNetWithUnclippedExtremeWeights() throws IOException {
+        // What an exporter that skipped weight clipping would produce: full-range int16 everywhere.
+        int width = 2;
+        short[] ftWeights = new short[FeatureExtractor.FEATURES_PER_PERSPECTIVE * width];
+        java.util.Arrays.fill(ftWeights, Short.MAX_VALUE);
+        byte[] high = writeNetwork(width, ftWeights, new short[] {Short.MAX_VALUE, 0}, new short[2 * width], 0,
+                127, 64, 400, "u", "c", 0L);
+        assertRejectedAsOverflow(high, "above the int16 maximum");
+
+        java.util.Arrays.fill(ftWeights, Short.MIN_VALUE);
+        byte[] low = writeNetwork(width, ftWeights, new short[] {Short.MIN_VALUE, 0}, new short[2 * width], 0,
+                127, 64, 400, "u", "c", 0L);
+        assertRejectedAsOverflow(low, "below the int16 minimum");
+    }
+
+    @Test
+    void loadRejectsOverflowOnFileEntryPointToo(@TempDir Path tempDir) throws IOException {
+        Path file = tempDir.resolve("unsafe.nnue");
+        Files.write(file, netWithNeuron0(32, (short) 1000, (short) 768));
+        IOException thrown = assertThrows(IOException.class, () -> NnueNetwork.load(file));
+        assertTrue(thrown.getMessage().contains("accumulator overflow risk"), thrown.getMessage());
+    }
+
+    @Test
+    void loadStillAcceptsTheProductionQaClipEnvelope() throws IOException {
+        // qa=127 production contract: bias clip 127, weight clip floor((32767-127)/32) == 1020.
+        NnueNetwork.load(new ByteArrayInputStream(netWithNeuron0(32, (short) 1020, (short) 127)));
+        NnueNetwork.load(new ByteArrayInputStream(netWithNeuron0(32, (short) -1020, (short) -127)));
+    }
+
+    @Test
+    void committedSupportedFixtureSatisfiesTheAccumulatorBound() throws IOException {
+        Path current = Path.of("").toAbsolutePath();
+        while (current != null && !Files.exists(current.resolve("engine-core/src/test/resources/nnue/d6-export-fixture.nnue"))) {
+            current = current.getParent();
+        }
+        assertTrue(current != null, "committed fixture not found from the working directory");
+        NnueNetwork loaded = NnueNetwork.load(current.resolve("engine-core/src/test/resources/nnue/d6-export-fixture.nnue"));
+        assertTrue(loaded.hiddenWidth() > 0);
     }
 
     private static byte[] writeNetwork(int width, short[] ftWeights, short[] ftBiases, short[] outputWeights,
