@@ -47,6 +47,7 @@ public final class NnueNetwork {
     // a .nnue path is user-supplied input to the UCI process (PRD §4), so a corrupt
     // or hostile header must be rejected before it can force a huge allocation.
     private static final int MAX_HIDDEN_WIDTH = 4096;
+    private static final int MAX_QA = Short.MAX_VALUE;
 
     private final int hiddenWidth;
     private final short[] ftWeights;
@@ -136,8 +137,8 @@ public final class NnueNetwork {
         }
         in.readInt(); // quantVersion — reserved for a future quantization scheme change
         int qa = in.readInt();
-        if (qa <= 0) {
-            throw new IOException("qa " + qa + " out of range (must be positive)");
+        if (qa <= 0 || qa > MAX_QA) {
+            throw new IOException("qa " + qa + " out of range (1.." + MAX_QA + ")");
         }
         int qb = in.readInt();
         if (qb <= 0) {

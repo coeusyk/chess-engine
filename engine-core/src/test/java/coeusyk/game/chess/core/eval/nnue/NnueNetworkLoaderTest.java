@@ -2,6 +2,8 @@ package coeusyk.game.chess.core.eval.nnue;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -228,6 +230,49 @@ class NnueNetworkLoaderTest {
         IOException thrown = assertThrows(IOException.class,
                 () -> NnueNetwork.load(new ByteArrayInputStream(bytes)));
         assertTrue(thrown.getMessage().contains("qa"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {32768, 65536, Integer.MAX_VALUE})
+    void loadRejectsQaAboveShortMax(int badQa) throws IOException {
+        int width = 4;
+        short[] ftWeights = new short[FeatureExtractor.FEATURES_PER_PERSPECTIVE * width];
+        short[] ftBiases = new short[width];
+        short[] outputWeights = new short[2 * width];
+        byte[] bytes = writeNetwork(width, ftWeights, ftBiases, outputWeights, 0,
+                badQa, 64, 400, "uuid", "commit", 0L);
+
+        IOException thrown = assertThrows(IOException.class,
+                () -> NnueNetwork.load(new ByteArrayInputStream(bytes)));
+        assertTrue(thrown.getMessage().contains("qa"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {1, 64, 127, 128, 255, 256, 512, 32767})
+    void loadAcceptsSupportedQaValuesAndSafeAccumulation(int qa) throws IOException {
+        int width = 2;
+        short weightClip = (short) ((Short.MAX_VALUE - qa) / 32);
+        short[] ftWeights = new short[FeatureExtractor.FEATURES_PER_PERSPECTIVE * width];
+        for (int f = 0; f < 32; f++) {
+            ftWeights[f * width] = weightClip;
+            ftWeights[f * width + 1] = (short) -weightClip;
+        }
+        short[] ftBiases = {(short) qa, (short) -qa};
+        short[] outputWeights = new short[2 * width];
+        byte[] bytes = writeNetwork(width, ftWeights, ftBiases, outputWeights, 0,
+                qa, 64, 400, "uuid", "commit", 0L);
+
+        NnueNetwork loaded = NnueNetwork.load(new ByteArrayInputStream(bytes));
+        assertEquals(qa, loaded.qa());
+
+        short posAcc = loaded.ftBiases()[0];
+        short negAcc = loaded.ftBiases()[1];
+        for (int f = 0; f < 32; f++) {
+            posAcc = (short) (posAcc + loaded.ftWeights()[f * width]);
+            negAcc = (short) (negAcc + loaded.ftWeights()[f * width + 1]);
+        }
+        assertTrue(posAcc >= 0, "positive accumulation wrapped negative for qa=" + qa + ": " + posAcc);
+        assertTrue(negAcc <= 0, "negative accumulation wrapped positive for qa=" + qa + ": " + negAcc);
     }
 
     @Test

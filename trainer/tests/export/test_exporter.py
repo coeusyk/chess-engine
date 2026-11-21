@@ -155,3 +155,27 @@ def test_export_rejects_non_positive_qa_end_to_end(tmp_path: Path):
     object.__setattr__(network, "qa", 0)
     with pytest.raises(ValueError, match="qa must be positive"):
         export(network, _metadata(), dataset_composition=[], output_dir=tmp_path)
+
+
+@pytest.mark.parametrize("qa", [64, 127, 128, 255, 256, 512, 32767])
+def test_nnue_bytes_accepts_supported_qa_values(qa: int):
+    network = _quantized_network()
+    object.__setattr__(network, "qa", qa)
+    raw = _nnue_bytes(network, "11111111-1111-1111-1111-111111111111", "a" * 40, 0)
+    assert raw[:4] == MAGIC
+
+
+@pytest.mark.parametrize("bad_qa", [32768, 65536])
+def test_nnue_bytes_rejects_qa_above_int16_max(bad_qa: int):
+    network = _quantized_network()
+    object.__setattr__(network, "qa", bad_qa)
+    with pytest.raises(ValueError, match="qa must be <="):
+        _nnue_bytes(network, "u", "c" * 8, 0)
+
+
+@pytest.mark.parametrize("bad_bias", [-(1 << 31) - 1, 1 << 31])
+def test_nnue_bytes_rejects_out_of_range_output_bias(bad_bias: int):
+    network = _quantized_network()
+    object.__setattr__(network, "output_bias", bad_bias)
+    with pytest.raises(ValueError, match="int32"):
+        _nnue_bytes(network, "u", "c" * 8, 0)

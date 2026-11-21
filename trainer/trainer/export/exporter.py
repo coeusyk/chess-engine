@@ -47,6 +47,8 @@ import numpy as np
 
 from trainer.encoding.feature_spec import repo_root
 from trainer.export.canonical import QuantizedCanonicalNetwork
+from trainer.model.network import INT16_MAX
+from trainer.quantization.quantizer import INT32_MAX, INT32_MIN
 from trainer.reproducibility.experiment_metadata import ExperimentMetadata
 
 MAGIC = b"VNUE"
@@ -148,8 +150,14 @@ def _nnue_bytes(network: QuantizedCanonicalNetwork, network_uuid: str, trainer_c
                  created_at_epoch_seconds: int) -> bytes:
     if network.qa <= 0:
         raise ValueError(f"qa must be positive, got {network.qa}")
+    if network.qa > INT16_MAX:
+        raise ValueError(f"qa must be <= {INT16_MAX}, got {network.qa}")
     if network.qb <= 0:
         raise ValueError(f"qb must be positive, got {network.qb}")
+    if network.output_bias < INT32_MIN or network.output_bias > INT32_MAX:
+        raise ValueError(
+            f"output_bias {network.output_bias} out of signed int32 range [{INT32_MIN}, {INT32_MAX}]"
+        )
 
     short_commit = trainer_commit[:_SHORT_COMMIT_LENGTH]
 
