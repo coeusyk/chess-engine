@@ -26,6 +26,14 @@ depth, and use its first PV"), this driver picks the `evals` entry with the high
 `fen,eval_cp[,eval_mate]` CSV rows (empty field = absent) -- this module does not
 touch `TextDatasetProvider`'s own logic (issue #202's Explicit Non-Scope), it only
 produces input for it.
+
+**Label perspective (issue #263).** Lichess publishes `cp`/`mate` from White's
+perspective; the trainer's label contract is mover-relative. `_to_record` therefore
+negates both for Black-to-move positions (`trainer/dataset/lichess_perspective.py`),
+and the manifest records `label_perspective: mover-relative`. Shards acquired before
+this fix have no such field and are White-perspective; audit/repair them with
+`scripts/repair_stage1_perspective.py` (writes a new versioned directory, never
+modifies the original).
 """
 
 from __future__ import annotations
@@ -52,6 +60,11 @@ import zstandard
 # `trainer/reproducibility/__init__.py` do not export these names -- consistent with
 # `stockfish_label.py`'s own established pattern for this exact problem, this module
 # follows it rather than inventing a second, divergent way to solve the same problem.
+from trainer.dataset.lichess_perspective import (
+    LABEL_PERSPECTIVE_FIELD,
+    MOVER_RELATIVE,
+    to_mover_relative,
+)
 from trainer.export.exporter import _atomic_write
 from trainer.reproducibility.experiment_metadata import _trainer_commit
 
@@ -87,7 +100,13 @@ def _to_record(raw: Dict[str, Any]) -> Optional[NormalizedRecord]:
     eval_cp, eval_mate = pv.get("cp"), pv.get("mate")
     if eval_cp is None and eval_mate is None:
         return None
-    return NormalizedRecord(fen=raw["fen"], eval_cp=eval_cp, eval_mate=eval_mate)
+    # Lichess scores are White-perspective; the trainer's label contract is
+    # mover-relative (issue #263). Normalize here, at the one adapter that knows the
+    # source convention -- never in a reader, which would also flip the already
+    # mover-relative Stage 2/3 sources.
+    fen = raw["fen"]
+    eval_cp, eval_mate = to_mover_relative(fen, eval_cp, eval_mate)
+    return NormalizedRecord(fen=fen, eval_cp=eval_cp, eval_mate=eval_mate)
 
 
 def _open_source_stream(source: str) -> io.TextIOWrapper:
@@ -170,6 +189,8 @@ def acquire(source: str, target_count: int, output_dir: Path, dataset_identifier
     manifest = {
         "dataset_identifier": dataset_identifier,
         "stage": "public",
+        # Absent on every pre-#263 manifest (those shards are White-perspective).
+        LABEL_PERSPECTIVE_FIELD: MOVER_RELATIVE,
         "source_url": source,
         "output_sha256": output_sha256,
         "trainer_commit": _trainer_commit(),
