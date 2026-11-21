@@ -6,11 +6,38 @@ import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class BoardHashOwnershipTest {
+
+    @Test
+    void cPawnDoublePushInRookEndgameDoesNotHashPinnedEnPassant() {
+        Board board = new Board("8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1");
+        long rootHash = board.getZobristHash();
+        board.makeMove(Move.of(52, 44)); // e2e3
+        board.makeMove(Move.of(10, 26, Move.FLAG_EP_TARGET)); // c7c5
+
+        // b5xc6 would remove both blockers between the rook on h5 and the king on a5.
+        assertEquals("8/8/3p4/KPp4r/1R3p1k/4P3/6P1/8 w - c6 0 2", board.toFen());
+        Board rebuilt = new Board(board.toFen());
+        Board withoutEp = new Board("8/8/3p4/KPp4r/1R3p1k/4P3/6P1/8 w - - 0 2");
+        int[] withEpMoves = new int[256];
+        int[] withoutEpMoves = new int[256];
+        int withEpCount = MovesGenerator.generate(board, withEpMoves);
+        int withoutEpCount = MovesGenerator.generate(withoutEp, withoutEpMoves);
+        assertFalse(Arrays.stream(withEpMoves, 0, withEpCount).anyMatch(Move::isEnPassant));
+        assertArrayEquals(Arrays.stream(withoutEpMoves, 0, withoutEpCount).sorted().toArray(),
+                Arrays.stream(withEpMoves, 0, withEpCount).sorted().toArray());
+        assertEquals(rebuilt.getZobristHash(), board.getZobristHash());
+        assertEquals(withoutEp.getZobristHash(), board.getZobristHash());
+        assertNotEquals(PolyglotKey.compute(withoutEp), PolyglotKey.compute(board));
+        board.unmakeMove();
+        board.unmakeMove();
+        assertEquals(rootHash, board.getZobristHash());
+    }
 
     @Test
     void searchSnapshotsDistinguishGameHistoryFromSearchCycles() {

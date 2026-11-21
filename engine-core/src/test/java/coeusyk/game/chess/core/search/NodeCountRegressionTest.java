@@ -25,7 +25,7 @@ class NodeCountRegressionTest {
         14776,
         1287,
         32267,
-        6136,
+        6128, // Legal EP hashing omits c6 when b5xc6 would expose the king to the h5 rook.
         7829,
     };
 
