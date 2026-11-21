@@ -56,3 +56,19 @@ original manifest/shard SHA-256 in `repaired_from`. Mixed-source artifacts (mmap
 built from Stage 1 + Stage 2, trained checkpoints) have no per-row source tag and must
 be rebuilt from a repaired Stage 1 directory; results trained on the old data were
 trained on corrupted Stage 1 labels and should be treated accordingly.
+
+### Safe publication and the training gate
+
+`acquire` only writes into a fresh or empty directory. It refuses a directory that already
+holds `stage1.csv`, `manifest.json` or a leftover `.stage1.csv.tmp`, so re-acquiring can
+never truncate a legacy CSV while its old unmarked manifest stays behind. Rows are written
+to a temp file and renamed into place once the stream ends, and the manifest is written
+last. If a run dies in between, the directory has a CSV but no manifest, which `repair` and
+the training gate below both refuse. Pick a new output directory after any interrupted run.
+
+`scripts/train_candidate_net.py::combine_and_split` (the entry every phase script goes
+through) calls `require_mover_relative_stage1` on the Stage 1 directory only. Training
+proceeds only if `manifest.json` declares `label_perspective: mover-relative`. A missing or
+unreadable manifest, a manifest with no marker (legacy, White-perspective), or any other
+marker value is refused with the repair command in the message. There is no override flag.
+Stage 2/3 directories and `TextDatasetProvider` itself are not affected.

@@ -38,6 +38,7 @@ import torch
 from trainer.contracts import DatasetProvider, PositionRecord
 from trainer.dataset import balance_phases, deduplicate, phase_of
 from trainer.dataset.stockfish_provider import StockfishLabeledProvider
+from trainer.dataset.lichess_perspective import require_mover_relative_stage1
 from trainer.dataset.text_provider import TextDatasetProvider
 from trainer.export.canonical import checkpoint_to_canonical
 from trainer.export.exporter import DatasetComposition, ExportResult, export
@@ -97,6 +98,8 @@ def combine_and_split(
     so the manifest's recorded proportions always match what was really trained on,
     even if the two sources are unequal-sized or the held-out fraction changes.
     """
+    # Stage 1 (Lichess) only: refuse legacy White-perspective data before any label is read.
+    require_mover_relative_stage1(stage1_dir)
     stage1 = TextDatasetProvider(
         directory=stage1_dir, identifier="stage1-lichess-evals-2026-07-15", source_ref=str(stage1_dir)
     )

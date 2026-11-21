@@ -43,6 +43,7 @@ import csv
 import hashlib
 import io
 import json
+import os
 import time
 import urllib.request
 from dataclasses import dataclass
@@ -169,23 +170,46 @@ def acquire(source: str, target_count: int, output_dir: Path, dataset_identifier
 
     output_dir.mkdir(parents=True, exist_ok=True)
     csv_path = output_dir / "stage1.csv"
+    manifest_path = output_dir / "manifest.json"
+    tmp_csv_path = output_dir / ".stage1.csv.tmp"
 
+    # Never reuse a directory that already holds (or half-holds) a dataset. Re-acquiring
+    # over a legacy directory used to truncate its White-perspective CSV while the old,
+    # unmarked manifest stayed until the very end; an interruption then left normalized
+    # rows beside a manifest that `repair --confirm-white-perspective` would accept and
+    # double-flip. Refusing reuse makes that pairing impossible (issue #263 review).
+    leftovers = [p.name for p in (csv_path, manifest_path, tmp_csv_path) if p.exists()]
+    if leftovers:
+        raise FileExistsError(
+            f"{output_dir} already contains {leftovers}; acquire only writes into a fresh or empty "
+            "directory. Choose a new output_dir (an interrupted earlier run leaves a partial directory "
+            "that must be inspected, not reused)."
+        )
+
+    # Rows go to a temp file and are published by rename only after the stream finished,
+    # so a crash can never leave a partially written `stage1.csv`. The manifest is
+    # written last: an interruption in between leaves a CSV with no manifest, which both
+    # `repair` and the training entry (`require_mover_relative_stage1`) refuse.
     position_count = 0
-    with open(csv_path, "w", newline="", encoding="ascii") as f, _open_source_stream(source) as stream:
-        writer = csv.writer(f)
-        for record in _iter_records(stream):
-            cp = "" if record.eval_cp is None else str(record.eval_cp)
-            mate = "" if record.eval_mate is None else str(record.eval_mate)
-            writer.writerow([record.fen, cp, mate])
-            position_count += 1
-            if position_count >= target_count:
-                break
+    try:
+        with open(tmp_csv_path, "x", newline="", encoding="ascii") as f, _open_source_stream(source) as stream:
+            writer = csv.writer(f)
+            for record in _iter_records(stream):
+                cp = "" if record.eval_cp is None else str(record.eval_cp)
+                mate = "" if record.eval_mate is None else str(record.eval_mate)
+                writer.writerow([record.fen, cp, mate])
+                position_count += 1
+                if position_count >= target_count:
+                    break
+        os.replace(tmp_csv_path, csv_path)
+    except BaseException:
+        tmp_csv_path.unlink(missing_ok=True)
+        raise
     # `with` block above closes `stream` here deterministically -- on the `break`
     # above just as much as on normal exhaustion or an exception, since it exits in
     # this same frame (not inside a generator whose cleanup depends on GC timing).
 
     output_sha256 = hashlib.sha256(csv_path.read_bytes()).hexdigest()
-    manifest_path = output_dir / "manifest.json"
     manifest = {
         "dataset_identifier": dataset_identifier,
         "stage": "public",

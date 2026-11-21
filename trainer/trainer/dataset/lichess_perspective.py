@@ -18,6 +18,8 @@ reader-side flip would corrupt them.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Optional, Tuple
 
 #: Manifest field/value written by the corrected acquisition adapter and by the repair
@@ -52,4 +54,49 @@ def to_mover_relative(
     return (
         None if eval_cp is None else -eval_cp,
         None if eval_mate is None else -eval_mate,
+    )
+
+
+class UnsafeStage1PerspectiveError(ValueError):
+    """A Stage 1 dataset directory cannot be shown to hold mover-relative labels."""
+
+
+def require_mover_relative_stage1(directory: Path) -> None:
+    """Fail-closed gate for the training entry (`scripts/train_candidate_net.py::
+    combine_and_split`), called on the Stage 1 directory only -- never from a reader, so
+    Stage 2/3 sources and `TextDatasetProvider` are unaffected.
+
+    Training proceeds only when `<directory>/manifest.json` exists and declares
+    `label_perspective == "mover-relative"`. Everything else is refused with a message
+    that names the remedy:
+
+    * no readable manifest: provenance cannot be established;
+    * marker absent (every pre-#263 manifest): the labels are historical
+      White-perspective, so training on them would invert half the data. Run
+      `scripts/repair_stage1_perspective.py` to produce a new, marked directory;
+    * any other marker value (including an explicit `white-relative`): refused, since
+      only `mover-relative` is known to match the trainer's label contract.
+    """
+    manifest_path = Path(directory) / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise UnsafeStage1PerspectiveError(
+            f"{directory}: cannot read manifest.json ({exc}); refusing to train on a Stage 1 dataset "
+            f"whose label perspective is unknown"
+        ) from exc
+    if not isinstance(manifest, dict):
+        raise UnsafeStage1PerspectiveError(f"{directory}: manifest.json is not a JSON object")
+
+    marker = manifest.get(LABEL_PERSPECTIVE_FIELD)
+    if marker == MOVER_RELATIVE:
+        return
+    if marker is None:
+        raise UnsafeStage1PerspectiveError(
+            f"{directory}: manifest has no {LABEL_PERSPECTIVE_FIELD!r} marker, so this is a legacy "
+            "White-perspective Stage 1 dataset (issue #263). Run scripts/repair_stage1_perspective.py "
+            "to write a corrected copy and train on that."
+        )
+    raise UnsafeStage1PerspectiveError(
+        f"{directory}: {LABEL_PERSPECTIVE_FIELD}={marker!r}, expected {MOVER_RELATIVE!r}"
     )

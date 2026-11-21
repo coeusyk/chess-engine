@@ -23,6 +23,7 @@ else:
     )
 
 from scripts.acquire_stage1_lichess import acquire, stream_records
+from scripts.repair_stage1_perspective import repair
 from trainer.dataset.text_provider import TextDatasetProvider
 
 STARTPOS = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -"
@@ -221,3 +222,78 @@ def test_text_provider_reads_labels_verbatim_without_a_second_flip(tmp_path):
     provider2 = TextDatasetProvider(already_relative, identifier="r", source_ref="test")
     (shard2,) = list(provider2.shards())
     assert next(iter(provider2.positions(shard2))).label.eval_cp == -50
+
+
+def _legacy_dir(root: Path) -> Path:
+    """A pre-#263 White-perspective dataset: CSV plus an unmarked manifest."""
+    d = root / "legacy"
+    d.mkdir()
+    (d / "stage1.csv").write_text(f"{BLACK_UP_QUEEN},-900,\n")
+    (d / "manifest.json").write_text(json.dumps({
+        "dataset_identifier": "legacy", "stage": "public", "source_url": "x", "output_sha256": "0",
+        "trainer_commit": "c", "created_at_epoch_seconds": 1, "position_count": 1,
+    }))
+    return d
+
+
+def _snapshot(d: Path) -> dict:
+    return {p.name: p.read_bytes() for p in sorted(d.iterdir())}
+
+
+def test_acquire_refuses_to_reuse_a_directory_holding_a_legacy_dataset(tmp_path):
+    # Regression (#263 review): re-acquiring over a legacy directory used to truncate
+    # its CSV and, if interrupted, leave normalized rows beside the stale unmarked
+    # manifest, which `repair --confirm-white-perspective` would then double-flip.
+    legacy = _legacy_dir(tmp_path)
+    before = _snapshot(legacy)
+    fixture = _write_fixture(tmp_path / "d.jsonl.zst", [
+        _line(BLACK_UP_QUEEN, [{"pvs": [{"cp": -900}], "knodes": 1, "depth": 20}]),
+    ])
+
+    with pytest.raises(FileExistsError, match="already contains"):
+        acquire(str(fixture), target_count=1, output_dir=legacy, dataset_identifier="t")
+
+    assert _snapshot(legacy) == before
+
+
+def test_interrupted_acquisition_cannot_be_double_flipped_by_repair(tmp_path):
+    # Stream dies mid-way (a malformed FEN on row 2): row 1 was already normalized.
+    fixture = _write_fixture(tmp_path / "d.jsonl.zst", [
+        _line(BLACK_UP_QUEEN, [{"pvs": [{"cp": -900}], "knodes": 1, "depth": 20}]),
+        _line("8/8/8/8/8/8/8/8", [{"pvs": [{"cp": 1}], "knodes": 1, "depth": 20}]),
+    ])
+    out = tmp_path / "out"
+
+    with pytest.raises(ValueError, match="side to move"):
+        acquire(str(fixture), target_count=5, output_dir=out, dataset_identifier="t")
+
+    # Nothing partial is published: no CSV, no manifest, no leftover temp file.
+    assert list(out.iterdir()) == []
+    # And repair has nothing it could accept.
+    with pytest.raises(ValueError, match="manifest"):
+        repair(out, tmp_path / "repaired", "t-fixed", confirm_white_perspective=True)
+
+
+def test_crash_between_csv_publish_and_manifest_leaves_a_dataset_repair_refuses(tmp_path, monkeypatch):
+    import scripts.acquire_stage1_lichess as mod
+
+    fixture = _write_fixture(tmp_path / "d.jsonl.zst", [
+        _line(BLACK_UP_QUEEN, [{"pvs": [{"cp": -900}], "knodes": 1, "depth": 20}]),
+    ])
+    out = tmp_path / "out"
+
+    def boom(*_a, **_k):
+        raise RuntimeError("simulated crash while writing the manifest")
+
+    monkeypatch.setattr(mod, "_atomic_write", boom)
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        acquire(str(fixture), target_count=1, output_dir=out, dataset_identifier="t")
+
+    # The normalized CSV exists but there is no manifest, so repair cannot be pointed at it...
+    assert (out / "stage1.csv").read_text() == f"{BLACK_UP_QUEEN},900,\n"
+    assert not (out / "manifest.json").exists()
+    with pytest.raises(ValueError, match="manifest"):
+        repair(out, tmp_path / "repaired", "t-fixed", confirm_white_perspective=True)
+    # ...and a retry into the same directory is refused rather than overwriting it.
+    with pytest.raises(FileExistsError):
+        acquire(str(fixture), target_count=1, output_dir=out, dataset_identifier="t")
