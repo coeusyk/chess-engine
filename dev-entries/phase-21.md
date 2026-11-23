@@ -790,13 +790,59 @@ Per position, best move, score, depth and node count are identical between the t
 
 **Not claimed:** nothing here is a strength result. Fixed-depth nodes do not say whether the earlier depth-reached-per-second or the lost reuse across moves wins in games.
 
-**Proposed native-Windows SPRT (not launched).** Both arms Threads=1, Hash=16, same options, `tools/noob_3moves.epd` (SHA-256 `2011193b4854e9a8cfdc05312ca2dbaffa6ceae3abbdee20e2ead2a18a603347`, verified tracked and unmodified), TC 5+0.05, concurrency 6, alpha = beta = 0.05, BonferroniM 1, MinGames 0, cap 20,000 scored games. Bounds need a decision: the generic policy is [0,50], and the [0,10] used for Phase 21 Stage 6 was approved for that stage only, so [0,10] here needs the maintainer's explicit approval. Build identities: baseline `a14a664`, candidate the head of `fix/tt-collision-policy`; `git diff c9d20e6 <head>` touches only `dev-entries/`.
+**Approved native-Windows SPRT (not launched from WSL).** Approved by the maintainer on 2026-11-23 for this isolated #266 candidate only: H0 = 0 Elo, H1 = +10 Elo, alpha = beta = 0.05, BonferroniM 1, MinGames 0, cap 20,000 scored games, TC 5+0.05, concurrency 6, Threads=1, Hash=16 MB. This is an exception for this run; the generic [0,50] policy and the existing preregistrations are unchanged. Nothing about the bounds, time control, baseline or candidate may change after launch. Boundary or cap decides: H1 accepted, H0 accepted, or INCONCLUSIVE at the cap; none of the three merges #290 automatically.
+
+Frozen identities: baseline `a14a664fa40a80a9c2bfab952fbb34e788af6f62` (develop after #288), candidate `c9d20e607203283ecbd175701147cf976ccd863c` (engine source; later commits on the branch touch only `dev-entries/`). `tools/sprt.ps1` is byte-identical at both commits. The opening book `tools/noob_3moves.epd` is gitignored; a byte-identical copy is tracked at `tools/results/phase21-stage6/20261011T061318503Z-b5a507c6/noob_3moves.epd` (SHA-256 `2011193b4854e9a8cfdc05312ca2dbaffa6ceae3abbdee20e2ead2a18a603347`), and the script below refuses to run unless the book matches that hash. (An earlier version of this entry called the book tracked; that was wrong.)
+
+Run from native Windows PowerShell at the repository root, on a checkout that contains both commits.
 
 ```powershell
-# 1. build both jars from git archive snapshots and write provenance (same commands as the #262 protocol, arms base=a14a664, cand=<head>)
-# 2. freeze the arguments without launching games
+# 0. Preflight: native host, clean Java environment, book present and verified, headroom recorded.
+$ErrorActionPreference = 'Stop'
+if ($env:WSL_INTEROP -or $env:WSL_DISTRO_NAME) { throw 'Run from native Windows PowerShell.' }
+foreach ($v in 'JAVA_TOOL_OPTIONS','JDK_JAVA_OPTIONS','_JAVA_OPTIONS','MAVEN_OPTS') { if ([Environment]::GetEnvironmentVariable($v)) { throw "Unset $v" } }
+if (-not (Test-Path tools\noob_3moves.epd)) { Copy-Item tools\results\phase21-stage6\20261011T061318503Z-b5a507c6\noob_3moves.epd tools\noob_3moves.epd }
+if ((Get-FileHash tools\noob_3moves.epd -Algorithm SHA256).Hash.ToLower() -ne '2011193b4854e9a8cfdc05312ca2dbaffa6ceae3abbdee20e2ead2a18a603347') { throw 'Opening book hash mismatch' }
+$cpu = (Get-Counter '\Processor(_Total)\% Processor Time' -SampleInterval 2 -MaxSamples 15 | ForEach-Object { $_.CounterSamples.CookedValue } | Measure-Object -Average).Average
+$freeGb = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB, 1)
+"Host idle CPU average over 30 s: $([math]::Round($cpu,1))%   Free RAM: $freeGb GB"
+if ($cpu -gt 15 -or $freeGb -lt 6) { throw 'Not enough headroom: close other work first (need under 15% CPU and at least 6 GB free)' }
+
+# 1. Build both jars from git archive snapshots of the frozen commits, with provenance.
+$run = Join-Path (Get-Location).ProviderPath ('tools\results\tt-266\' + (Get-Date -Format 'yyyyMMddTHHmmss'))
+New-Item -ItemType Directory -Path $run | Out-Null
+$arms = [ordered]@{ base = 'a14a664fa40a80a9c2bfab952fbb34e788af6f62'; cand = 'c9d20e607203283ecbd175701147cf976ccd863c' }
+$prov = [ordered]@{ Java = (cmd /c 'java -version 2>&1' | Select-Object -First 1); Maven = (mvn -v | Select-Object -First 1); Cutechess = $env:CUTECHESS; HostIdleCpuPct = [math]::Round($cpu,1); HostFreeRamGb = $freeGb; Arms = [ordered]@{} }
+foreach ($name in $arms.Keys) {
+    $full = (git rev-parse "$($arms[$name])^{commit}").Trim()
+    if ($full -ne $arms[$name]) { throw "$name resolves to $full, not the frozen commit" }
+    $src = "$run\src-$name"; New-Item -ItemType Directory -Path $src | Out-Null
+    git archive --format=tar -o "$run\$name.tar" $full
+    tar -xf "$run\$name.tar" -C $src
+    Push-Location $src; mvn -B -pl engine-core,engine-uci -am package -DskipTests; if ($LASTEXITCODE) { throw "build $name failed" }; Pop-Location
+    Copy-Item "$src\engine-uci\target\engine-uci-0.6.1-SNAPSHOT.jar" "$run\$name.jar"
+    $prov.Arms[$name] = [ordered]@{ Commit = $full; JarSha256 = (Get-FileHash "$run\$name.jar" -Algorithm SHA256).Hash.ToLower() }
+}
+Remove-Item "$run\src-*", "$run\*.tar" -Recurse -Force
+$prov.OpeningSha256 = (Get-FileHash tools\noob_3moves.epd -Algorithm SHA256).Hash.ToLower()
+$prov | ConvertTo-Json -Depth 5 | Set-Content "$run\provenance.json" -Encoding UTF8
+
+# 2. Freeze the arguments without launching games, then read prepared-arguments.json:
+#    both engines must show option.Threads=1 and an identical option list, the opening group must be present, and -repeat and the sprt group must read elo0=0 elo1=10.
 $opts = 'Hash=16','PawnHashSize=1','EvalType=Classical','MultiPV=1','Contempt=0','OwnBook=false','SyzygyOnline=false','SyzygyPath='
 .\tools\sprt.ps1 -New "$run\cand.jar" -Old "$run\base.jar" -Tag tt-266-collision -Elo0 0 -Elo1 10 -Alpha 0.05 -Beta 0.05 -BonferroniM 1 -MinGames 0 -MaxGames 20000 -TC '5+0.05' -Concurrency 6 -EngineThreads 1 -OpeningsFile tools\noob_3moves.epd -OpeningOrder random -NewOptions $opts -OldOptions $opts -LogPath "$run\match.log" -PgnPath "$run\match.pgn" -PrepareOnly -ArgumentManifestPath "$run\prepared-arguments.json"
-# 3. the full run, only after approval
+Get-ChildItem $run -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Set-Content "$run\SHA256SUMS" -Encoding ASCII
+Get-ChildItem $run -File | ForEach-Object { $_.IsReadOnly = $true }
+
+# 3. The full run. It stops at an LLR boundary or at 20,000 games.
 .\tools\sprt.ps1 -New "$run\cand.jar" -Old "$run\base.jar" -Tag tt-266-collision -Elo0 0 -Elo1 10 -Alpha 0.05 -Beta 0.05 -BonferroniM 1 -MinGames 0 -MaxGames 20000 -TC '5+0.05' -Concurrency 6 -EngineThreads 1 -OpeningsFile tools\noob_3moves.epd -OpeningOrder random -NewOptions $opts -OldOptions $opts -LogPath "$run\match.log" -PgnPath "$run\match.pgn" -ExpectedArgumentManifestPath "$run\prepared-arguments.json"
+
+# 4. Afterwards (or while it runs, read-only): the quantities to record.
+Select-String -Path "$run\match.log" -Pattern '^SPRT: LLR' | Select-Object -Last 1 -ExpandProperty Line     # latest LLR and bounds
+Select-String -Path "$run\match.log" -Pattern '^Score of NEW vs OLD' | Select-Object -Last 1 -ExpandProperty Line   # W-L-D
+Select-String -Path "$run\match.log" -Pattern '^Elo difference' | Select-Object -Last 1 -ExpandProperty Line         # Elo and uncertainty
+(Select-String -Path "$run\match.log" -Pattern 'loses on time').Count                                                # time forfeits
+(Select-String -Path "$run\match.log" -Pattern 'disconnects|connection stalls|crashed|illegal move').Count            # crashes and faults
 ```
+
+Then send me `$run\match.log`, `$run\match.pgn` and `provenance.json` (or their paths in the repository's results folder). I will report the LLR progression, W-L-D, Elo with its interval, time forfeits, crashes, throughput and the terminal decision, and give a MERGE, REJECT or INCONCLUSIVE recommendation. I will not merge #290 or close #266 on the result.
