@@ -767,3 +767,36 @@ An independent read-only review found five gaps, all fixed and re-reviewed: Powe
 **Decisions Made:** only the age arithmetic. The 1-slot collision policy and the `Integer` boxing in `applyTtBound` stay for separate measured work, as the issue itself says. A distance of 256 reads as age 0 (8-bit generation); the test pins it as inherent, not a bug.
 
 **Measurements:** red before the fix on exactly the 128..255 cases (7 failures), green after. Bench numbers are in the PR.
+
+### [2026-11-23] Transposition-table collision replacement: candidate measurement and proposed SPRT (#266, part 2)
+
+**Built:** a candidate in which a different-key collision follows the rule a same-key store already follows (replace if stale, equal or shallower; keep if fresh and deeper). Same memory budget, layout and XOR publication. Stats-gated counters record what each store did. Candidate commit `c9d20e6`, baseline `a14a664` (develop after #288). Not merged.
+
+**Decisions Made:** one change only, no buckets and no boxing change. Three existing XOR/collision tests built their collision with a shallower write and so relied on always-replace; the colliding write is now equally deep so they still check the torn-read and ABA invariants. Four depth-8 node goldens moved by 1, 22, 1 and 3 (best move and score identical). The E5 best move moved from a2a6 to a2e2: the baseline's free depth-8 search picked a2a6 at 844 cp while a forced a2e2 scored 992, and at depths 10 and 12 a2e2 scores 1799 and 1895 against 860 and 913.
+
+**Measurements** (WSL, so node counts are valid and times only indicative; cold table per position, 31 bench positions, depth 13, two passes per build in the order base, cand, cand, base):
+
+| | 1 MB base | 1 MB cand | 16 MB base | 16 MB cand |
+|---|---|---|---|---|
+| nodes | 44,040,937 | 24,719,457 (-43.9%) | 23,222,204 | 19,146,122 (-17.5%) |
+| elapsed, two passes (s) | 132.1, 128.5 | 71.8, 72.1 | 71.9, 72.0 | 58.9, 59.6 |
+| TT probes | 54.4M | 29.9M | 32.6M | 27.5M |
+| usable cutoffs (per node) | 5.34M (12.1%) | 2.49M (10.1%) | 6.33M (27.3%) | 5.89M (30.8%) |
+| fresh-deeper entries evicted | 6,581,240 | 0 | 1,621,169 | 0 |
+| writes refused | 0 | 14,201,473 | 0 | 1,540,924 |
+| final hashfull (mean) | 85.2% | 84.6% | 35.9% | 34.2% |
+
+Per position, best move, score, depth and node count are identical between the two passes of each build (the single-thread search is deterministic), and the best move matches the baseline in 31 of 31 positions at both sizes. Largest score difference: 33 cp at 16 MB (median 1), 120 cp at 1 MB (median 9). The candidate searches fewer nodes in 22 of 31 positions at 16 MB and 23 of 31 at 1 MB, and more in 9 and 8; the worst single position is 1.73 times the baseline's nodes at 16 MB and 1.27 times at 1 MB, so the aggregate gain comes from the larger trees. NPS is about the same, so the time follows the nodes. A warm shared 4 MB table (depth 11, one table across all 31 positions) showed a smaller node saving (-7%) and a lower hit rate (27.2% to 24.2% of probes), which is the tradeoff to watch in real play.
+
+**Not claimed:** nothing here is a strength result. Fixed-depth nodes do not say whether the earlier depth-reached-per-second or the lost reuse across moves wins in games.
+
+**Proposed native-Windows SPRT (not launched).** Both arms Threads=1, Hash=16, same options, `tools/noob_3moves.epd` (SHA-256 `2011193b4854e9a8cfdc05312ca2dbaffa6ceae3abbdee20e2ead2a18a603347`, verified tracked and unmodified), TC 5+0.05, concurrency 6, alpha = beta = 0.05, BonferroniM 1, MinGames 0, cap 20,000 scored games. Bounds need a decision: the generic policy is [0,50], and the [0,10] used for Phase 21 Stage 6 was approved for that stage only, so [0,10] here needs the maintainer's explicit approval. Build identities: baseline `a14a664`, candidate the head of `fix/tt-collision-policy`; `git diff c9d20e6 <head>` touches only `dev-entries/`.
+
+```powershell
+# 1. build both jars from git archive snapshots and write provenance (same commands as the #262 protocol, arms base=a14a664, cand=<head>)
+# 2. freeze the arguments without launching games
+$opts = 'Hash=16','PawnHashSize=1','EvalType=Classical','MultiPV=1','Contempt=0','OwnBook=false','SyzygyOnline=false','SyzygyPath='
+.\tools\sprt.ps1 -New "$run\cand.jar" -Old "$run\base.jar" -Tag tt-266-collision -Elo0 0 -Elo1 10 -Alpha 0.05 -Beta 0.05 -BonferroniM 1 -MinGames 0 -MaxGames 20000 -TC '5+0.05' -Concurrency 6 -EngineThreads 1 -OpeningsFile tools\noob_3moves.epd -OpeningOrder random -NewOptions $opts -OldOptions $opts -LogPath "$run\match.log" -PgnPath "$run\match.pgn" -PrepareOnly -ArgumentManifestPath "$run\prepared-arguments.json"
+# 3. the full run, only after approval
+.\tools\sprt.ps1 -New "$run\cand.jar" -Old "$run\base.jar" -Tag tt-266-collision -Elo0 0 -Elo1 10 -Alpha 0.05 -Beta 0.05 -BonferroniM 1 -MinGames 0 -MaxGames 20000 -TC '5+0.05' -Concurrency 6 -EngineThreads 1 -OpeningsFile tools\noob_3moves.epd -OpeningOrder random -NewOptions $opts -OldOptions $opts -LogPath "$run\match.log" -PgnPath "$run\match.pgn" -ExpectedArgumentManifestPath "$run\prepared-arguments.json"
+```
