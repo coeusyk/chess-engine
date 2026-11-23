@@ -87,7 +87,7 @@ foreach ($v in 'JAVA_TOOL_OPTIONS','JDK_JAVA_OPTIONS','_JAVA_OPTIONS','MAVEN_OPT
 $run = "tools\results\see-262\" + (Get-Date -Format 'yyyyMMddTHHmmss')
 New-Item -ItemType Directory -Path $run | Out-Null
 $arms = [ordered]@{ base = '52fee7c'; cand = '25a3889' }
-$prov = [ordered]@{ Java = (& java -version 2>&1 | Select-Object -First 1).ToString(); Maven = (mvn -v | Select-Object -First 1); Cutechess = $env:CUTECHESS; Arms = [ordered]@{} }
+$prov = [ordered]@{ Java = (cmd /c 'java -version 2>&1' | Select-Object -First 1); Maven = (mvn -v | Select-Object -First 1); Cutechess = $env:CUTECHESS; Arms = [ordered]@{} }
 foreach ($name in $arms.Keys) {
     $full = (git rev-parse "$($arms[$name])^{commit}").Trim()
     $src = "$run\src-$name"; New-Item -ItemType Directory -Path $src | Out-Null
