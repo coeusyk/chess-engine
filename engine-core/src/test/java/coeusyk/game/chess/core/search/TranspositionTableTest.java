@@ -127,13 +127,13 @@ class TranspositionTableTest {
         long keyB = 1L << 32;
 
         table.store(keyA, Move.of(10, 18), 8, 50, TTBound.EXACT);
-        table.store(keyB, Move.of(12, 20), 1, 25, TTBound.LOWER_BOUND);
+        table.store(keyB, Move.of(12, 20), 8, 25, TTBound.LOWER_BOUND);
 
         assertNull(table.probe(keyA));
         TranspositionTable.Entry entryB = table.probe(keyB);
         assertNotNull(entryB);
         assertEquals(keyB, entryB.key());
-        assertEquals(1, entryB.depth());
+        assertEquals(8, entryB.depth());
         assertEquals(25, entryB.score());
     }
 
@@ -222,7 +222,7 @@ class TranspositionTableTest {
         int idx = (int) keyA & (table.getEntryCount() - 1);
         long assocWordBeforeB = rawTable.get(idx * 2);
 
-        table.store(keyB, Move.of(12, 20), 1, 99, TTBound.LOWER_BOUND);
+        table.store(keyB, Move.of(12, 20), 6, 99, TTBound.LOWER_BOUND); // not shallower than A, so it takes the slot
 
         // Simulate a reader whose read of the association word raced ahead of
         // B's store, but whose read of the data word landed after it.
@@ -256,7 +256,7 @@ class TranspositionTableTest {
         int idx = (int) keyA & (table.getEntryCount() - 1);
         long assocWordAfterFirstA = rawTable.get(idx * 2);
 
-        table.store(keyB, Move.of(12, 20), 1, 99, TTBound.LOWER_BOUND);
+        table.store(keyB, Move.of(12, 20), 6, 99, TTBound.LOWER_BOUND); // not shallower than A, so it takes the slot
         long dataWordAfterB = rawTable.get(idx * 2 + 1);
 
         table.store(keyA, Move.of(20, 28), 9, -12, TTBound.UPPER_BOUND);

@@ -344,7 +344,7 @@ class SearchRegressionTest {
             // Phase 21 PVS chooses Ra6 at depths 8 and 9 (scores +844/+876 versus +989/+1768
             // for Ra2-e2). Its depth-9 PV is truncated to this one legal move. At depth 10
             // the candidate returns to Ra2-e2, 44 cp below the control's Ke1-f1.
-            Arguments.of("E5",  E5_FEN,  "a2a6"),
+            Arguments.of("E5",  E5_FEN,  "a2e2"), // #266: depth-8 pick was a2a6 only through table noise (forced a2e2 scored 992 vs 844); depths 10 and 12 give a2e2 1799 and 1895 vs a2a6 860 and 913.
             // E6: 8/8/8/5k2/1PP5/8/2K5/8 — Kc2+Pb4c4 vs Kf5. Both b4b5 and c4c5 advance
             //     connected pawns; BK on f5 is far from both.
             //     Updated 2026-04-03: SEE-based hanging-piece penalty (gain/4) causes a small

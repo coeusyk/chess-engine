@@ -219,11 +219,11 @@ public class TranspositionTable {
      * scheme.  The eviction priority order is:
      * <ol>
      *   <li>Empty slot — always fill.</li>
-     *   <li>Key mismatch — always replace (different position).</li>
-     *   <li>Age ≥ {@link #AGE_THRESHOLD} — always replace (stale regardless of depth).
+     *   <li>Age ≥ {@link #AGE_THRESHOLD} — always replace (stale regardless of depth or key).
      *       Age is the unsigned distance computed by {@link #ageOf}.</li>
-     *   <li>Same key, entry is fresh (age &lt; threshold) — replace only when
-     *       the new depth ≥ existing depth (depth-preferred policy).</li>
+     *   <li>Otherwise the entry is fresh — replace only when the new depth ≥ existing depth
+     *       (depth-preferred), whether it is the same position or a different one that hashes to the
+     *       same slot.</li>
      * </ol>
      *
      * <p>Entries from the most recent {@code AGE_THRESHOLD - 1} searches are
@@ -239,13 +239,19 @@ public class TranspositionTable {
         long existingData  = table.get(idx * 2 + 1);
         long existingKey   = existingCheck ^ existingData;
         boolean replace;
-        if (existingKey == 0L || existingKey != key) {
+        if (existingKey == 0L) {
             replace = true;
         } else {
+            // Same position or a different one on the same slot: keep a fresh entry that is deeper than the
+            // new one, replace anything stale, equal or shallower (issue #266). Applying the same-key rule to
+            // a collision stops a depth-1 leaf from wiping a depth-12 entry that is still fresh.
             byte existingGen  = (byte) (existingData & 0xFF);
             int  existingDepth = (int) ((existingData >>> 10) & 0xFF);
             replace = ageOf(currentGeneration, existingGen) >= AGE_THRESHOLD
                    || depth >= existingDepth;
+        }
+        if (statsEnabled) {
+            countStore(existingKey, existingData, key, depth, replace);
         }
         if (replace) {
             long data = pack(score, bestMove, depth, bound, currentGeneration);
@@ -289,6 +295,56 @@ public class TranspositionTable {
             }
         }
         return recent * 1000 / sampleSize;
+    }
+
+    /**
+     * What a {@link #store} did to the slot it landed on, for measurement only (issue #266). Counted only
+     * while stats are enabled, so the normal search path pays one volatile read.
+     */
+    public enum StoreOutcome {
+        /** The slot was empty. */
+        EMPTY,
+        /** Same position, new entry written. */
+        SAME_KEY_REPLACED,
+        /** Same position, the new shallower entry was not written. */
+        SAME_KEY_KEPT,
+        /** Another position, stale (age at or beyond the threshold): evicted. */
+        COLLISION_EVICTED_STALE,
+        /** Another position, fresh, strictly deeper than the new entry: evicted (the destructive case). */
+        COLLISION_EVICTED_FRESH_DEEPER,
+        /** Another position, fresh, not deeper than the new entry: evicted. */
+        COLLISION_EVICTED_FRESH_NOT_DEEPER,
+        /** Another position, fresh and deeper: the new entry was not written. */
+        COLLISION_REJECTED
+    }
+
+    private final AtomicLongArray storeOutcomes = new AtomicLongArray(StoreOutcome.values().length);
+
+    private void countStore(long existingKey, long existingData, long key, int depth, boolean replaced) {
+        StoreOutcome outcome;
+        if (existingKey == 0L) {
+            outcome = StoreOutcome.EMPTY;
+        } else {
+            boolean stale = ageOf(currentGeneration, (byte) (existingData & 0xFF)) >= AGE_THRESHOLD;
+            int existingDepth = (int) ((existingData >>> 10) & 0xFF);
+            if (existingKey == key) {
+                outcome = replaced ? StoreOutcome.SAME_KEY_REPLACED : StoreOutcome.SAME_KEY_KEPT;
+            } else if (!replaced) {
+                outcome = StoreOutcome.COLLISION_REJECTED;
+            } else if (stale) {
+                outcome = StoreOutcome.COLLISION_EVICTED_STALE;
+            } else if (existingDepth > depth) {
+                outcome = StoreOutcome.COLLISION_EVICTED_FRESH_DEEPER;
+            } else {
+                outcome = StoreOutcome.COLLISION_EVICTED_FRESH_NOT_DEEPER;
+            }
+        }
+        storeOutcomes.incrementAndGet(outcome.ordinal());
+    }
+
+    /** Store outcomes since the last {@link #resetStats()} / {@link #clear()}, indexed by {@link StoreOutcome#ordinal()}. */
+    public long storeOutcomeCount(StoreOutcome outcome) {
+        return storeOutcomes.get(outcome.ordinal());
     }
 
     public int getEntryCount() {
@@ -342,6 +398,9 @@ public class TranspositionTable {
     private void resetStatsInternal() {
         probes.set(0);
         hits.set(0);
+        for (int i = 0; i < storeOutcomes.length(); i++) {
+            storeOutcomes.set(i, 0L);
+        }
     }
 
     public DiagnosticSnapshot diagnosticSnapshot() {

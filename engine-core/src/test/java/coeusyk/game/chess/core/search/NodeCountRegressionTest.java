@@ -22,11 +22,11 @@ class NodeCountRegressionTest {
     };
 
     private static final long[] EXPECTED_NODES = {
-        14312, // #262: pin-aware SEE (was 14776). Same best move, score and PV; verified against a legal-move SEE oracle.
+        14311, // #266: depth-preferred collision replacement (was 14312). #262: pin-aware SEE took it from 14776. Same best move and score.
         1287,
-        32082, // #262: pin-aware SEE (was 32267). Same best move, score and PV.
-        6128, // Legal EP hashing omits c6 when b5xc6 would expose the king to the h5 rook.
-        7829,
+        32104, // #266: collision replacement (was 32082). #262: pin-aware SEE took it from 32267. Same best move and score.
+        6127, // #266: was 6128, same best move and score. Legal EP hashing omits c6 when b5xc6 would expose the king to the h5 rook.
+        7826, // #266: was 7829, same best move and score.
     };
 
     @Test
