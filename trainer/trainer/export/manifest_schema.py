@@ -45,6 +45,14 @@ _DATASET_COMPOSITION_ENTRY_FIELDS: Dict[str, Any] = {
 }
 
 
+# Optional `quantization_parity` object (issue #265), validated only when present. The label
+# correlation fields are None when no labels were supplied, so they are not required numbers.
+_PARITY_REQUIRED_NUMBER_FIELDS = (
+    "position_count", "mae_cp", "rmse_cp", "max_abs_cp", "mean_signed_cp", "pearson_float_quantized",
+    "weight_rounding_mae_cp", "integer_arithmetic_max_abs_cp", "qa", "qb", "output_scale",
+)
+
+
 def validate_manifest(manifest: Dict[str, Any]) -> None:
     """Raises `ValueError` listing every violation found (not just the first) if
     `manifest` does not match the sidecar schema `_write_manifest` produces. A manifest
@@ -62,6 +70,20 @@ def validate_manifest(manifest: Dict[str, Any]) -> None:
         value = manifest[field]
         if isinstance(value, bool) or not isinstance(value, expected_type):
             errors.append(f"field {field!r} has type {type(value).__name__}, expected {expected_type}")
+
+    parity = manifest.get("quantization_parity")
+    if parity is not None:
+        if not isinstance(parity, dict):
+            errors.append("field 'quantization_parity' is not an object")
+        else:
+            for field in _PARITY_REQUIRED_NUMBER_FIELDS:
+                value = parity.get(field)
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    errors.append(f"quantization_parity.{field!r} must be a number, got {type(value).__name__}")
+            if not isinstance(parity.get("fen_corpus_sha256"), str):
+                errors.append("quantization_parity.'fen_corpus_sha256' must be a string")
+            if not isinstance(parity.get("labels_sha256"), (str, type(None))):
+                errors.append("quantization_parity.'labels_sha256' must be a string or null")
 
     dataset_composition = manifest.get("dataset_composition")
     if isinstance(dataset_composition, list):

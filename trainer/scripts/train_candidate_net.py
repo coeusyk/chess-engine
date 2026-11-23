@@ -42,9 +42,10 @@ from trainer.dataset.lichess_perspective import require_mover_relative_stage1
 from trainer.dataset.text_provider import TextDatasetProvider
 from trainer.export.canonical import checkpoint_to_canonical
 from trainer.export.exporter import DatasetComposition, ExportResult, export
-from trainer.model.train import TrainingConfig, train
+from trainer.model.train import TrainingConfig, target_cp, train
 from trainer.quantization.quantizer import ClippingBoundaryReport, clipping_report, quantize
 from trainer.reproducibility.experiment_metadata import ExperimentMetadata
+from trainer.validation.quantization_parity import quantize_validate_export
 
 HIDDEN_WIDTH = 256  # PRD Section 4 Network Specification: (768 -> 256) x2 -> 1
 QA = 127
@@ -172,7 +173,6 @@ def train_quantize_export(
     checkpoint = torch.load(checkpoint_path, weights_only=False)
     canonical = checkpoint_to_canonical(checkpoint)
     report = clipping_report(canonical)
-    quantized = quantize(canonical)
 
     experiment_metadata = ExperimentMetadata(**checkpoint["experiment_metadata"])
     # label_engine_version is left None: this corpus mixes public (no label engine)
@@ -180,8 +180,27 @@ def train_quantize_export(
     # a 50/50 mix as 100% Stockfish-labeled. dataset_composition (above) already
     # carries the accurate per-source stage breakdown; exporter.py's own docstring
     # confirms None is a valid, complete value "where applicable", not a missing one.
+    if held_out_records:
+        # Issue #265: measure float32-versus-quantized parity on the held-out positions and record it
+        # in the provenance manifest. Report only: no numeric gate is applied here, because release
+        # thresholds have not been calibrated against a real checkpoint yet (see quantization_parity.py).
+        result, parity = quantize_validate_export(
+            canonical,
+            experiment_metadata,
+            dataset_composition,
+            output_dir,
+            fens=[r.fen for r in held_out_records],
+            labels_cp=[float(target_cp(r.label)) for r in held_out_records],
+            label_engine_version=None,
+        )
+        print(
+            f"quantization parity on {parity.position_count} held-out positions: "
+            f"MAE {parity.mae_cp:.3f} cp, RMSE {parity.rmse_cp:.3f} cp, max |delta| {parity.max_abs_cp:.3f} cp, "
+            f"label-correlation delta {parity.label_correlation_delta:.5f}"
+        )
+        return result, report
     result = export(
-        quantized,
+        quantize(canonical),
         experiment_metadata,
         dataset_composition=dataset_composition,
         output_dir=output_dir,
