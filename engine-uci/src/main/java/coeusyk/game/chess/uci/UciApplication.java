@@ -132,6 +132,12 @@ public class UciApplication {
     }
 
     private volatile GoSession session;
+    /**
+     * Identity of the evaluator the shared transposition table currently holds scores for: "Classical" or
+     * "NNUE:" plus the network's UUID. Written only by a search worker, before it starts any helper and
+     * after the previous worker has been joined, so no extra synchronization is needed (issue #259).
+     */
+    private String tableEvaluatorIdentity = "Classical";
     /** Wakes a worker that is holding its bestmove back. Always set the flag first, then notify under this lock. */
     private final Object holdMonitor = new Object();
 
@@ -810,6 +816,23 @@ public class UciApplication {
         Move bestMoveToEmit = null;
         SearchResult result = null;
         try {
+            // Resolved once per go (not once per thread) so any fallback info string
+            // prints exactly once; each thread below still gets its own NnueEvaluator
+            // instance — never the same instance shared across threads.
+            NnueNetwork nnueNetworkForSearch = resolveNnueNetworkForSearch();
+            // Issue #259: the shared table's entries are scores from one particular evaluator, and its
+            // key does not say which. When the effective evaluator changes (Classical or NNUE, or a
+            // different network, after any fallback has been applied) the entries are meaningless to
+            // the next search, so clear them. This runs before any helper of this search is submitted
+            // and after handleGo has joined the previous worker and its helpers, so nothing is
+            // reading or writing the table while it is cleared.
+            String evaluatorIdentity = nnueNetworkForSearch == null
+                    ? "Classical" : "NNUE:" + nnueNetworkForSearch.networkUuid();
+            if (!evaluatorIdentity.equals(tableEvaluatorIdentity)) {
+                sharedTT.clear();
+                tableEvaluatorIdentity = evaluatorIdentity;
+                System.out.println("info string transposition table cleared: evaluator changed");
+            }
             // --- Lazy SMP: launch N-1 helper threads before the main search ---
             // Each helper runs an independent iterative-deepening loop on its own
             // Board copy, all sharing the same TranspositionTable.  Helpers stop
@@ -830,10 +853,6 @@ public class UciApplication {
                 smpDiagnostic("search=" + searchId + " event=begin threads=" + threads
                         + " helpers=" + effectiveHelpers + " available_cores=" + AVAILABLE_CORES);
             }
-            // Resolved once per go (not once per thread) so any fallback info string
-            // prints exactly once; each thread below still gets its own NnueEvaluator
-            // instance — never the same instance shared across threads.
-            NnueNetwork nnueNetworkForSearch = resolveNnueNetworkForSearch();
             if (effectiveHelpers > 0) {
                 for (int i = 1; i <= effectiveHelpers; i++) {
                     // Stagger start depths per spec:
