@@ -759,3 +759,11 @@ An independent read-only review found five gaps, all fixed and re-reviewed: Powe
 - Quiescence checked: it never reads the fifty-move rule or the table, so it adds nothing to the horizon.
 - Cost of the guard: it fires when `clock + depth + 16 >= 100`, so at depth 14 from clock 70, and for every node at clock 84 and above. Those nodes lose score reuse but keep the move hint. This is a performance cost only; a tighter per-path extension count would recover some of it and is not worth doing without a measurement.
 - Bench at `1f1b09e`: 23,222,204 nodes, identical to `8d33edc` at every position.
+
+### [2026-11-23] Transposition-table generation age is unsigned (#266, part 1)
+
+**Built:** `TranspositionTable.ageOf(current, entry) = (current - entry) & 0xFF`, used by `store()` and `hashfull()` in place of the signed `(byte)` comparison, which read every entry 128..255 generations old as brand new (protected from replacement, counted live). `TranspositionTableAgeTest` covers distances 0, 1, 3, 4, 5, 127, 128, 129, 200, 255, 256, 260 for replacement and 0, 1, 3, 4, 127, 128, 200, 255, 256 for `hashfull()`.
+
+**Decisions Made:** only the age arithmetic. The 1-slot collision policy and the `Integer` boxing in `applyTtBound` stay for separate measured work, as the issue itself says. A distance of 256 reads as age 0 (8-bit generation); the test pins it as inherent, not a bug.
+
+**Measurements:** red before the fix on exactly the 128..255 cases (7 failures), green after. Bench numbers are in the PR.
