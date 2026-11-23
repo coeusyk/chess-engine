@@ -84,7 +84,7 @@ These were not executed by the session that wrote them. Run step 3 first as an i
 $ErrorActionPreference = 'Stop'
 if ($env:WSL_INTEROP -or $env:WSL_DISTRO_NAME) { throw 'Run from native Windows PowerShell.' }
 foreach ($v in 'JAVA_TOOL_OPTIONS','JDK_JAVA_OPTIONS','_JAVA_OPTIONS','MAVEN_OPTS') { if ([Environment]::GetEnvironmentVariable($v)) { throw "Unset $v" } }
-$run = "tools\results\see-262\" + (Get-Date -Format 'yyyyMMddTHHmmss')
+$run = Join-Path (Get-Location).ProviderPath ('tools\results\see-262\' + (Get-Date -Format 'yyyyMMddTHHmmss'))
 New-Item -ItemType Directory -Path $run | Out-Null
 $arms = [ordered]@{ base = '52fee7c'; cand = '25a3889' }
 $prov = [ordered]@{ Java = (cmd /c 'java -version 2>&1' | Select-Object -First 1); Maven = (mvn -v | Select-Object -First 1); Cutechess = $env:CUTECHESS; Arms = [ordered]@{} }
@@ -97,6 +97,8 @@ foreach ($name in $arms.Keys) {
     Copy-Item "$src\engine-uci\target\engine-uci-0.6.1-SNAPSHOT.jar" "$run\$name.jar"
     $prov.Arms[$name] = [ordered]@{ Commit = $full; JarSha256 = (Get-FileHash "$run\$name.jar" -Algorithm SHA256).Hash.ToLower() }
 }
+# The source snapshots and tars are about 400 MB; the jars and provenance are what the run needs.
+Remove-Item "$run\src-*", "$run\*.tar" -Recurse -Force
 $prov.OpeningSha256 = (Get-FileHash tools\noob_3moves.epd -Algorithm SHA256).Hash.ToLower()
 if ($prov.OpeningSha256 -ne '2011193b4854e9a8cfdc05312ca2dbaffa6ceae3abbdee20e2ead2a18a603347') { throw 'Opening book hash mismatch' }
 $prov | ConvertTo-Json -Depth 5 | Set-Content "$run\provenance.json" -Encoding UTF8
@@ -129,6 +131,11 @@ Every count printed should be 2 (each opening played with both colours).
 ```
 
 `-ExpectedArgumentManifestPath` makes the script refuse to launch if its actual Cute Chess arguments differ from the frozen manifest.
+
+## Lessons from the first run
+
+- The first run used relative `-LogPath` and `-PgnPath`. `sprt.ps1` resolved them against the .NET process directory (the user profile), so the log and PGN landed outside the run folder. `sprt.ps1` now resolves them against the PowerShell location, and `$run` above is an absolute path as well. If the files ever end up elsewhere, copy them into the run folder after the run, verify the SHA-256, and write a new `SHA256SUMS.final` instead of editing the frozen `SHA256SUMS`.
+- Step 1 now deletes the extracted source trees and tar files once the jars are built.
 
 ## What this tooling does not give you
 

@@ -163,8 +163,9 @@ if ($hasLogPath -xor $hasPgnPath) {
 }
 
 if ($hasLogPath) {
-    $PgnOut = [System.IO.Path]::GetFullPath($PgnPath)
-    $LogOut = [System.IO.Path]::GetFullPath($LogPath)
+    # Resolve against the PowerShell location, not the .NET process directory (which Set-Location does not change).
+    $PgnOut = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($PgnPath)
+    $LogOut = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($LogPath)
     if ($PgnOut -eq $LogOut) { throw "-LogPath and -PgnPath must be different files." }
     foreach ($outputPath in @($PgnOut, $LogOut)) {
         $parent = Split-Path -Parent $outputPath
