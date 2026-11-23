@@ -589,3 +589,22 @@ An independent read-only review found five gaps, all fixed and re-reviewed: Powe
 - Native Windows (Zulu 21) `--bench-raw 13`, two runs each, develop `448c98f` versus this change: total nodes 24,909,290 to 23,222,204 (-6.8%), node count changed in 24 of 31 positions (largest -34.8% and +33.0%). Time 75.5 s and 75.2 s to 72.2 s and 71.6 s. NPS 329,784 and 331,126 to 321,499 and 324,386 (about -2.5%), still above the 301,116 floor.
 - Depth 13 over the same 31 positions through UCI: best move differs in 6, score in 15, PV in 16. The search tree changed materially, as expected when SEE ordering and pruning decisions change. This is not a strength measurement.
 - Not run: SPRT, the WAC/tactical corpus pruning count the issue asks for, and any Elo claim. The change is a correctness fix to SEE and its effect on strength is unmeasured.
+
+### [2026-11-23] #262 qualification: SEE decision diff, bench, SPRT status
+
+**Built:**
+
+- `tools/SeeDecisionDiff.java`, a read-only harness that compares the pre-fix SEE (52fee7c, extracted and renamed `OldStaticExchangeEvaluator`) with the candidate SEE (b26569f) on every legal capture in a full-width tree below each corpus position. No SEE or search code was touched.
+
+**Decisions Made:**
+
+- Identities: baseline is exactly 52fee7c (the parent of b26569f, pre-SEE develop) and candidate is exactly PR #283 head b26569f. Both jars were built from `git archive` snapshots of those commits in scratch space (no worktree, no local modifications). The issue text names 61a3712 as its baseline, but 52fee7c is the exact pre-fix commit the maintainer specified, so that was used.
+- The decision tested is the `SEE < 0` test that quiescence uses to prune and that main-search ordering uses to label a capture losing. Counts are visits, not unique positions, because the tree walk revisits transpositions.
+- `wac.epd` holds only 20 mostly trivial endgame positions, so draw_failures.epd (3) and the 31 BENCH positions were added to get a meaningful population.
+
+**Measurements:**
+
+- WAC alone, 3 plies: 10,702 capture decisions, 0 differ.
+- WAC + draw_failures + BENCH (54 positions), 3 plies: 3,713,211 capture decisions, SEE value differs on 19,169 (0.52%). `SEE < 0` flips: 3,017 pruned to searched (old < 0, new >= 0) and 222 searched to pruned (old >= 0, new < 0), 3,239 in total (0.087%). Per ply: ply 0 74 captures, 2 differ; ply 1 2,077, 7; ply 2 100,863, 1,727; ply 3 3,610,197, 17,433.
+- WSL `--bench` (default depth), three alternating runs, 52fee7c versus b26569f, informational only because WSL NPS is not a valid regression signal: NPS 342,720 / 357,378 / 357,358 versus 348,101 / 363,454 / 354,764. Cut evals 28,092,760 versus 26,202,800 (-6.7%), consistent with the native node drop already recorded above. No NPS regression visible.
+- Native SPRT: not run. See the issue comment for the blocker and the command.
