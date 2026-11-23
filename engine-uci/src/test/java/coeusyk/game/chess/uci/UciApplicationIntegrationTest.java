@@ -853,6 +853,10 @@ class UciApplicationIntegrationTest {
             return start(true);
         }
 
+        static UciHarness startWithVmOptions(boolean withDiagnostics, String... vmOptions) throws IOException {
+            return start(withDiagnostics, vmOptions);
+        }
+
         private static UciHarness start(boolean withDiagnostics, String... vmOptions) throws IOException {
             String javaBinary = System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win")
                     ? "java.exe"

@@ -14,7 +14,6 @@ import java.time.Duration;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -122,16 +121,25 @@ class UciSearchLifecycleTest {
         assertEquals(30, harness.bestmoveCount());
     }
 
-    @Test
-    void forcedMoveUnderInfiniteWaitsForStop() throws Exception {
-        harness = UciHarness.start();
-        harness.send("position fen " + ONE_LEGAL_MOVE);
-        harness.send("go infinite");
+    /**
+     * Waits until the worker reports it has finished searching and is holding its bestmove. Only then is "no bestmove
+     * yet" a statement about a worker that is blocked, and not about one that has not got there. The isready round
+     * trip gives a worker that wrongly skipped the hold time to print.
+     */
+    private void awaitHoldWithNoBestmove() throws Exception {
+        assertNotNull(harness.awaitDiagnostic(l -> l.contains("event=hold"), LONG), "worker never reached its hold");
         harness.barrier();
-        assertEquals(0, harness.bestmoveCount(), "forced move was published before stop");
+        assertEquals(0, harness.bestmoveCount(), "bestmove published while the search was meant to be held");
+    }
+
+    @Test
+    void forcedMoveUnderInfiniteIsSearchedAndWaitsForStop() throws Exception {
+        harness = UciHarness.startWithDiagnostics();
+        harness.send("position fen " + ONE_LEGAL_MOVE);
+        harness.send("go infinite depth 6");
+        awaitHoldWithNoBestmove();
         harness.send("stop");
-        String line = harness.awaitLine(l -> l.startsWith("bestmove "), LONG);
-        assertEquals("bestmove a1a2", line);
+        assertTrue(harness.awaitLine(l -> l.startsWith("bestmove "), LONG).startsWith("bestmove a1a2"));
         harness.barrier();
         assertEquals(1, harness.bestmoveCount());
     }
@@ -146,12 +154,11 @@ class UciSearchLifecycleTest {
 
     @Test
     void mateFoundUnderInfiniteStillWaitsForStop() throws Exception {
-        harness = UciHarness.start();
+        harness = UciHarness.startWithDiagnostics();
         harness.send("position fen " + MATE_IN_ONE);
-        harness.send("go infinite");
-        assertNotNull(harness.awaitLine(l -> l.contains(" score mate 1"), LONG));
-        harness.barrier();
-        assertEquals(0, harness.bestmoveCount(), "bestmove published before stop after a mate was found");
+        harness.send("go infinite depth 4");
+        awaitHoldWithNoBestmove();
+        assertTrue(harness.history().stream().anyMatch(l -> l.contains(" score mate 1")), "the mate was not found");
         harness.send("stop");
         String line = harness.awaitLine(l -> l.startsWith("bestmove "), LONG);
         assertTrue(line.startsWith("bestmove a1a8"), line);
@@ -215,15 +222,81 @@ class UciSearchLifecycleTest {
             harness.sendBatch("position startpos", "go infinite", "stop");
         }
         harness.sendBatch("go infinite", "go infinite", "stop");
-        harness.send("setoption name Hash value 16"); // joins the last search
+        harness.send("setoption name Hash value 16"); // joins the last search, so its bestmove is already printed
         harness.barrier();
         assertEquals(22, harness.bestmoveCount(), "one bestmove per go (20 cycles, then a replaced search and its replacement)");
-        long drained = harness.diagnosticLines().stream().filter(l -> l.contains("event=drained")).count();
-        long clean = harness.diagnosticLines().stream()
-                .filter(l -> l.contains("event=drained") && l.contains("helper_pending=0")).count();
-        assertEquals(22, drained);
-        assertEquals(22, clean, "a search finished with helpers still pending");
-        assertFalse(harness.history().isEmpty());
+        // The drained diagnostics travel on stderr, which readyok does not order. Wait for them explicitly.
+        assertNotNull(harness.awaitDiagnostic(l -> countDrained(harness, false) >= 22, LONG), "not every search drained");
+        assertEquals(22, countDrained(harness, false));
+        assertEquals(22, countDrained(harness, true), "a search finished with helpers still pending");
         assertNull(harness.awaitLine("bestmove 0000", Duration.ofMillis(1)));
+    }
+
+    private static long countDrained(UciHarness h, boolean requireNoPendingHelpers) {
+        return h.diagnosticLines().stream()
+                .filter(l -> l.contains("event=drained") && (!requireNoPendingHelpers || l.contains("helper_pending=0")))
+                .count();
+    }
+
+    private static final String AFTER_E4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+
+    /**
+     * A worker that is slow to stop (the test seam keeps it alive 2.5 s after it has finished, longer than the 2 s
+     * bounded wait) must not make position or go run against the state it was told to replace.
+     */
+    @Test
+    void slowToDrainWorkerNeverLeavesPositionOrGoOnStaleState() throws Exception {
+        harness = UciHarness.startWithVmOptions(false, "-Dvex.test.drainDelayMs=2500");
+        harness.send("position startpos");
+        harness.send("go infinite");
+        assertNotNull(harness.awaitLine(l -> l.startsWith("info depth 3 "), LONG));
+        harness.sendBatch("position startpos moves e2e4", "go depth 1");
+
+        assertNotNull(harness.awaitLine(l -> l.startsWith("bestmove "), LONG), "the first search never answered");
+        String second = harness.awaitLine(l -> l.startsWith("bestmove "), LONG);
+        assertNotNull(second, "go depth 1 was dropped while the old worker was draining");
+        assertTrue(isLegalFrom(AFTER_E4, second),
+                "go ran on the old position instead of the one sent after it: " + second);
+        harness.barrier();
+        assertEquals(2, harness.bestmoveCount());
+    }
+
+    /** quit must not wait for a worker that never finishes: every search thread is a daemon. */
+    @Test
+    void quitExitsEvenIfTheWorkerIsSlowToDrain() throws Exception {
+        harness = UciHarness.startWithVmOptions(false, "-Dvex.test.drainDelayMs=30000");
+        harness.send("position startpos");
+        harness.send("go infinite");
+        assertNotNull(harness.awaitLine(l -> l.startsWith("info depth 3 "), LONG));
+        harness.send("quit");
+        assertTrue(harness.awaitExit(Duration.ofSeconds(10)), "the engine waited for the slow worker instead of exiting");
+        assertTrue(harness.bestmoveCount() <= 1);
+    }
+
+    /**
+     * A forced-move or terminal answer does not replace the previous session. A later ponderhit or stop must still do
+     * nothing to the search that was answered, and the next search must be unaffected.
+     */
+    @Test
+    void ponderhitAndStopAfterAForcedMoveAnswerAreInert() throws Exception {
+        harness = UciHarness.start();
+        harness.send("position startpos");
+        harness.send("go ponder wtime 5000 btime 5000");
+        assertNotNull(harness.awaitLine(l -> l.startsWith("info depth 2 "), LONG));
+        harness.send("stop");
+        assertNotNull(harness.awaitLine(l -> l.startsWith("bestmove "), LONG));
+
+        harness.send("position fen " + ONE_LEGAL_MOVE);
+        harness.send("go wtime 1000 btime 1000"); // answered immediately, no worker, no new session
+        assertEquals("bestmove a1a2", harness.awaitLine(l -> l.startsWith("bestmove "), LONG));
+        harness.sendBatch("ponderhit", "stop", "ponderhit");
+        harness.barrier();
+        assertEquals(2, harness.bestmoveCount(), "ponderhit or stop after a forced-move answer printed something");
+
+        harness.send("position startpos");
+        harness.send("go depth 2");
+        assertNotNull(harness.awaitLine(l -> l.startsWith("bestmove "), LONG), "the next search was affected");
+        harness.barrier();
+        assertEquals(3, harness.bestmoveCount());
     }
 }

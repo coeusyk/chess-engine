@@ -137,6 +137,12 @@ public class UciApplication {
 
     private static final int DEFAULT_BENCH_DEPTH = BenchRunner.DEFAULT_DEPTH;
 
+    /**
+     * Test seam (issue #268): keeps a finished search worker alive this long after it has printed its bestmove and
+     * drained its helpers, to simulate a worker that is slow to stop. Zero, and never set, in normal use.
+     */
+    private static final long TEST_DRAIN_DELAY_MS = Long.getLong("vex.test.drainDelayMs", 0L);
+
     public static void main(String[] args) throws IOException {
         // Heap cap sanity check — must run before any large allocation.
         // Written to stderr with "info string" prefix so GUI logs see it without
@@ -243,17 +249,14 @@ public class UciApplication {
             } else if ("isready".equals(line)) {
                 System.out.println("readyok");
             } else if ("ucinewgame".equals(line)) {
-                if (stopAndJoinSearch()) {
-                    board = new Board();
-                    // Full TT clear (not just age-bump) ensures no stale entries from
-                    // the previous game are visible to the next game's search.
-                    sharedTT.clear();
-                    // Searcher history is reset by constructing a new Searcher per go.
-                    openingBook.close();
-                    session = null;
-                } else {
-                    System.out.println("info string ucinewgame skipped: search did not stop within 2000 ms");
-                }
+                drainSearch();
+                board = new Board();
+                // Full TT clear (not just age-bump) ensures no stale entries from
+                // the previous game are visible to the next game's search.
+                sharedTT.clear();
+                // Searcher history is reset by constructing a new Searcher per go.
+                openingBook.close();
+                session = null;
             } else if (line.startsWith("position")) {
                 handlePosition(line);
             } else if (line.startsWith("setoption")) {
@@ -286,7 +289,9 @@ public class UciApplication {
 
             System.out.flush();
         }
-        // quit or end of input: stop and drain the worker (and through it, its helpers).
+        // quit or end of input: ask the worker to stop and give it up to 2 s to print its bestmove and drain its
+        // helpers. Then the process exits regardless: the worker and the helpers are daemon threads, so none of
+        // them can outlive it, and a worker that is still busy is simply abandoned with the JVM.
         requestStop();
         stopAndJoinSearch();
         System.out.flush();
@@ -397,10 +402,7 @@ public class UciApplication {
             return;
         }
         // The worker probes the opening book, which the reopen guard below can touch.
-        if (!stopAndJoinSearch()) {
-            System.out.println("info string position skipped: search did not stop within 2000 ms");
-            return;
-        }
+        drainSearch();
 
         int index = 1;
         if ("startpos".equals(parts[index])) {
@@ -497,12 +499,9 @@ public class UciApplication {
             try {
                 int value = Integer.parseInt(valuePart);
                 int newHashSizeMb = Math.max(1, Math.min(65536, value));
-                if (stopAndJoinSearch()) {
-                    sharedTT.resize(newHashSizeMb);
-                    hashSizeMb = newHashSizeMb;
-                } else {
-                    System.out.println("info string Hash resize skipped: search did not stop within 2000 ms");
-                }
+                drainSearch();
+                sharedTT.resize(newHashSizeMb);
+                hashSizeMb = newHashSizeMb;
             } catch (NumberFormatException ignored) {
             }
         } else if ("multipv".equals(optionNameLower)) {
@@ -552,10 +551,7 @@ public class UciApplication {
                         trimmed.replaceAll("[\r\n\t]", "_"));
                 return;
             }
-            if (!stopAndJoinSearch()) {
-                System.out.println("info string BookFile change skipped: search did not stop within 2000 ms");
-                return;
-            }
+            drainSearch();
             bookFile = trimmed;
             openNewBook();
         } else if ("bookdepth".equals(optionNameLower)) {
@@ -566,10 +562,7 @@ public class UciApplication {
         } else if ("bookvariance".equals(optionNameLower)) {
             try {
                 int newVariance = Math.max(0, Math.min(100, Integer.parseInt(valuePart)));
-                if (!stopAndJoinSearch()) {
-                    System.out.println("info string BookVariance change skipped: search did not stop within 2000 ms");
-                    return;
-                }
+                drainSearch();
                 bookVariance = newVariance;
                 OpeningBook previous = openingBook;
                 openingBook = new OpeningBook(bookVariance);
@@ -690,7 +683,7 @@ public class UciApplication {
     }
 
     private void handleGo(String command) {
-        if (!stopAndJoinSearch()) return;
+        drainSearch();
 
         long searchId = SMP_DIAGNOSTICS ? searchSequence.incrementAndGet() : 0L;
         stopRequested.set(false);
@@ -1017,6 +1010,9 @@ public class UciApplication {
             // Aborted before depth 1 finished: a null move is only right for a terminal position.
             Move toEmit = found == null && !rootLegalMoves.isEmpty() ? rootLegalMoves.get(0) : found;
             if (goSession.hold) {
+                if (SMP_DIAGNOSTICS) {
+                    smpDiagnostic("search=" + searchId + " event=hold");
+                }
                 awaitRelease(goSession);
             }
             if (SMP_DIAGNOSTICS) {
@@ -1080,6 +1076,13 @@ public class UciApplication {
                         + " drain_elapsed_ns=" + (drainedNanos - searchStartedNanos)
                         + " hashfull=" + sharedTT.hashfull());
             }
+            if (TEST_DRAIN_DELAY_MS > 0) {
+                try {
+                    Thread.sleep(TEST_DRAIN_DELAY_MS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
         }
     }
 
@@ -1090,6 +1093,33 @@ public class UciApplication {
         }
     }
 
+    /**
+     * Stops the running search and waits for its worker, and through it the helpers, to finish. It waits as long as
+     * that takes: a command that changes engine state, or starts the next search, must never overlap the old worker,
+     * and skipping or dropping it would leave the next command running against stale state. Only quit and end of
+     * input use the bounded {@link #stopAndJoinSearch()} on its own.
+     */
+    private void drainSearch() {
+        if (stopAndJoinSearch()) {
+            return;
+        }
+        System.out.println("info string search is slow to stop, waiting for it before continuing");
+        System.out.flush();
+        Thread current = searchThread;
+        boolean interrupted = false;
+        while (current.isAlive()) {
+            try {
+                current.join();
+            } catch (InterruptedException e) {
+                interrupted = true; // keep waiting: giving up here would let the next command overlap the worker
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /** Bounded: asks the worker to stop and waits up to 2 s. True if it has finished. */
     private boolean stopAndJoinSearch() {
         Thread current = searchThread;
         if (current == null) return true;

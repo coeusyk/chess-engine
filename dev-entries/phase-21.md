@@ -660,3 +660,26 @@ An independent read-only review found five gaps, all fixed and re-reviewed: Powe
 
 - Full reactor: engine-core 455, engine-uci 61, chess-engine-api 29, engine-tuner 131, all passing. The lifecycle class was run five more times with no failure.
 - No SPRT, no NPS or search change: the search code is untouched.
+
+### [2026-11-23] #268 lifecycle-safety verification of PR #284
+
+**Built:**
+
+- `drainSearch()`: stops the running search and waits for its worker, and through it the helpers, for as long as that takes. `go`, `position`, `ucinewgame`, `setoption Hash`, `BookFile` and `BookVariance` use it. Only `quit` and end of input keep the bounded 2 s `stopAndJoinSearch()`.
+- A test seam, the system property `vex.test.drainDelayMs`, which keeps a finished worker alive that many milliseconds to simulate a worker that is slow to stop. Zero and unused outside the tests. A `search=N event=hold` line in the SMP diagnostics marks the moment a held worker starts waiting.
+- Three new tests (slow drain, quit with a slow worker, ponderhit and stop after a forced-move answer) and two stronger ones (the forced-move and mate holds now wait for `event=hold`).
+
+**Decisions Made:**
+
+- **Drain timeout was a real defect.** After 2 s the old code returned from `go` with no output at all (no bestmove for that `go`), and skipped `position`, `ucinewgame`, `Hash`, `BookFile` and `BookVariance` with only an `info string`. When the slow worker finally ended, the next command ran against the old board, TT or book. Reproduced with the seam: `go infinite`, then `position startpos moves e2e4` and `go depth 1` sent together answered `e2e4`, a move from the old position. The commands now wait. A worker that was told to stop and never ends makes the engine unresponsive instead of silently wrong, and `info string search is slow to stop` is printed once.
+- **Quit and end of input need no change.** The search worker and all `smp-helper` threads are daemon threads, so none can outlive the JVM. The 2 s wait is a courtesy to let the worker print its bestmove. Verified with a worker held for 30 s: the engine still exits promptly. The guarantee is "at most 2 s, then the process exits", not "every helper drained", and the comment says so.
+- **Stale `GoSession` is inert, no change.** Forced-move and terminal answers leave the previous session referenced. That cannot matter because a worker only ever uses the session object it was handed, `handleGo` drains the previous worker before it replaces `session`, and a `ponderhit` or `stop` that reaches a finished session changes only state nobody reads (an unused `TimeManager`, and the `stopRequested` flag that every `go` resets). A test sends `ponderhit`, `stop`, `ponderhit` after a forced-move answer and checks nothing is printed and the next search is unaffected.
+- **Test synchronization.** `readyok` is printed by the command thread, so it orders stdout lines printed by the command thread and, after a join, the worker's bestmove (the join is a happens-before). It does not order stderr diagnostics, and it says nothing about a worker that has not yet reached its emission point. The rapid go/stop test read `drained` diagnostics straight after readyok, which was racy, and now waits for them. The forced-move and mate hold tests asserted "no bestmove" after readyok, which a worker that was merely slow would also satisfy; they now wait for `event=hold` first.
+
+**Broke / Fixed:**
+
+- First version of the strengthened forced-move test asserted the exact line `bestmove a1a2`, but the search now also returns a ponder move. Test bug, not an engine bug.
+
+**Measurements:**
+
+- engine-uci 64 tests (17 in `UciSearchLifecycleTest`), engine-core 455, chess-engine-api 29, engine-tuner 131, all passing. The lifecycle class passed three runs in a row after the fix. No search, evaluation or time-allocation code changed.
