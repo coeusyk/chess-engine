@@ -26,6 +26,7 @@ class TranspositionTableScoreValidityTest {
 
     private static final String ROOK_ENDING_CLOCK_0 = "7k/8/8/8/8/8/R7/K7 w - - 0 80";
     private static final String ROOK_ENDING_CLOCK_98 = "7k/8/8/8/8/8/R7/K7 w - - 98 80";
+    private static final String ROOK_ENDING_CLOCK_84 = "7k/8/8/8/8/8/R7/K7 w - - 84 80";
     private static final String ROOK_ENDING_CLOCK_20 = "7k/8/8/8/8/8/R7/K7 w - - 20 80";
     private static final int DEPTH = 2;
 
@@ -105,6 +106,23 @@ class TranspositionTableScoreValidityTest {
     }
 
     @Test
+    void anEntryDeepEnoughToReachTheRuleIsNotTrustedWhateverThisIterationsExtensionBudget() {
+        // Entries outlive the iteration (and the go command, and the SMP helper) that stored them. One stored
+        // by a deep search was judged against that search's large extension budget, so at probe time the
+        // guard must assume the largest budget any search can have, not the small one of a depth-2 iteration.
+        // The entry is for the position after Ra3, one ply below the root, so its clock is 85: 85 + 13 + 1
+        // is still below 100, but 85 + 13 + the 16-ply maximum is not.
+        TranspositionTable shared = new TranspositionTable(1);
+        shared.store(keyAfterRa3(ROOK_ENDING_CLOCK_84), Move.NONE, 13, 777, TTBound.EXACT);
+
+        SearchResult result = ra3(ROOK_ENDING_CLOCK_84, shared);
+
+        assertTrue(result.scoreCp() > 300 && result.scoreCp() != -777,
+                "a deep entry was trusted at a clock where its subtree can reach the fifty-move rule: "
+                        + result.scoreCp());
+    }
+
+    @Test
     void ordinaryClocksStillShareTheTable() {
         // Guard against over-correcting: clocks that cannot reach 100 inside the horizon keep reusing entries.
         TranspositionTable shared = new TranspositionTable(1);
@@ -120,12 +138,12 @@ class TranspositionTableScoreValidityTest {
 
     @Test
     void theFiftyMoveGuardAppliesOnlyWhenTheRuleIsReachableInsideTheSearchedSubtree() {
-        // clock + remaining depth + extension budget must reach 100 before the rule can matter.
-        assertFalse(Searcher.fiftyMoveSensitive(0, 20, 16));
-        assertFalse(Searcher.fiftyMoveSensitive(63, 20, 16));
-        assertTrue(Searcher.fiftyMoveSensitive(64, 20, 16));
-        assertTrue(Searcher.fiftyMoveSensitive(98, 2, 0));
-        assertFalse(Searcher.fiftyMoveSensitive(97, 2, 0));
-        assertTrue(Searcher.fiftyMoveSensitive(98, 1, 1));
+        // clock + remaining depth + the 16-ply extension allowance must reach 100 before the rule can matter.
+        assertFalse(Searcher.fiftyMoveSensitive(0, 20));
+        assertFalse(Searcher.fiftyMoveSensitive(63, 20));
+        assertTrue(Searcher.fiftyMoveSensitive(64, 20));
+        assertFalse(Searcher.fiftyMoveSensitive(81, 2));
+        assertTrue(Searcher.fiftyMoveSensitive(82, 2));
+        assertTrue(Searcher.fiftyMoveSensitive(98, 0));
     }
 }

@@ -134,7 +134,7 @@ public class UciApplication {
     private volatile GoSession session;
     /**
      * Identity of the evaluator the shared transposition table currently holds scores for: "Classical" or
-     * "NNUE:" plus the network's UUID. Written only by a search worker, before it starts any helper and
+     * "NNUE:" plus the file path and the network's UUID. Written only by a search worker, before it starts any helper and
      * after the previous worker has been joined, so no extra synchronization is needed (issue #259).
      */
     private String tableEvaluatorIdentity = "Classical";
@@ -826,8 +826,11 @@ public class UciApplication {
             // the next search, so clear them. This runs before any helper of this search is submitted
             // and after handleGo has joined the previous worker and its helpers, so nothing is
             // reading or writing the table while it is cleared.
+            // The file path is part of the identity because the UUID inside a file is only unique if every
+            // tool that writes networks makes it so: a copied or hand-edited header would otherwise let two
+            // different networks share one.
             String evaluatorIdentity = nnueNetworkForSearch == null
-                    ? "Classical" : "NNUE:" + nnueNetworkForSearch.networkUuid();
+                    ? "Classical" : "NNUE:" + evalFile + "#" + nnueNetworkForSearch.networkUuid();
             if (!evaluatorIdentity.equals(tableEvaluatorIdentity)) {
                 sharedTT.clear();
                 tableEvaluatorIdentity = evaluatorIdentity;

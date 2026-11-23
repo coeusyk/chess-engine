@@ -1089,7 +1089,7 @@ public class Searcher {
         // against the game history are a separate, accepted graph-history effect: the table lives for one
         // game and is cleared on ucinewgame.
         boolean ttScoreUsable = ttEntry != null
-                && !fiftyMoveSensitive(board.getHalfmoveClock(), ttEntry.depth(), maxExtensions);
+                && !fiftyMoveSensitive(board.getHalfmoveClock(), ttEntry.depth());
         Integer ttScore = ttScoreUsable ? applyTtBound(ttEntry, effectiveDepth, alpha, beta, ply) : null;
         if (ttScore != null) {
             ttHits++;
@@ -1455,7 +1455,7 @@ public class Searcher {
             TTBound bound = resolveBound(bestScore, alphaOrig, beta);
             // Issue #259: a score the fifty-move rule could have shaped is clock-specific, so it is not
             // stored at all; storing it would hand a clock-98 verdict to the same position at clock 0.
-            if (!fiftyMoveSensitive(board.getHalfmoveClock(), effectiveDepth, maxExtensions)) {
+            if (!fiftyMoveSensitive(board.getHalfmoveClock(), effectiveDepth)) {
                 transpositionTable.store(zobrist, bestMove, effectiveDepth, scoreToTT(bestScore, ply), bound);
             }
 
@@ -1808,15 +1808,19 @@ public class Searcher {
     }
 
     /**
-     * True when a score for a node at {@code halfmoveClock} searched {@code depth} plies deep (plus up to
-     * {@code maxExtensions} extension plies) could have been decided by the fifty-move rule, which the
-     * transposition-table key does not contain. Such a score must neither be stored nor trusted across
-     * clocks (issue #259). The rule is checked on entry to every {@code alphaBeta} node, so the deepest
-     * clock a subtree can see is {@code halfmoveClock + depth + maxExtensions}; captures and pawn moves only
-     * lower it, which makes this a safe upper bound.
+     * True when a score for a node at {@code halfmoveClock} searched {@code depth} plies deep could have been
+     * decided by the fifty-move rule, which the transposition-table key does not contain. Such a score must
+     * neither be stored nor trusted across clocks (issue #259). The rule is checked on entry to every
+     * {@code alphaBeta} node, so the deepest clock a subtree can see is {@code halfmoveClock + depth} plus
+     * the extensions on the path, and captures and pawn moves only lower it. The extension allowance is the
+     * largest any search can have ({@link #MAX_CHECK_EXTENSIONS}), not the current iteration's: entries
+     * outlive the iteration, the {@code go} command and the helper thread that stored them, so a bound that
+     * depends on who is asking would trust a deep entry stored under a large allowance at a shallow
+     * iteration with a small one. Quiescence never checks the rule and does not use the table, so it adds
+     * nothing to the horizon.
      */
-    static boolean fiftyMoveSensitive(int halfmoveClock, int depth, int maxExtensions) {
-        return halfmoveClock + depth + maxExtensions >= 100;
+    static boolean fiftyMoveSensitive(int halfmoveClock, int depth) {
+        return halfmoveClock + depth + MAX_CHECK_EXTENSIONS >= 100;
     }
 
     Integer applyTtBound(TranspositionTable.Entry entry, int depth, int alpha, int beta, int ply) {
