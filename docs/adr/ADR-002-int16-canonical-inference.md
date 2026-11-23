@@ -145,3 +145,27 @@ Phase C, not a Phase B gap requiring reopening.
 The exact acceptable-drift numeric bound (mentioned above) is deferred to
 Phase C, to be measured against the first real network rather than asserted
 here against synthetic test data.
+
+## Update (issue #265): the float32-versus-quantized check now exists
+
+This ADR delegated "float32 checkpoint versus quantized network" verification to the Python trainer,
+and for a long time nothing implemented it. The infrastructure now does:
+
+- `trainer/trainer/quantization/inference.py` evaluates a `QuantizedCanonicalNetwork` with the same integer
+  arithmetic as `NnueEvaluator.evaluate()` (wrapping int16 accumulators, clamp to `[0, qa]`, 64-bit sum,
+  `sum * outputScale / (qa * qb)` truncating toward zero), and a float32 reference for the same network
+  before quantization.
+- `trainer/trainer/validation/quantization_parity.py` reports MAE, RMSE, maximum absolute difference,
+  mean signed difference and correlations in centipawns, records the validation corpus hash, and can gate an
+  export. The report is written into the provenance manifest (`quantization_parity`).
+- Python equals Java exactly (0 cp) on `d6-export-fixture.nnue` and `parity-w32-fixture.nnue` over the
+  393-FEN corpus, checked on both sides against `bench/nnue-corpus/fixture-*-golden-evals.csv`
+  (`NnueFixtureGoldenEvalTest` and `trainer/tests/quantization/test_java_parity.py`).
+
+The training and inference contract is unchanged (QA/QB-native units, bare rounding in `quantize()`).
+
+The numeric acceptable-drift bound is still open. No real checkpoint is available in this repository, so
+the values suggested in issue #265 (MAE 5 cp, max 25 cp on non-extreme positions, correlation delta 0.005)
+remain provisional and are not enforced by default; `ParityThresholds` is report-only unless a caller sets
+bounds. Measuring the surviving real checkpoints, then choosing the bound and whether the scale contract
+needs to change, is still to do.

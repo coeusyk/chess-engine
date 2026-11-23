@@ -683,3 +683,39 @@ An independent read-only review found five gaps, all fixed and re-reviewed: Powe
 **Measurements:**
 
 - engine-uci 64 tests (17 in `UciSearchLifecycleTest`), engine-core 455, chess-engine-api 29, engine-tuner 131, all passing. The lifecycle class passed three runs in a row after the fix. No search, evaluation or time-allocation code changed.
+
+### [2026-11-23] Float32-versus-quantized parity validation (#265)
+
+**Built:**
+
+- `trainer/trainer/quantization/inference.py`: `eval_quantized_canonical()` and `eval_quantized_fens()` mirror `NnueEvaluator.evaluate()` exactly (wrapping int16 accumulator, clamp to `[0, qa]`, int64 sum, `long` multiply and divide truncating toward zero, `int` cast). `eval_float_canonical()` is the float32 reference built from `CanonicalNetwork`, `eval_dequantized_float()` the float64 counterpart of `NnueOracle`, and `accumulator_bound_violations()` mirrors the #264 loader check, so a network Java would refuse to load is refused here.
+- `trainer/trainer/validation/quantization_parity.py`: `compute_quantization_parity()` (MAE, RMSE, max |delta|, signed mean, float-vs-quantized Pearson, label-correlation change, a split into weight-rounding and integer-arithmetic error, the validation FEN hash), `ParityThresholds` (report only unless set), `threshold_violations()` and `quantize_validate_export()`, which raises `QuantizationParityError` before anything is written and otherwise exports with the report in the manifest.
+- `trainer/trainer/export/nnue_reader.py` (inverse of the exporter, so committed fixtures can be evaluated), the optional `quantization_parity` manifest field and its schema check, and the parity report wired into `scripts/train_candidate_net.py` for the held-out positions.
+- Java: a second committed fixture `parity-w32-fixture.nnue`, golden CSVs `bench/nnue-corpus/fixture-{d6,w32}-golden-evals.csv`, `NnueFixtureGoldenEvalTest`, and an opt-in `NnueFixtureGoldenGenerator`.
+
+**Decisions Made:**
+
+- The existing numerical contract is untouched: QA/QB-native units, bare `np.round` in `quantize()`, no export-time scaling, no architecture change. This work only measures it.
+- Java stays the arithmetic authority. The Java side pins its own output for each fixture in a committed CSV; Python is compared with the same CSV, so the two languages are tied together by one file and a drift on either side fails its own CI job. No cross-language process is started in CI (that is #269's job).
+- A second, wider fixture was added because the frozen D-6 fixture has `hidden_width = 2`, which cannot exercise the `us`/`them` output-weight stride or the clamp at both ends across many units. The wide one has 7.3% of accumulators above `qa`, 37.6% below zero (over all 393 FENs), and scores from -2831 to +1913 cp (173 negative), so truncation toward zero is covered.
+- No release threshold was chosen. `ParityThresholds` defaults to report-only. The tests use explicit round numbers (MAE 20 cp, max 60 cp, correlation 0.99) that are local to the tests and separate two synthetic networks by a wide margin; they are not proposed gates. The figures suggested in the issue (MAE 5 cp, max 25 cp, correlation delta 0.005) stay provisional until a real checkpoint exists.
+- `accumulator_bound_violations()` follows the Java rule (the 32 largest positive and 32 most negative weights per neuron), which is never stricter than the quantizer's `bias + 32 * max|w|`, so anything `quantize()` accepts is also loadable here.
+
+**Broke / Fixed:**
+
+- A hand-computed test value was wrong (a neuron's bias was 20, so it ended at 5 and not -5). The code was right; the test input was fixed.
+- The first design of the "well-scaled" synthetic network gave 15 cp MAE, because output weights with a standard deviation of 40 are tiny next to their rounding step at that score scale. Realistic centipawn scale needs output weights nearer 12 per unit with FT weights across the int16 range, which gives MAE about 6 cp; the poorly scaled case (FT weights O(1), output weights 150) gives MAE about 70 cp and max about 264 cp on the same 393 FENs. Both are synthetic.
+
+**Measurements (synthetic networks only, 393-FEN corpus, deterministic seeds):**
+
+- Python versus Java on the committed fixtures: 0 cp difference on all 393 FENs for both fixtures.
+- Well-scaled net (FT sigma 16, output sigma 12): MAE 5.8 cp, RMSE 7.0 cp, max 19.1 cp, float-vs-quantized correlation 0.9994, score spread about 190 cp.
+- Poorly scaled net (FT sigma 1, output sigma 150): MAE 70.3 cp, RMSE 89.7 cp, max 263.7 cp, correlation 0.9507, score spread about 237 cp.
+- Integer arithmetic alone (rounded weights, float64 versus integer score) never differs by 1 cp or more.
+- Three deliberate arithmetic mutations (floor division, no clamp at `qa`, swapped `us`/`them` weights) each fail the parity tests.
+- Trainer suite 496 passed. Reactor: engine-core 457, engine-uci 64, chess-engine-api 29, engine-tuner 131.
+
+**Not done / cannot be qualified yet:**
+
+- No real checkpoint is available here (`P5-AUXHEAD-001`, E-3, E-15 and E-16 are not in the checkout), so the actual float32-versus-quantized error of any trained network is still unmeasured, and the scale-contract question (Option A or B in the issue) is not decided. Run `compute_quantization_parity()` on each surviving checkpoint first.
+- The numeric acceptance thresholds are uncalibrated. #263 (dataset audit and checkpoint qualification) and #269 (a CI job that runs Java and Python together) are separate and untouched.

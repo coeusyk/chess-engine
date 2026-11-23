@@ -185,7 +185,8 @@ def _nnue_bytes(network: QuantizedCanonicalNetwork, network_uuid: str, trainer_c
 def _write_manifest(manifest_path: Path, network: QuantizedCanonicalNetwork, network_uuid: str,
                      trainer_commit: str, created_at_epoch_seconds: int,
                      experiment_metadata: ExperimentMetadata, dataset_composition: List[DatasetComposition],
-                     label_engine_version: Optional[str], nnue_sha256: str) -> None:
+                     label_engine_version: Optional[str], nnue_sha256: str,
+                     quantization_parity: Optional[Dict[str, Any]] = None) -> None:
     manifest: Dict[str, Any] = {
         "format_version": FORMAT_VERSION,
         "architecture_id": network.architecture_id,
@@ -205,13 +206,18 @@ def _write_manifest(manifest_path: Path, network: QuantizedCanonicalNetwork, net
         "label_engine_version": label_engine_version,
         "nnue_sha256": nnue_sha256,
     }
+    if quantization_parity is not None:
+        # Additive optional field (manifest_schema.py): float32-checkpoint-versus-quantized parity
+        # measured on a recorded corpus (issue #265). Absent for exports that did not measure it.
+        manifest["quantization_parity"] = quantization_parity
     manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
     _atomic_write(manifest_path, manifest_bytes)
 
 
 def export(network: QuantizedCanonicalNetwork, experiment_metadata: ExperimentMetadata,
            dataset_composition: List[DatasetComposition], output_dir: Path,
-           label_engine_version: Optional[str] = None) -> ExportResult:
+           label_engine_version: Optional[str] = None,
+           quantization_parity: Optional[Dict[str, Any]] = None) -> ExportResult:
     """Writes `<output_dir>/<uuid>.nnue` and `<output_dir>/<uuid>.json`. Each file is
     written atomically (temp file + `os.replace`, see `_atomic_write`) -- a crash
     mid-write can never leave a truncated file for either artifact, though the pair
@@ -224,6 +230,9 @@ def export(network: QuantizedCanonicalNetwork, experiment_metadata: ExperimentMe
     `label_engine_version` is `None` for every source reachable today (Stage 1 text
     data has no label-generating engine of its own); PRD "Provenance" marks this
     field "where applicable", so `None` is a valid, complete value, not a missing one.
+
+    `quantization_parity`, if given, is `QuantizationParityReport.to_manifest_dict()` and is
+    written verbatim under that key (issue #265); it is optional and additive.
     """
     network_uuid = str(uuid.uuid4())
     created_at_epoch_seconds = int(time.time())
@@ -238,6 +247,7 @@ def export(network: QuantizedCanonicalNetwork, experiment_metadata: ExperimentMe
 
     _atomic_write(nnue_path, nnue_bytes)
     _write_manifest(manifest_path, network, network_uuid, trainer_commit, created_at_epoch_seconds,
-                     experiment_metadata, dataset_composition, label_engine_version, nnue_sha256)
+                     experiment_metadata, dataset_composition, label_engine_version, nnue_sha256,
+                     quantization_parity)
 
     return ExportResult(nnue_path=nnue_path, manifest_path=manifest_path, network_uuid=network_uuid)

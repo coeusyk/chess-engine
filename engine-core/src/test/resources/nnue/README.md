@@ -62,3 +62,63 @@ the new file — never hand-edit the binary itself.
 - `outputWeights = [33, -44, 55, -66]` (perspective-major: "us" = `[33, -44]`,
   "them" = `[55, -66]`)
 - `outputBias = 777`
+
+---
+
+# `parity-w32-fixture.nnue` (issue #265): Python-versus-Java quantized-inference parity
+
+A second fixture next to `d6-export-fixture.nnue`, for the same reason that one is frozen: it
+lets both languages be checked against the same bytes. The D-6 fixture has `hidden_width = 2`,
+which cannot exercise the `us`/`them` output-weight stride, the clamp at both ends of
+`[0, qa]` across many units, or truncation on large negative scores. This one has
+`hidden_width = 32`, seeded random int16 weights, and was chosen so those cases actually occur on the
+393-FEN benchmark corpus: 7.3% of accumulator values exceed `qa`, 37.6% fall below zero,
+and scores range from -2831 to +1913 cp (173 negative), so integer division toward zero is
+exercised.
+
+Like the D-6 fixture it is a permanent compatibility artifact. It must never be regenerated to match a
+future change; if a Python or Java change breaks `NnueFixtureGoldenEvalTest` or
+`tests/quantization/test_java_parity.py`, that is a real cross-language regression.
+
+- `networkUuid`: `cdfa4c5e-3774-4f07-8e4a-1c7350229b1c`
+- file SHA-256: `f7fadc95e3025e8c24c99bf09fa98654e1847e76d104c67ca4575bfc95537e82`
+- `hiddenWidth = 32`, `qa = 127`, `qb = 64`, `outputScale = 400`, `outputBias = -123`, trainer commit `dddddddd`
+
+## Generation
+
+```python
+import numpy as np
+from pathlib import Path
+from trainer.export.canonical import FEATURES_PER_PERSPECTIVE, QuantizedCanonicalNetwork
+from trainer.export.exporter import export
+from trainer.reproducibility.experiment_metadata import ExperimentMetadata
+
+rng = np.random.default_rng(265)
+width = 32
+network = QuantizedCanonicalNetwork(
+    hidden_width=width,
+    ft_weights=np.round(rng.normal(0, 16, (FEATURES_PER_PERSPECTIVE, width))).astype(np.int16),
+    ft_biases=np.round(rng.normal(30, 25, width)).astype(np.int16),
+    output_weights=np.round(rng.normal(0, 40, (2, width))).astype(np.int16),
+    output_bias=-123,
+    qa=127, qb=64, output_scale=400,
+    architecture_id=1, feature_set_id=1,
+)
+metadata = ExperimentMetadata(seed=265, trainer_commit="d" * 40, started_at_epoch_seconds=1700000002, config={})
+export(network, metadata, [], Path("."))
+```
+
+The weights are reproducible from the seed, but `export()` assigns a fresh UUID and timestamp on every
+call, so the bytes of a re-export differ. That is why the file is committed instead of regenerated.
+
+## Golden outputs
+
+`bench/nnue-corpus/fixture-d6-golden-evals.csv` and `bench/nnue-corpus/fixture-w32-golden-evals.csv` hold the
+canonical Java int16 score of each fixture for every corpus FEN. `NnueFixtureGoldenEvalTest` checks them
+against the live Java evaluator; the trainer test `tests/quantization/test_java_parity.py` checks the
+Python quantized inference against the same files, so Python equals Java with zero centipawn
+difference. Regenerate them only through `NnueFixtureGoldenGenerator` (opt-in, never in CI):
+
+```
+mvn -pl engine-core test -Dgroups=corpus-generation -Dcorpus.generate=true -Dtest=NnueFixtureGoldenGenerator
+```

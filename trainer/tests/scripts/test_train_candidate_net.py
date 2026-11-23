@@ -46,3 +46,40 @@ def test_combine_and_split_refuses_legacy_stage1_before_reading_any_label(tmp_pa
     # stage2_dir deliberately does not exist: the Stage 1 gate must fire first.
     with pytest.raises(UnsafeStage1PerspectiveError, match="legacy White-perspective"):
         combine_and_split(stage1, stage2, seed=1)
+
+
+def _fixture_records():
+    from pathlib import Path
+    from trainer.dataset.text_provider import TextDatasetProvider
+    provider = TextDatasetProvider(directory=Path(__file__).parent.parent / "fixtures", identifier="x", source_ref="x")
+    return list(provider.positions(next(iter(provider.shards()))))
+
+
+def test_train_quantize_export_records_parity_for_the_held_out_positions(tmp_path):
+    # Issue #265: the real train -> quantize -> export script path measures float32-versus-quantized
+    # parity on the held-out positions and writes it into the provenance manifest.
+    from scripts.train_candidate_net import train_quantize_export
+    from trainer.export.exporter import DatasetComposition
+    from trainer.export.manifest_schema import validate_manifest
+
+    records = _fixture_records()
+    held_out, training = records[:3], records[3:]
+    result, _ = train_quantize_export(
+        training, [DatasetComposition("x", "public", 1.0)], k=1.0, seed=1, steps=2, batch_size=2,
+        learning_rate=0.01, output_dir=tmp_path, held_out_records=held_out, log_interval=1)
+
+    manifest = json.loads(result.manifest_path.read_text())
+    validate_manifest(manifest)
+    assert manifest["quantization_parity"]["position_count"] == len(held_out)
+    assert manifest["quantization_parity"]["label_correlation_float"] is not None
+
+
+def test_train_quantize_export_without_held_out_positions_writes_no_parity_block(tmp_path):
+    from scripts.train_candidate_net import train_quantize_export
+    from trainer.export.exporter import DatasetComposition
+
+    result, _ = train_quantize_export(
+        _fixture_records(), [DatasetComposition("x", "public", 1.0)], k=1.0, seed=1, steps=2, batch_size=2,
+        learning_rate=0.01, output_dir=tmp_path, held_out_records=None, log_interval=1)
+
+    assert "quantization_parity" not in json.loads(result.manifest_path.read_text())
