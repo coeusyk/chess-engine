@@ -210,25 +210,41 @@ The condition that makes it conditional rather than automatic is noise. The WSL 
 | CPU contention | vCPUs are host threads; Windows load (browser, indexing, Defender, a native job) steals time invisibly from inside WSL. `/proc/pressure` and steal time are the only hints. | High, main risk. Mitigate by an idle host, low concurrency, and logging pressure during the run. |
 | SMT and affinity | The VM does not expose which vCPUs are SMT siblings, and Windows decides placement. The Windows launcher sets no affinity either, but its host mapping is knowable. | Medium for concurrency above 8, high for Lazy SMP. |
 | Lazy SMP | Thread scheduling, cache sharing and timing scaling are what Phase 20 measured natively; WSL timing was explicitly never used for them. | Not valid. Keep Threads=1 only. |
-| Memory | No `memory` or `swap` limit is configured, so WSL takes up to half of host RAM and the host was already at about 86% RAM during native SPRTs. Reclaim or host pressure can stall the VM. | Medium. Pin `memory` and `swap=0` and keep the JVM heap explicit. |
+| Memory | No `memory` or `swap` limit is configured, so WSL takes up to half of host RAM and the host was already at about 86% RAM during native SPRTs. Reclaim or host pressure can stall the VM. | Medium. Record the effective limits, and pin `memory` and `swap=0` and the JVM heap explicitly for the qualified runs. |
 | Clock handling | Monotonic time is fine for search and for cutechess timing. Wall clock can jump after host sleep or resume. | Low, but record the host state and avoid sleep. |
-| Time forfeits | Stalls longer than the cutechess time margin show up as losses on time. They would be asymmetric noise. | High signal: any forfeit is a stop condition for a qualification run. |
+| Time forfeits | Stalls longer than the cutechess time margin show up as losses on time. They would be asymmetric noise. | High signal: measure the forfeit rate with an interval and compare it with the native record, instead of assuming zero. |
 | Java 21 | Same major version family (Linux OpenJDK 21.0.13 here, Zulu 21.0.10 native). JIT and GC timing differ; `--add-modules jdk.incubator.vector` works. | Low for node counts, medium for speed. Different JDK builds must be recorded, not compared. |
 | cutechess-cli | Not installed in this WSL environment; the Linux build and the Windows build are separate binaries with their own versions. | Blocking until installed and version-pinned. |
 | Filesystem | Running from a `/mnt` path is much slower than the ext4 home; openings, PGN and logs must live on ext4. | Medium. |
 
-### Smallest qualification protocol using existing tooling
+### Qualification protocol (staged, Threads=1 only)
 
-No new statistical parameters. Every step reuses the existing jar, `--bench-raw`, the standard opening corpus and cutechess-cli.
+The protocol reuses the existing jar, `--bench-raw`, the standard opening corpus and cutechess-cli, and adds no new statistical parameters. It is staged so that each step is small, produces numbers with uncertainty, and decides whether the next step is worth its cost. It is limited to Threads=1 at first; Lazy SMP is out of scope until a separate case is made.
 
-1. **Build identity.** One control jar, SHA-256 recorded, run in WSL and on native Windows. Pass: depth-13 31-position node total and per-position counts identical on both (this also re-verifies determinism).
-2. **Relative throughput.** Same session on the same machine, one discarded warm-up then 7 `--bench-raw` runs per side, alternating in blocks, repeated over 3 separate sessions. Report the WSL/native ratio, and each side's CV. Pass: nodes identical, WSL CV at most 2% and at most 2.5 times native CV, and the ratio's spread across sessions at most 2 points. This establishes how stable "about 91 to 94%" actually is. It does not create an absolute gate.
-3. **A/A on WSL.** The same jar against itself, Threads=1, Hash=16 MB, the standard corpus with paired openings and the standard time control, `-Concurrency 2`, fixed 1,000 games (no SPRT stopping). Pass: zero time forfeits, zero crashes or disconnects, colour and opening pairing complete, and the measured Elo within 2 standard errors of 0.
-4. **Sensitivity control on WSL.** The same jar at two time controls with a known ratio of 1.5 (for example 60+0.6 against 40+0.4), same 1,000-game budget. Pass: a clear and correctly signed Elo gap, whose size is recorded and later compared with a native run of the same pair.
-5. **Cross-check against a native decision already on record.** Re-run one pair whose native SPRT outcome is already archived (for example the #262 SEE non-regression result) on WSL as a fixed-count match. Pass: the Elo confidence intervals overlap and the verdict agrees. This is the step that actually shows WSL decisions match native ones, so it is the longest.
-6. **Resource monitoring throughout:** `/proc/pressure/cpu` and `memory`, `vmstat 5`, load average, JVM heap, game durations and per-move times from the PGN annotations (the method used in sections 5 and 6 above). Pin `memory`, `processors` and `swap=0` in `.wslconfig`, fixed `-Xmx`, and stop the run if pressure stays above a recorded threshold.
+**Stage 0: environment record and build identity.** Before any run, record what the VM can actually use and what the host is doing, because the VM's limits are not visible from the repo:
 
-Steps 1 to 4 are short (benchmarks and two 1,000-game fixed matches). Step 5 is the long one and should be a separate approved task.
+- effective WSL resources: logical CPU count as seen by the VM, `/proc/meminfo` totals, swap, the cgroup memory and CPU limits if any, the WSL kernel and distribution versions, the effective `.wslconfig` values (an absent key means the default of all processors and about half of host RAM, not "unlimited" in any useful sense), the JDK build and the JVM heap flags;
+- the cutechess-cli build, and the same set for the native side (JDK, cutechess build, power plan);
+- Windows-host contention, sampled passively from the VM during the run through read-only host counters (total processor time and available memory via interop `typeperf`), together with `/proc/pressure/cpu`, `/proc/pressure/memory` and `vmstat`. Interop is used here only to observe the host, never to launch the engines under test.
+
+Then one control jar with its SHA-256, run in WSL and native: the 31-position depth-13 node total and the per-position counts must be identical, which also re-confirms determinism.
+
+**Stage 1: relative throughput.** One discarded warm-up and 7 `--bench-raw` runs per side, alternating blocks, in 3 separate sessions. Report the WSL to native ratio, each side's coefficient of variation, and the between-session spread of the ratio, each with its interval. This characterises how stable "about 91 to 94%" is and how noisy WSL is under the recorded host load. It does not create an absolute gate.
+
+**Stage 2: small A/A pilot (about 100 games, 50 opening pairs).** The same jar against itself in WSL, Threads=1, Hash=16 MB, the standard corpus with paired openings and a short time control, `-Concurrency 2`. The point is to measure, not to pass or fail:
+
+- failure rates with 95% Wilson intervals: time forfeits, crashes or disconnects, illegal-move or adjudication anomalies, per game and per move;
+- the observed score and its standard error, the pentanomial pair-score variance, and how many games a 1,000-game run would actually need for a stated Elo resolution;
+- game-duration distribution and per-move think-time spread compared with archived native logs (the method used earlier in this document), and the failure rate compared with the native archived rate with intervals, not with a fixed zero;
+- the host and VM contention record from Stage 0 over the same window, so a bad stretch can be attributed instead of averaged away.
+
+The pilot's decision is a judgment recorded with its numbers: whether the failure rate and variance are close enough to the native record that a longer run is informative. Which tolerance to apply is fixed before looking at the pilot, from the native archive, and written into the run note.
+
+**Stage 3: A/A at the size the pilot supports.** If the pilot supports it, one fixed-count A/A match of the size computed from the pilot variance (about 1,000 games if that is what the arithmetic says), with the same measurements. Report the score, its confidence interval, the failure rates with intervals, and whether the interval contains an even score. A time-control sensitivity pair (for example 60+0.6 against 40+0.4) may be run and recorded for information, but no particular Elo gap is required from it; its size is only useful later as a comparison with a native run of the same pair.
+
+**Stage 4 (final): cross-platform replication.** Only after Stages 0 to 3 are clean, re-run one pair whose native SPRT outcome is already archived (for example the #262 SEE non-regression result) as a fixed-count match in WSL, and compare it with the native record: overlapping confidence intervals and the same verdict. This is the longest and most expensive step, so it comes last and needs its own explicit approval.
+
+No stage launches a long match without approval. Stages 0 and 1 and the 100-game pilot are the only parts that fit a short session.
 
 ### Can the PowerShell launcher run in WSL?
 
@@ -236,7 +252,7 @@ Not as it stands. `tools/sprt.ps1` builds the JVM path with `bin\java.exe`, docu
 
 ### Recommendation: ALLOW WSL CONDITIONALLY
 
-WSL2 may be used for relative, same-session, same-host comparisons at Threads=1, but only after the qualification above passes, and never as an equivalent of the native environment. Specifically:
+WSL2 may be used for relative, same-session, same-host comparisons at Threads=1, but only after the staged qualification above has produced acceptable numbers, and never as an equivalent of the native environment. Specifically:
 
 - Allowed after qualification: relative NPS between two builds measured in one WSL session; fixed-depth and node comparisons; exploratory or screening SPRTs via a Linux launcher, recorded as "WSL, qualified" and never as the deciding result for a merge unless a native confirmation is also on record.
 - Still native Windows only: the absolute NPS floor (301,116 against the native baseline), anything with Lazy SMP or thread scaling, release comparisons, and any run whose preregistration freezes the host.
