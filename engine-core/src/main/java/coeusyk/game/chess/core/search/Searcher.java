@@ -1082,7 +1082,15 @@ public class Searcher {
         long zobrist = board.getZobristHash();
         int alphaOrig = alpha;
         TranspositionTable.Entry ttEntry = transpositionTable.probe(zobrist);
-        Integer ttScore = applyTtBound(ttEntry, effectiveDepth, alpha, beta, ply);
+        // Issue #259: the key has no halfmove clock, so an entry deep enough to reach the fifty-move
+        // boundary from here may have been searched at a clock where the rule never fired (or fired
+        // where it would not now). Its score is not trusted, neither as a cutoff nor as the basis of a
+        // singular-extension test, but its best move still orders the moves below. Repetition draws
+        // against the game history are a separate, accepted graph-history effect: the table lives for one
+        // game and is cleared on ucinewgame.
+        boolean ttScoreUsable = ttEntry != null
+                && !fiftyMoveSensitive(board.getHalfmoveClock(), ttEntry.depth());
+        Integer ttScore = ttScoreUsable ? applyTtBound(ttEntry, effectiveDepth, alpha, beta, ply) : null;
         if (ttScore != null) {
             ttHits++;
             return ttScore;
@@ -1181,7 +1189,7 @@ public class Searcher {
         }
 
         int singularMoveToExtend = Move.NONE;
-        if (canAttemptSingularity(effectiveDepth, ttEntry, inSingularitySearch, sideToMoveInCheck, alpha, beta)) {
+        if (ttScoreUsable && canAttemptSingularity(effectiveDepth, ttEntry, inSingularitySearch, sideToMoveInCheck, alpha, beta)) {
             SingularityResult singularity = runSingularitySearch(
                     board,
                     moves,
@@ -1445,7 +1453,11 @@ public class Searcher {
 
         if (!aborted && bestScore != -INF) {
             TTBound bound = resolveBound(bestScore, alphaOrig, beta);
-            transpositionTable.store(zobrist, bestMove, effectiveDepth, scoreToTT(bestScore, ply), bound);
+            // Issue #259: a score the fifty-move rule could have shaped is clock-specific, so it is not
+            // stored at all; storing it would hand a clock-98 verdict to the same position at clock 0.
+            if (!fiftyMoveSensitive(board.getHalfmoveClock(), effectiveDepth)) {
+                transpositionTable.store(zobrist, bestMove, effectiveDepth, scoreToTT(bestScore, ply), bound);
+            }
 
             // Update correction history: accumulate how much the search
             // score diverges from the raw static eval for this pawn structure.
@@ -1793,6 +1805,22 @@ public class Searcher {
         if (score >= MATE_SCORE - MAX_PLY) return score - ply;
         if (score <= -(MATE_SCORE - MAX_PLY)) return score + ply;
         return score;
+    }
+
+    /**
+     * True when a score for a node at {@code halfmoveClock} searched {@code depth} plies deep could have been
+     * decided by the fifty-move rule, which the transposition-table key does not contain. Such a score must
+     * neither be stored nor trusted across clocks (issue #259). The rule is checked on entry to every
+     * {@code alphaBeta} node, so the deepest clock a subtree can see is {@code halfmoveClock + depth} plus
+     * the extensions on the path, and captures and pawn moves only lower it. The extension allowance is the
+     * largest any search can have ({@link #MAX_CHECK_EXTENSIONS}), not the current iteration's: entries
+     * outlive the iteration, the {@code go} command and the helper thread that stored them, so a bound that
+     * depends on who is asking would trust a deep entry stored under a large allowance at a shallow
+     * iteration with a small one. Quiescence never checks the rule and does not use the table, so it adds
+     * nothing to the horizon.
+     */
+    static boolean fiftyMoveSensitive(int halfmoveClock, int depth) {
+        return halfmoveClock + depth + MAX_CHECK_EXTENSIONS >= 100;
     }
 
     Integer applyTtBound(TranspositionTable.Entry entry, int depth, int alpha, int beta, int ply) {
