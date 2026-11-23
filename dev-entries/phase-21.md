@@ -719,3 +719,35 @@ An independent read-only review found five gaps, all fixed and re-reviewed: Powe
 
 - No real checkpoint is available here (`P5-AUXHEAD-001`, E-3, E-15 and E-16 are not in the checkout), so the actual float32-versus-quantized error of any trained network is still unmeasured, and the scale-contract question (Option A or B in the issue) is not decided. Run `compute_quantization_parity()` on each surviving checkpoint first.
 - The numeric acceptance thresholds are uncalibrated. #263 (dataset audit and checkpoint qualification) and #269 (a CI job that runs Java and Python together) are separate and untouched.
+
+### [2026-11-23] Transposition-table score validity: fifty-move clock and evaluator identity (#259)
+
+**Built:**
+
+- `Searcher.fiftyMoveSensitive(clock, depth, maxExtensions)`: true when `clock + depth + extension budget >= 100`. The fifty-move rule is checked on entry to every `alphaBeta` node, so that is the deepest clock a subtree can see (captures and pawn moves only lower it). A sensitive node does not store its score. A probed entry whose own depth makes it sensitive at the current clock is not used for a cutoff or the singular-extension test, but its best move still orders the moves.
+- `UciApplication` resolves the effective evaluator at the start of every search (Classical, or NNUE plus the network UUID, after any fallback), before any helper is submitted and after `handleGo` has joined the previous worker, and clears the shared table when it differs from the one the table last served. It prints `info string transposition table cleared: evaluator changed`.
+- Tests: `TranspositionTableScoreValidityTest` (6, both clock orders, the move hint, ordinary-clock reuse, the predicate) and `UciEvaluatorSwitchTest` (3, including a two-thread run that checks every search drained before the next clear).
+
+**Decisions Made:**
+
+- The Zobrist key stays as it is. Mixing the clock into it would make quiet transpositions miss and cost far more than the guard does.
+- Guard on the subtree horizon, not a fixed clock threshold. `clock >= 90` alone would miss `clock 85, depth 15`; `clock + depth + budget >= 100` is exact for what the subtree can reach. The budget is `maxExtensions` (every extension type draws from it), the conservative upper bound.
+- Not storing a sensitive score is simpler and safer than storing it with a flag. The cost is that the move hint is lost for those nodes, which only exist at clocks of roughly 70 and above.
+- The evaluator check is done at search start, not in `setoption`, because whether `EvalType NNUE` actually resolves to NNUE (a file is set and loads) is only known at `go` time. That also means a fallback to the same Classical evaluator, or setting the same option twice, does not clear anything.
+- Repetition draws against the game history are not guarded. That is the usual graph-history interaction; the table lives for one game and is cleared on `ucinewgame`, and adding it here would restrict cutoffs well beyond the defect.
+
+**Broke / Fixed:**
+
+- Reproduced before the change: a clock-0 score came back at clock 98 as +605 cp (cold 0), a clock-98 draw verdict reached a later clock-0 search, and after switching to NNUE a depth-5 startpos search reported +36 cp (the classical value) where a cold NNUE search gives -503 cp.
+- Self-review found two misplaced edits of mine (a field splitting an existing comment block, and the clear block sitting between a comment and the line it described). Moved, no behaviour change.
+
+**Measurements (WSL, so node counts are valid and NPS is only indicative):**
+
+- Baseline `develop` at `8d33edc` versus this branch at `157e88c`, both built from `git archive` snapshots, `--bench` depth 13, 31 positions: total nodes 23,222,204 for both, every position's node count identical, repeatable run to run. The bench FENs all have halfmove clocks of 6 or less, so the guard never fires there, and the table is not cleared in a bench run.
+- NPS (two alternating runs each): baseline 327,456 and 338,782, candidate 337,169 and 343,594. Within run-to-run noise, no regression.
+- Full reactor: engine-core 463, engine-uci 67, chess-engine-api 29, engine-tuner 131, all passing, no golden count changed.
+
+**Not done:**
+
+- No SPRT and no native NPS gate. Search behaviour changes only at halfmove clocks of about 70 and above and across an evaluator switch, neither of which the bench or ordinary games reach, so I do not expect a measurable strength change and have not tried to measure one. If one is wanted, it would need a position set built around long quiet endgames, since random self-play seldom reaches those clocks.
+- TT hit rate and cutoff counters were not separately instrumented; identical node counts on the bench imply identical table behaviour there.
