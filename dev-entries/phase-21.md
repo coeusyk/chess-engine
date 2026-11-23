@@ -631,3 +631,55 @@ An independent read-only review found five gaps, all fixed and re-reviewed: Powe
 
 - LLR 2.96 against bounds of +/-2.94, H1 accepted. 5,713 scored games: 1,969 wins, 1,872 losses, 1,872 draws, score 0.5085, +5.9 Elo, 95% interval -1.5 to +13.3. 5 cancelled games unscored. No crashes, forfeits, illegal moves or timeouts.
 - Stockfish 18 depth 24 on 200 seeded resign-adjudicated final positions: 194 supported, 0 uncertain, 6 potentially incorrect (3.0%, 95% interval 1.4% to 6.4%, unweighted stratified sample). All six are drawn or nearly drawn endings that the shared classical evaluation scored as 4 to 7 pawns. Details in `docs/engineering/investigations/2026-11-23-see-262-sprt-adjudication-audit.md`.
+
+### [2026-11-23] UCI search lifecycle: one bestmove per go, held infinite and ponder, ponderhit race (#268)
+
+**Built:**
+
+- A per-go `GoSession` (hold flag, ponder flag, `TimeManager`, `ponderHit` and `bestmoveEmitted` flags) built on the command thread and published before the search worker starts.
+- `stop` only requests a stop. It never prints a bestmove, so an idle stop and a stop after a finished search print nothing. The worker is the only writer of its own bestmove.
+- `go infinite` and `go ponder` are held: the worker finishes (or hits the depth cap, or finds a mate, or has a forced move) and then waits on a monitor until `stop` or, for ponder, `ponderhit`. Helpers are already aborted and drain as before. Untimed held searches run to `MAX_SEARCH_DEPTH` instead of 4.
+- The `TimeManager` for movetime and clock searches is now built in `handleGo` (`buildTimeManager`), so `ponderhit` finds it even when it arrives before the worker has started.
+- If a search is aborted before depth 1 completes in a non-terminal position, the worker emits the first legal root move instead of `bestmove 0000`.
+- `position`, `setoption BookFile` and `setoption BookVariance` join the worker before changing state. `BookVariance` closes the book it replaces. `quit` and end of input stop and drain the worker.
+- Tests: `UciSearchLifecycleTest` (14 cases, subprocess based, waits on output lines and an isready/readyok barrier, no sleeps).
+
+**Decisions Made:**
+
+- A held search with a forced move or a mate still waits for `stop`. Terminal positions (no legal move) keep their immediate `bestmove 0000`, because there is nothing to analyse and the old behaviour was already one null move.
+- `go nodes`, `go mate` and a bare `go` keep their depth 4 default. They are not supported modes, and making them run to the depth cap would hang a GUI that expected them to end. Only held modes changed.
+- A replaced search (a second `go` without a `stop`) still ends the first with a stop, so it prints one bestmove and the second `go` prints its own.
+- No fixed sleeps: `stop` and `ponderhit` are written in the same flush as `go` so the engine reads them back to back.
+
+**Broke / Fixed:**
+
+- Reproduced on `develop` (a5eff3c) before the fix, all red: `go infinite` never passed depth 4; an idle `stop` printed `bestmove 0000` and a `stop` after a finished search printed a second bestmove; `go infinite` immediately followed by `stop` printed `bestmove 0000` on the first iteration; `ponderhit` right after `go ponder` was dropped with 1 and 2 threads; a forced move and a mate-in-1 under `go infinite` printed before `stop`; a `stop` in a stalemate printed a duplicate null bestmove.
+- The `UciHarness` in `UciApplicationIntegrationTest` is now package visible with a few accessors, and its `close()` ignores a closed pipe after the engine has exited.
+
+**Measurements:**
+
+- Full reactor: engine-core 455, engine-uci 61, chess-engine-api 29, engine-tuner 131, all passing. The lifecycle class was run five more times with no failure.
+- No SPRT, no NPS or search change: the search code is untouched.
+
+### [2026-11-23] #268 lifecycle-safety verification of PR #284
+
+**Built:**
+
+- `drainSearch()`: stops the running search and waits for its worker, and through it the helpers, for as long as that takes. `go`, `position`, `ucinewgame`, `setoption Hash`, `BookFile` and `BookVariance` use it. Only `quit` and end of input keep the bounded 2 s `stopAndJoinSearch()`.
+- A test seam, the system property `vex.test.drainDelayMs`, which keeps a finished worker alive that many milliseconds to simulate a worker that is slow to stop. Zero and unused outside the tests. A `search=N event=hold` line in the SMP diagnostics marks the moment a held worker starts waiting.
+- Three new tests (slow drain, quit with a slow worker, ponderhit and stop after a forced-move answer) and two stronger ones (the forced-move and mate holds now wait for `event=hold`).
+
+**Decisions Made:**
+
+- **Drain timeout was a real defect.** After 2 s the old code returned from `go` with no output at all (no bestmove for that `go`), and skipped `position`, `ucinewgame`, `Hash`, `BookFile` and `BookVariance` with only an `info string`. When the slow worker finally ended, the next command ran against the old board, TT or book. Reproduced with the seam: `go infinite`, then `position startpos moves e2e4` and `go depth 1` sent together answered `e2e4`, a move from the old position. The commands now wait. A worker that was told to stop and never ends makes the engine unresponsive instead of silently wrong, and `info string search is slow to stop` is printed once.
+- **Quit and end of input need no change.** The search worker and all `smp-helper` threads are daemon threads, so none can outlive the JVM. The 2 s wait is a courtesy to let the worker print its bestmove. Verified with a worker held for 30 s: the engine still exits promptly. The guarantee is "at most 2 s, then the process exits", not "every helper drained", and the comment says so.
+- **Stale `GoSession` is inert, no change.** Forced-move and terminal answers leave the previous session referenced. That cannot matter because a worker only ever uses the session object it was handed, `handleGo` drains the previous worker before it replaces `session`, and a `ponderhit` or `stop` that reaches a finished session changes only state nobody reads (an unused `TimeManager`, and the `stopRequested` flag that every `go` resets). A test sends `ponderhit`, `stop`, `ponderhit` after a forced-move answer and checks nothing is printed and the next search is unaffected.
+- **Test synchronization.** `readyok` is printed by the command thread, so it orders stdout lines printed by the command thread and, after a join, the worker's bestmove (the join is a happens-before). It does not order stderr diagnostics, and it says nothing about a worker that has not yet reached its emission point. The rapid go/stop test read `drained` diagnostics straight after readyok, which was racy, and now waits for them. The forced-move and mate hold tests asserted "no bestmove" after readyok, which a worker that was merely slow would also satisfy; they now wait for `event=hold` first.
+
+**Broke / Fixed:**
+
+- First version of the strengthened forced-move test asserted the exact line `bestmove a1a2`, but the search now also returns a ponder move. Test bug, not an engine bug.
+
+**Measurements:**
+
+- engine-uci 64 tests (17 in `UciSearchLifecycleTest`), engine-core 455, chess-engine-api 29, engine-tuner 131, all passing. The lifecycle class passed three runs in a row after the fix. No search, evaluation or time-allocation code changed.

@@ -826,7 +826,7 @@ class UciApplicationIntegrationTest {
         return "" + fileChar + rank;
     }
 
-    private static final class UciHarness implements AutoCloseable {
+    static final class UciHarness implements AutoCloseable {
         private final Process process;
         private final BufferedWriter in;
         private final BlockingQueue<String> lines;
@@ -851,6 +851,10 @@ class UciApplicationIntegrationTest {
 
         static UciHarness startWithDiagnostics() throws IOException {
             return start(true);
+        }
+
+        static UciHarness startWithVmOptions(boolean withDiagnostics, String... vmOptions) throws IOException {
+            return start(withDiagnostics, vmOptions);
         }
 
         private static UciHarness start(boolean withDiagnostics, String... vmOptions) throws IOException {
@@ -924,6 +928,41 @@ class UciApplicationIntegrationTest {
             in.flush();
         }
 
+        /** Writes several commands and flushes once, so the engine reads them back to back. */
+        void sendBatch(String... commands) throws IOException {
+            for (String command : commands) {
+                in.write(command);
+                in.newLine();
+            }
+            in.flush();
+        }
+
+        /** Every stdout line seen so far, in order. */
+        List<String> history() {
+            return new java.util.ArrayList<>(outputHistory);
+        }
+
+        /** Every stderr line seen so far (only populated by {@link #startWithDiagnostics()}). */
+        List<String> diagnosticLines() {
+            return new java.util.ArrayList<>(diagnosticHistory);
+        }
+
+        long bestmoveCount() {
+            return outputHistory.stream().filter(line -> line.startsWith("bestmove ")).count();
+        }
+
+        /** isready/readyok round trip: everything the command thread printed before it is now in history. */
+        void barrier() throws IOException, InterruptedException {
+            send("isready");
+            if (awaitLine("readyok", Duration.ofSeconds(10)) == null) {
+                throw new AssertionError("no readyok");
+            }
+        }
+
+        boolean awaitExit(Duration timeout) throws InterruptedException {
+            return process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        }
+
         String awaitLine(String expected, Duration timeout) throws InterruptedException {
             return awaitLine(expected::equals, timeout);
         }
@@ -981,7 +1020,11 @@ class UciApplicationIntegrationTest {
                 process.destroyForcibly();
             }
 
-            in.close();
+            try {
+                in.close();
+            } catch (IOException ignored) {
+                // The engine already exited (for example after quit), so there is nothing left to flush to.
+            }
         }
     }
 }
