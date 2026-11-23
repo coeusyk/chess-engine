@@ -74,8 +74,7 @@ public class UciApplication {
     private int bookVariance = 50;
     private int contempt = 0;
 
-    // Pondering
-    private volatile TimeManager activePonderTimeManager = null;
+    // Pondering. The ponder clock parameters are read and written on the command thread only.
     private int ponderActiveColor;
     private long ponderWtime, ponderBtime, ponderWinc, ponderBinc;
     private int ponderMoveNumber;
@@ -106,9 +105,35 @@ public class UciApplication {
     });
 
     private final AtomicBoolean stopRequested = new AtomicBoolean(false);
-    private volatile boolean searchRunning = false;
     private volatile Move latestIterativeBestMove;
     private volatile Thread searchThread;
+
+    /**
+     * Everything the command thread and the search worker share for one {@code go}. It is built on the command
+     * thread and published before the worker starts, so a {@code stop} or {@code ponderhit} that follows the
+     * {@code go} immediately always finds it. A search worker is the only thing that prints its own
+     * {@code bestmove}, and {@link #bestmoveEmitted} keeps that to one line. Forced-move and terminal answers have no
+     * worker: {@code handleGo} prints them synchronously, once.
+     */
+    private static final class GoSession {
+        /** {@code go infinite} and {@code go ponder}: no bestmove until {@code stop} or {@code ponderhit}. */
+        final boolean hold;
+        final boolean ponder;
+        /** Null for depth and infinite searches. For ponder it starts in ponder mode. */
+        final TimeManager timeManager;
+        final AtomicBoolean ponderHit = new AtomicBoolean(false);
+        final AtomicBoolean bestmoveEmitted = new AtomicBoolean(false);
+
+        GoSession(boolean hold, boolean ponder, TimeManager timeManager) {
+            this.hold = hold;
+            this.ponder = ponder;
+            this.timeManager = timeManager;
+        }
+    }
+
+    private volatile GoSession session;
+    /** Wakes a worker that is holding its bestmove back. Always set the flag first, then notify under this lock. */
+    private final Object holdMonitor = new Object();
 
     private static final int DEFAULT_BENCH_DEPTH = BenchRunner.DEFAULT_DEPTH;
 
@@ -225,12 +250,11 @@ public class UciApplication {
                     sharedTT.clear();
                     // Searcher history is reset by constructing a new Searcher per go.
                     openingBook.close();
-                    activePonderTimeManager = null;
+                    session = null;
                 } else {
                     System.out.println("info string ucinewgame skipped: search did not stop within 2000 ms");
                 }
             } else if (line.startsWith("position")) {
-                stopRequested.set(true);
                 handlePosition(line);
             } else if (line.startsWith("setoption")) {
                 handleSetOption(line);
@@ -248,18 +272,11 @@ public class UciApplication {
                 }
                 runBench(benchDepth, true);
             } else if ("stop".equals(line)) {
-                stopRequested.set(true);
-                if (!searchRunning) {
-                    emitBestMove(latestIterativeBestMove);
-                }
+                // The running search prints its own bestmove. A stop with nothing running prints nothing.
+                requestStop();
             } else if ("ponderhit".equals(line)) {
-                TimeManager tm = activePonderTimeManager;
-                if (tm != null) {
-                    tm.configurePonderHit(ponderActiveColor, ponderWtime, ponderBtime, ponderWinc, ponderBinc, ponderMoveNumber);
-                    activePonderTimeManager = null;
-                }
+                handlePonderHit();
             } else if ("quit".equals(line)) {
-                stopRequested.set(true);
                 break;
             } else if ("eval".equals(line)) {
                 handleEval();
@@ -269,6 +286,10 @@ public class UciApplication {
 
             System.out.flush();
         }
+        // quit or end of input: stop and drain the worker (and through it, its helpers).
+        requestStop();
+        stopAndJoinSearch();
+        System.out.flush();
     }
 
     /**
@@ -373,6 +394,11 @@ public class UciApplication {
     private void handlePosition(String command) {
         String[] parts = command.split("\\s+");
         if (parts.length < 2) {
+            return;
+        }
+        // The worker probes the opening book, which the reopen guard below can touch.
+        if (!stopAndJoinSearch()) {
+            System.out.println("info string position skipped: search did not stop within 2000 ms");
             return;
         }
 
@@ -526,6 +552,10 @@ public class UciApplication {
                         trimmed.replaceAll("[\r\n\t]", "_"));
                 return;
             }
+            if (!stopAndJoinSearch()) {
+                System.out.println("info string BookFile change skipped: search did not stop within 2000 ms");
+                return;
+            }
             bookFile = trimmed;
             openNewBook();
         } else if ("bookdepth".equals(optionNameLower)) {
@@ -535,8 +565,15 @@ public class UciApplication {
             }
         } else if ("bookvariance".equals(optionNameLower)) {
             try {
-                bookVariance = Math.max(0, Math.min(100, Integer.parseInt(valuePart)));
+                int newVariance = Math.max(0, Math.min(100, Integer.parseInt(valuePart)));
+                if (!stopAndJoinSearch()) {
+                    System.out.println("info string BookVariance change skipped: search did not stop within 2000 ms");
+                    return;
+                }
+                bookVariance = newVariance;
+                OpeningBook previous = openingBook;
                 openingBook = new OpeningBook(bookVariance);
+                previous.close();
                 openNewBook();
             } catch (NumberFormatException ignored) {
             }
@@ -662,6 +699,8 @@ public class UciApplication {
         // Detect ponder flag and save time params for ponderhit reconfiguration.
         String[] goParts = command.split("\\s+");
         boolean isGoPonder = contains(goParts, "ponder");
+        // go infinite and go ponder answer only after stop (or ponderhit), however early the search finishes.
+        boolean hold = isGoPonder || contains(goParts, "infinite");
         if (isGoPonder) {
             ponderActiveColor = board.getActiveColor();
             ponderWtime = parseLongArg(goParts, "wtime", 0L);
@@ -677,9 +716,9 @@ public class UciApplication {
         // Forced move detection: if exactly one legal move exists, play it
         // immediately without entering the search. Saves clock time in positions
         // where there is no choice (e.g. single legal reply to check).
-        // Skip in ponder mode — the ponder position needs a full search.
+        // Skip in ponder and infinite mode: they are held until stop or ponderhit.
         List<Move> legalMoves = new MovesGenerator(searchBoard).getActiveMoves(searchBoard.getActiveColor());
-        if (!isGoPonder && legalMoves.size() == 1) {
+        if (!hold && legalMoves.size() == 1) {
             Move forcedMove = legalMoves.get(0);
             emitBestMove(forcedMove);
             System.out.flush();
@@ -700,16 +739,69 @@ public class UciApplication {
             return;
         }
 
-        searchRunning = true;
-        Thread worker = new Thread(() -> runSearch(command, snapshot, searchBoard, searchId, legalMoves),
+        // Built and published here, before the worker exists, so ponderhit and stop can never beat it.
+        GoSession goSession = new GoSession(hold, isGoPonder,
+                hold && !isGoPonder ? null : buildTimeManager(goParts, searchBoard, isGoPonder));
+        session = goSession;
+        Thread worker = new Thread(() -> runSearch(command, snapshot, searchBoard, searchId, legalMoves, goSession),
                 "uci-search-thread");
         worker.setDaemon(true);
         searchThread = worker;
         worker.start();
     }
 
+    /** Time control for a go command, or null when it is a depth or infinite search. */
+    private TimeManager buildTimeManager(String[] parts, Board searchBoard, boolean ponder) {
+        TimeManager manager;
+        if (contains(parts, "movetime")) {
+            manager = new TimeManager();
+            manager.setMoveOverheadMs(moveOverheadMs);
+            manager.configureMovetime(parseLongArg(parts, "movetime", 1000L));
+        } else if (contains(parts, "wtime") || contains(parts, "btime")) {
+            manager = new TimeManager();
+            manager.setMoveOverheadMs(moveOverheadMs);
+            int moveNumber = Math.max(1, searchBoard.getFullMoves()) - 1;
+            manager.configureClock(searchBoard.getActiveColor(),
+                    parseLongArg(parts, "wtime", 0L), parseLongArg(parts, "btime", 0L),
+                    parseLongArg(parts, "winc", 0L), parseLongArg(parts, "binc", 0L), moveNumber);
+        } else {
+            return null;
+        }
+        if (ponder) {
+            manager.configurePonder();
+        }
+        return manager;
+    }
+
+    private void handlePonderHit() {
+        GoSession current = session;
+        if (current == null || !current.ponder || !current.ponderHit.compareAndSet(false, true)) {
+            return;
+        }
+        if (current.timeManager != null) {
+            current.timeManager.configurePonderHit(
+                    ponderActiveColor, ponderWtime, ponderBtime, ponderWinc, ponderBinc, ponderMoveNumber);
+        }
+        synchronized (holdMonitor) {
+            holdMonitor.notifyAll();
+        }
+    }
+
+    /** Blocks a held search's bestmove until stop, ponderhit (ponder only) or a state change asks it to end. */
+    private void awaitRelease(GoSession current) {
+        synchronized (holdMonitor) {
+            try {
+                while (!stopRequested.get() && !(current.ponder && current.ponderHit.get())) {
+                    holdMonitor.wait();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
     private void runSearch(String command, Board.SearchSnapshot snapshot, Board searchBoard, long searchId,
-                           List<Move> rootLegalMoves) {
+                           List<Move> rootLegalMoves, GoSession goSession) {
         // Per-search abort flag for Lazy SMP helper threads.
         // Separate from the global stopRequested so setting it to true at the end
         // of this search does not bleed into the next search cycle.
@@ -891,45 +983,17 @@ public class UciApplication {
                 searcher.setSearchMoves(searchMovesList);
             }
 
-            if (contains(parts, "movetime")) {
-                long movetime = parseLongArg(parts, "movetime", 1000L);
-                TimeManager manager = new TimeManager();
-                manager.setMoveOverheadMs(moveOverheadMs);
-                manager.configureMovetime(movetime);
-                if (isPonder) {
-                    manager.configurePonder();
-                    activePonderTimeManager = manager;
-                }
+            if (goSession.timeManager != null) {
                 result = searcher.searchWithTimeManager(
                         searchBoard,
                         64,
-                        manager,
-                        stopRequested::get,
-                        this::printInfoLine
-                );
-            } else if (contains(parts, "wtime") || contains(parts, "btime")) {
-                long wtime = parseLongArg(parts, "wtime", 0L);
-                long btime = parseLongArg(parts, "btime", 0L);
-                long winc = parseLongArg(parts, "winc", 0L);
-                long binc = parseLongArg(parts, "binc", 0L);
-
-                TimeManager manager = new TimeManager();
-                manager.setMoveOverheadMs(moveOverheadMs);
-                int moveNumber = Math.max(1, searchBoard.getFullMoves()) - 1;
-                manager.configureClock(searchBoard.getActiveColor(), wtime, btime, winc, binc, moveNumber);
-                if (isPonder) {
-                    manager.configurePonder();
-                    activePonderTimeManager = manager;
-                }
-                result = searcher.searchWithTimeManager(
-                        searchBoard,
-                        64,
-                        manager,
+                        goSession.timeManager,
                         stopRequested::get,
                         this::printInfoLine
                 );
             } else {
-                int depth = parseDepthArg(parts, "depth", 4);
+                // Depth searches default to 4. Held searches (infinite, bare ponder) run to the depth cap.
+                int depth = parseDepthArg(parts, "depth", goSession.hold ? MAX_SEARCH_DEPTH : 4);
                 result = searcher.iterativeDeepening(
                         searchBoard,
                         depth,
@@ -948,13 +1012,19 @@ public class UciApplication {
                 helperAbortNanos.compareAndSet(0L, System.nanoTime());
             }
             helperAbort.set(true);
-            activePonderTimeManager = null;
             Move ponderMove = result != null ? result.ponderMove() : null;
-            Move toEmit = bestMoveToEmit != null ? bestMoveToEmit : latestIterativeBestMove;
+            Move found = bestMoveToEmit != null ? bestMoveToEmit : latestIterativeBestMove;
+            // Aborted before depth 1 finished: a null move is only right for a terminal position.
+            Move toEmit = found == null && !rootLegalMoves.isEmpty() ? rootLegalMoves.get(0) : found;
+            if (goSession.hold) {
+                awaitRelease(goSession);
+            }
             if (SMP_DIAGNOSTICS) {
                 bestmoveNanos.set(System.nanoTime());
             }
-            emitBestMove(toEmit, ponderMove);
+            if (goSession.bestmoveEmitted.compareAndSet(false, true)) {
+                emitBestMove(toEmit, ponderMove);
+            }
             System.out.flush();
             if (SMP_DIAGNOSTICS) {
                 String source = result != null && result.bestMove() != null ? "main-result"
@@ -1010,14 +1080,20 @@ public class UciApplication {
                         + " drain_elapsed_ns=" + (drainedNanos - searchStartedNanos)
                         + " hashfull=" + sharedTT.hashfull());
             }
-            searchRunning = false;
+        }
+    }
+
+    private void requestStop() {
+        stopRequested.set(true);
+        synchronized (holdMonitor) {
+            holdMonitor.notifyAll();
         }
     }
 
     private boolean stopAndJoinSearch() {
         Thread current = searchThread;
         if (current == null) return true;
-        stopRequested.set(true);
+        requestStop();
         try {
             current.join(2000);
         } catch (InterruptedException e) {
