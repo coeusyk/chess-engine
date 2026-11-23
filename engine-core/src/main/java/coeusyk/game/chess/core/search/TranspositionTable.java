@@ -78,8 +78,9 @@ public class TranspositionTable {
 
     // Threshold (in generation ticks) beyond which a stored entry is considered
     // stale and always evicted on the next store() collision, regardless of depth.
-    // Byte arithmetic wraps correctly: (byte)(currentGeneration - e.generation())
-    // returns the age in the range [0, 127] for entries up to 127 moves old.
+    // Age is the unsigned distance (currentGeneration - e.generation()) & 0xFF, in [0, 255]
+    // (see ageOf). A signed byte comparison would read every entry 128..255 generations old
+    // as brand new (issue #266). The generation is 8 bits, so a distance of 256 aliases to 0.
     // Default 4 means entries from the last 3 moves are preserved by depth-preference;
     // entries 4 or more moves old are freely replaced by any new entry.
     static final byte AGE_THRESHOLD = 4;
@@ -208,6 +209,11 @@ public class TranspositionTable {
         currentGeneration = (byte) (currentGeneration + 1);
     }
 
+    /** Unsigned generation distance in [0, 255]; a signed byte compare would misread 128..255 as negative. */
+    static int ageOf(byte currentGeneration, byte entryGeneration) {
+        return (currentGeneration - entryGeneration) & 0xFF;
+    }
+
     /**
      * Stores an entry using a generation-age-aware depth-preferred replacement
      * scheme.  The eviction priority order is:
@@ -215,8 +221,7 @@ public class TranspositionTable {
      *   <li>Empty slot — always fill.</li>
      *   <li>Key mismatch — always replace (different position).</li>
      *   <li>Age ≥ {@link #AGE_THRESHOLD} — always replace (stale regardless of depth).
-     *       Age is computed as {@code (byte)(currentGeneration - existing.generation())}
-     *       which wraps correctly for {@code byte} arithmetic.</li>
+     *       Age is the unsigned distance computed by {@link #ageOf}.</li>
      *   <li>Same key, entry is fresh (age &lt; threshold) — replace only when
      *       the new depth ≥ existing depth (depth-preferred policy).</li>
      * </ol>
@@ -239,7 +244,7 @@ public class TranspositionTable {
         } else {
             byte existingGen  = (byte) (existingData & 0xFF);
             int  existingDepth = (int) ((existingData >>> 10) & 0xFF);
-            replace = (byte) (currentGeneration - existingGen) >= AGE_THRESHOLD
+            replace = ageOf(currentGeneration, existingGen) >= AGE_THRESHOLD
                    || depth >= existingDepth;
         }
         if (replace) {
@@ -278,7 +283,7 @@ public class TranspositionTable {
             if (check != 0L) {
                 long data = table.get(i * stride * 2 + 1);
                 byte entryGen = (byte) (data & 0xFF);
-                if ((byte) (gen - entryGen) < AGE_THRESHOLD) {
+                if (ageOf(gen, entryGen) < AGE_THRESHOLD) {
                     recent++;
                 }
             }
