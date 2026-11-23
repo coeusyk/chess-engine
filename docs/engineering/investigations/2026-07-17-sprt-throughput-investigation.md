@@ -177,3 +177,70 @@ the same document:
 
 A short pointer to this case study has been added to `tools/README.md`'s "Running SPRT" section;
 no other existing files were modified.
+
+---
+
+## Addendum (2026-11-23): could qualified WSL2 testing be allowed?
+
+Question: should the native-Windows-only rule for NPS gates and SPRTs (CLAUDE.md sections 4 and 6) be relaxed to allow WSL2 testing, and if so under what conditions. This is an evidence review only. No policy, code or SPRT parameter was changed, and no games were run.
+
+### What the rule was actually based on
+
+Reading the repository, the rule rests on four different things that are easy to run together:
+
+1. **Throughput overhead (measured, small, not repeated).** The only like-for-like comparison is Phase 16 P16-2: the same commit and the same 73,089,246-node tree gave 304,059 NPS (uninstrumented) and 313,085 (instrumented) in WSL2 against a native median of 334,861, which is 9.20% and 6.50% lower. Both were single runs on a "shared, noisy" VM. Nothing back-to-back was ever repeated.
+2. **Measurement noise (measured, WSL about twice as noisy).** Native Phase 16: 7 runs, CV 0.84%, spread 7,045 NPS. WSL2 P18-5: 7 runs, CV 1.70%. Different trees, so this is indicative. In this session the same search tree (23,222,204 nodes at depth 13, identical at every position) measured 327,456, 336,013, 337,169, 338,782, 343,594, 345,841 and 355,443 NPS across several builds and runs, an 8.5% spread with nothing different in the search.
+3. **An absolute gate that WSL cannot meet by construction.** The NPS floor is a fixed number (5% under a native baseline). A 6 to 9% systematic overhead alone would fail it, so an absolute gate compared against a Windows number is invalid in WSL regardless of noise. This is the actual content of "WSL2 NPS is not a valid regression signal" (Phase 14 and Phase 16 entries).
+4. **Infrastructure and provenance constraints.** The release and Phase 20/21 runners are PowerShell scripts that refuse WSL paths and interop, record `Platform: Win32NT`, and mark a run `LocationVerified: false` when it cannot prove it ran in the audited native checkout. Preregistrations freeze the host as the native Ryzen 7 7700X machine.
+
+What I could not find anywhere is a measurement showing that a WSL2 SPRT gives a different or invalid statistical result. The rule is a convention. The SPRT statistics (LLR bounds, pentanomial or trinomial scoring, paired openings) depend on game results, not on absolute NPS, and in a same-host A/B both engines share the same overhead. So "statistical validity" was never the demonstrated reason; "we cannot verify the conditions" and "the absolute gate cannot be met" were.
+
+What WSL2 is already accepted for, with evidence: node counts and node-tree equality (the 77,265,370 WSL2 count matched the native count exactly), correctness tests, Stage 0/1 and the node and overlap parts of Stage 5 in the Phase 20 qualification preregistration, and Phase 21 Stage 3 and node reproduction.
+
+### Can WSL-to-WSL relative testing be valid without matching Windows NPS?
+
+In principle yes for relative questions, for these reasons: search is deterministic at 1 thread (node counts are bit-identical across platforms), so any NPS difference is purely speed; a time-controlled match compares two builds that experience the same slowdown; and a constant 6 to 9% slowdown acts like a slightly shorter time control. It is not valid for anything that needs an absolute number, a comparison against a Windows baseline, or SMP scaling.
+
+The condition that makes it conditional rather than automatic is noise. The WSL VM shares the physical cores with whatever the Windows desktop is doing, the measured spread is about twice the native one, and nobody has shown that this spread stays symmetric between two engines in a match. It probably does (they interleave on the same slots), but "probably" is why a qualification run comes first.
+
+### WSL-specific risks
+
+| Area | Risk | Severity for relative 1T testing |
+|---|---|---|
+| CPU contention | vCPUs are host threads; Windows load (browser, indexing, Defender, a native job) steals time invisibly from inside WSL. `/proc/pressure` and steal time are the only hints. | High, main risk. Mitigate by an idle host, low concurrency, and logging pressure during the run. |
+| SMT and affinity | The VM does not expose which vCPUs are SMT siblings, and Windows decides placement. The Windows launcher sets no affinity either, but its host mapping is knowable. | Medium for concurrency above 8, high for Lazy SMP. |
+| Lazy SMP | Thread scheduling, cache sharing and timing scaling are what Phase 20 measured natively; WSL timing was explicitly never used for them. | Not valid. Keep Threads=1 only. |
+| Memory | No `memory` or `swap` limit is configured, so WSL takes up to half of host RAM and the host was already at about 86% RAM during native SPRTs. Reclaim or host pressure can stall the VM. | Medium. Pin `memory` and `swap=0` and keep the JVM heap explicit. |
+| Clock handling | Monotonic time is fine for search and for cutechess timing. Wall clock can jump after host sleep or resume. | Low, but record the host state and avoid sleep. |
+| Time forfeits | Stalls longer than the cutechess time margin show up as losses on time. They would be asymmetric noise. | High signal: any forfeit is a stop condition for a qualification run. |
+| Java 21 | Same major version family (Linux OpenJDK 21.0.13 here, Zulu 21.0.10 native). JIT and GC timing differ; `--add-modules jdk.incubator.vector` works. | Low for node counts, medium for speed. Different JDK builds must be recorded, not compared. |
+| cutechess-cli | Not installed in this WSL environment; the Linux build and the Windows build are separate binaries with their own versions. | Blocking until installed and version-pinned. |
+| Filesystem | Running from a `/mnt` path is much slower than the ext4 home; openings, PGN and logs must live on ext4. | Medium. |
+
+### Smallest qualification protocol using existing tooling
+
+No new statistical parameters. Every step reuses the existing jar, `--bench-raw`, the standard opening corpus and cutechess-cli.
+
+1. **Build identity.** One control jar, SHA-256 recorded, run in WSL and on native Windows. Pass: depth-13 31-position node total and per-position counts identical on both (this also re-verifies determinism).
+2. **Relative throughput.** Same session on the same machine, one discarded warm-up then 7 `--bench-raw` runs per side, alternating in blocks, repeated over 3 separate sessions. Report the WSL/native ratio, and each side's CV. Pass: nodes identical, WSL CV at most 2% and at most 2.5 times native CV, and the ratio's spread across sessions at most 2 points. This establishes how stable "about 91 to 94%" actually is. It does not create an absolute gate.
+3. **A/A on WSL.** The same jar against itself, Threads=1, Hash=16 MB, the standard corpus with paired openings and the standard time control, `-Concurrency 2`, fixed 1,000 games (no SPRT stopping). Pass: zero time forfeits, zero crashes or disconnects, colour and opening pairing complete, and the measured Elo within 2 standard errors of 0.
+4. **Sensitivity control on WSL.** The same jar at two time controls with a known ratio of 1.5 (for example 60+0.6 against 40+0.4), same 1,000-game budget. Pass: a clear and correctly signed Elo gap, whose size is recorded and later compared with a native run of the same pair.
+5. **Cross-check against a native decision already on record.** Re-run one pair whose native SPRT outcome is already archived (for example the #262 SEE non-regression result) on WSL as a fixed-count match. Pass: the Elo confidence intervals overlap and the verdict agrees. This is the step that actually shows WSL decisions match native ones, so it is the longest.
+6. **Resource monitoring throughout:** `/proc/pressure/cpu` and `memory`, `vmstat 5`, load average, JVM heap, game durations and per-move times from the PGN annotations (the method used in sections 5 and 6 above). Pin `memory`, `processors` and `swap=0` in `.wslconfig`, fixed `-Xmx`, and stop the run if pressure stays above a recorded threshold.
+
+Steps 1 to 4 are short (benchmarks and two 1,000-game fixed matches). Step 5 is the long one and should be a separate approved task.
+
+### Can the PowerShell launcher run in WSL?
+
+Not as it stands. `tools/sprt.ps1` builds the JVM path with `bin\java.exe`, documents `cutechess-cli.exe`, carries a Windows PowerShell 5.1 stderr workaround, and the surrounding runners verify `Win32NT`, paths and process ownership. PowerShell 7 is not installed here, and cutechess-cli is not either. Even with `pwsh`, the hard-coded `\` and `.exe` would have to change, and doing that would touch the launcher that the frozen preregistrations reference. A separate small Linux launcher that emits the same cutechess argument manifest (same `-each tc`, `-recover`, `-concurrency`, openings and engine options) is the safer shape, with a test that its argument list equals the one `sprt.ps1` produces for the same inputs.
+
+### Recommendation: ALLOW WSL CONDITIONALLY
+
+WSL2 may be used for relative, same-session, same-host comparisons at Threads=1, but only after the qualification above passes, and never as an equivalent of the native environment. Specifically:
+
+- Allowed after qualification: relative NPS between two builds measured in one WSL session; fixed-depth and node comparisons; exploratory or screening SPRTs via a Linux launcher, recorded as "WSL, qualified" and never as the deciding result for a merge unless a native confirmation is also on record.
+- Still native Windows only: the absolute NPS floor (301,116 against the native baseline), anything with Lazy SMP or thread scaling, release comparisons, and any run whose preregistration freezes the host.
+
+### Frozen and must not be edited
+
+These name native Windows or the RENEGADE host explicitly and stay as written: the release strength preregistration and runner qualification (`release-strength-sprt-v0.5.7-v0.6.0`), `phase20-smp-stage6-preregistration.md` (laptop or WSL provides no comparable timing), `phase21-stage6-strength-policy-proposal.md`, the Phase 16 P16-2 canonical baseline and `tools/p16-2-native-baseline.ps1` with its interop refusal, `see-262-nonregression-protocol.md` and its recorded run, and `phase21-direction-and-preregistration.md` section 8 (timing reference native only). Any change would be a new, separately numbered policy document, not an edit of these.
