@@ -751,3 +751,11 @@ An independent read-only review found five gaps, all fixed and re-reviewed: Powe
 
 - No SPRT and no native NPS gate. Search behaviour changes only at halfmove clocks of about 70 and above and across an evaluator switch, neither of which the bench or ordinary games reach, so I do not expect a measurable strength change and have not tried to measure one. If one is wanted, it would need a position set built around long quiet endgames, since random self-play seldom reaches those clocks.
 - TT hit rate and cutoff counters were not separately instrumented; identical node counts on the bench imply identical table behaviour there.
+
+**Follow-up review (2026-11-23):**
+
+- The probe-time guard had used the current iteration's extension allowance. Entries outlive the iteration, the go command and the helper that stored them, so a deep entry was trusted by a shallower iteration (clock 85, entry depth 13, returned -777 against a true result above +300). The guard now always adds `MAX_CHECK_EXTENSIONS`, so its answer does not depend on who asks.
+- The evaluator identity was the UUID inside the network file, so a different network carrying the same UUID kept the old entries (1423 nodes against 844 cold). It is now the EvalFile path plus the UUID. A file rewritten in place at the same path between searches is not detected; that is accepted.
+- Quiescence checked: it never reads the fifty-move rule or the table, so it adds nothing to the horizon.
+- Cost of the guard: it fires when `clock + depth + 16 >= 100`, so at depth 14 from clock 70, and for every node at clock 84 and above. Those nodes lose score reuse but keep the move hint. This is a performance cost only; a tighter per-path extension count would recover some of it and is not worth doing without a measurement.
+- Bench at `1f1b09e`: 23,222,204 nodes, identical to `8d33edc` at every position.
