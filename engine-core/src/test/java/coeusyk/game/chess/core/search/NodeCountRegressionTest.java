@@ -22,9 +22,9 @@ class NodeCountRegressionTest {
     };
 
     private static final long[] EXPECTED_NODES = {
-        14776,
+        14312, // #262: pin-aware SEE (was 14776). Same best move, score and PV; verified against a legal-move SEE oracle.
         1287,
-        32267,
+        32082, // #262: pin-aware SEE (was 32267). Same best move, score and PV.
         6128, // Legal EP hashing omits c6 when b5xc6 would expose the king to the h5 rook.
         7829,
     };

@@ -561,3 +561,73 @@ An independent read-only review found five gaps, all fixed and re-reviewed: Powe
 - engine-core 443 tests, engine-uci 47, chess-engine-api 29, all with 0 failures. The node-count regression test passes unchanged.
 - No bench and no NPS run: WSL NPS is not a valid regression signal here and the change only adds a branch that executes at halfmove clock >= 100. The native-Windows NPS gate has not been re-run for this change.
 - Not covered: how often this occurs in play, and any Elo effect (the issue marks both as unmeasured). Interaction with the transposition table across halfmove clocks is #259 and was not touched.
+
+### [2026-11-21] Pin-aware SEE, h1 shift fix and non-active captureGainFor (#262)
+
+**Built:**
+
+- `StaticExchangeEvaluator.bitboardLva` uses logical `>>>` for the Black pawn attacker shifts. With `>>` on bit 63 (h1) the sign bit was extended, which invented a pawn on h2 attacking h1 and made a blocked pawn "capture" a rook for 1,300 cp.
+- `bestReplyGain` now takes the least-valuable attacker that is legal: after making the recapture it checks `board.isColorKingInCheck(side)` and, if the capturer left its own king attacked, undoes the move, adds that attacker to an exclusion mask and tries the next one. This covers an absolutely pinned piece moving off its ray and a king stepping onto a defended square. The recursion passes the opposite of the side explicitly instead of reading `board.getActiveColor()`.
+- `captureGainFor` for a side that is not to move passes the turn with a null move first, so the second attacker no longer recaptures its own piece (it returned 220 instead of 320 on `4k3/8/8/3n4/4P3/8/8/3QK3 b`).
+- Tests: 10 new in `StaticExchangeEvaluatorTest` and a new `StaticExchangeEvaluatorOracleTest` that compares SEE with a slow oracle taking every recapture from full legal move generation, on 16 fixed positions and on seeded 60-ply random playouts from each (960 positions, 2,540 captures).
+
+**Decisions Made:**
+
+- Legality is checked with one `isColorKingInCheck` per exchange step, not full legal move generation. SEE already does make and unmake per step, so the extra cost is a few magic-bitboard lookups. A separate pin-mask pass was not needed to be correct and would have been a second code path to keep in sync.
+- An illegal attacker is skipped, not treated as "no recapture". Skipping lets the next legal attacker recapture, which the `Rf8xf5` test pins (still -230 when a rook also defends f5).
+- The oracle test is the main evidence. It is independent of SEE's bitboard shortcuts, so a mistake in the pin logic cannot hide behind the same mistake in the test.
+- Only the two golden node counts that actually moved were updated (see below). The rest of the file was not touched.
+
+**Broke / Fixed:**
+
+- `NodeCountRegressionTest` failed after the change. Investigated before touching it: at depth 8, best move, score and PV are identical for all five positions, and only two node counts changed (startpos 14776 to 14312, position 3 32267 to 32082). With the old SEE reinstated the oracle test fails, including on a naturally reached playout position (`1rb1k2r/ppp1bppp/q2p3n/n3p3/3NP1P1/7P/PPPPNPR1/R1BQ1K2 b k - 3 15`, 220 vs 320), so the new numbers come from correcting wrong SEE values, not from a regression. The two golden values were then updated with a comment.
+- A first oracle fixture had an illegal position (black to move with the white king capturable); fixed.
+
+**Measurements:**
+
+- Old versus new SEE on the playout corpus: 24 of 2,540 capture values differ (0.9%), and the `SEE < 0` quiescence pruning decision flips on 7 (0.3%).
+- Native Windows (Zulu 21) `--bench-raw 13`, two runs each, develop `448c98f` versus this change: total nodes 24,909,290 to 23,222,204 (-6.8%), node count changed in 24 of 31 positions (largest -34.8% and +33.0%). Time 75.5 s and 75.2 s to 72.2 s and 71.6 s. NPS 329,784 and 331,126 to 321,499 and 324,386 (about -2.5%), still above the 301,116 floor.
+- Depth 13 over the same 31 positions through UCI: best move differs in 6, score in 15, PV in 16. The search tree changed materially, as expected when SEE ordering and pruning decisions change. This is not a strength measurement.
+- Not run: SPRT, the WAC/tactical corpus pruning count the issue asks for, and any Elo claim. The change is a correctness fix to SEE and its effect on strength is unmeasured.
+
+### [2026-11-23] #262 qualification: SEE decision diff, bench, SPRT status
+
+**Built:**
+
+- `tools/SeeDecisionDiff.java`, a read-only harness that compares the pre-fix SEE (52fee7c, extracted and renamed `OldStaticExchangeEvaluator`) with the candidate SEE (b26569f) on every legal capture in a full-width tree below each corpus position. No SEE or search code was touched.
+
+**Decisions Made:**
+
+- Identities: baseline is exactly 52fee7c (the parent of b26569f, pre-SEE develop) and candidate is exactly PR #283 head b26569f. Both jars were built from `git archive` snapshots of those commits in scratch space (no worktree, no local modifications). The issue text names 61a3712 as its baseline, but 52fee7c is the exact pre-fix commit the maintainer specified, so that was used.
+- The decision tested is the `SEE < 0` test that quiescence uses to prune and that main-search ordering uses to label a capture losing. Counts are visits, not unique positions, because the tree walk revisits transpositions.
+- `wac.epd` holds only 20 mostly trivial endgame positions, so draw_failures.epd (3) and the 31 BENCH positions were added to get a meaningful population.
+
+**Measurements:**
+
+- WAC alone, 3 plies: 10,702 capture decisions, 0 differ.
+- WAC + draw_failures + BENCH (54 positions), 3 plies: 3,713,211 capture decisions, SEE value differs on 19,169 (0.52%). `SEE < 0` flips: 3,017 pruned to searched (old < 0, new >= 0) and 222 searched to pruned (old >= 0, new < 0), 3,239 in total (0.087%). Per ply: ply 0 74 captures, 2 differ; ply 1 2,077, 7; ply 2 100,863, 1,727; ply 3 3,610,197, 17,433.
+- WSL `--bench` (default depth), three alternating runs, 52fee7c versus b26569f, informational only because WSL NPS is not a valid regression signal: NPS 342,720 / 357,378 / 357,358 versus 348,101 / 363,454 / 354,764. Cut evals 28,092,760 versus 26,202,800 (-6.7%), consistent with the native node drop already recorded above. No NPS regression visible.
+- Native SPRT: not run. See the issue comment for the blocker and the command.
+
+### [2026-11-23] #262 native non-regression SPRT: H1 accepted, adjudication audit
+
+**Built:**
+
+- Ran the preregistered `[-5,0]` non-regression SPRT natively (alpha = beta = 0.05, cap 30,000, 5+0.05, concurrency 6, 1 thread, `noob_3moves.epd`, `-repeat`). Baseline 52fee7c, candidate 25a3889 (SEE commit b26569f plus tooling-only commits). Protocol: `docs/architecture/research/see-262-nonregression-protocol.md`.
+- `tools/adjudication_audit.py` and the 200-game sample `docs/architecture/research/see-262-adjudication-audit-sample.csv`.
+- `tools/sprt.ps1` resolves `-LogPath` and `-PgnPath` against the PowerShell location (4557869).
+
+**Decisions Made:**
+
+- Non-regression was the right question. The change is a correctness fix expected near 0 Elo, so an improvement test ([0,50] or [0,10]) could not answer it.
+- The adjudication audit was run after the match stopped, on the final PGN and log, and was not used to reinterpret the SPRT result.
+
+**Broke / Fixed:**
+
+- The first set of commands wrote the log and PGN outside the run folder because of relative paths. Copied in with hash verification and fixed in `sprt.ps1`.
+- I reported 1,535 finished games when the categories summed to 1,935. A transcription error, corrected in the case study.
+
+**Measurements:**
+
+- LLR 2.96 against bounds of +/-2.94, H1 accepted. 5,713 scored games: 1,969 wins, 1,872 losses, 1,872 draws, score 0.5085, +5.9 Elo, 95% interval -1.5 to +13.3. 5 cancelled games unscored. No crashes, forfeits, illegal moves or timeouts.
+- Stockfish 18 depth 24 on 200 seeded resign-adjudicated final positions: 194 supported, 0 uncertain, 6 potentially incorrect (3.0%, 95% interval 1.4% to 6.4%, unweighted stratified sample). All six are drawn or nearly drawn endings that the shared classical evaluation scored as 4 to 7 pawns. Details in `docs/engineering/investigations/2026-11-23-see-262-sprt-adjudication-audit.md`.

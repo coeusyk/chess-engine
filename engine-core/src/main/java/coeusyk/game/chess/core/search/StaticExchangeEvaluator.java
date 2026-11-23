@@ -69,7 +69,18 @@ public class StaticExchangeEvaluator {
      * recapture is the optimal response (SEE returns 0 for that exchange).
      */
     public int captureGainFor(Board board, int targetSquare, int attackerColor) {
-        return bestReplyGain(board, targetSquare, attackerColor);
+        if (attackerColor == board.getActiveColor()) {
+            return bestReplyGain(board, targetSquare, attackerColor);
+        }
+        // The attacker is not to move. makeMove always hands the turn to the other side, so
+        // pass the turn first; otherwise the exchange is played out with the wrong side
+        // moving. This path allocates (null-move state) but is not used in the search.
+        Board.NullMoveState state = board.makeNullMove();
+        try {
+            return bestReplyGain(board, targetSquare, attackerColor);
+        } finally {
+            board.unmakeNullMove(state);
+        }
     }
 
     // ==================== Core SEE: zero-allocation bitboard LVA ====================
@@ -85,34 +96,44 @@ public class StaticExchangeEvaluator {
      * bitboards before the next recursive {@code bitboardLva} query.
      */
     private int bestReplyGain(Board board, int targetSq, int sideToMove) {
-        int from = bitboardLva(board, targetSq, sideToMove);
-        if (from < 0) {
-            return 0;
+        // Attackers whose capture would leave their own king attacked (an absolutely pinned
+        // piece moving off its ray, or the king stepping onto a defended square) are not
+        // legal recaptures. Skip them and try the next least-valuable attacker instead.
+        long illegalAttackers = 0L;
+        while (true) {
+            int from = bitboardLva(board, targetSq, sideToMove, illegalAttackers);
+            if (from < 0) {
+                return 0;
+            }
+
+            int flag = recaptureFlag(board, from, targetSq);
+
+            int capturedVal;
+            if (flag == Move.FLAG_EN_PASSANT) {
+                capturedVal = PIECE_VALUES[Piece.Pawn];
+            } else {
+                int occ = board.getPiece(targetSq);
+                capturedVal = (occ != Piece.None) ? PIECE_VALUES[Piece.type(occ)] : 0;
+            }
+            int promoBonus = (flag == Move.FLAG_PROMO_Q)
+                    ? PIECE_VALUES[Piece.Queen] - PIECE_VALUES[Piece.Pawn] : 0;
+
+            board.makeMove(Move.of(from, targetSq, flag));
+            if (board.isColorKingInCheck(sideToMove)) {
+                board.unmakeMove();
+                illegalAttackers |= 1L << from;
+                continue;
+            }
+            int continuation = bestReplyGain(board, targetSq, sideToMove == Piece.White ? Piece.Black : Piece.White);
+            board.unmakeMove();
+
+            return Math.max(0, capturedVal + promoBonus - continuation);
         }
-
-        int flag = recaptureFlag(board, from, targetSq);
-
-        int capturedVal;
-        if (flag == Move.FLAG_EN_PASSANT) {
-            capturedVal = PIECE_VALUES[Piece.Pawn];
-        } else {
-            int occ = board.getPiece(targetSq);
-            capturedVal = (occ != Piece.None) ? PIECE_VALUES[Piece.type(occ)] : 0;
-        }
-        int promoBonus = (flag == Move.FLAG_PROMO_Q)
-                ? PIECE_VALUES[Piece.Queen] - PIECE_VALUES[Piece.Pawn] : 0;
-
-        int packed = Move.of(from, targetSq, flag);
-        board.makeMove(packed);
-        int continuation = bestReplyGain(board, targetSq, board.getActiveColor());
-        board.unmakeMove();
-
-        return Math.max(0, capturedVal + promoBonus - continuation);
     }
 
     /**
      * Returns the from-square of the least-valuable piece of {@code sideToMove}
-     * that attacks {@code toSq}, or -1 if no such piece exists.
+     * that attacks {@code toSq} and is not in {@code excluded}, or -1 if there is none.
      *
      * <p>Piece priority (lowest value first):
      * pawn → knight → bishop → rook → queen → king.
@@ -125,11 +146,14 @@ public class StaticExchangeEvaluator {
      *   <li>White pawn at sq attacks sq−9 (not file A) and sq−7 (not file H).</li>
      *   <li>Black pawn at sq attacks sq+7 (not file A) and sq+9 (not file H).</li>
      * </ul>
+     * Shifts on the target bit are logical ({@code >>>}): h1 is bit 63, and an arithmetic
+     * shift would sign-extend it and invent a pawn on h2 attacking h1.
      * To find which pawns attack {@code toSq} we reverse this:
      * white: toSq+9 (not file H) and toSq+7 (not file A);
      * black: toSq−7 (not file H) and toSq−9 (not file A).
      */
-    private int bitboardLva(Board board, int toSq, int sideToMove) {
+    private int bitboardLva(Board board, int toSq, int sideToMove, long excluded) {
+        long allowed  = ~excluded;
         long occ      = board.getAllOccupancy();
         long sqBit    = 1L << toSq;
         long rookRays = MagicBitboards.getRookAttacks(toSq, occ);
@@ -138,41 +162,41 @@ public class StaticExchangeEvaluator {
         long sub;
         if (sideToMove == Piece.White) {
             // White pawns: attack toSq from squares toSq+9 (not file H) and toSq+7 (not file A).
-            sub = ((sqBit & ~FILE_H) << 9 | (sqBit & ~FILE_A) << 7) & board.getWhitePawns();
+            sub = ((sqBit & ~FILE_H) << 9 | (sqBit & ~FILE_A) << 7) & board.getWhitePawns() & allowed;
             if (sub != 0) return Long.numberOfTrailingZeros(sub);
 
-            sub = AttackTables.KNIGHT_ATTACKS[toSq] & board.getWhiteKnights();
+            sub = AttackTables.KNIGHT_ATTACKS[toSq] & board.getWhiteKnights() & allowed;
             if (sub != 0) return Long.numberOfTrailingZeros(sub);
 
-            sub = diagRays & board.getWhiteBishops();
+            sub = diagRays & board.getWhiteBishops() & allowed;
             if (sub != 0) return Long.numberOfTrailingZeros(sub);
 
-            sub = rookRays & board.getWhiteRooks();
+            sub = rookRays & board.getWhiteRooks() & allowed;
             if (sub != 0) return Long.numberOfTrailingZeros(sub);
 
-            sub = (rookRays | diagRays) & board.getWhiteQueens();
+            sub = (rookRays | diagRays) & board.getWhiteQueens() & allowed;
             if (sub != 0) return Long.numberOfTrailingZeros(sub);
 
-            sub = AttackTables.KING_ATTACKS[toSq] & board.getWhiteKing();
+            sub = AttackTables.KING_ATTACKS[toSq] & board.getWhiteKing() & allowed;
             if (sub != 0) return Long.numberOfTrailingZeros(sub);
         } else {
             // Black pawns: attack toSq from squares toSq−7 (not file H) and toSq−9 (not file A).
-            sub = ((sqBit & ~FILE_H) >> 7 | (sqBit & ~FILE_A) >> 9) & board.getBlackPawns();
+            sub = ((sqBit & ~FILE_H) >>> 7 | (sqBit & ~FILE_A) >>> 9) & board.getBlackPawns() & allowed;
             if (sub != 0) return Long.numberOfTrailingZeros(sub);
 
-            sub = AttackTables.KNIGHT_ATTACKS[toSq] & board.getBlackKnights();
+            sub = AttackTables.KNIGHT_ATTACKS[toSq] & board.getBlackKnights() & allowed;
             if (sub != 0) return Long.numberOfTrailingZeros(sub);
 
-            sub = diagRays & board.getBlackBishops();
+            sub = diagRays & board.getBlackBishops() & allowed;
             if (sub != 0) return Long.numberOfTrailingZeros(sub);
 
-            sub = rookRays & board.getBlackRooks();
+            sub = rookRays & board.getBlackRooks() & allowed;
             if (sub != 0) return Long.numberOfTrailingZeros(sub);
 
-            sub = (rookRays | diagRays) & board.getBlackQueens();
+            sub = (rookRays | diagRays) & board.getBlackQueens() & allowed;
             if (sub != 0) return Long.numberOfTrailingZeros(sub);
 
-            sub = AttackTables.KING_ATTACKS[toSq] & board.getBlackKing();
+            sub = AttackTables.KING_ATTACKS[toSq] & board.getBlackKing() & allowed;
             if (sub != 0) return Long.numberOfTrailingZeros(sub);
         }
         return -1;

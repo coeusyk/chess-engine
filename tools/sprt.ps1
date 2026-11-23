@@ -146,6 +146,10 @@ if ($OpeningsFile -eq "") {
     if (Test-Path $defaultBook) { $OpeningsFile = $defaultBook }
 }
 $openingsArgs = @()
+# Fail closed: an explicitly requested book that is missing must not silently become startpos games.
+if ($PSBoundParameters.ContainsKey('OpeningsFile') -and ($OpeningsFile -eq "" -or -not (Test-Path -LiteralPath $OpeningsFile -PathType Leaf))) {
+    throw "Opening book not found: $OpeningsFile"
+}
 if ($OpeningsFile -ne "" -and (Test-Path $OpeningsFile)) {
     $openingsArgs = @("-openings", "file=$OpeningsFile", "format=epd", "order=$OpeningOrder", "plies=4")
 }
@@ -159,8 +163,9 @@ if ($hasLogPath -xor $hasPgnPath) {
 }
 
 if ($hasLogPath) {
-    $PgnOut = [System.IO.Path]::GetFullPath($PgnPath)
-    $LogOut = [System.IO.Path]::GetFullPath($LogPath)
+    # Resolve against the PowerShell location, not the .NET process directory (which Set-Location does not change).
+    $PgnOut = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($PgnPath)
+    $LogOut = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($LogPath)
     if ($PgnOut -eq $LogOut) { throw "-LogPath and -PgnPath must be different files." }
     foreach ($outputPath in @($PgnOut, $LogOut)) {
         $parent = Split-Path -Parent $outputPath
