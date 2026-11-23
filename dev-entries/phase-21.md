@@ -608,3 +608,26 @@ An independent read-only review found five gaps, all fixed and re-reviewed: Powe
 - WAC + draw_failures + BENCH (54 positions), 3 plies: 3,713,211 capture decisions, SEE value differs on 19,169 (0.52%). `SEE < 0` flips: 3,017 pruned to searched (old < 0, new >= 0) and 222 searched to pruned (old >= 0, new < 0), 3,239 in total (0.087%). Per ply: ply 0 74 captures, 2 differ; ply 1 2,077, 7; ply 2 100,863, 1,727; ply 3 3,610,197, 17,433.
 - WSL `--bench` (default depth), three alternating runs, 52fee7c versus b26569f, informational only because WSL NPS is not a valid regression signal: NPS 342,720 / 357,378 / 357,358 versus 348,101 / 363,454 / 354,764. Cut evals 28,092,760 versus 26,202,800 (-6.7%), consistent with the native node drop already recorded above. No NPS regression visible.
 - Native SPRT: not run. See the issue comment for the blocker and the command.
+
+### [2026-11-23] #262 native non-regression SPRT: H1 accepted, adjudication audit
+
+**Built:**
+
+- Ran the preregistered `[-5,0]` non-regression SPRT natively (alpha = beta = 0.05, cap 30,000, 5+0.05, concurrency 6, 1 thread, `noob_3moves.epd`, `-repeat`). Baseline 52fee7c, candidate 25a3889 (SEE commit b26569f plus tooling-only commits). Protocol: `docs/architecture/research/see-262-nonregression-protocol.md`.
+- `tools/adjudication_audit.py` and the 200-game sample `docs/architecture/research/see-262-adjudication-audit-sample.csv`.
+- `tools/sprt.ps1` resolves `-LogPath` and `-PgnPath` against the PowerShell location (4557869).
+
+**Decisions Made:**
+
+- Non-regression was the right question. The change is a correctness fix expected near 0 Elo, so an improvement test ([0,50] or [0,10]) could not answer it.
+- The adjudication audit was run after the match stopped, on the final PGN and log, and was not used to reinterpret the SPRT result.
+
+**Broke / Fixed:**
+
+- The first set of commands wrote the log and PGN outside the run folder because of relative paths. Copied in with hash verification and fixed in `sprt.ps1`.
+- I reported 1,535 finished games when the categories summed to 1,935. A transcription error, corrected in the case study.
+
+**Measurements:**
+
+- LLR 2.96 against bounds of +/-2.94, H1 accepted. 5,713 scored games: 1,969 wins, 1,872 losses, 1,872 draws, score 0.5085, +5.9 Elo, 95% interval -1.5 to +13.3. 5 cancelled games unscored. No crashes, forfeits, illegal moves or timeouts.
+- Stockfish 18 depth 24 on 200 seeded resign-adjudicated final positions: 194 supported, 0 uncertain, 6 potentially incorrect (3.0%, 95% interval 1.4% to 6.4%, unweighted stratified sample). All six are drawn or nearly drawn endings that the shared classical evaluation scored as 4 to 7 pawns. Details in `docs/engineering/investigations/2026-11-23-see-262-sprt-adjudication-audit.md`.
