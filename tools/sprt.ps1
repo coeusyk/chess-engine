@@ -146,6 +146,10 @@ if ($OpeningsFile -eq "") {
     if (Test-Path $defaultBook) { $OpeningsFile = $defaultBook }
 }
 $openingsArgs = @()
+# Fail closed: an explicitly requested book that is missing must not silently become startpos games.
+if ($PSBoundParameters.ContainsKey('OpeningsFile') -and ($OpeningsFile -eq "" -or -not (Test-Path -LiteralPath $OpeningsFile -PathType Leaf))) {
+    throw "Opening book not found: $OpeningsFile"
+}
 if ($OpeningsFile -ne "" -and (Test-Path $OpeningsFile)) {
     $openingsArgs = @("-openings", "file=$OpeningsFile", "format=epd", "order=$OpeningOrder", "plies=4")
 }
