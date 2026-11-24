@@ -506,32 +506,36 @@ public final class PositionLoader {
                     + (trainFrac + valFrac));
         }
 
-        // Partition indices into outcome buckets
-        List<Integer> winIdx   = new ArrayList<>();
-        List<Integer> drawIdx  = new ArrayList<>();
-        List<Integer> lossIdx  = new ArrayList<>();
-        List<Integer> otherIdx = new ArrayList<>();
+        // A position and its colour-flipped twin (from loadBalanced) carry the same information, so they move
+        // together; split on a group of indices, not on single indices (#274). Exact duplicates stay separate.
+        List<int[]> groups = twinGroups(positions);
 
-        for (int i = 0; i < positions.size(); i++) {
-            double o = positions.get(i).outcome();
-            if (Math.abs(o - 1.0) <= 0.05)      winIdx.add(i);
-            else if (Math.abs(o - 0.5) <= 0.05) drawIdx.add(i);
-            else if (Math.abs(o - 0.0) <= 0.05) lossIdx.add(i);
-            else                                 otherIdx.add(i);
+        // Partition groups into outcome buckets, by the outcome of the first member
+        List<int[]> winGroups   = new ArrayList<>();
+        List<int[]> drawGroups  = new ArrayList<>();
+        List<int[]> lossGroups  = new ArrayList<>();
+        List<int[]> otherGroups = new ArrayList<>();
+
+        for (int[] g : groups) {
+            double o = positions.get(g[0]).outcome();
+            if (Math.abs(o - 1.0) <= 0.05)      winGroups.add(g);
+            else if (Math.abs(o - 0.5) <= 0.05) drawGroups.add(g);
+            else if (Math.abs(o - 0.0) <= 0.05) lossGroups.add(g);
+            else                                 otherGroups.add(g);
         }
 
         // Shuffle each bucket with the same seed (different per-bucket offset)
-        shuffle(winIdx,   new Random(seed));
-        shuffle(drawIdx,  new Random(seed + 1));
-        shuffle(lossIdx,  new Random(seed + 2));
-        shuffle(otherIdx, new Random(seed + 3));
+        shuffle(winGroups,   new Random(seed));
+        shuffle(drawGroups,  new Random(seed + 1));
+        shuffle(lossGroups,  new Random(seed + 2));
+        shuffle(otherGroups, new Random(seed + 3));
 
         // Collect per-bucket slices into global train/val/test index lists
         List<Integer> trainIdx = new ArrayList<>();
         List<Integer> valIdx   = new ArrayList<>();
         List<Integer> testIdx  = new ArrayList<>();
 
-        for (List<Integer> bucket : List.of(winIdx, drawIdx, lossIdx, otherIdx)) {
+        for (List<int[]> bucket : List.of(winGroups, drawGroups, lossGroups, otherGroups)) {
             int n        = bucket.size();
             int nTrain   = (int) Math.round(n * trainFrac);
             int nVal     = (int) Math.round(n * valFrac);
@@ -539,9 +543,9 @@ public final class PositionLoader {
             nTrain = Math.min(nTrain, n);
             nVal   = Math.min(nVal, n - nTrain);
 
-            trainIdx.addAll(bucket.subList(0, nTrain));
-            valIdx.addAll(bucket.subList(nTrain, nTrain + nVal));
-            testIdx.addAll(bucket.subList(nTrain + nVal, n));
+            addAll(trainIdx, bucket.subList(0, nTrain));
+            addAll(valIdx,   bucket.subList(nTrain, nTrain + nVal));
+            addAll(testIdx,  bucket.subList(nTrain + nVal, n));
         }
 
         return new CorpusPartition(
@@ -551,13 +555,73 @@ public final class PositionLoader {
     }
 
     /** Shuffle helper (Fisher-Yates on an ArrayList of integers). */
-    private static void shuffle(List<Integer> list, Random rng) {
+    private static <T> void shuffle(List<T> list, Random rng) {
         for (int i = list.size() - 1; i > 0; i--) {
             int j = rng.nextInt(i + 1);
-            int tmp = list.get(i);
+            T tmp = list.get(i);
             list.set(i, list.get(j));
             list.set(j, tmp);
         }
+    }
+
+    private static void addAll(List<Integer> out, List<int[]> groups) {
+        for (int[] g : groups) for (int idx : g) out.add(idx);
+    }
+
+    /**
+     * Groups colour-flipped twins. A record is paired with an earlier record of the opposite orientation that has
+     * the same position and the mirrored outcome (what {@link #loadBalanced} produces); everything else is a group
+     * of one. Groups come out in the order of their first member, so a corpus without twins splits exactly as it
+     * did when single indices were shuffled.
+     */
+    static List<int[]> twinGroups(List<LabelledPosition> positions) {
+        int n = positions.size();
+        int[] partner = new int[n];
+        java.util.Arrays.fill(partner, -1);
+        java.util.Map<String, java.util.ArrayDeque<Integer>> waiting = new java.util.HashMap<>();
+        for (int i = 0; i < n; i++) {
+            LabelledPosition lp = positions.get(i);
+            String fen = lp.pos().fen();
+            String own = positionKey(fen);
+            String flipped = colorFlipFen(fen);
+            String other = flipped == null ? own : positionKey(flipped);
+            boolean canonical = own.compareTo(other) <= 0;
+            double canonicalOutcome = canonical ? lp.outcome() : 1.0 - lp.outcome();
+            String key = (canonical ? own : other) + "|" + Math.round(canonicalOutcome * 1000);
+            String ownSide = key + (canonical ? "|a" : "|b");
+            String oppositeSide = key + (canonical ? "|b" : "|a");
+            java.util.ArrayDeque<Integer> opposite = waiting.get(oppositeSide);
+            if (own.equals(other) || opposite == null || opposite.isEmpty()) {
+                waiting.computeIfAbsent(ownSide, x -> new java.util.ArrayDeque<>()).add(i);
+            } else {
+                int j = opposite.poll();
+                partner[i] = j;
+                partner[j] = i;
+            }
+        }
+        List<int[]> groups = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            if (partner[i] == -1) groups.add(new int[]{i});
+            else if (partner[i] > i) groups.add(new int[]{i, partner[i]});
+        }
+        return groups;
+    }
+
+    /** Position, side to move, castling rights (sorted) and en passant square; the move counters are left out. */
+    private static String positionKey(String fen) {
+        String[] parts = fen.split(" ");
+        if (parts.length < 4) return fen;
+        char[] castling = parts[2].toCharArray();
+        java.util.Arrays.sort(castling);
+        return parts[0] + " " + parts[1] + " " + new String(castling) + " " + parts[3];
+    }
+
+    /** Same for a position and its colour-flipped twin. Package-private for tests. */
+    static String twinKey(String fen) {
+        String own = positionKey(fen);
+        String flipped = colorFlipFen(fen);
+        String other = flipped == null ? own : positionKey(flipped);
+        return own.compareTo(other) <= 0 ? own : other;
     }
 
     /**
