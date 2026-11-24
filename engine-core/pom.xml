@@ -91,6 +91,7 @@
                             </includes>
                             <systemPropertyVariables>
                                 <update-baseline>${update-baseline}</update-baseline>
+                                <nnue.requireVector>true</nnue.requireVector>
                                 <benchmark.depth>${benchmark.depth}</benchmark.depth>
                             </systemPropertyVariables>
                         </configuration>
