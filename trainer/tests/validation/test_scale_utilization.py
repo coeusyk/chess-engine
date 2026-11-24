@@ -5,6 +5,7 @@ contrast case only shows that the diagnostics separate the two scaling regimes t
 describes. Neither says anything about a real checkpoint, none of which is in this repository.
 """
 
+import dataclasses
 import json
 import math
 
@@ -62,6 +63,16 @@ def test_hand_computed_utilization():
     assert report.output_weight_rms == pytest.approx(math.sqrt(30 / 8))
     assert report.cp_per_accumulator_unit_max == pytest.approx(4 * 400 / (127 * 64))
     assert report.output_weight_int16_headroom_ratio == pytest.approx(4 / 32767)
+
+
+def test_half_unit_weights_round_to_zero_like_the_production_quantizer():
+    # np.round is ties-to-even, so +-0.5 become 0 while +-1.5 become +-2.
+    network = _bias_only_network([0.0, 0.0], [[1, 1], [1, 1]])
+    weights = np.zeros((FEATURES_PER_PERSPECTIVE, 2), dtype=np.float32)
+    weights[:, 0] = 0.5
+    weights[:, 1] = -1.5
+    network = dataclasses.replace(network, ft_weights=weights)
+    assert compute_scale_utilization(network, [START]).ft_weight_fraction_rounding_to_zero == 0.5
 
 
 def test_rejects_an_empty_corpus():

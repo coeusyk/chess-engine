@@ -17,6 +17,9 @@ What the numbers describe: the checkpoint on the FEN set that was passed, identi
 which is not the checkpoint's training or held-out distribution. A real held-out set (`--fens`)
 gives the figure that matters for strength.
 
+Checkpoints are loaded with `weights_only=True`; `--trust-checkpoint` allows full unpickling and
+must only be used on files you produced.
+
 Provenance written to the output: the checkpoint file's basename and SHA-256, the trainer commit
 and seed recorded inside the checkpoint when present, and the FEN source names. No absolute path
 is recorded.
@@ -30,6 +33,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -73,12 +77,30 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def audit_checkpoint(checkpoint_path: Path, fens: Sequence[str], fen_sources: Sequence[str],
-                     thresholds: Optional[ParityThresholds] = None) -> Dict[str, Any]:
-    """Returns the full audit record (JSON-safe). `violations` is empty when no bound is set."""
+def load_checkpoint(checkpoint_path: Path, trust_checkpoint: bool) -> Dict[str, Any]:
+    """Loads with `weights_only=True` (tensors and plain containers only) so a hostile file cannot run
+    code. A checkpoint that holds other pickled types fails with an explanation; `--trust-checkpoint`
+    then allows full unpickling, which executes whatever the file contains, so only use it on files
+    you produced."""
+    import pickle
+
     import torch
 
-    checkpoint = torch.load(checkpoint_path, weights_only=False)
+    if trust_checkpoint:
+        return torch.load(checkpoint_path, weights_only=False)
+    try:
+        return torch.load(checkpoint_path, weights_only=True)
+    except pickle.UnpicklingError as error:
+        raise SystemExit(
+            f"{checkpoint_path.name} needs full unpickling ({error}). Re-run with --trust-checkpoint only "
+            f"if you created this file: unpickling runs code contained in it.")
+
+
+def audit_checkpoint(checkpoint_path: Path, fens: Sequence[str], fen_sources: Sequence[str],
+                     thresholds: Optional[ParityThresholds] = None,
+                     trust_checkpoint: bool = False) -> Dict[str, Any]:
+    """Returns the full audit record (JSON-safe). `violations` is empty when no bound is set."""
+    checkpoint = load_checkpoint(checkpoint_path, trust_checkpoint)
     canonical = checkpoint_to_canonical(checkpoint)
     parity, _ = compute_quantization_parity(canonical, fens)
     utilization = compute_scale_utilization(canonical, fens)
@@ -100,16 +122,25 @@ def audit_checkpoint(checkpoint_path: Path, fens: Sequence[str], fen_sources: Se
     }
 
 
+def _finite_float(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value):
+        raise argparse.ArgumentTypeError(f"bound must be a finite number, got {text!r}")
+    return value
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     parser.add_argument("checkpoint", type=Path)
     parser.add_argument("--fens", type=Path, nargs="+", default=None,
                         help="FEN/EPD files to evaluate (default: the committed bench/nnue-corpus).")
     parser.add_argument("--output", type=Path, default=None, help="Also write the record as JSON here.")
-    parser.add_argument("--max-mae-cp", type=float, default=None)
-    parser.add_argument("--max-rmse-cp", type=float, default=None)
-    parser.add_argument("--max-abs-cp", type=float, default=None)
-    parser.add_argument("--min-pearson", type=float, default=None)
+    parser.add_argument("--trust-checkpoint", action="store_true",
+                        help="Allow full unpickling (runs code in the file). Only for files you produced.")
+    parser.add_argument("--max-mae-cp", type=_finite_float, default=None)
+    parser.add_argument("--max-rmse-cp", type=_finite_float, default=None)
+    parser.add_argument("--max-abs-cp", type=_finite_float, default=None)
+    parser.add_argument("--min-pearson", type=_finite_float, default=None)
     args = parser.parse_args(argv)
 
     if args.fens:
@@ -125,7 +156,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         max_mae_cp=args.max_mae_cp, max_rmse_cp=args.max_rmse_cp, max_abs_cp=args.max_abs_cp,
         min_pearson_float_quantized=args.min_pearson)
 
-    record = audit_checkpoint(args.checkpoint, fens, sources, thresholds)
+    record = audit_checkpoint(args.checkpoint, fens, sources, thresholds, args.trust_checkpoint)
     text = json.dumps(record, indent=2, sort_keys=True)
     print(text)
     if args.output is not None:

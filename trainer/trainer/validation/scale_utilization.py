@@ -19,14 +19,16 @@ Definitions (accumulators are pre-clamp, in QA-native units, both perspectives p
 - `dead_neuron_fraction`: neurons whose accumulator is at or below zero for every sampled
   position and perspective, so the clamp zeroes them everywhere.
 - `ft_weight_*`, `output_weight_*`: spread of the weights that will be rounded to int16.
-  `ft_weight_fraction_rounding_to_zero` counts FT weights with `|w| < 0.5`, which become exactly 0.
+  `ft_weight_fraction_rounding_to_zero` counts FT weights whose production rounding (`np.round`,
+  ties to even) is exactly 0, so it includes +-0.5.
 - `ft_rounding_error_to_weight_rms_ratio`: RMS of the actual rounding error over RMS of the FT
   weights. Close to 0 means rounding is small against the weights; near or above 0.29 / rms of
   1.0 means rounding noise is comparable to the signal.
 - `cp_per_accumulator_unit_rms` and `_max`: centipawns that move when one accumulator unit moves
   on an unclamped neuron, `|w_out| * output_scale / (qa * qb)`, over the output weights. This is
-  the amplification factor: multiplied by the rounding error per accumulator it bounds the score
-  noise that rounding can add.
+  per-accumulator sensitivity, a way to see how strongly rounding of one weight can reach the
+  score. It is not a bound on total score error: contributions from many neurons and both
+  perspectives add, and output weight and bias rounding add their own error.
 """
 
 from __future__ import annotations
@@ -114,7 +116,7 @@ def compute_scale_utilization(canonical: CanonicalNetwork, fens: Sequence[str]) 
         ft_weight_rms=ft_rms,
         ft_weight_max_abs=float(np.abs(ft_weights).max()),
         ft_weight_int16_headroom_ratio=float(np.abs(ft_weights).max() / INT16_MAX),
-        ft_weight_fraction_rounding_to_zero=float(np.mean(np.abs(ft_weights) < 0.5)),
+        ft_weight_fraction_rounding_to_zero=float(np.mean(np.round(ft_weights) == 0)),
         ft_rounding_error_to_weight_rms_ratio=0.0 if ft_rms == 0 else _rms(ft_rounding_error) / ft_rms,
         output_weight_rms=_rms(output_weights),
         output_weight_l2_norm=float(np.linalg.norm(output_weights)),

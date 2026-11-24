@@ -84,3 +84,28 @@ def test_default_corpus_is_the_committed_bench_set():
     fens, sources = audit.default_corpus()
     assert len(fens) == 393
     assert sources[0] == "bench/nnue-corpus/tactical.epd"
+
+
+def test_non_finite_bounds_are_rejected(tmp_path, fen_file):
+    checkpoint = tmp_path / "model.pt"
+    _write_checkpoint(checkpoint)
+    for bad in ("nan", "inf"):
+        with pytest.raises(SystemExit) as raised:
+            audit.main([str(checkpoint), "--fens", str(fen_file), "--max-mae-cp", bad])
+        assert raised.value.code == 2
+
+
+class _Opaque:
+    """A type `weights_only=True` refuses to unpickle."""
+
+
+def test_checkpoints_with_arbitrary_pickled_objects_need_an_explicit_opt_in(tmp_path, fen_file):
+    checkpoint = tmp_path / "model.pt"
+    _write_checkpoint(checkpoint)
+    loaded = torch.load(checkpoint, weights_only=True)
+    loaded["extra"] = _Opaque()
+    torch.save(loaded, checkpoint)
+
+    with pytest.raises(SystemExit, match="--trust-checkpoint"):
+        audit.main([str(checkpoint), "--fens", str(fen_file)])
+    assert audit.main([str(checkpoint), "--fens", str(fen_file), "--trust-checkpoint"]) == 0
