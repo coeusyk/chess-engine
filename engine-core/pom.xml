@@ -59,6 +59,9 @@
                     <excludedGroups>search-regression</excludedGroups>
                     <systemPropertyVariables>
                         <benchmark.depth>${benchmark.depth}</benchmark.depth>
+                        <!-- This build is the vector-qualified configuration: wide-network NNUE
+                             tests fail instead of quietly running scalar if the module is absent. -->
+                        <nnue.requireVector>true</nnue.requireVector>
                     </systemPropertyVariables>
                     <!-- Same reasoning as the compiler plugin above: the forked test JVM must
                          also resolve jdk.incubator.vector for VectorCapabilitiesTest to observe
@@ -88,6 +91,7 @@
                             </includes>
                             <systemPropertyVariables>
                                 <update-baseline>${update-baseline}</update-baseline>
+                                <nnue.requireVector>true</nnue.requireVector>
                                 <benchmark.depth>${benchmark.depth}</benchmark.depth>
                             </systemPropertyVariables>
                         </configuration>

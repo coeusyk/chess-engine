@@ -75,8 +75,8 @@ Write-Host "LOG    : $LogOut"
 Write-Host ""
 
 & $Cutechess `
-    -engine "name=Vex-NNUE" "cmd=$Java" "arg=-jar" "arg=$EngineJar" proto=uci "option.EvalType=NNUE" "option.EvalFile=$NnuePath" `
-    -engine "name=Vex-Classical" "cmd=$Java" "arg=-jar" "arg=$EngineJar" proto=uci "option.EvalType=Classical" `
+    -engine "name=Vex-NNUE" "cmd=$Java" "arg=--add-modules" "arg=jdk.incubator.vector" "arg=-jar" "arg=$EngineJar" proto=uci "option.EvalType=NNUE" "option.EvalFile=$NnuePath" `
+    -engine "name=Vex-Classical" "cmd=$Java" "arg=--add-modules" "arg=jdk.incubator.vector" "arg=-jar" "arg=$EngineJar" proto=uci "option.EvalType=Classical" `
     -each tc=$TC `
     -games $Games `
     -repeat `
