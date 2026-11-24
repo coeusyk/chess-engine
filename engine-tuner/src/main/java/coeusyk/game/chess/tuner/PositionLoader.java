@@ -571,14 +571,16 @@ public final class PositionLoader {
     /**
      * Groups colour-flipped twins. A record is paired with an earlier record of the opposite orientation that has
      * the same position and the mirrored outcome (what {@link #loadBalanced} produces); everything else is a group
-     * of one. Groups come out in the order of their first member, so a corpus without twins splits exactly as it
+     * of one. Records are matched by a 64-bit hash of the position key. Groups come out in the order of their first member, so a corpus without twins splits exactly as it
      * did when single indices were shuffled.
      */
     static List<int[]> twinGroups(List<LabelledPosition> positions) {
-        int n = positions.size();
-        int[] partner = new int[n];
-        java.util.Arrays.fill(partner, -1);
-        java.util.Map<String, java.util.ArrayDeque<Integer>> waiting = new java.util.HashMap<>();
+        final int n = positions.size();
+        // One 64-bit hash per record for (canonical position, canonical outcome), and the orientation bit. This
+        // keeps the pass at a few primitive arrays and one sort, where a map of key strings would hold a string
+        // and a queue per position on a corpus of a million.
+        long[] hash = new long[n];
+        boolean[] canonicalSide = new boolean[n];
         for (int i = 0; i < n; i++) {
             LabelledPosition lp = positions.get(i);
             String fen = lp.pos().fen();
@@ -587,12 +589,28 @@ public final class PositionLoader {
             String other = flipped == null ? own : positionKey(flipped);
             boolean canonical = own.compareTo(other) <= 0;
             double canonicalOutcome = canonical ? lp.outcome() : 1.0 - lp.outcome();
-            String key = (canonical ? own : other) + "|" + Math.round(canonicalOutcome * 1000);
-            String ownSide = key + (canonical ? "|a" : "|b");
-            String oppositeSide = key + (canonical ? "|b" : "|a");
-            java.util.ArrayDeque<Integer> opposite = waiting.get(oppositeSide);
-            if (own.equals(other) || opposite == null || opposite.isEmpty()) {
-                waiting.computeIfAbsent(ownSide, x -> new java.util.ArrayDeque<>()).add(i);
+            hash[i] = hash64((canonical ? own : other) + "|" + Math.round(canonicalOutcome * 1000));
+            canonicalSide[i] = canonical;
+        }
+
+        Integer[] order = new Integer[n];
+        for (int i = 0; i < n; i++) order[i] = i;
+        java.util.Arrays.sort(order, (x, y) -> {
+            int c = Long.compare(hash[x], hash[y]);
+            return c != 0 ? c : Integer.compare(x, y);
+        });
+
+        int[] partner = new int[n];
+        java.util.Arrays.fill(partner, -1);
+        java.util.ArrayDeque<Integer> waitingA = new java.util.ArrayDeque<>();
+        java.util.ArrayDeque<Integer> waitingB = new java.util.ArrayDeque<>();
+        for (int r = 0; r < n; r++) {
+            int i = order[r];
+            if (r > 0 && hash[order[r - 1]] != hash[i]) { waitingA.clear(); waitingB.clear(); }
+            java.util.ArrayDeque<Integer> own = canonicalSide[i] ? waitingA : waitingB;
+            java.util.ArrayDeque<Integer> opposite = canonicalSide[i] ? waitingB : waitingA;
+            if (opposite.isEmpty()) {
+                own.add(i);
             } else {
                 int j = opposite.poll();
                 partner[i] = j;
@@ -605,6 +623,17 @@ public final class PositionLoader {
             else if (partner[i] > i) groups.add(new int[]{i, partner[i]});
         }
         return groups;
+    }
+
+    /** FNV-1a over the characters with a final avalanche; collisions are far below one in 10^9 for a million keys. */
+    private static long hash64(String s) {
+        long h = 0xcbf29ce484222325L;
+        for (int i = 0; i < s.length(); i++) {
+            h ^= s.charAt(i);
+            h *= 0x100000001b3L;
+        }
+        h ^= h >>> 33; h *= 0xff51afd7ed558ccdL; h ^= h >>> 33; h *= 0xc4ceb9fe1a85ec53L; h ^= h >>> 33;
+        return h;
     }
 
     /** Position, side to move, castling rights (sorted) and en passant square; the move counters are left out. */
