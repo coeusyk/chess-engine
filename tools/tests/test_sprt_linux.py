@@ -143,7 +143,7 @@ class ArgumentArray(unittest.TestCase):
             return found
 
         start = text.index("$ccArgs = @(")
-        end = text.index("if ($openingsArgs.Count -gt 0)")
+        end = text.index("if ($openingsArgs.Count -gt 0)", start)
         body = tokens(text[start:end])
         openings_match = re.search(r'\$openingsArgs = @\((\s*"-openings".*?)\)', text, re.S)
         self.assertIsNotNone(openings_match, "sprt.ps1 no longer builds an -openings group the way this test parses it")
@@ -444,6 +444,17 @@ class DifferentialAgainstSprtPs1(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         args = self.load(path)["Arguments"]
         self.assertEqual(args[args.index("-openings") + 1], f"file={literal_book}")
+
+        bracketed_dir = self.ws.dir / "runner [stage]"
+        bracketed_dir.mkdir()
+        self.runner = bracketed_dir / PS1.name
+        shutil.copyfile(PS1, self.runner)
+        default_book = bracketed_dir / "noob_3moves.epd"
+        shutil.copyfile(literal_book, default_book)
+        done, path = self.ps_manifest(["-StrictInputs"], "default-book.json", book=False)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        args = self.load(path)["Arguments"]
+        self.assertEqual(args[args.index("-openings") + 1], f"file={default_book}")
 
     def test_release_log_watcher_drains_the_last_unterminated_line_after_exit(self):
         common = ps_quote(ROOT / "tools/release-strength-sprt-common.ps1")

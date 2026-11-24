@@ -157,7 +157,8 @@ if ($AllowStartpos -and $PSBoundParameters.ContainsKey('OpeningsFile')) {
 }
 if (-not $AllowStartpos -and $OpeningsFile -eq "") {
     $defaultBook = Join-Path $PSScriptRoot 'noob_3moves.epd'
-    if (Test-Path $defaultBook) { $OpeningsFile = $defaultBook }
+    $hasDefaultBook = if ($StrictInputs) { Test-Path -LiteralPath $defaultBook -PathType Leaf } else { Test-Path $defaultBook }
+    if ($hasDefaultBook) { $OpeningsFile = $defaultBook }
 }
 $openingsArgs = @()
 # Fail closed: an explicitly requested book that is missing must not silently become startpos games.
