@@ -133,6 +133,38 @@ class SingularSearchBoundSemanticsTest {
                 "a forced mate needs no singular extension, and its mate-range window must not be searched");
     }
 
+    /** a8 is square 0 and h1 is square 63. */
+    private static int square(String name) {
+        return (8 - (name.charAt(1) - '0')) * 8 + (name.charAt(0) - 'a');
+    }
+
+    @Test
+    void forcedMatesStillReportTheirExactDistanceAndLine() {
+        // Real positions, searched deep enough for singular verification to be eligible (depth >= 8) with the
+        // table warm from the earlier iterations. Two mates in 1 and a rook-ladder mate in 2 for White; a forced mate is
+        // 2n - 1 plies, so the score is MATE_SCORE - (2n - 1) and the first PV move is the mating key.
+        record Case(String fen, int mateInMoves, String firstMove) { }
+        Case[] cases = {
+                new Case("6k1/5ppp/8/8/8/8/5PPP/3R2K1 w - - 0 1", 1, "d1d8"),
+                new Case("r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4", 1, "h5f7"),
+                new Case("7k/8/8/8/8/8/1R6/R6K w - - 0 1", 2, null), // 1.Rb7 or 1.Ra7, Kg8, then the other rook mates
+        };
+        for (Case c : cases) {
+            Board board = new Board(c.fen());
+            board.setSearchMode(true);
+            SearchResult result = new Searcher().searchDepth(board, 10);
+            assertEquals(MATE_SCORE - (2 * c.mateInMoves() - 1), result.scoreCp(), c.fen());
+            if (c.firstMove() != null) {
+                assertEquals(square(c.firstMove().substring(0, 2)), result.bestMove().startSquare, c.fen());
+                assertEquals(square(c.firstMove().substring(2, 4)), result.bestMove().targetSquare, c.fen());
+            }
+            assertTrue(result.principalVariation().size() >= 2 * c.mateInMoves() - 1, "PV reaches the mate: " + c.fen());
+            assertFalse(result.principalVariation().isEmpty(), c.fen());
+            assertEquals(result.bestMove().startSquare, result.principalVariation().get(0).startSquare, c.fen());
+            assertEquals(result.bestMove().targetSquare, result.principalVariation().get(0).targetSquare, c.fen());
+        }
+    }
+
     private static void assertTtMoveIsLegal(Board board) {
         int[] moves = new int[256];
         int count = MovesGenerator.generate(board, moves);
