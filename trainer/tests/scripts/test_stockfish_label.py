@@ -24,6 +24,7 @@ from scripts.stockfish_label import (
     label_positions,
 )
 from trainer.dataset.mmap_shard import read_shard
+from tests.fixtures.stub_uci_engine import CHECKMATED_FEN
 
 STUB_ENGINE = Path(__file__).parent.parent / "fixtures" / "stub_uci_engine.py"
 
@@ -169,6 +170,20 @@ def test_label_positions_manifest_carries_provenance(tmp_path):
     assert manifest["labeled_count"] == 1
     assert manifest["skipped_count"] == 0
     assert manifest["trainer_commit"]
+
+
+def test_label_positions_preserves_terminal_mate_zero(tmp_path):
+    input_path = tmp_path / "positions.fen"
+    input_path.write_text(f"{CHECKMATED_FEN}\n", encoding="ascii")
+    config = StockfishLabelConfig(engine_path=STUB_ENGINE, nodes=100, timeout_seconds=2.0)
+
+    result = label_positions(config, input_path, tmp_path / "out", dataset_identifier="test-ds")
+
+    assert (result.labeled_count, result.skipped_count) == (1, 0)
+    record, = read_shard(result.shard)
+    assert record.fen == CHECKMATED_FEN
+    assert record.label.eval_mate == 0
+    assert record.label.eval_cp is None
 
 
 def test_label_positions_skips_hanging_positions_and_continues(tmp_path):

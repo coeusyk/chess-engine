@@ -169,7 +169,7 @@ _MAX_RECORD_COUNT = 2**40
 
 
 class ShardFormatError(ValueError):
-    """A shard file's header or layout does not match the V1 format exactly."""
+    """A shard header or record layout disagrees with the declared format version."""
 
 
 @dataclass(frozen=True)
