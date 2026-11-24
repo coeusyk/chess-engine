@@ -179,3 +179,10 @@ def test_nnue_bytes_rejects_out_of_range_output_bias(bad_bias: int):
     object.__setattr__(network, "output_bias", bad_bias)
     with pytest.raises(ValueError, match="int32"):
         _nnue_bytes(network, "u", "c" * 8, 0)
+
+
+def test_write_utf_rejects_nul():
+    # Java's modified UTF-8 writes NUL as C0 80, plain UTF-8 as 00, so a NUL is not wire-compatible.
+    with pytest.raises(ValueError, match="NUL"):
+        _write_utf("ab\x00c")
+    assert _write_utf("abc")[2:] == b"abc"

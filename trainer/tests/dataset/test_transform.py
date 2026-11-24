@@ -62,3 +62,28 @@ def test_balance_phases_caps_each_bucket_independently():
     result = list(transform(records))
     assert sum(1 for r in result if r.fen == opening) == 3
     assert sum(1 for r in result if r.fen == endgame) == 2
+
+
+def test_position_key_is_placement_and_side_to_move_only():
+    from trainer.dataset.transform import position_key
+
+    base = "4k3/8/8/8/8/8/4Q3/4K3 w - - 0 1"
+    assert position_key(base) == "4k3/8/8/8/8/8/4Q3/4K3 w"
+    assert position_key(base.replace("0 1", "37 60")) == position_key(base)  # clocks differ
+    assert position_key("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1") == position_key(
+        "r3k2r/8/8/8/8/8/8/R3K2R w - - 0 1"
+    )  # castling rights differ
+    assert position_key(base.replace(" w ", " b ")) != position_key(base)  # side to move matters
+    assert position_key("4k3/8/8/8/8/8/3Q4/4K3 w - - 0 1") != position_key(base)  # placement matters
+
+
+def test_deduplicate_treats_the_same_position_with_different_clocks_as_a_duplicate():
+    # #275: keying on the full FEN let a position re-appear with a different halfmove/fullmove counter.
+    first = "4k3/8/8/8/8/8/4Q3/4K3 w - - 0 1"
+    records = [
+        _record(first),
+        _record("4k3/8/8/8/8/8/4Q3/4K3 w - - 12 40"),
+        _record("4k3/8/8/8/8/8/4Q3/4K3 b - - 0 1"),
+    ]
+    result = list(deduplicate(records))
+    assert [r.fen for r in result] == [first, "4k3/8/8/8/8/8/4Q3/4K3 b - - 0 1"], "the first record wins"

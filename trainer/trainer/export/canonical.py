@@ -129,16 +129,16 @@ def checkpoint_to_canonical(checkpoint: Dict[str, Any]) -> CanonicalNetwork:
     config = checkpoint["config"]
     hidden_width = config["hidden_width"]
 
-    ft_weights = state_dict["ft.weight"].detach().numpy().astype(np.float32)
-    ft_biases = state_dict["ft_bias"].detach().numpy().astype(np.float32)
+    ft_weights = state_dict["ft.weight"].detach().cpu().numpy().astype(np.float32)
+    ft_biases = state_dict["ft_bias"].detach().cpu().numpy().astype(np.float32)
 
     # output_layer.weight: shape [1, 2*hidden_width]. Columns [0:hidden_width] are
     # "us", [hidden_width:2*hidden_width] are "them" -- exactly the order
     # NnueNet.forward() concatenates activation_us/activation_them in
     # (trainer/trainer/model/network.py), matching NnueNetwork.java's perspective-major
     # outputWeights layout (Section 8).
-    output_weight = state_dict["output_layer.weight"].detach().numpy().astype(np.float32)
-    output_bias_tensor = state_dict["output_layer.bias"].detach().numpy().astype(np.float32)
+    output_weight = state_dict["output_layer.weight"].detach().cpu().numpy().astype(np.float32)
+    output_bias_tensor = state_dict["output_layer.bias"].detach().cpu().numpy().astype(np.float32)
     output_weights = np.stack([output_weight[0, :hidden_width], output_weight[0, hidden_width:]])
 
     return CanonicalNetwork(

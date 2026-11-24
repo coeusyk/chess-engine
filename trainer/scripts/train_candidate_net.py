@@ -37,6 +37,7 @@ import torch
 
 from trainer.contracts import DatasetProvider, PositionRecord
 from trainer.dataset import balance_phases, deduplicate, phase_of
+from trainer.dataset.transform import position_key
 from trainer.dataset.stockfish_provider import StockfishLabeledProvider
 from trainer.dataset.lichess_perspective import require_mover_relative_stage1
 from trainer.dataset.text_provider import TextDatasetProvider
@@ -89,8 +90,26 @@ def report_dataset_quality(records: List[PositionRecord]) -> None:
     )
 
 
+def _drop_duplicate_positions(tagged: list) -> list:
+    """Keeps the first entry for each `position_key`, in the given order (Stage 1 is loaded before
+    Stage 2, so a position present in both keeps its Stage 1 label). Prints how many were removed.
+    Entries are `(record, identifier, stage)` tuples.
+    """
+    seen: set = set()
+    unique = []
+    for entry in tagged:
+        key = position_key(entry[0].fen)
+        if key not in seen:
+            seen.add(key)
+            unique.append(entry)
+    removed = len(tagged) - len(unique)
+    if removed:
+        print(f"combine_and_split: removed {removed} duplicate positions before the split")
+    return unique
+
+
 def combine_and_split(
-    stage1_dir: Path, stage2_dir: Path, seed: int
+    stage1_dir: Path, stage2_dir: Path, seed: int, drop_duplicates: bool = False
 ) -> Tuple[List[PositionRecord], List[PositionRecord], List[DatasetComposition]]:
     """Loads both real E-2 datasets, shuffles their union (tagged by origin) with
     `seed`, and splits off `HELD_OUT_FRACTION` for validation. Returns
@@ -98,6 +117,12 @@ def combine_and_split(
     from `training_records`' *actual* post-split origins (not the pre-split union),
     so the manifest's recorded proportions always match what was really trained on,
     even if the two sources are unequal-sized or the held-out fraction changes.
+
+    `drop_duplicates` (default False) removes repeated positions before the shuffle, so no position
+    is in both sets. It is off by default on purpose: many existing experiment and evaluation
+    scripts call this with a fixed seed to reproduce the exact split a frozen checkpoint was trained
+    on, and removing records first would change which positions are held out. New training runs
+    (this module's `main`) turn it on. (#275)
     """
     # Stage 1 (Lichess) only: refuse legacy White-perspective data before any label is read.
     require_mover_relative_stage1(stage1_dir)
@@ -114,6 +139,12 @@ def combine_and_split(
         raise ValueError("combine_and_split found no records in either stage1_dir or stage2_dir")
 
     report_dataset_quality([r for r, _, _ in tagged])
+
+    # The report above only counts duplicates. They are also removed here, before the split, so the
+    # same position (same placement and side to move) cannot be in both the training and the
+    # held-out set, which would make the held-out loss measure memorisation. (#275)
+    if drop_duplicates:
+        tagged = _drop_duplicate_positions(tagged)
 
     random.Random(seed).shuffle(tagged)
 
@@ -229,7 +260,7 @@ def main() -> int:
     args = parser.parse_args()
 
     training_records, held_out_records, dataset_composition = combine_and_split(
-        args.stage1_dir, args.stage2_dir, args.seed
+        args.stage1_dir, args.stage2_dir, args.seed, drop_duplicates=True
     )
     print(f"training records: {len(training_records)}, held-out records: {len(held_out_records)}")
 

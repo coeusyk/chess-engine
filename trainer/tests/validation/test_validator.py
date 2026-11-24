@@ -184,3 +184,35 @@ def test_eval_scale_check_runs_against_the_real_classical_corpus(tmp_path: Path)
 
     assert result.position_count == len(records)
     assert result.mean_absolute_difference_cp == pytest.approx(result.mean_absolute_difference_cp)  # finite, no NaN
+
+
+def _wdl_only(fen: str, wdl: float):
+    from trainer.contracts import PositionLabel, PositionMetadata, PositionRecord
+
+    return PositionRecord(fen=fen, label=PositionLabel(wdl=wdl), metadata=PositionMetadata())
+
+
+def test_cp_metrics_skip_wdl_only_records_with_a_warning(tmp_path: Path):
+    # #275: target_cp raises for a WDL-only record, so a mixed held-out set used to crash the validator.
+    model = _trained_model(tmp_path)
+    cp_records = _records()
+    mixed = cp_records + [_wdl_only("4k3/8/8/8/8/8/4Q3/4K3 w - - 0 1", 1.0), _wdl_only("4k3/8/8/8/8/8/4q3/4K3 b - - 0 1", 0.0)]
+
+    with pytest.warns(UserWarning, match="skipped 2 of"):
+        report = evaluate_held_out(model, mixed, k=1.0)
+    assert report.position_count == len(cp_records)
+    assert report.held_out_loss == pytest.approx(evaluate_held_out(model, cp_records, k=1.0).held_out_loss)
+
+    with pytest.warns(UserWarning, match="fit_affine_calibration: skipped 2"):
+        fit_affine_calibration(model, mixed)
+    with pytest.warns(UserWarning, match="calibration_report: skipped 2"):
+        calibration_report(model, mixed)
+
+
+@pytest.mark.parametrize("function", [evaluate_held_out, fit_affine_calibration, calibration_report])
+def test_a_set_with_only_wdl_labels_is_a_clear_error_not_a_target_cp_crash(tmp_path: Path, function):
+    model = _trained_model(tmp_path)
+    wdl_only = [_wdl_only("4k3/8/8/8/8/8/4Q3/4K3 w - - 0 1", 1.0)]
+    args = (model, wdl_only, 1.0) if function is evaluate_held_out else (model, wdl_only)
+    with pytest.warns(UserWarning), pytest.raises(ValueError, match="eval_cp or eval_mate"):
+        function(*args)
