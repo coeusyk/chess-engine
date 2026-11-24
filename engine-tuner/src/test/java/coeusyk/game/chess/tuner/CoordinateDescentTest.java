@@ -92,4 +92,23 @@ class CoordinateDescentTest {
                 "MSE must not increase after tuning drawn positions (" +
                         mseBefore + " → " + mseFinal + ")");
     }
+
+    @Test
+    void rejectedMaterialTrialLeavesTheOrderingNeighbourUntouched() {
+        // No knights or bishops on the board, so changing either value never changes the MSE and every
+        // trial of them is rejected. With the knight one below the bishop, trying knight + 1 makes
+        // enforceMaterialOrdering push the bishop up. Undoing only the knight used to leave the bishop moved.
+        List<LabelledPosition> positions = List.of(
+                new LabelledPosition(TunerPosition.from(new Board("4k3/pppp4/8/8/8/8/PPPP4/R3K2R w - - 0 1")), 1.0),
+                new LabelledPosition(TunerPosition.from(new Board("r3k2r/pppp4/8/8/8/8/PPPP4/4K3 b - - 0 1")), 0.0));
+        double[] params = EvalParams.extractFromCurrentEval();
+        params[2] = 390;   // knight MG
+        params[4] = 391;   // bishop MG, one above the knight
+        double[] before = params.clone();
+
+        double[] tuned = CoordinateDescent.tune(positions, params, 1.0, 1, false);
+
+        assertEquals(before[2], tuned[2], "knight MG must not move, it cannot change the MSE");
+        assertEquals(before[4], tuned[4], "bishop MG must not be left raised by a rejected knight trial");
+    }
 }

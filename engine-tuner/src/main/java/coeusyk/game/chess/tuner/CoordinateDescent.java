@@ -87,6 +87,9 @@ public final class CoordinateDescent {
             for (int i = 0; i < params.length; i++) {
                 double lo = EvalParams.PARAM_MIN[i];
                 double hi = EvalParams.PARAM_MAX[i];
+                // enforceMaterialOrdering can move other material values during a trial, so a rejected
+                // trial restores the whole array and not just parameter i (#274).
+                double[] saved = params.clone();
 
                 // Try +1 (only if within upper bound)
                 if (params[i] < hi) {
@@ -98,8 +101,7 @@ public final class CoordinateDescent {
                         improved = true;
                         continue;
                     }
-                    params[i] -= 1.0;
-                    EvalParams.enforceMaterialOrdering(params);
+                    System.arraycopy(saved, 0, params, 0, params.length);
                 }
 
                 // Try -1 (only if within lower bound)
@@ -112,8 +114,7 @@ public final class CoordinateDescent {
                         improved = true;
                         continue;
                     }
-                    params[i] += 1.0;
-                    EvalParams.enforceMaterialOrdering(params);
+                    System.arraycopy(saved, 0, params, 0, params.length);
                 }
             }
 
