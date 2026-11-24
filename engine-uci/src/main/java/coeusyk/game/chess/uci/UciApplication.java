@@ -552,6 +552,8 @@ public class UciApplication {
         } else if ("syzygyonline".equals(optionNameLower)) {
             syzygyOnline = "true".equalsIgnoreCase(valuePart);
             if (!syzygyOnline) {
+                // The worker creates and uses the prober, so wait for it before closing, as Hash does.
+                drainSearch();
                 closeOnlineSyzygyProber();
             }
         } else if ("syzygyprobedepth".equals(optionNameLower)) {

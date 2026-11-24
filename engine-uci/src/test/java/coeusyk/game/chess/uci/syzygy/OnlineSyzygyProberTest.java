@@ -95,6 +95,27 @@ class OnlineSyzygyProberTest {
     }
 
     @Test
+    void aFailedLookupIsNotRetriedOnEveryRootProbeButExpires() throws Exception {
+        AtomicInteger hits = new AtomicInteger();
+        server.createContext("/down", exchange -> {
+            hits.incrementAndGet();
+            exchange.sendResponseHeaders(503, -1);
+            exchange.close();
+        });
+        String down = "http://127.0.0.1:" + server.getAddress().getPort() + "/down";
+
+        try (OnlineSyzygyProber prober = new OnlineSyzygyProber(true, down, java.time.Duration.ofMillis(300))) {
+            for (int depth = 1; depth <= 5; depth++) {
+                assertEquals(DTZResult.INVALID, prober.probeDTZ(new Board(KQK)), "depth " + depth);
+            }
+            assertEquals(1, hits.get(), "one failure must cover the iterations that follow it");
+            Thread.sleep(400);
+            prober.probeDTZ(new Board(KQK));
+            assertEquals(2, hits.get(), "the failure memory must expire");
+        }
+    }
+
+    @Test
     void asksTheSearchToProbeAtTheRootOnly() {
         try (OnlineSyzygyProber prober = new OnlineSyzygyProber(true, endpoint)) {
             assertFalse(prober.allowsInteriorProbing());
