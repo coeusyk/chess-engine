@@ -63,6 +63,24 @@ def game(white, result, fen):
 
 
 class Analyzer(unittest.TestCase):
+    def test_an_unscored_attempt_has_no_point_estimate_or_reconciled_llr(self):
+        pgn = game("NEW", "*", "A w - - 0 1")
+        report = analyze.analyze("SPRT: llr 0.00", pgn, 0, 20, 0.05, 0.05)
+        self.assertEqual((report["scored_games"], report["cancelled_games"]), (0, 1))
+        self.assertIsNone(report["game_level"]["score"])
+        self.assertIsNone(report["game_level"]["elo_95_low"])
+        self.assertIsNone(report["llr_reconciliation"]["model_llr"])
+        self.assertIsNone(report["llr_reconciliation"]["agrees_with_cutechess_log"])
+
+    def test_sample_variance_uses_n_minus_one_without_changing_legacy_intervals(self):
+        counts = {0.0: 1, 0.5: 2, 1.0: 1}
+        legacy = analyze.summarize(counts, 0, 20)
+        sample = analyze.summarize(counts, 0, 20, sample_variance=True)
+        self.assertAlmostEqual(legacy["elo_95_low"], analyze.elo_of(0.5 - 1.96 * (0.5 / 4 / 4) ** 0.5))
+        self.assertAlmostEqual(sample["elo_95_low"], analyze.elo_of(0.5 - 1.96 * (0.5 / 3 / 4) ** 0.5))
+        single = analyze.summarize({0.5: 1}, 0, 20, sample_variance=True)
+        self.assertEqual(single["score"], 0.5)
+        self.assertIsNone(single["elo_95_low"])
     def test_reproduces_the_archived_phase21_result(self):
         r = analyze.analyze((PHASE21 / "match.log").read_text(encoding="utf-8", errors="replace"),
                             (PHASE21 / "match.pgn").read_text(encoding="utf-8", errors="replace"), 0, 10, 0.05, 0.05)

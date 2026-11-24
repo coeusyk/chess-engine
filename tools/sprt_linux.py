@@ -267,7 +267,7 @@ def parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     p.add_argument("--tc", default="60+0.6")
     p.add_argument("--concurrency", type=int, default=2)
     p.add_argument("--engine-threads", type=int, default=1)
-    p.add_argument("--min-games", type=int, default=0)
+    p.add_argument("--min-games", type=int, default=0, help="Legacy default-cap hint. It never delays an SPRT stop.")
     p.add_argument("--max-games", type=int, default=0)
     p.add_argument("--openings-file", default=None)
     p.add_argument("--allow-startpos", action="store_true")

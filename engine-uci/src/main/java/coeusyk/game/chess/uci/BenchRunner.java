@@ -18,6 +18,7 @@ import java.util.function.Supplier;
  * <p>Usage:
  * <pre>
  *   java -jar engine-uci-shaded.jar --bench [depth]
+ *   java -jar engine-uci-shaded.jar --bench-raw [depth] --bench-timing
  *   java -jar engine-uci-shaded.jar --bench [depth] --eval-type NNUE --eval-file &lt;path&gt;
  *   # or, inside a UCI session:
  *   bench [depth]
@@ -170,11 +171,20 @@ public class BenchRunner {
      */
     public void run(int depth, Supplier<EvaluatorStrategy> evaluatorFactory, String evaluatorLabel,
                      boolean instrumentationEnabled) {
+        run(depth, evaluatorFactory, evaluatorLabel, instrumentationEnabled, false);
+    }
+
+    void run(int depth, Supplier<EvaluatorStrategy> evaluatorFactory, String evaluatorLabel,
+             boolean instrumentationEnabled, boolean reportSearchTiming) {
         long totalNodes = 0L;
         long totalEvalNanos = 0L;
         long totalAccumulatorNanos = 0L;
         long totalPvNodeEvals = 0L;
         long totalCutNodeEvals = 0L;
+        long searchNanos = 0L;
+        long quiescenceNodes = 0L;
+        int minReachedDepth = Integer.MAX_VALUE;
+        int maxReachedDepth = 0;
         long startMs = System.currentTimeMillis();
 
         // Validate the entire suite before searching. An illegal FEN must be
@@ -186,26 +196,37 @@ public class BenchRunner {
             }
         }
 
+        if (reportSearchTiming) {
+            long warmupStartMs = System.currentTimeMillis();
+            int warmupDepth = Math.min(depth, 8);
+            for (String fen : BENCH_FENS) {
+                Searcher searcher = newSearcher(evaluatorFactory, instrumentationEnabled);
+                Board board = new Board(fen);
+                board.setSearchMode(true);
+                searcher.searchDepth(board, warmupDepth);
+            }
+            startMs += System.currentTimeMillis() - warmupStartMs;
+        }
+
         System.out.printf(Locale.US,
             "Bench   : depth %d | hash %d MB | %d positions | evaluator %s | instrumentation %s%n",
             depth, BENCH_HASH_MB, BENCH_FENS.length, evaluatorLabel,
             instrumentationEnabled ? "on" : "off");
 
         for (int i = 0; i < BENCH_FENS.length; i++) {
-            // Fresh Searcher → killers, history, correction-history all zeroed.
-            // setTranspositionTableSizeMb resizes the private 1 MB placeholder TT
-            // that the default constructor creates, so there is no TT carry-over.
-            Searcher searcher = new Searcher();
-            searcher.setTranspositionTableSizeMb(BENCH_HASH_MB);
-            if (evaluatorFactory != null) {
-                searcher.setEvaluatorStrategy(evaluatorFactory.get());
-            }
-            searcher.setInstrumentationEnabled(instrumentationEnabled);
+            Searcher searcher = newSearcher(evaluatorFactory, instrumentationEnabled);
 
             Board board = new Board(BENCH_FENS[i]);
             board.setSearchMode(true);
 
+            long searchStart = reportSearchTiming ? System.nanoTime() : 0L;
             SearchResult result = searcher.searchDepth(board, depth);
+            if (reportSearchTiming) {
+                searchNanos += System.nanoTime() - searchStart;
+                quiescenceNodes += result.quiescenceNodes();
+                minReachedDepth = Math.min(minReachedDepth, result.depthReached());
+                maxReachedDepth = Math.max(maxReachedDepth, result.depthReached());
+            }
             totalNodes += result.nodesVisited();
             totalEvalNanos += result.evalNanos();
             totalAccumulatorNanos += result.accumulatorNanos();
@@ -229,6 +250,21 @@ public class BenchRunner {
         System.out.printf(Locale.US, "NPS   : %d%n",         nps);
         System.out.printf(Locale.US, "Eval time: %.1f%% | Accumulator-update time: %.1f%% | PV evals: %d | Cut evals: %d%n",
             evalPct, accPct, totalPvNodeEvals, totalCutNodeEvals);
+        if (reportSearchTiming) {
+            System.out.printf(Locale.US, "Search-only: %d ns | nodes=%d | qnodes=%d | reached-depth=%d..%d | nps=%d%n",
+                searchNanos, totalNodes, quiescenceNodes, minReachedDepth, maxReachedDepth,
+                (long) (totalNodes * 1_000_000_000.0 / Math.max(1L, searchNanos)));
+        }
         System.out.flush();
+    }
+
+    private Searcher newSearcher(Supplier<EvaluatorStrategy> evaluatorFactory, boolean instrumentationEnabled) {
+        Searcher searcher = new Searcher();
+        searcher.setTranspositionTableSizeMb(BENCH_HASH_MB);
+        if (evaluatorFactory != null) {
+            searcher.setEvaluatorStrategy(evaluatorFactory.get());
+        }
+        searcher.setInstrumentationEnabled(instrumentationEnabled);
+        return searcher;
     }
 }

@@ -143,7 +143,7 @@ class ArgumentArray(unittest.TestCase):
             return found
 
         start = text.index("$ccArgs = @(")
-        end = text.index("if ($openingsArgs.Count -gt 0)")
+        end = text.index("if ($openingsArgs.Count -gt 0)", start)
         body = tokens(text[start:end])
         openings_match = re.search(r'\$openingsArgs = @\((\s*"-openings".*?)\)', text, re.S)
         self.assertIsNotNone(openings_match, "sprt.ps1 no longer builds an -openings group the way this test parses it")
@@ -366,13 +366,17 @@ class DifferentialAgainstSprtPs1(unittest.TestCase):
     def setUp(self):
         self.assertIsNotNone(PWSH, "REQUIRE_PWSH=1 but pwsh is not installed")
         self.ws = Workspace(self)
+        self.runner = self.ws.dir / PS1.name
+        shutil.copyfile(PS1, self.runner)
 
-    def ps_manifest(self, ps_extra, manifest_name="ps.json", expected=None):
+    def ps_manifest(self, ps_extra, manifest_name="ps.json", expected=None, book=True):
         ws = self.ws
         manifest = ws.dir / manifest_name
-        parts = ["&", ps_quote(PS1), "-New", ps_quote(ws.new), "-Old", ps_quote(ws.old), "-Tag", "x",
-                 "-OpeningsFile", ps_quote(ws.book), "-LogPath", ps_quote(ws.log), "-PgnPath", ps_quote(ws.pgn),
+        parts = ["&", ps_quote(self.runner), "-New", ps_quote(ws.new), "-Old", ps_quote(ws.old), "-Tag", "x",
+                 "-LogPath", ps_quote(ws.log), "-PgnPath", ps_quote(ws.pgn),
                  "-PrepareOnly", "-ArgumentManifestPath", ps_quote(manifest)] + ps_extra
+        if book:
+            parts += ["-OpeningsFile", ps_quote(ws.book)]
         if expected:
             parts += ["-ExpectedArgumentManifestPath", ps_quote(expected)]
         env = dict(os.environ, CUTECHESS=str(ws.cutechess))
@@ -404,6 +408,68 @@ class DifferentialAgainstSprtPs1(unittest.TestCase):
                 ps, linux = self.load(ps_path), self.load(linux_path)
                 self.assertEqual(ps["Executable"], linux["Executable"])
                 self.assertEqual(ps["Arguments"], linux["Arguments"])
+
+    def test_native_strict_inputs_require_a_book_or_an_explicit_startpos_choice(self):
+        legacy, legacy_path = self.ps_manifest([], "legacy.json", book=False)
+        self.assertEqual(legacy.returncode, 0, legacy.stderr)
+        self.assertNotIn("-openings", self.load(legacy_path)["Arguments"])
+        missing, rejected_path = self.ps_manifest(["-StrictInputs"], "missing.json", book=False)
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertIn("No opening book", missing.stderr)
+        self.assertFalse(rejected_path.exists())
+        shutil.copyfile(self.ws.book, self.ws.dir / "noob_3moves.epd")
+        allowed, allowed_path = self.ps_manifest(["-StrictInputs", "-AllowStartpos"], "allowed.json", book=False)
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+        self.assertEqual(self.load(allowed_path), self.load(legacy_path))
+        conflict, _ = self.ps_manifest(["-StrictInputs", "-AllowStartpos"], "conflict.json")
+        self.assertNotEqual(conflict.returncode, 0)
+        self.assertIn("cannot be combined", conflict.stderr)
+        strict, strict_path = self.ps_manifest(["-StrictInputs"], "strict.json")
+        ordinary, ordinary_path = self.ps_manifest([], "ordinary.json")
+        self.assertEqual(strict.returncode, 0, strict.stderr)
+        self.assertEqual(ordinary.returncode, 0, ordinary.stderr)
+        self.assertEqual(self.load(strict_path), self.load(ordinary_path))
+
+    def test_native_strict_inputs_reject_a_misleading_minimum(self):
+        done, path = self.ps_manifest(["-StrictInputs", "-MinGames", "100"], "minimum.json")
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("-MaxGames", done.stderr)
+        self.assertFalse(path.exists())
+
+    def test_native_strict_inputs_keep_a_literal_opening_book_path(self):
+        literal_book = self.ws.dir / "openings [stage].epd"
+        self.ws.book.rename(literal_book)
+        self.ws.book = literal_book
+        done, path = self.ps_manifest(["-StrictInputs"], "literal-book.json")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        args = self.load(path)["Arguments"]
+        self.assertEqual(args[args.index("-openings") + 1], f"file={literal_book}")
+
+        bracketed_dir = self.ws.dir / "runner [stage]"
+        bracketed_dir.mkdir()
+        self.runner = bracketed_dir / PS1.name
+        shutil.copyfile(PS1, self.runner)
+        default_book = bracketed_dir / "noob_3moves.epd"
+        shutil.copyfile(literal_book, default_book)
+        done, path = self.ps_manifest(["-StrictInputs"], "default-book.json", book=False)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        args = self.load(path)["Arguments"]
+        self.assertEqual(args[args.index("-openings") + 1], f"file={default_book}")
+
+    def test_release_log_watcher_drains_the_last_unterminated_line_after_exit(self):
+        common = ps_quote(ROOT / "tools/release-strength-sprt-common.ps1")
+        command = f"""$ErrorActionPreference = 'Stop'
+. {common}
+$bytes = [Text.Encoding]::UTF8.GetBytes("Final score`r`nFinished match")
+$reader = [IO.StreamReader]::new([IO.MemoryStream]::new($bytes))
+$child = [pscustomobject]@{{ HasExited = $true }}
+$child | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value {{}}
+try {{ Watch-ReleaseSprtLog $reader $child }} finally {{ $reader.Dispose() }}
+"""
+        done = subprocess.run([str(PWSH), "-NoProfile", "-Command", command], cwd=ROOT,
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.splitlines(), ["Final score", "Finished match"])
 
     def test_each_launcher_accepts_the_others_manifest_and_refuses_a_changed_one(self):
         done, ps_path = self.ps_manifest([], "ps.json")

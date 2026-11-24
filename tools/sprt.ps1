@@ -39,7 +39,13 @@
     Number of threads per engine instance (default 1).
 
 .PARAMETER MinGames
-    Minimum game count before SPRT can stop (default 0 = no minimum).
+    Legacy cap hint. With MaxGames omitted, can raise its default of 20,000. It never delays an SPRT stop.
+
+.PARAMETER StrictInputs
+    Require a usable opening book or explicit AllowStartpos, and use MaxGames for the game cap.
+
+.PARAMETER AllowStartpos
+    Deliberately start every game from the initial position. Cannot be combined with OpeningsFile.
 
 .PARAMETER OpeningsFile
     Path to an EPD opening book. Auto-detected from tools/noob_3moves.epd if empty.
@@ -90,6 +96,8 @@ param(
     [int]   $MinGames     = 0,
     [int]   $MaxGames     = 0,
     [string]$OpeningsFile = "",
+    [switch]$StrictInputs,
+    [switch]$AllowStartpos,
     [ValidateSet('random','sequential')][string]$OpeningOrder = 'random',
     [string[]]$NewOptions = @(),
     [string[]]$OldOptions = @(),
@@ -141,16 +149,29 @@ $alpha = $Alpha / $BonferroniM
 $beta  = $Beta  / $BonferroniM
 
 # ─── Opening book ────────────────────────────────────────────────────────────
-if ($OpeningsFile -eq "") {
+if ($StrictInputs -and $MinGames -ne 0) {
+    throw 'MinGames does not impose a stop barrier. Use -MaxGames to set the cap.'
+}
+if ($AllowStartpos -and $PSBoundParameters.ContainsKey('OpeningsFile')) {
+    throw 'AllowStartpos cannot be combined with OpeningsFile.'
+}
+if (-not $AllowStartpos -and $OpeningsFile -eq "") {
     $defaultBook = Join-Path $PSScriptRoot 'noob_3moves.epd'
-    if (Test-Path $defaultBook) { $OpeningsFile = $defaultBook }
+    $hasDefaultBook = if ($StrictInputs) { Test-Path -LiteralPath $defaultBook -PathType Leaf } else { Test-Path $defaultBook }
+    if ($hasDefaultBook) { $OpeningsFile = $defaultBook }
 }
 $openingsArgs = @()
 # Fail closed: an explicitly requested book that is missing must not silently become startpos games.
 if ($PSBoundParameters.ContainsKey('OpeningsFile') -and ($OpeningsFile -eq "" -or -not (Test-Path -LiteralPath $OpeningsFile -PathType Leaf))) {
     throw "Opening book not found: $OpeningsFile"
 }
-if ($OpeningsFile -ne "" -and (Test-Path $OpeningsFile)) {
+if ($StrictInputs -and -not $AllowStartpos) {
+    if ($OpeningsFile -eq '' -or -not (Test-Path -LiteralPath $OpeningsFile -PathType Leaf)) {
+        throw 'No opening book. Pass -OpeningsFile or explicitly opt in to -AllowStartpos.'
+    }
+    if ((Get-Item -LiteralPath $OpeningsFile).Length -eq 0) { throw "Opening book is empty: $OpeningsFile" }
+}
+if ($OpeningsFile -ne "" -and ($StrictInputs -or (Test-Path $OpeningsFile))) {
     $openingsArgs = @("-openings", "file=$OpeningsFile", "format=epd", "order=$OpeningOrder", "plies=4")
 }
 
@@ -186,12 +207,12 @@ Write-Host "NEW : $($NewResolved.Path)"
 Write-Host "OLD : $($OldResolved.Path)"
 Write-Host "PGN : $PgnOut"
 Write-Host "LOG : $LogOut"
-if ($OpeningsFile -ne "" -and (Test-Path $OpeningsFile)) {
+if ($openingsArgs.Count -gt 0) {
     Write-Host "Opening book: $OpeningsFile"
 } else {
     Write-Host "Opening book: (none)"
 }
-if ($MinGames -gt 0) { Write-Host "Min games   : $MinGames" }
+if ($MinGames -gt 0) { Write-Host "Legacy cap hint (not a stop barrier): $MinGames" }
 Write-Host ""
 
 # ─── Build cutechess-cli arguments ───────────────────────────────────────────

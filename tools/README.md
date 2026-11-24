@@ -142,6 +142,11 @@ The PowerShell runner also accepts optional `-LogPath <path>` and
 exact paths; omit both to retain the timestamped defaults above. Callers must
 not identify authoritative artifacts by selecting the newest matching file.
 
+For new PowerShell runs, pass `-StrictInputs` and `-OpeningsFile <path>`.
+`-AllowStartpos` explicitly selects the initial position for every game.
+`-MaxGames` sets a cap. The legacy `-MinGames` option can raise the default
+cap and does not delay a sequential stop.
+
 **Verifying the actual Concurrency/Threads used for a run:** `tools/sprt.ps1` prints them as
 the first line of both its console output and the run's own `.log` file
 (`SPRT: new vs old ... concurrency=... threads/engine=...`) — check there rather than assuming
@@ -198,6 +203,14 @@ The nightly CI workflow downloads the JAR attached to the latest release tag aut
 ---
 
 ## Bench Baseline Recording
+
+For a relative performance comparison, add `--bench-timing` to `--bench-raw`
+or `--bench`. It warms the JVM with one pass at depth at most 8, then reports
+the usual wall-time metric and a search-only metric for the measured pass.
+Search-only NPS divides total main-search nodes by the sum of the search
+intervals. Quiescence nodes and achieved depths are reported separately.
+Use a fresh `Searcher` for each position in both passes. The native NPS floor
+still uses its original benchmark protocol.
 
 After every significant performance change, run:
 ```bash

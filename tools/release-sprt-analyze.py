@@ -1,6 +1,6 @@
 """Post-match reconciliation and reporting for the v0.5.7 vs v0.6.0 release SPRT. Read-only.
 
-    python tools/release-sprt-analyze.py <run-dir> [--elo0 0 --elo1 20 --alpha 0.05 --beta 0.05] [--openings FILE]
+    python tools/release-sprt-analyze.py <run-dir> [--elo0 0 --elo1 20 --alpha 0.05 --beta 0.05] [--openings FILE] [--sample-variance]
 
 The opening list is chosen from the Kind recorded in the run's identity.json (production list for a run, smoke list for a
 smoke attempt). A smoke attempt is labelled as not a result.
@@ -16,7 +16,8 @@ per class, BayesElo with an estimated draw Elo). It reproduces the archived Phas
 printed). The printed value has two decimals, so the tolerance is 0.01. The Elo intervals are nominal fixed-sample
 intervals: the match stops on an LLR boundary, so their coverage after that stop is not guaranteed to be 95%.
 The pair-level numbers treat the two color-reversed games on one opening as one observation and use a normal
-approximation; Cute Chess has no pair model, so they are descriptive only.
+approximation; Cute Chess has no pair model, so they are descriptive only. Use --sample-variance for new descriptive
+estimates. The default denominator reproduces previously archived reports.
 """
 import argparse
 import json
@@ -61,22 +62,29 @@ def cutechess_llr(wins, losses, draws, elo0, elo1):
     return w * math.log(p1[0] / p0[0]) + l * math.log(p1[1] / p0[1]) + d * math.log(p1[2] / p0[2])
 
 
-def moments(counts_by_value):
+def moments(counts_by_value, *, sample_variance=False):
     n = sum(counts_by_value.values())
+    if not n:
+        return n, None, None
     mean = sum(v * c for v, c in counts_by_value.items()) / n
-    var = sum(c * (v - mean) ** 2 for v, c in counts_by_value.items()) / n
+    denominator = n - 1 if sample_variance else n
+    var = sum(c * (v - mean) ** 2 for v, c in counts_by_value.items()) / denominator if denominator else None
     return n, mean, var
 
 
-def summarize(counts_by_value, elo0, elo1):
-    n, mean, var = moments(counts_by_value)
-    se = math.sqrt(var / n)
+def summarize(counts_by_value, elo0, elo1, *, sample_variance=False):
+    n, mean, var = moments(counts_by_value, sample_variance=sample_variance)
+    se = math.sqrt(var / n) if var is not None else None
     s0, s1 = score_of(elo0), score_of(elo1)
+    interval_basis = "nominal fixed-sample normal approximation; not corrected for sequential stopping"
+    if sample_variance:
+        interval_basis += "; sample variance (n - 1)"
     return {
-        "observations": n, "score": mean, "elo": elo_of(mean),
-        "elo_95_low": elo_of(mean - 1.96 * se), "elo_95_high": elo_of(mean + 1.96 * se),
-        "interval_basis": "nominal fixed-sample normal approximation; not corrected for sequential stopping",
-        "llr_normal_approximation": (s1 - s0) * (2 * mean - s0 - s1) * n / (2 * var) if var > 0 else None,
+        "observations": n, "score": mean, "elo": elo_of(mean) if mean is not None else None,
+        "elo_95_low": elo_of(mean - 1.96 * se) if se is not None else None,
+        "elo_95_high": elo_of(mean + 1.96 * se) if se is not None else None,
+        "interval_basis": interval_basis,
+        "llr_normal_approximation": (s1 - s0) * (2 * mean - s0 - s1) * n / (2 * var) if var else None,
     }
 
 
@@ -111,7 +119,7 @@ def reconcile_openings(games, opening_lines):
     }
 
 
-def analyze(log_text, pgn_text, elo0, elo1, alpha, beta, opening_lines=None):
+def analyze(log_text, pgn_text, elo0, elo1, alpha, beta, opening_lines=None, *, sample_variance=False):
     points = {"1-0": (1.0, 0.0), "0-1": (0.0, 1.0), "1/2-1/2": (0.5, 0.5)}
     game_counts = defaultdict(int)
     pairs = defaultdict(dict)
@@ -139,16 +147,16 @@ def analyze(log_text, pgn_text, elo0, elo1, alpha, beta, opening_lines=None):
            "wins": wins, "draws": draws, "losses": losses,
            "completed_pairs": sum(complete.values()), "unpaired_games": unpaired,
            "pair_points_histogram_0_to_2": {str(k * 2): v for k, v in complete.items()}}
-    out["game_level"] = summarize(game_counts, elo0, elo1)
+    out["game_level"] = summarize(game_counts, elo0, elo1, sample_variance=sample_variance)
     if out["completed_pairs"]:
-        out["pair_level"] = summarize(complete, elo0, elo1)
-    rec = {"model_llr": cutechess_llr(wins, losses, draws, elo0, elo1),
+        out["pair_level"] = summarize(complete, elo0, elo1, sample_variance=sample_variance)
+    rec = {"model_llr": cutechess_llr(wins, losses, draws, elo0, elo1) if out["scored_games"] else None,
            "lower_bound": math.log(beta / (1 - alpha)), "upper_bound": math.log((1 - beta) / alpha), "tolerance": LLR_TOLERANCE}
     llr = re.findall(r"(?m)^SPRT:\s+llr\s+(-?[\d.]+)", log_text)
     if llr:
         rec["log_llr"] = float(llr[-1])
-        rec["difference"] = rec["model_llr"] - rec["log_llr"]
-        rec["agrees_with_cutechess_log"] = abs(rec["difference"]) <= LLR_TOLERANCE
+        rec["difference"] = rec["model_llr"] - rec["log_llr"] if rec["model_llr"] is not None else None
+        rec["agrees_with_cutechess_log"] = abs(rec["difference"]) <= LLR_TOLERANCE if rec["difference"] is not None else None
     out["llr_reconciliation"] = rec
     elo = re.findall(r"(?m)^Elo difference:\s*(-?[\d.]+)\s*\+/-\s*([\d.]+)", log_text)
     if elo:
@@ -170,6 +178,7 @@ def main():
     p.add_argument("--alpha", type=float, default=0.05)
     p.add_argument("--beta", type=float, default=0.05)
     p.add_argument("--openings", default=None)
+    p.add_argument("--sample-variance", action="store_true", help="Use n-1 for descriptive uncertainty")
     a = p.parse_args()
     d = Path(a.run_dir)
     kind = None
@@ -180,7 +189,7 @@ def main():
     lines = [l for l in lines if l]
     result = analyze((d / "match.log").read_text(encoding="utf-8", errors="replace"),
                      (d / "match.pgn").read_text(encoding="utf-8", errors="replace"),
-                     a.elo0, a.elo1, a.alpha, a.beta, lines)
+                     a.elo0, a.elo1, a.alpha, a.beta, lines, sample_variance=a.sample_variance)
     result["attempt_kind"] = kind
     if kind == "smoke":
         result["note"] = "SMOKE ATTEMPT: not a result. Statistics below describe a handful of games and are not an Elo estimate."
