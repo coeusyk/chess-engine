@@ -1,9 +1,13 @@
 package coeusyk.game.chess.core.selfplay;
 
+import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.search.IterationInfo;
+import coeusyk.game.chess.core.search.Searcher;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -163,5 +167,118 @@ class CompletedRootCandidateAdapterTest {
         List<IterationInfo> set = adapter.lastCompletedSet().orElseThrow();
         assertEquals(1, set.size());
         assertEquals(4, set.get(0).depth());
+    }
+
+    // ---- #275: a line stopped before it found a move ------------------------------------------
+
+    @Test
+    void anAbortedLineAfterTheFirstDiscardsItsDepthAndKeepsThePreviousFullSet() {
+        CompletedRootCandidateAdapter adapter = new CompletedRootCandidateAdapter(3);
+        adapter.onIteration(info(4, 1, true));
+        adapter.onIteration(info(4, 2, true));
+        adapter.onIteration(info(4, 3, true));
+        adapter.onIteration(info(5, 1, true));
+        adapter.onIteration(info(5, 2, true));
+        adapter.onIterationAborted(5, 3); // Searcher sends no IterationInfo for this line
+
+        adapter.finish();
+
+        List<IterationInfo> set = adapter.lastCompletedSet().orElseThrow();
+        assertEquals(3, set.size());
+        assertTrue(set.stream().allMatch(c -> c.depth() == 4), "the depth that was stopped must not be published");
+    }
+
+    @Test
+    void anAbortedLineIsNotMistakenForAPositionWithFewerLegalMoves() {
+        // Same two events, but with no abort notice: that really is the fewer-legal-moves case, and
+        // finish() publishes the two lines. The abort notice is what separates the two cases.
+        CompletedRootCandidateAdapter fewerMoves = new CompletedRootCandidateAdapter(3);
+        fewerMoves.onIteration(info(5, 1, true));
+        fewerMoves.onIteration(info(5, 2, true));
+        fewerMoves.finish();
+        assertEquals(2, fewerMoves.lastCompletedSet().orElseThrow().size());
+
+        CompletedRootCandidateAdapter stopped = new CompletedRootCandidateAdapter(3);
+        stopped.onIteration(info(5, 1, true));
+        stopped.onIteration(info(5, 2, true));
+        stopped.onIterationAborted(5, 3);
+        stopped.finish();
+        assertTrue(stopped.lastCompletedSet().isEmpty());
+    }
+
+    @Test
+    void anAbortNoticeForADepthWithNoEarlierLinesIsHarmless() {
+        CompletedRootCandidateAdapter adapter = new CompletedRootCandidateAdapter(2);
+        adapter.onIteration(info(3, 1, true));
+        adapter.onIteration(info(3, 2, true));
+        adapter.onIterationAborted(4, 2); // depth 4 never reported line 1 to this adapter
+        adapter.finish();
+        assertEquals(3, adapter.lastCompletedSet().orElseThrow().get(0).depth());
+    }
+
+    @Test
+    void searcherStoppedDuringALaterLineNeverPublishesThatDepthAsComplete() {
+        // End to end with the real Searcher: stop as soon as line 2 of depth D is reported, so the stop
+        // lands inside line 3. Before the fix the adapter published depth D with 2 of the 3 requested
+        // lines, replacing the full depth D-1 set.
+        for (int stopDepth = 2; stopDepth <= 4; stopDepth++) {
+            Board board = new Board();
+            board.setSearchMode(true);
+            Searcher searcher = new Searcher();
+            searcher.setMultiPV(3);
+            CompletedRootCandidateAdapter adapter = new CompletedRootCandidateAdapter(3);
+            AtomicBoolean stop = new AtomicBoolean(false);
+            List<String> events = new ArrayList<>();
+            int target = stopDepth;
+            Searcher.IterationListener listener = new Searcher.IterationListener() {
+                @Override
+                public void onIteration(IterationInfo info) {
+                    events.add("d" + info.depth() + "/" + info.multipv());
+                    adapter.onIteration(info);
+                    if (info.depth() == target && info.multipv() == 2) {
+                        stop.set(true);
+                    }
+                }
+
+                @Override
+                public void onIterationAborted(int depth, int multipv) {
+                    events.add("aborted d" + depth + "/" + multipv);
+                    adapter.onIterationAborted(depth, multipv);
+                }
+            };
+
+            searcher.iterativeDeepening(board, 8, stop::get, stop::get, listener);
+            adapter.finish();
+
+            assertTrue(events.contains("aborted d" + stopDepth + "/3"), "the stopped line is announced: " + events);
+            List<IterationInfo> set = adapter.lastCompletedSet().orElseThrow();
+            assertEquals(3, set.size(), "stop depth " + stopDepth + ": " + events);
+            int expectedDepth = stopDepth - 1;
+            assertTrue(set.stream().allMatch(c -> c.depth() == expectedDepth),
+                    "stop depth " + stopDepth + " published depth " + set.get(0).depth());
+        }
+    }
+
+    @Test
+    void aListenerThatOnlyImplementsOnIterationSeesNoExtraEvents() {
+        // The new hook is a default no-op: a plain lambda listener (what UCI and the API use) still
+        // compiles and receives exactly the events it did before, with nothing for the stopped line.
+        Board board = new Board();
+        board.setSearchMode(true);
+        Searcher searcher = new Searcher();
+        searcher.setMultiPV(3);
+        AtomicBoolean stop = new AtomicBoolean(false);
+        List<IterationInfo> seen = new ArrayList<>();
+        Searcher.IterationListener lambda = info -> {
+            seen.add(info);
+            if (info.depth() == 2 && info.multipv() == 2) {
+                stop.set(true);
+            }
+        };
+        searcher.iterativeDeepening(board, 8, stop::get, stop::get, lambda);
+        IterationInfo last = seen.get(seen.size() - 1);
+        assertEquals(2, last.depth());
+        assertEquals(2, last.multipv());
+        assertTrue(last.completed());
     }
 }

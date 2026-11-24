@@ -168,7 +168,7 @@ public final class SelfPlayCli {
 
         Path tmpVspr = config.outputVsprPath().resolveSibling(config.outputVsprPath().getFileName() + ".tmp");
         writeVsprAtomic(file, tmpVspr, config.outputVsprPath());
-        String vsprSha256 = sha256Hex(Files.readAllBytes(config.outputVsprPath()));
+        String vsprSha256 = sha256HexOfFile(config.outputVsprPath());
 
         DecisionRecord record = new DecisionRecord(
                 "bootstrap",
@@ -233,10 +233,17 @@ public final class SelfPlayCli {
         return HexFormat.of().parseHex(hex);
     }
 
-    private static String sha256Hex(byte[] bytes) {
-        try {
+    /** Streams the file through the digest in fixed-size chunks, so a large VSPR log is never read
+     * into memory whole (it used to be {@code Files.readAllBytes}). */
+    static String sha256HexOfFile(Path path) throws IOException {
+        try (java.io.InputStream in = Files.newInputStream(path)) {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(digest.digest(bytes));
+            byte[] buffer = new byte[1 << 20];
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                digest.update(buffer, 0, read);
+            }
+            return HexFormat.of().formatHex(digest.digest());
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 not available", e);
         }
@@ -298,10 +305,31 @@ public final class SelfPlayCli {
                     outputVsprPath, outputDecisionRecordPath);
         }
 
+        private static final java.util.Set<String> KNOWN_OPTIONS = java.util.Set.of(
+                "--network", "--network-sha256", "--network-uuid", "--engine-build-id",
+                "--search-depth", "--max-plies", "--max-games", "--max-positions", "--seed",
+                "--output-vspr", "--output-decision-record",
+                "--diversity-max-rank", "--diversity-cp-loss-bound", "--diversity-temperature",
+                "--control-multipv", "--start-fen", "--start-fen-file");
+
         static CliArgs parse(String[] args) {
             java.util.Map<String, String> opts = new java.util.HashMap<>();
-            for (int i = 0; i < args.length - 1; i += 2) {
-                opts.put(args[i], args[i + 1]);
+            // Every option is a `--name value` pair. An odd count used to drop the last argument
+            // silently, an unknown name was ignored (a misspelt flag left the default in force), and
+            // a repeated name kept only the last value; all three are errors now. (#275)
+            if (args.length % 2 != 0) {
+                throw new IllegalArgumentException("every option needs a value, but there is an odd "
+                        + "number of arguments (the last is " + args[args.length - 1] + ")");
+            }
+            for (int i = 0; i < args.length; i += 2) {
+                String name = args[i];
+                if (!KNOWN_OPTIONS.contains(name)) {
+                    throw new IllegalArgumentException("unknown option " + name);
+                }
+                if (opts.containsKey(name)) {
+                    throw new IllegalArgumentException("option " + name + " given more than once");
+                }
+                opts.put(name, args[i + 1]);
             }
             String maxPositionsRaw = opts.get("--max-positions");
 

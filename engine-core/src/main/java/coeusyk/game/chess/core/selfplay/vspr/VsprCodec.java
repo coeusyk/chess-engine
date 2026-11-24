@@ -7,6 +7,10 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -387,6 +391,7 @@ public final class VsprCodec {
             throws IOException {
         out.writeInt((int) set.ply());
         out.writeInt(set.depth());
+        checkWriteBound(set.candidates().size(), MAX_CANDIDATE_COUNT, "candidate count");
         out.writeShort(set.candidates().size());
         for (SearchCandidate c : set.candidates()) {
             writeSearchCandidate(out, c);
@@ -420,6 +425,7 @@ public final class VsprCodec {
         out.writeShort(c.rank());
         out.writeByte(c.scoreKind().ordinal());
         out.writeInt(c.score());
+        checkWriteBound(c.pv().size(), MAX_PV_LENGTH, "pv length");
         out.writeShort(c.pv().size());
         for (int pvMove : c.pv()) {
             out.writeShort(pvMove);
@@ -515,8 +521,49 @@ public final class VsprCodec {
         out.writeByte(config == null ? 0 : 1);
         if (config != null) {
             out.writeByte(config.schemaId());
+            checkWriteBound(config.payload().length, MAX_OPAQUE_PAYLOAD_BYTES, "opaqueConfig payload length");
             out.writeShort(config.payload().length);
             out.write(config.payload());
+        }
+    }
+
+    /** The writer enforces the same bounds the reader does, so it can never produce a file the
+     * reader rejects, and never lets a length wrap in its {@code u16} field (a 65,536-byte
+     * payload would otherwise be written as length 0). */
+    private static void checkWriteBound(int value, int max, String field) {
+        if (value > max) {
+            throw new IllegalArgumentException(field + " " + value + " exceeds max " + max);
+        }
+    }
+
+    /** Strict UTF-8: a malformed sequence is rejected, not replaced with U+FFFD. The Python
+     * decoder is strict, so a lenient Java reader would accept files Python refuses. */
+    private static String decodeUtf8Strict(byte[] bytes, String field) throws VsprFormatException {
+        try {
+            return StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(bytes)).toString();
+        } catch (CharacterCodingException e) {
+            throw new VsprFormatException(VsprFormatException.Reason.STRUCTURAL,
+                    field + " is not valid UTF-8");
+        }
+    }
+
+    /** Strict UTF-8 on write too: {@code String.getBytes} silently turns an unpaired surrogate
+     * into '?', which would write a different string than the one given. */
+    private static byte[] encodeUtf8Strict(String value, String field) {
+        try {
+            ByteBuffer encoded = StandardCharsets.UTF_8.newEncoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .encode(CharBuffer.wrap(value));
+            byte[] bytes = new byte[encoded.remaining()];
+            encoded.get(bytes);
+            return bytes;
+        } catch (CharacterCodingException e) {
+            throw new IllegalArgumentException(field + " cannot be encoded as UTF-8 "
+                    + "(unpaired surrogate)");
         }
     }
 
@@ -530,12 +577,12 @@ public final class VsprCodec {
         }
         byte[] bytes = new byte[length];
         in.readFully(bytes);
-        return new String(bytes, StandardCharsets.UTF_8);
+        return decodeUtf8Strict(bytes, field);
     }
 
     private static void writeBoundedString(DataOutputStream out, String value, int maxBytes,
             String field) throws IOException {
-        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+        byte[] bytes = encodeUtf8Strict(value, field);
         if (bytes.length > maxBytes) {
             throw new IllegalArgumentException(field + " length " + bytes.length
                     + " exceeds max " + maxBytes);
@@ -554,12 +601,12 @@ public final class VsprCodec {
         }
         byte[] bytes = new byte[length];
         in.readFully(bytes);
-        return new String(bytes, StandardCharsets.UTF_8);
+        return decodeUtf8Strict(bytes, field);
     }
 
     private static void writeBoundedString8(DataOutputStream out, String value, int maxBytes,
             String field) throws IOException {
-        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+        byte[] bytes = encodeUtf8Strict(value, field);
         if (bytes.length > maxBytes) {
             throw new IllegalArgumentException(field + " length " + bytes.length
                     + " exceeds max " + maxBytes);

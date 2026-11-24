@@ -420,4 +420,142 @@ class VsprCodecTest {
         }
         return out;
     }
+
+    // =====================================================================================
+    // #275: strict UTF-8 on both sides, and write-side bounds
+    // =====================================================================================
+
+    private static VsprHeader baseHeader() throws IOException {
+        return VsprCodec.read(new ByteArrayInputStream(base())).header();
+    }
+
+    private static byte[] encodeHeader(VsprHeader header) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        VsprCodec.writeHeader(header, new DataOutputStream(bytes));
+        return bytes.toByteArray();
+    }
+
+    private static int indexOf(byte[] haystack, byte[] needle) {
+        outer:
+        for (int i = 0; i + needle.length <= haystack.length; i++) {
+            for (int j = 0; j < needle.length; j++) {
+                if (haystack[i + j] != needle[j]) {
+                    continue outer;
+                }
+            }
+            return i;
+        }
+        throw new AssertionError("needle not found");
+    }
+
+    private static VsprFormatException readHeaderFailure(byte[] headerBytes) {
+        return assertThrows(VsprFormatException.class,
+                () -> VsprCodec.readHeader(new java.io.DataInputStream(new ByteArrayInputStream(headerBytes))));
+    }
+
+    @Test
+    void malformedUtf8InABstr16HeaderString_isRejectedNotReplaced() throws Exception {
+        VsprHeader header = baseHeader();
+        byte[] encoded = encodeHeader(header);
+        int at = indexOf(encoded, header.generatorNetworkUuid().getBytes(StandardCharsets.UTF_8));
+
+        byte[] invalidByte = encoded.clone();
+        invalidByte[at] = (byte) 0xFF; // never valid in UTF-8
+        assertEquals(VsprFormatException.Reason.STRUCTURAL, readHeaderFailure(invalidByte).reason());
+
+        byte[] overlongNul = encoded.clone(); // C0 80 is an overlong encoding of NUL
+        overlongNul[at] = (byte) 0xC0;
+        overlongNul[at + 1] = (byte) 0x80;
+        assertEquals(VsprFormatException.Reason.STRUCTURAL, readHeaderFailure(overlongNul).reason());
+
+        byte[] encodedSurrogate = encoded.clone(); // ED A0 80 is a UTF-16 surrogate encoded as UTF-8
+        encodedSurrogate[at] = (byte) 0xED;
+        encodedSurrogate[at + 1] = (byte) 0xA0;
+        encodedSurrogate[at + 2] = (byte) 0x80;
+        assertEquals(VsprFormatException.Reason.STRUCTURAL, readHeaderFailure(encodedSurrogate).reason());
+    }
+
+    @Test
+    void malformedUtf8InABstr8HeaderString_isRejectedNotReplaced() throws Exception {
+        VsprHeader header = baseHeader();
+        byte[] encoded = encodeHeader(header);
+        int at = indexOf(encoded, header.engineBuildId().getBytes(StandardCharsets.UTF_8));
+        encoded[at] = (byte) 0xFF;
+        assertEquals(VsprFormatException.Reason.STRUCTURAL, readHeaderFailure(encoded).reason());
+    }
+
+    @Test
+    void validNonAsciiUtf8InAHeaderString_stillRoundTrips() throws Exception {
+        VsprHeader base = baseHeader();
+        String path = "net/caf\u00e9-\u7f51\u7edc.nnue"; // 2- and 3-byte sequences
+        VsprHeader header = withNetworkPath(base, path);
+        byte[] encoded = encodeHeader(header);
+        VsprHeader decoded = VsprCodec.readHeader(
+                new java.io.DataInputStream(new ByteArrayInputStream(encoded)));
+        assertEquals(path, decoded.generatorNetworkPath());
+    }
+
+    @Test
+    void anUnpairedSurrogateIsRejectedOnWrite_notWrittenAsAQuestionMark() throws Exception {
+        VsprHeader header = withNetworkPath(baseHeader(), "net/\ud800.nnue");
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> encodeHeader(header));
+        assertTrue(ex.getMessage().contains("generatorNetworkPath"), ex.getMessage());
+    }
+
+    private static VsprHeader withNetworkPath(VsprHeader h, String path) {
+        return new VsprHeader(h.formatVersion(), h.runId(), h.createdAtEpochSeconds(), h.generatorNetworkUuid(),
+                h.generatorNetworkSha256(), h.engineBuildId(), path, h.maxPlies(), h.searchBudgetKind(),
+                h.searchBudgetValue(), h.resetSearchStateBetweenGames(), h.candidatesPersisted(),
+                h.adjudicationConfig(), h.diversityConfig());
+    }
+
+    private static VsprHeader withAdjudicationConfig(VsprHeader h, OpaqueConfig config) {
+        return new VsprHeader(h.formatVersion(), h.runId(), h.createdAtEpochSeconds(), h.generatorNetworkUuid(),
+                h.generatorNetworkSha256(), h.engineBuildId(), h.generatorNetworkPath(), h.maxPlies(),
+                h.searchBudgetKind(), h.searchBudgetValue(), h.resetSearchStateBetweenGames(),
+                h.candidatesPersisted(), config, h.diversityConfig());
+    }
+
+    @Test
+    void anOpaqueConfigPayloadOverTheReadersBoundIsRejectedOnWrite() throws Exception {
+        VsprHeader base = baseHeader();
+        // exactly at the bound round-trips
+        VsprHeader atBound = withAdjudicationConfig(base, new OpaqueConfig(1, new byte[4096]));
+        VsprHeader decoded = VsprCodec.readHeader(
+                new java.io.DataInputStream(new ByteArrayInputStream(encodeHeader(atBound))));
+        assertEquals(4096, decoded.adjudicationConfig().payload().length);
+
+        // one over the bound: the reader would refuse this file, so the writer must not make it
+        assertThrows(IllegalArgumentException.class,
+                () -> encodeHeader(withAdjudicationConfig(base, new OpaqueConfig(1, new byte[4097]))));
+        // 65,536 bytes: writeShort would have wrapped the length to 0 and corrupted the stream
+        assertThrows(IllegalArgumentException.class,
+                () -> encodeHeader(withAdjudicationConfig(base, new OpaqueConfig(1, new byte[65_536]))));
+    }
+
+    @Test
+    void candidateAndPvCountsOverTheReadersBoundsAreRejectedOnWrite() throws Exception {
+        VsprFile file = VsprCodec.read(new ByteArrayInputStream(fixtureBytes("valid_05_candidate_section_present.vspr")));
+        VsprHeader header = file.header();
+        GameFrame frame = file.frames().get(0);
+        CandidateSet original = frame.candidateSets().get(0);
+        SearchCandidate firstCandidate = original.candidates().get(0);
+
+        List<Integer> longPv = new java.util.ArrayList<>(java.util.Collections.nCopies(129, 0));
+        SearchCandidate overlongPv = new SearchCandidate(firstCandidate.move(), firstCandidate.rank(),
+                firstCandidate.scoreKind(), firstCandidate.score(), longPv, firstCandidate.complete());
+        assertThrows(IllegalArgumentException.class,
+                () -> writeWithCandidateSet(file, frame, new CandidateSet(original.ply(), original.depth(), List.of(overlongPv))));
+
+        List<SearchCandidate> tooMany = java.util.Collections.nCopies(219, firstCandidate);
+        assertThrows(IllegalArgumentException.class,
+                () -> writeWithCandidateSet(file, frame, new CandidateSet(original.ply(), original.depth(), tooMany)));
+    }
+
+    private static void writeWithCandidateSet(VsprFile file, GameFrame frame, CandidateSet set) throws IOException {
+        GameFrame changed = new GameFrame(frame.gameId(), frame.gameSeed(), frame.gameOutcome(),
+                frame.terminationReason(), frame.outcomePerspective(), frame.playedMoves(), frame.samples(),
+                List.of(set));
+        VsprCodec.write(new VsprFile(file.header(), List.of(changed)), new ByteArrayOutputStream());
+    }
 }
