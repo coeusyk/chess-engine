@@ -14,6 +14,9 @@ the `-openings` group), the `{Executable, Arguments}` argument manifest, `--prep
 `--expected-argument-manifest-path` (refuse to launch if the arguments differ), the log/PGN path
 rules, and the exit-code handling. Numbers are formatted the way PowerShell 7 prints them.
 
+Scope of the equivalence: literal paths (sprt.ps1's `Resolve-Path` also expands wildcards in `-New`
+and `-Old`; this launcher does not, and fails with "JAR not found"), and numbers with |x| < 1e15.
+
 What differs, on purpose:
 - It fails closed on a missing opening book even when no book was named: no `tools/noob_3moves.epd`
   and no `--openings-file` is an error unless `--allow-startpos` is given. sprt.ps1 silently
@@ -62,12 +65,17 @@ class LauncherError(Exception):
 
 def ps_number(value: float) -> str:
     """A double as PowerShell 7 prints it in a string: integral values without a decimal point,
-    otherwise the shortest round-trip form with an upper-case exponent. (Windows PowerShell 5.1
-    prints 15 significant digits instead; the two agree for the frozen alpha = beta = 0.05.)"""
+    otherwise the shortest round-trip form with an upper-case exponent. Supported range |x| < 1e15
+    (see below). Windows PowerShell 5.1 prints 15 significant digits instead; the two agree for the
+    frozen alpha = beta = 0.05."""
     value = float(value)
     if not math.isfinite(value):
         raise LauncherError(f"not a finite number: {value}")
-    if value == int(value) and abs(value) < 1e15:
+    if abs(value) >= 1e15:
+        # .NET switches to exponent form at 1e15, Python's repr at 1e16, so values in between would
+        # print differently. No SPRT parameter is anywhere near this large; refuse instead of diverging.
+        raise LauncherError(f"number outside the supported range (|x| < 1e15): {value}")
+    if value == int(value):
         return str(int(value))
     return repr(value).replace("e", "E")
 
@@ -206,6 +214,16 @@ def build_provenance(*, launcher_path: Path, new_jar: Path, old_jar: Path, openi
     }
 
 
+def redact_option(option: str) -> str:
+    """`Name=Value` with an absolute-path Value replaced by its file name, so the provenance record
+    never carries a local directory layout (an `EvalFile` option naming a local network file, for example)."""
+    name, separator, value = option.partition("=")
+    looks_absolute = value.startswith(("/", "\\\\")) or (len(value) > 2 and value[1] == ":" and value[2] in "\\/")
+    if separator and looks_absolute:
+        return f"{name}=<path omitted: {value.replace(chr(92), '/').rsplit('/', 1)[-1]}>"
+    return option
+
+
 def write_json(path: Path, data: Any) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -221,12 +239,17 @@ def utc_now() -> str:
 def resolve_book(openings_file: Optional[str], allow_startpos: bool) -> Optional[str]:
     """Explicit book must exist. With none named, use tools/noob_3moves.epd if present. With
     neither, refuse unless `allow_startpos` (sprt.ps1 would silently play from the start position)."""
+    # Same order as sprt.ps1: an empty value is replaced by the default book when that exists, and only
+    # then is an explicitly named book required to exist.
+    book = openings_file
+    if book in (None, "") and DEFAULT_BOOK.is_file():
+        book = str(DEFAULT_BOOK)
     if openings_file is not None:
-        if openings_file == "" or not Path(openings_file).is_file():
+        if not book or not Path(book).is_file():
             raise LauncherError(f"Opening book not found: {openings_file}")
-        return openings_file
-    if DEFAULT_BOOK.is_file():
-        return str(DEFAULT_BOOK)
+        return book
+    if book:
+        return book
     if allow_startpos:
         return None
     raise LauncherError("No opening book: tools/noob_3moves.epd is absent and --openings-file was not "
@@ -326,8 +349,9 @@ def run(argv: Optional[Sequence[str]] = None, env: Optional[Mapping[str, str]] =
     if args.provenance_path:
         parameters = {"tc": args.tc, "concurrency": args.concurrency, "engine_threads": args.engine_threads,
                       "elo0": args.elo0, "elo1": args.elo1, "alpha": alpha, "beta": beta, "max_games": max_games,
-                      "opening_order": args.opening_order, "new_options": list(args.new_option),
-                      "old_options": list(args.old_option)}
+                      "opening_order": args.opening_order,
+                      "new_options": [redact_option(o) for o in args.new_option],
+                      "old_options": [redact_option(o) for o in args.old_option]}
         provenance = build_provenance(
             launcher_path=Path(__file__).resolve(), new_jar=Path(new_jar), old_jar=Path(old_jar),
             opening_book=None if book is None else Path(book), parameters=parameters, arguments=cc_args,

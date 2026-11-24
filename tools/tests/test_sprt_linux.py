@@ -54,8 +54,9 @@ class Workspace:
         self.book = self.dir / "book.epd"
         self.book.write_text("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -\n")
         self.cutechess = fake_executable(self.dir / "cutechess-cli")
-        self.log = self.dir / "out" / "match.log"
-        self.pgn = self.dir / "out" / "match.pgn"
+        # a directory with spaces, so every case also covers whitespace in the output paths
+        self.log = self.dir / "out dir" / "match.log"
+        self.pgn = self.dir / "out dir" / "match.pgn"
         self.env = {"CUTECHESS": str(self.cutechess)}
 
     def argv(self, *extra, book=True, paths=True):
@@ -78,8 +79,14 @@ class NumberFormatting(unittest.TestCase):
     def test_numbers_print_like_powershell_7(self):
         for value, text in ((0, "0"), (10.0, "10"), (0.05, "0.05"), (-2.5, "-2.5"), (7.5, "7.5"),
                             (0.05 / 3, "0.016666666666666666"), (1e-05, "1E-05"), (1.5e-07, "1.5E-07"),
-                            (50, "50")):
+                            (0.0001, "0.0001"), (50, "50"), (999999999999999.0, "999999999999999")):
             self.assertEqual(sprt_linux.ps_number(value), text, value)
+
+    def test_numbers_outside_the_supported_range_are_refused_not_formatted_differently(self):
+        # .NET prints 1e15 as 1E+15 but Python repr prints 1000000000000000.0, so the launcher refuses.
+        for value in (1e15, 1e16, -1e15):
+            with self.assertRaisesRegex(sprt_linux.LauncherError, "supported range"):
+                sprt_linux.ps_number(value)
 
     def test_non_finite_numbers_are_refused(self):
         for value in (float("nan"), float("inf")):
@@ -197,6 +204,21 @@ class LauncherBehaviour(unittest.TestCase):
             manifest = ws.prepare("--allow-startpos", book=False)
         self.assertNotIn("-openings", manifest["Arguments"])
 
+    def test_an_empty_book_value_is_replaced_by_the_default_book_like_sprt_ps1(self):
+        ws = Workspace(self)
+        with mock.patch.object(sprt_linux, "DEFAULT_BOOK", ws.book):
+            manifest = ws.prepare("--openings-file", "", book=False)
+        self.assertIn(f"file={ws.book}", manifest["Arguments"])
+        with mock.patch.object(sprt_linux, "DEFAULT_BOOK", ws.dir / "absent.epd"):
+            with self.assertRaisesRegex(sprt_linux.LauncherError, "Opening book not found"):
+                ws.prepare("--openings-file", "", book=False)
+
+    def test_wildcard_jar_paths_are_not_expanded(self):
+        ws = Workspace(self)
+        with self.assertRaisesRegex(sprt_linux.LauncherError, "New engine JAR not found"):
+            sprt_linux.run(["--new", str(ws.dir / "*.jar"), "--old", str(ws.old), "--openings-file", str(ws.book),
+                            "--log-path", str(ws.log), "--pgn-path", str(ws.pgn)], env=ws.env)
+
     def test_default_book_is_picked_up_when_present(self):
         ws = Workspace(self)
         with mock.patch.object(sprt_linux, "DEFAULT_BOOK", ws.book):
@@ -265,6 +287,19 @@ class Provenance(unittest.TestCase):
             self.assertIn(key, record["host"])
         self.assertIsNone(record["finished_utc"])
 
+    def test_path_valued_engine_options_are_redacted_in_the_record(self):
+        ws = Workspace(self)
+        record, path = self.run_with_provenance(ws, [
+            "--new-option", "EvalFile=/home/someone/nets/net.nnue", "--new-option", "EvalType=NNUE",
+            "--old-option", "EvalFile=C:\\Users\\someone\\net.nnue", "--old-option", "SyzygyPath="])
+        self.assertEqual(record["parameters"]["new_options"],
+                         ["EvalFile=<path omitted: net.nnue>", "EvalType=NNUE"])
+        self.assertEqual(record["parameters"]["old_options"], ["EvalFile=<path omitted: net.nnue>", "SyzygyPath="])
+        self.assertNotIn("someone", path.read_text())
+        # the argument manifest, like sprt.ps1's, still carries the real values
+        manifest = json.loads((ws.dir / "m.json").read_text())
+        self.assertIn("option.EvalFile=/home/someone/nets/net.nnue", manifest["Arguments"])
+
     def test_record_is_never_authoritative_and_has_no_absolute_paths(self):
         ws = Workspace(self)
         record, path = self.run_with_provenance(ws)
@@ -322,6 +357,8 @@ class DifferentialAgainstSprtPs1(unittest.TestCase):
             ["--bonferroni-m", "3", "--elo0", "-2.5", "--elo1", "7.5", "--engine-threads", "2",
              "--opening-order", "sequential", "--new-option", "EvalType=NNUE", "--new-option", "EvalFile=net.nnue",
              "--old-option", "EvalType=Classical"]),
+        "small-and-large-doubles": (["-Alpha", "0.00001", "-Elo0", "-0.0001", "-Elo1", "999999999999999"],
+                                    ["--alpha", "0.00001", "--elo0", "-0.0001", "--elo1", "999999999999999"]),
         "min-games-raises-the-cap": (["-MinGames", "30000"], ["--min-games", "30000"]),
         "min-games-below-default": (["-MinGames", "500"], ["--min-games", "500"]),
     }
