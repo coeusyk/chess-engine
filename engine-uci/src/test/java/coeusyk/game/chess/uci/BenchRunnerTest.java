@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -28,6 +29,32 @@ class BenchRunnerTest {
 
         assertTrue(output.contains("evaluator Classical"));
         assertTrue(output.contains("Accumulator-update time: 0.0%"));
+        assertFalse(output.contains("Search-only:"));
+    }
+
+    @Test
+    void optInTimingReportsWeightedSearchRateBesideLegacyTiming() {
+        String output = captureStdout(() -> {
+            try {
+                UciApplication.main(new String[] {"--bench-raw", Integer.toString(DEPTH), "--bench-timing"});
+            } catch (Exception e) {
+                throw new AssertionError(e);
+            }
+        });
+        assertTrue(output.contains("instrumentation off"));
+        assertTrue(output.contains("Time  : "));
+        assertTrue(output.contains("NPS   : "));
+        var timing = Pattern.compile("(?m)^Search-only: (\\d+) ns \\| nodes=(\\d+) \\| qnodes=(\\d+)"
+            + " \\| reached-depth=(\\d+)\\.\\.(\\d+) \\| nps=(\\d+)$").matcher(output);
+        assertTrue(timing.find(), output);
+        long elapsed = Long.parseLong(timing.group(1));
+        long nodes = Long.parseLong(timing.group(2));
+        assertTrue(elapsed > 0);
+        assertEquals(totalNodes(output), nodes);
+        assertTrue(Long.parseLong(timing.group(3)) > 0);
+        assertTrue(Integer.parseInt(timing.group(4)) <= Integer.parseInt(timing.group(5)));
+        assertEquals(DEPTH, Integer.parseInt(timing.group(5)));
+        assertEquals(nodes * 1_000_000_000L / elapsed, Long.parseLong(timing.group(6)));
     }
 
     /**
