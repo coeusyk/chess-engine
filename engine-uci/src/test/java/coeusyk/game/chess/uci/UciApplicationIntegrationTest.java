@@ -717,6 +717,50 @@ class UciApplicationIntegrationTest {
         assertTrue(elapsedMs < 1500, "Expected stop response under 1500ms but got " + elapsedMs + "ms");
     }
 
+    @ParameterizedTest(name = "stop during go infinite, Threads={0}")
+    @ValueSource(ints = {1, 2, 4})
+    void stopDuringAnInfiniteSearchReturnsALegalMoveAndLeavesTheEngineUsable(int threads) throws Exception {
+        harness = UciHarness.start();
+        harness.send("setoption name Threads value " + threads);
+        harness.send("position startpos");
+        harness.send("go infinite");
+        Thread.sleep(300);
+
+        Instant start = Instant.now();
+        harness.send("stop");
+        String bestMoveLine = harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(3));
+        long elapsedMs = Duration.between(start, Instant.now()).toMillis();
+
+        assertNotNull(bestMoveLine, "no bestmove after stop with Threads=" + threads);
+        assertTrue(isLegalStartBestmove(bestMoveLine), "illegal move after stop: " + bestMoveLine);
+        assertTrue(elapsedMs < 1500, "stop took " + elapsedMs + "ms with Threads=" + threads);
+
+        // The helpers must have wound down: a follow-up search on the same engine must complete normally.
+        harness.send("position startpos");
+        harness.send("go depth 5");
+        String next = harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(20));
+        assertNotNull(next, "engine did not complete a search after a stop with Threads=" + threads);
+        assertTrue(isLegalStartBestmove(next), "illegal move in the follow-up search: " + next);
+    }
+
+    @ParameterizedTest(name = "movetime deadline, Threads={0}")
+    @ValueSource(ints = {1, 2})
+    void aMovetimeSearchStopsNearItsDeadline(int threads) throws Exception {
+        harness = UciHarness.start();
+        harness.send("setoption name Threads value " + threads);
+        harness.send("position startpos");
+
+        Instant start = Instant.now();
+        harness.send("go movetime 300");
+        String bestMoveLine = harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(5));
+        long elapsedMs = Duration.between(start, Instant.now()).toMillis();
+
+        assertNotNull(bestMoveLine);
+        assertTrue(isLegalStartBestmove(bestMoveLine), "illegal move: " + bestMoveLine);
+        // The hard stop is now polled every 1024 nodes. A generous bound, because CI hosts are slow and shared.
+        assertTrue(elapsedMs < 1500, "movetime 300 took " + elapsedMs + "ms with Threads=" + threads);
+    }
+
     @Test
     void unknownInputDoesNotCrashLoop() throws Exception {
         harness = UciHarness.start();
