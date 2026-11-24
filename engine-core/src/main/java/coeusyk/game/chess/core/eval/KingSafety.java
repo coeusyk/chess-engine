@@ -178,9 +178,8 @@ public final class KingSafety {
      * @return positive centipawn penalty (caller applies sign convention)
      */
     public static int safetyTablePenalty(int atkWeight) {
-        int base = atkWeight < SAFETY_TABLE.length
-                 ? SAFETY_TABLE[atkWeight]
-                 : SAFETY_TABLE[SAFETY_TABLE.length - 1];
+        // Clamp both ends: a negative ATK_WEIGHT_* override must not index below the table (#278).
+        int base = SAFETY_TABLE[Math.max(0, Math.min(atkWeight, SAFETY_TABLE.length - 1))];
         return base * EvalParams.KING_SAFETY_SCALE / 100;
     }
 
@@ -199,7 +198,7 @@ public final class KingSafety {
         w += countAttackers(eRooks,   Piece.Rook,   zone, allOcc) * EvalParams.ATK_WEIGHT_ROOK;
         w += countAttackers(eQueens,  Piece.Queen,  zone, allOcc) * EvalParams.ATK_WEIGHT_QUEEN;
 
-        int base = w < SAFETY_TABLE.length ? SAFETY_TABLE[w] : SAFETY_TABLE[SAFETY_TABLE.length - 1];
+        int base = SAFETY_TABLE[Math.max(0, Math.min(w, SAFETY_TABLE.length - 1))];
         return -(base * EvalParams.KING_SAFETY_SCALE / 100);
     }
 

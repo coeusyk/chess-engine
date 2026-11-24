@@ -535,7 +535,7 @@ public final class TunerEvaluator {
     }
 
     private static int attackerPenalty(int w, double[] params) {
-        int base = w < SAFETY_TABLE.length ? SAFETY_TABLE[w] : SAFETY_TABLE[SAFETY_TABLE.length - 1];
+        int base = SAFETY_TABLE[Math.max(0, Math.min(w, SAFETY_TABLE.length - 1))];
         return -(int) (base * params[EvalParams.IDX_KING_SAFETY_SCALE] / 100);
     }
 
