@@ -219,8 +219,9 @@ public class Searcher {
 
     // The hard-stop supplier of a timed search reads System.nanoTime(), so polling it at every node is
     // visible in timed play and invisible to fixed-depth benchmarks. Interior and quiescence nodes ask it
-    // once per STOP_POLL_INTERVAL nodes. The root loop still asks at every root move, so a stop that is
-    // already pending is seen before any search work. (#271)
+    // at the first node of a search and then once per STOP_POLL_INTERVAL nodes. The counter restarts with
+    // every search and the root loop still asks at every root move, so a stop that is already pending is
+    // seen before any real search work. (#271)
     private static final int STOP_POLL_INTERVAL = 1024;
     private int stopPollCounter;
 
@@ -228,7 +229,7 @@ public class Searcher {
         if (aborted) {
             return true;
         }
-        return (++stopPollCounter & (STOP_POLL_INTERVAL - 1)) == 0 && shouldStopHard.getAsBoolean();
+        return (++stopPollCounter & (STOP_POLL_INTERVAL - 1)) == 1 && shouldStopHard.getAsBoolean();
     }
     // Set by searchRoot when the root position itself has no legal moves (checkmate or
     // stalemate), so iterative deepening can tell a terminal root from a cancelled search.
@@ -544,6 +545,7 @@ public class Searcher {
         long[] nodesPerDepth = new long[effectiveMaxDepth + 1];
 
         aborted = false;
+        stopPollCounter = 0;
         checkExtensionsApplied = 0;
         matingThreatExtensionsApplied = 0;
         singularExtensionsApplied = 0;
