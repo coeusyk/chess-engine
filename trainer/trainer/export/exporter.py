@@ -186,7 +186,8 @@ def _write_manifest(manifest_path: Path, network: QuantizedCanonicalNetwork, net
                      trainer_commit: str, created_at_epoch_seconds: int,
                      experiment_metadata: ExperimentMetadata, dataset_composition: List[DatasetComposition],
                      label_engine_version: Optional[str], nnue_sha256: str,
-                     quantization_parity: Optional[Dict[str, Any]] = None) -> None:
+                     quantization_parity: Optional[Dict[str, Any]] = None,
+                     scale_utilization: Optional[Dict[str, Any]] = None) -> None:
     manifest: Dict[str, Any] = {
         "format_version": FORMAT_VERSION,
         "architecture_id": network.architecture_id,
@@ -210,6 +211,10 @@ def _write_manifest(manifest_path: Path, network: QuantizedCanonicalNetwork, net
         # Additive optional field (manifest_schema.py): float32-checkpoint-versus-quantized parity
         # measured on a recorded corpus (issue #265). Absent for exports that did not measure it.
         manifest["quantization_parity"] = quantization_parity
+    if scale_utilization is not None:
+        # Additive optional field: how much of the QA and int16 range the float32 network uses,
+        # measured on the same corpus family (issue #265). Absent when it was not measured.
+        manifest["scale_utilization"] = scale_utilization
     manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
     _atomic_write(manifest_path, manifest_bytes)
 
@@ -217,7 +222,8 @@ def _write_manifest(manifest_path: Path, network: QuantizedCanonicalNetwork, net
 def export(network: QuantizedCanonicalNetwork, experiment_metadata: ExperimentMetadata,
            dataset_composition: List[DatasetComposition], output_dir: Path,
            label_engine_version: Optional[str] = None,
-           quantization_parity: Optional[Dict[str, Any]] = None) -> ExportResult:
+           quantization_parity: Optional[Dict[str, Any]] = None,
+           scale_utilization: Optional[Dict[str, Any]] = None) -> ExportResult:
     """Writes `<output_dir>/<uuid>.nnue` and `<output_dir>/<uuid>.json`. Each file is
     written atomically (temp file + `os.replace`, see `_atomic_write`) -- a crash
     mid-write can never leave a truncated file for either artifact, though the pair
@@ -232,7 +238,8 @@ def export(network: QuantizedCanonicalNetwork, experiment_metadata: ExperimentMe
     field "where applicable", so `None` is a valid, complete value, not a missing one.
 
     `quantization_parity`, if given, is `QuantizationParityReport.to_manifest_dict()` and is
-    written verbatim under that key (issue #265); it is optional and additive.
+    written verbatim under that key (issue #265); it is optional and additive. `scale_utilization`
+    is the same for `ScaleUtilizationReport.to_manifest_dict()`.
     """
     network_uuid = str(uuid.uuid4())
     created_at_epoch_seconds = int(time.time())
@@ -248,6 +255,6 @@ def export(network: QuantizedCanonicalNetwork, experiment_metadata: ExperimentMe
     _atomic_write(nnue_path, nnue_bytes)
     _write_manifest(manifest_path, network, network_uuid, trainer_commit, created_at_epoch_seconds,
                      experiment_metadata, dataset_composition, label_engine_version, nnue_sha256,
-                     quantization_parity)
+                     quantization_parity, scale_utilization)
 
     return ExportResult(nnue_path=nnue_path, manifest_path=manifest_path, network_uuid=network_uuid)

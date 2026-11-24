@@ -789,3 +789,28 @@ An independent read-only review found five gaps, all fixed and re-reviewed: Powe
 **Measurements:** red-first, each reverted afterwards. Doubling the vector add in the loop body fails the 256 and 264 cases at the scalar-only oracle and leaves width 8 green; the shared-dispatch comparison next to it still passed, which is why the independent oracle was needed. Always reading the white accumulator as the side to move's makes the colour-flip test fail at both widths. Deleting the engine-uci argLine fails the guard test. On the 32-lane host used here, 256 is eight vector iterations and 264 adds an 8-lane tail.
 
 **Deferred:** `NnueModeSearchRegressionTest` and the UCI integration tests at wide widths need new golden moves and a larger network fixture. The cross-language Python-versus-Java evaluation check on `d6-export-fixture.nnue` belongs with #265, which is still open.
+
+### [2026-11-24] Scale-utilization diagnostics and a checkpoint audit entry point (#265, part 2)
+
+**Built:** `trainer/trainer/validation/scale_utilization.py` measures how a float32 network uses the QA and int16 range on a FEN set: the share of accumulators below zero, in range and at or above `qa`; mean and RMS of the clamped activations; the fraction of neurons that are never positive; FT and output weight spread and int16 headroom; the fraction of FT weights that round to zero; the RMS rounding error over the RMS FT weight; and `cp_per_accumulator_unit_*`, the centipawns one accumulator unit moves on an unclamped neuron (`|w_out| * output_scale / (qa * qb)`), a per-accumulator sensitivity, not a bound on total score error. `quantize_validate_export` records it in the manifest next to the parity report (optional `scale_utilization` field, schema-checked, sampled on the first 5000 FENs by default). `trainer/scripts/audit_checkpoint_quantization.py` loads one `.pt` checkpoint with the existing `checkpoint_to_canonical`, runs `compute_quantization_parity` and `compute_scale_utilization`, and prints a JSON record with the checkpoint's SHA-256 and file name, the trainer commit and seed recorded inside it, and the FEN source names. No absolute path is written. It is report-only unless a `--max-*` or `--min-pearson` bound is given, in which case a violation exits with status 1.
+
+**Decisions Made:** nothing else was added because the rest of #265 already exists from part 1 (bit-exact Python inference, the parity report and gate, the manifest field, the committed fixtures and goldens). No threshold was chosen: with no real checkpoint there is nothing to calibrate against, and the issue's figures (MAE 5 cp, max 25 cp, correlation delta 0.005) stay provisional. The default audit corpus is the committed 393-position `bench/nnue-corpus`, which is not a checkpoint's held-out distribution, so the record says its scope is that FEN set and `--fens` takes a real held-out file. The scale contract (Option A or B in the issue) is not decided and ADR-002 is unchanged, since no unit convention changed.
+
+**Measurements (synthetic networks only, 393-FEN corpus, deterministic seeds; not evidence about any trained network):**
+
+| | well scaled (FT sigma 16, out sigma 12) | poorly scaled (FT sigma 1, out sigma 150) |
+|---|---|---|
+| accumulators at or above qa | 9.3% | 0.0% |
+| activation mean / RMS | 42.8 / 62.2 | 28.8 / 37.6 |
+| dead neurons | 0.0% | 15.6% |
+| FT weight RMS | 15.9 | 0.99 |
+| FT weights rounding to 0 | 2.6% | 38.3% |
+| rounding error / FT weight RMS | 0.018 | 0.292 |
+| output weight L2 | 105 | 1318 |
+| cp per accumulator unit (RMS / max) | 0.65 / 1.53 | 8.1 / 19.1 |
+
+The poorly scaled row is the regime the issue describes for a default-initialised `EmbeddingBag`, and the diagnostics separate it from the well scaled one on every axis the issue names. The activation mean and RMS in the issue (1.47 to 2.35 and 4.61 for P5-AUXHEAD-001) are far below either synthetic row, so no synthetic network here reproduces that checkpoint; only the real file can.
+
+Tests: a hand-computed case pins every arithmetic definition exactly (fractions, mean, RMS, dead fraction, norms, cp per unit); the two regimes are separated; the manifest round trip validates and rejects a non-number; the sample cap applies; the audit entry point writes the record, records no absolute path, exits 0 in report-only mode and 1 once a bound is exceeded, and does nothing on import. The audit tests use a freshly initialised `NnueNet` saved to a temp directory.
+
+**Not done / cannot be qualified yet:** real-checkpoint evidence. No `.pt` checkpoint is in this checkout, so the audit has been exercised only on synthetic checkpoints. The first run on a surviving checkpoint (P5-AUXHEAD-001, E-3, E-15 or E-16) should be `python -m scripts.audit_checkpoint_quantization CHECKPOINT.pt --fens HELD_OUT.epd --output audit.json`, and its numbers, not these, decide whether a scale redesign is needed and what thresholds to set. Issue #265 stays open for that.
