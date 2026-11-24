@@ -139,4 +139,55 @@ class SearcherPlyBoundsTest {
         assertEquals(-MATE_SCORE + ply, score);
         assertNotEquals(score, Searcher.scoreToTT(score, ply), "recognised as a mate score");
     }
+
+    @Test
+    void aTruncatedNodeIsStoredAtTheDepthThatActuallyFitted() throws Exception {
+        // At ply 118 only one ply of search fits below MAX_SEARCH_PLY, whatever depth was requested.
+        Board nearBoundary = board(START);
+        TranspositionTable table = new TranspositionTable(1);
+        Searcher near = searcherWithEval(25);
+        near.setSharedTranspositionTable(table);
+        alphaBeta(near, nearBoundary, 5, Searcher.MAX_SEARCH_PLY - 1);
+        var truncated = table.probe(nearBoundary.getZobristHash());
+        assertTrue(truncated != null, "the node stores its result");
+        assertEquals(1, truncated.depth(), "stored depth must not exceed the room below the guard");
+
+        // A node with room to spare keeps the full requested depth (the normal path is unchanged).
+        Board shallow = board(START);
+        TranspositionTable otherTable = new TranspositionTable(1);
+        Searcher normal = searcherWithEval(25);
+        normal.setSharedTranspositionTable(otherTable);
+        alphaBeta(normal, shallow, 2, 10);
+        var full = otherTable.probe(shallow.getZobristHash());
+        assertTrue(full != null);
+        assertEquals(2, full.depth());
+    }
+
+    @Test
+    void quiescenceFromTheLastSearchingPlyNeverGoesDeeperThanTheMarginAllows() throws Exception {
+        // Follows real capture and check chains (not a single call on a mated position) and reads the
+        // deepest ply the recursion touched from Searcher's own seldepth bookkeeping.
+        String[] tactical = {
+                "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+                "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+                "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
+                "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",
+                "2kr3r/p1ppqpb1/bn2Qnp1/3PN3/1p2P3/2N5/PPPBBPPP/R3K2R b KQ - 3 2",
+        };
+        Method quiescence = Searcher.class.getDeclaredMethod("quiescence", Board.class, int.class, int.class,
+                int.class, int.class, BooleanSupplier.class);
+        quiescence.setAccessible(true);
+        var seldepth = Searcher.class.getDeclaredField("seldepth");
+        seldepth.setAccessible(true);
+        int entry = Searcher.MAX_SEARCH_PLY - 1;
+        int deepest = entry;
+        for (String fen : tactical) {
+            Searcher searcher = new Searcher();
+            quiescence.invoke(searcher, board(fen), -MATE_SCORE, MATE_SCORE, entry, 0, (BooleanSupplier) () -> false);
+            int reached = seldepth.getInt(searcher);
+            assertTrue(reached <= entry + QUIESCENCE_REACH - 1, fen + " reached ply " + reached);
+            deepest = Math.max(deepest, reached);
+        }
+        assertTrue(deepest > entry, "the chains must actually recurse, or this test proves nothing");
+    }
 }

@@ -1486,7 +1486,11 @@ public class Searcher {
             // Issue #259: a score the fifty-move rule could have shaped is clock-specific, so it is not
             // stored at all; storing it would hand a clock-98 verdict to the same position at clock 0.
             if (!fiftyMoveSensitive(board.getHalfmoveClock(), effectiveDepth)) {
-                transpositionTable.store(zobrist, bestMove, effectiveDepth, scoreToTT(bestScore, ply), bound);
+                // Near MAX_SEARCH_PLY the children are cut off by the ply guard, so this node was not
+                // searched to effectiveDepth. Record only the depth that actually fit, otherwise a later,
+                // shallower visit of the same position would take this score as a full-depth result. (#267)
+                int searchedDepth = Math.min(effectiveDepth, MAX_SEARCH_PLY - ply);
+                transpositionTable.store(zobrist, bestMove, searchedDepth, scoreToTT(bestScore, ply), bound);
             }
 
             // Update correction history: accumulate how much the search
