@@ -866,6 +866,11 @@ class UciApplicationIntegrationTest {
 
             List<String> command = new java.util.ArrayList<>();
             command.add(javaExec);
+            // The engine runs in this child JVM, not in surefire's, so the module flag set in
+            // engine-uci/pom.xml does not reach it. Without it every NNUE search here silently
+            // used the scalar accumulator path (#269).
+            command.add("--add-modules");
+            command.add("jdk.incubator.vector");
             command.addAll(List.of(vmOptions));
             if (withDiagnostics) command.add("-Dvex.smp.diagnostics=true");
             command.add("-cp");

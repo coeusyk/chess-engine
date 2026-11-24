@@ -5,11 +5,21 @@ on:
     paths:
       - 'trainer/**'
       - 'docs/architecture/feature-spec/**'
+      # Shared fixtures the trainer tests read: VSPR golden bytes (tests/vspr, tests/scripts),
+      # the Java-generated NNUE fixtures and corpus used by tests/quantization (#269).
+      - 'fixtures/vspr/**'
+      - 'engine-core/src/test/resources/nnue/**'
+      - 'bench/nnue-corpus/**'
       - '.github/workflows/trainer-ci.yml'
   pull_request:
     paths:
       - 'trainer/**'
       - 'docs/architecture/feature-spec/**'
+      # Shared fixtures the trainer tests read: VSPR golden bytes (tests/vspr, tests/scripts),
+      # the Java-generated NNUE fixtures and corpus used by tests/quantization (#269).
+      - 'fixtures/vspr/**'
+      - 'engine-core/src/test/resources/nnue/**'
+      - 'bench/nnue-corpus/**'
       - '.github/workflows/trainer-ci.yml'
 
 jobs:

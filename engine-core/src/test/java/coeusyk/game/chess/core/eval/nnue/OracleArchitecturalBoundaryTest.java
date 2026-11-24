@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.stream.Stream;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -84,8 +85,12 @@ class OracleArchitecturalBoundaryTest {
     }
 
     private static String toFqcn(Path packageRoot, Path classFile) {
-        Path relative = packageRoot.relativize(classFile);
-        String withoutExtension = relative.toString().replace(".class", "");
+        return fqcnFromRelativePath(packageRoot.relativize(classFile).toString());
+    }
+
+    /** Accepts '/' or '\\' separators: Path.toString() is platform-dependent (#269). */
+    static String fqcnFromRelativePath(String relative) {
+        String withoutExtension = relative.replace('\\', '/').replace(".class", "");
         String pathPart = withoutExtension.contains("/")
                 ? withoutExtension.substring(0, withoutExtension.lastIndexOf('/'))
                 : "";
@@ -94,6 +99,15 @@ class OracleArchitecturalBoundaryTest {
                 : withoutExtension;
         String packagePrefix = "coeusyk.game.chess.core.eval" + (pathPart.isEmpty() ? "" : "." + pathPart.replace('/', '.'));
         return packagePrefix + "." + fileName;
+    }
+
+    @Test
+    void fqcnConversionIsIndependentOfThePathSeparator() {
+        assertEquals("coeusyk.game.chess.core.eval.nnue.NnueOracle$Result",
+                fqcnFromRelativePath("nnue/NnueOracle$Result.class"));
+        assertEquals("coeusyk.game.chess.core.eval.nnue.NnueOracle$Result",
+                fqcnFromRelativePath("nnue\\NnueOracle$Result.class"));
+        assertEquals("coeusyk.game.chess.core.eval.Evaluator", fqcnFromRelativePath("Evaluator.class"));
     }
 
     private static String disassemble(String fqcn) throws IOException, InterruptedException {

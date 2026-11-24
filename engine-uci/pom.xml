@@ -46,6 +46,17 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
+                <configuration>
+                    <!-- Without this the forked test JVM cannot resolve jdk.incubator.vector, so
+                         every NNUE test here silently ran the scalar accumulator path (#269).
+                         nnue.requireVector turns that silent fallback into a test failure for
+                         this build only; the engine itself still degrades gracefully when the
+                         module is absent. -->
+                    <argLine>--add-modules jdk.incubator.vector</argLine>
+                    <systemPropertyVariables>
+                        <nnue.requireVector>true</nnue.requireVector>
+                    </systemPropertyVariables>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
