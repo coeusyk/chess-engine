@@ -920,3 +920,13 @@ The raw files are preserved in the native checkout at `tools/results/tt-266/2026
 **Not done:** a gate that really rejects a pawn that hangs for nothing (it would need `> 0`, or a different measure) changes which pawn pushes are extended, so it is a search-strength experiment and needs its own SPRT. It is deliberately not part of this change. The only caller of `evaluateSquareOccupation` is gone, so the method is now unused; it is left in place to keep this change to one line of logic.
 
 **Measurements:** `SearcherTest`, `NodeCountRegressionTest`, `SearchRegressionTest` and `TerminalAdjudicationTest` pass unchanged. No bench was run (the #290 SPRT is using the machine). For a fixed-depth search the node count is identical by construction, since the removed expression was always true and the SEE call changes no position state (it only invalidates the board's attacked-squares cache, which affects cache warmth, not results). That is an argument from the code. A timed search can stop at a different point, because the removed work changes timing, so its node count is not expected to match. The owed check is a native bench node-count identity run once #290 finishes.
+
+### [2026-11-24] Initial WSL2 qualification after #294
+
+**Built:** Ran one same-JAR platform control, three 7-run-per-platform throughput sessions, a real-engine launcher smoke, and a fixed 100-game A/A pilot. Preserved the evidence and method in the [WSL2 operational qualification](../docs/engineering/investigations/2026-11-24-wsl2-operational-qualification.md).
+
+**Decisions Made:** The pilot met the operational criteria. Native Windows remains the platform for strength tests and absolute NPS gating. Further qualification requires separate approval.
+
+**Broke / Fixed:** The smoke postcheck initially treated Cute Chess's infinite-bound status line as evidence of SPRT. The effective argument manifest confirmed fixed-count execution. The corrected check verifies the absent flag and infinite bounds.
+
+**Measurements:** 23,222,204 nodes in every control run. WSL/native throughput ratio 1.034 (nominal 95% interval 0.978–1.092). The pilot completed 50 opening pairs at 497 games/hour, with no time forfeits, engine faults or VM swap traffic.
