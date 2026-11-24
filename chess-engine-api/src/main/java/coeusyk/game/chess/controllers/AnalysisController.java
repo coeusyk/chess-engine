@@ -4,6 +4,7 @@ import coeusyk.game.chess.core.models.InvalidFenException;
 import coeusyk.game.chess.services.AnalysisService;
 import coeusyk.game.chess.services.EvaluateRequest;
 import coeusyk.game.chess.services.EvaluateResponse;
+import coeusyk.game.chess.services.SearchAbortedException;
 import coeusyk.game.chess.services.SearchTimeoutException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -60,6 +61,11 @@ public class AnalysisController {
         int depth = request.depth() != null ? request.depth() : 15;
         int multiPv = request.multiPv() != null ? request.multiPv() : 1;
         return analysisService.evaluate(request.fen(), depth, multiPv);
+    }
+
+    @ExceptionHandler(SearchAbortedException.class)
+    public ResponseEntity<Map<String, String>> handleAborted(SearchAbortedException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", ex.getMessage()));
     }
 
     @ExceptionHandler(SearchTimeoutException.class)

@@ -207,6 +207,7 @@ public class Board {
             throw new InvalidFenException("expected appropriate FEN String (\"<position> <color-to-move> <castling-availability> <en-passant-target-square> <halfmove-clock> <full-move>\")");
         }
 
+        checkPiecePlacementShape(fenFields[0]);
         String piecePositions = String.join("", fenFields[0].split("/"));
         String[] boardInformation = Arrays.copyOfRange(fenFields, 1, fenFields.length);
 
@@ -485,6 +486,38 @@ public class Board {
 
         if (!Character.isDigit(secondChar)) {
             throw new InvalidFenException("expected a valid rank (digits)");
+        }
+
+        // The square index is computed from file and rank, so both must lie on the board.
+        if (firstChar > 'h') {
+            throw new InvalidFenException("expected a valid file (a to h)");
+        }
+        if (secondChar < '1' || secondChar > '8') {
+            throw new InvalidFenException("expected a valid rank (1 to 8)");
+        }
+    }
+
+    // Eight ranks, each exactly eight squares wide. Without this the flattened piece string let a short or
+    // long rank slide pieces onto the wrong squares, or past square 63, where the bit shift silently wraps.
+    private static void checkPiecePlacementShape(String placement) {
+        String[] ranks = placement.split("/", -1);
+        if (ranks.length != 8) {
+            throw new InvalidFenException("expected 8 ranks in the piece placement; got " + ranks.length);
+        }
+        for (String rank : ranks) {
+            int width = 0;
+            for (char ch : rank.toCharArray()) {
+                if (ch >= '1' && ch <= '8') {
+                    width += ch - '0';
+                } else if ("pnbrqkPNBRQK".indexOf(ch) >= 0) {
+                    width++;
+                } else {
+                    throw new InvalidFenException("Invalid FEN piece character '" + ch + "'");
+                }
+            }
+            if (width != 8) {
+                throw new InvalidFenException("expected every rank to cover 8 squares; got '" + rank + "'");
+            }
         }
     }
 

@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 @Service
 public class ChessGameService {
@@ -28,7 +29,7 @@ public class ChessGameService {
         synchronized (session.getLock()) {
             session.setMovesGenerator(new MovesGenerator(session.getBoard()));
             ArrayList<Move> possibleMoves = session.getMovesGenerator().getActiveMoves(session.getBoard().getActiveColor());
-            return new SetupContainer(session.getBoard(), toNotationMoves(session.getBoard(), possibleMoves));
+            return new SetupContainer(snapshot(session.getBoard()), toNotationMoves(session.getBoard(), possibleMoves));
         }
     }
 
@@ -60,9 +61,10 @@ public class ChessGameService {
     public void loadFen(FENStringHandler fenStringHandler, String gameId) {
         GameSession session = session(gameId);
         synchronized (session.getLock()) {
-            Board board = new Board(fenStringHandler.getFenString());
+            Board board = KingValidator.requireKings(new Board(fenStringHandler.getFenString()));
             session.setBoard(board);
             session.setMovesGenerator(new MovesGenerator(board));
+            session.getRedoStack().clear();
         }
     }
 
@@ -72,6 +74,7 @@ public class ChessGameService {
             Board board = new Board();
             session.setBoard(board);
             session.setMovesGenerator(new MovesGenerator(board));
+            session.getRedoStack().clear();
         }
     }
 
@@ -83,14 +86,14 @@ public class ChessGameService {
             }
 
             int[] moveDetails = moveHandler.getMoveDetails();
-            Move move = session.getMovesGenerator().findMove(moveDetails[0], moveDetails[1]);
+            Move move = findMove(session, moveDetails[0], moveDetails[1], moveHandler.promotion);
 
             if (move != null) {
                 session.getBoard().makeMove(move);
                 session.getRedoStack().clear();
                 session.setMovesGenerator(new MovesGenerator(session.getBoard()));
 
-                return new ResponseContainer(true, session.getBoard(),
+                return new ResponseContainer(true, snapshot(session.getBoard()),
                     toNotationMoves(
                         session.getBoard(),
                         session.getMovesGenerator().getActiveMoves(session.getBoard().getActiveColor())
@@ -99,6 +102,38 @@ public class ChessGameService {
 
             return new ResponseContainer(false);
         }
+    }
+
+    /**
+     * The generator returns the first legal move for a square pair, which for a promotion is the queen
+     * move. An explicit promotion letter ("q", "r", "b" or "n") selects the matching underpromotion.
+     * An unknown letter matches nothing, so the request reports failure instead of promoting silently.
+     */
+    private static Move findMove(GameSession session, int start, int target, String promotion) {
+        if (promotion == null || promotion.isBlank()) {
+            return session.getMovesGenerator().findMove(start, target);
+        }
+        String reaction = "promote-" + promotion.trim().toLowerCase(Locale.ROOT);
+        for (Move candidate : session.getMovesGenerator().getActiveMoves(session.getBoard().getActiveColor())) {
+            if (candidate.startSquare == start && candidate.targetSquare == target
+                    && reaction.equals(candidate.reaction)) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Detached copy of the live board, taken while the session lock is held, so JSON serialization
+     * after the lock is released cannot observe a concurrent move. Replaying the history keeps
+     * every serialized field, including the move list and board states, identical to the live board.
+     */
+    private static Board snapshot(Board live) {
+        Board copy = new Board(live.boardStates.get(0));
+        for (Move m : live.movesPlayed) {
+            copy.makeMove(m);
+        }
+        return copy;
     }
 
     private ArrayList<MoveNotation> toNotationMoves(Board board, ArrayList<Move> moves) {
@@ -134,7 +169,7 @@ public class ChessGameService {
     public void loadFenForGame(String gameId, String fen) {
         GameSession session = sessionStore.get(gameId);
         synchronized (session.getLock()) {
-            Board board = new Board(fen);
+            Board board = KingValidator.requireKings(new Board(fen));
             session.setBoard(board);
             session.setMovesGenerator(new MovesGenerator(board));
             session.getRedoStack().clear();
