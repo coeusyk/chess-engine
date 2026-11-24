@@ -29,7 +29,8 @@ java -jar engine-uci/target/engine-uci-<version>-SNAPSHOT.jar --bench   # bench 
 - `engine-core` must never depend on Spring/HTTP.
 - No object allocation in hot paths (Searcher, Evaluator inner loops).
 - NPS bench floor: aggregate >= 301,116 (5% below the 316,964 native-Windows baseline). Only
-  enforce this gate on native Windows — WSL2 NPS is not a valid regression signal.
+  enforce this gate on native Windows — WSL2 NPS is not a valid regression signal. Relative NPS
+  comparisons of two builds are allowed on qualified WSL2 (section 6), never against this floor.
 - Perft counts must pass before any Board/MoveGenerator commit.
 - Evaluation must remain mirror-symmetric; run the mirror-symmetry test after every Evaluator change.
 
@@ -42,8 +43,18 @@ All acceptance criteria must be checked and evidenced in the commit body before 
 
 ## 6. SPRT Rule
 
-SPRTs run on native Windows only, never WSL. When an issue needs one, output the exact
-`sprt.ps1` command and stop — never simulate or skip it.
+SPRTs run on native Windows by default. When an issue needs one, output the exact `sprt.ps1`
+command and stop — never simulate or skip it.
+
+Threads=1 SPRTs may instead run on the qualified WSL2 setup through `tools/sprt_linux.py`, under
+the controls recorded in `docs/engineering/investigations/2026-11-24-wsl2-operational-qualification.md`
+(headroom gate, recorded identities and checksums, paired openings). Record such a run as "WSL,
+qualified". It does not decide a merge on its own without a native confirmation on record. Qualified
+WSL2 also allows relative NPS and fixed-depth comparisons of two builds in one session on one host.
+Everything else stays native Windows only: the absolute NPS floor, Lazy SMP and thread scaling,
+release comparisons, and any run whose preregistration freezes the host. WSL is not claimed to be
+statistically equivalent to native. Never run two matches at once, including a WSL job beside a
+native one. Preregistrations that name native Windows keep their wording.
 
 ## 7. Engineering Investigations
 
