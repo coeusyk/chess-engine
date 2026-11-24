@@ -34,11 +34,26 @@ explicitly makes that portable and makes the on-disk layout legible from the
 dtype declaration alone, at zero runtime cost (x86_64/ARM are both little-endian,
 so this costs nothing here and only pays off if it ever doesn't).
 
-Versioning is exact-match-or-reject, not forward/backward compatible: there is
-exactly one current format version (1) and no speculative extension mechanism
-for hypothetical future versions. When a V2 is actually needed, add it then, with
-a real second format to design against -- not now, against a format that doesn't
-exist yet.
+Two format versions are supported, and nothing else:
+
+- **version 1**: the original layout, FEN field `S90`. Still read, never written by
+  `write_shard()`. Only the two legacy migrations below still produce it, because
+  their source FENs were already capped at 90 bytes.
+- **version 2** (#275): identical to version 1 except the FEN field is `S100`, so a
+  100-byte FEN (the cap VSPR allows, `trainer/trainer/vspr.py` `_MAX_FEN_BYTES`) no
+  longer fails to ingest. This is what `write_shard()` writes.
+
+`read_shard()` picks the record dtype from the header's version, so a version 1 file
+keeps loading unchanged. Any other version, a record size that does not match the
+declared version's layout, a file size that is not the header plus a whole number of
+records, or a record count that disagrees with the file is rejected with a
+`ShardFormatError`; the record count is never inferred from the file size. There is
+no in-place migration: existing version 1 datasets are left as they are.
+
+A FEN that does not fit is rejected on write (non-ASCII, a NUL byte, or longer than
+the version's field) instead of being truncated: numpy's fixed-width `S` dtype
+silently cuts an over-long value to the field width, which would turn a bad record
+into a different valid-looking one.
 
 ## Legacy formats and migration (#207)
 
@@ -85,7 +100,7 @@ migration script that predates this module's own header/versioning -- it is left
 as-is (its job, producing `stage2-quiet-sf-wdl/`, is already done, and it carries
 its own frozen `_LEGACY_SHARD_DTYPE_NO_WDL` rather than importing this module's
 legacy dtypes) and continues to work: it calls `write_shard()`, which now
-transparently produces V1 output.
+transparently produces current-version output.
 """
 
 from __future__ import annotations
@@ -101,38 +116,45 @@ import numpy as np
 
 from trainer.contracts import PositionLabel, PositionMetadata, PositionRecord, ShardRef
 
-# Longest realistic FEN (castling rights, en passant, full move counters) is well
-# under 90 bytes; 90 gives headroom without being large enough to matter for shard
-# size at the 50-100M position scale this format targets.
-_FEN_BYTES = 90
+# Version 1 stored the FEN in 90 bytes; version 2 uses 100 to match VSPR's own cap
+# (a realistic FEN is far shorter, but ingestion must accept anything VSPR does).
+_FEN_BYTES_V1 = 90
+_FEN_BYTES = 100
 
-SHARD_DTYPE = np.dtype(
-    [
-        ("fen", f"S{_FEN_BYTES}"),
-        ("eval_cp", "<i4"),
-        ("has_eval_cp", "?"),
-        ("eval_mate", "<i4"),
-        ("has_eval_mate", "?"),
-        ("wdl", "<f4"),
-        ("has_wdl", "?"),
-        ("ply", "<i4"),
-        ("has_ply", "?"),
-        ("search_depth", "<i4"),
-        ("has_search_depth", "?"),
-        # i8: a node budget can exceed int32 range at high search depth/time.
-        ("search_nodes", "<i8"),
-        ("has_search_nodes", "?"),
-        ("game_id", "<i8"),
-        ("has_game_id", "?"),
-    ]
-)
+
+def _shard_dtype(fen_bytes: int) -> np.dtype:
+    return np.dtype(
+        [
+            ("fen", f"S{fen_bytes}"),
+            ("eval_cp", "<i4"),
+            ("has_eval_cp", "?"),
+            ("eval_mate", "<i4"),
+            ("has_eval_mate", "?"),
+            ("wdl", "<f4"),
+            ("has_wdl", "?"),
+            ("ply", "<i4"),
+            ("has_ply", "?"),
+            ("search_depth", "<i4"),
+            ("has_search_depth", "?"),
+            # i8: a node budget can exceed int32 range at high search depth/time.
+            ("search_nodes", "<i8"),
+            ("has_search_nodes", "?"),
+            ("game_id", "<i8"),
+            ("has_game_id", "?"),
+        ]
+    )
+
+
+SHARD_DTYPE_V1 = _shard_dtype(_FEN_BYTES_V1)
+SHARD_DTYPE = _shard_dtype(_FEN_BYTES)  # the current (version 2) record layout
 
 # ==========================================================================
 # V1 envelope header -- fixed size, explicit little-endian, exact-match-or-reject.
 # ==========================================================================
 
 _MAGIC = b"VEXSHRD\x00"  # 8 bytes, NUL-padded -- not itself ASCII-printable text.
-_FORMAT_VERSION = 1
+_FORMAT_VERSION = 2  # the version write_shard() produces
+_SUPPORTED_DTYPES = {1: SHARD_DTYPE_V1, 2: SHARD_DTYPE}
 
 # "<8sIIIQ": magic(8s) | format_version(u32) | header_size(u32) | record_size(u32)
 # | record_count(u64). Explicit "<" prefix -- no native padding, no ambiguity.
@@ -158,9 +180,11 @@ class ShardHeader:
     record_count: int
 
 
-def _write_header(f, record_count: int) -> None:
+def _write_header(f, record_count: int, version: int) -> None:
     f.write(
-        _HEADER_STRUCT.pack(_MAGIC, _FORMAT_VERSION, HEADER_SIZE, SHARD_DTYPE.itemsize, record_count)
+        _HEADER_STRUCT.pack(
+            _MAGIC, version, HEADER_SIZE, _SUPPORTED_DTYPES[version].itemsize, record_count
+        )
     )
 
 
@@ -176,15 +200,18 @@ def _read_header(path: Path) -> ShardHeader:
 
     if magic != _MAGIC:
         raise ShardFormatError(f"{path}: bad magic {magic!r}")
-    if format_version != _FORMAT_VERSION:
+    dtype = _SUPPORTED_DTYPES.get(format_version)
+    if dtype is None:
         raise ShardFormatError(
-            f"{path}: unsupported format_version {format_version} (expected {_FORMAT_VERSION})"
+            f"{path}: unsupported format_version {format_version} "
+            f"(supported: {sorted(_SUPPORTED_DTYPES)})"
         )
     if header_size != HEADER_SIZE:
         raise ShardFormatError(f"{path}: header_size {header_size} != expected {HEADER_SIZE}")
-    if record_size != SHARD_DTYPE.itemsize:
+    if record_size != dtype.itemsize:
         raise ShardFormatError(
-            f"{path}: record_size {record_size} != SHARD_DTYPE.itemsize {SHARD_DTYPE.itemsize}"
+            f"{path}: record_size {record_size} != version {format_version} record size "
+            f"{dtype.itemsize}"
         )
     if record_count > _MAX_RECORD_COUNT:
         raise ShardFormatError(f"{path}: record_count {record_count} exceeds sanity bound")
@@ -207,7 +234,12 @@ def _read_header(path: Path) -> ShardHeader:
 
 
 def _encode(record: PositionRecord) -> tuple:
-    fen_bytes = record.fen.encode("ascii")
+    try:
+        fen_bytes = record.fen.encode("ascii")
+    except UnicodeEncodeError:
+        raise ValueError(f"FEN is not ASCII, refusing to write it to a shard: {record.fen!r}") from None
+    if b"\x00" in fen_bytes:
+        raise ValueError(f"FEN contains a NUL byte, refusing to write it to a shard: {record.fen!r}")
     if len(fen_bytes) > _FEN_BYTES:
         raise ValueError(f"FEN exceeds {_FEN_BYTES}-byte shard field: {record.fen!r}")
     label = record.label
@@ -258,32 +290,34 @@ def _decode(row: np.void) -> PositionRecord:
 _WRITE_BATCH_SIZE = 10_000
 
 
-def _write_v1_atomic(path: Path, encoded_batches: Iterable[list]) -> int:
+def _write_atomic(path: Path, encoded_batches: Iterable[list], version: int = _FORMAT_VERSION) -> int:
     """Write a placeholder header, stream `encoded_batches` (each a list of
     `_encode()`-shaped tuples), patch in the real record_count, fsync, verify, and
     atomically rename into place. `path`'s parent directory must already exist.
     Never leaves a partially-written file at `path` itself -- failures only ever
     leave (or fail to clean up) the temp file. Returns the record count written.
+    `version` selects the on-disk layout; encoded tuples must fit that version's FEN field.
     """
+    dtype = _SUPPORTED_DTYPES[version]
     count = 0
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "wb") as f:
-            _write_header(f, record_count=0)  # placeholder, patched below
+            _write_header(f, record_count=0, version=version)  # placeholder, patched below
             for batch in encoded_batches:
                 if not batch:
                     continue
-                np.array(batch, dtype=SHARD_DTYPE).tofile(f)
+                np.array(batch, dtype=dtype).tofile(f)
                 count += len(batch)
             f.flush()
             f.seek(0)
-            _write_header(f, record_count=count)
+            _write_header(f, record_count=count, version=version)
             f.flush()
             os.fsync(f.fileno())
 
         # Verify before publishing: a reader must never see a destination that
         # looks like valid, complete V1 after a failed/truncated write.
-        expected_size = HEADER_SIZE + count * SHARD_DTYPE.itemsize
+        expected_size = HEADER_SIZE + count * dtype.itemsize
         actual_size = os.path.getsize(tmp_name)
         if actual_size != expected_size:
             raise ShardFormatError(
@@ -309,7 +343,7 @@ def _batched(records: Iterable[tuple], batch_size: int) -> Iterator[list]:
 
 
 def write_shard(records: Iterable[PositionRecord], path: Path) -> ShardRef:
-    """Write `records` to a V1 binary shard at `path`, streaming in bounded
+    """Write `records` to a version 2 binary shard at `path`, streaming in bounded
     batches -- never materializes the full input in memory at once. Overwrites
     an existing file at `path` (matching this function's pre-#207 behavior);
     use `migrate_legacy119_to_v1`/`migrate_legacy124_to_v1` when the destination
@@ -317,21 +351,26 @@ def write_shard(records: Iterable[PositionRecord], path: Path) -> ShardRef:
     """
     path = Path(path)
     encoded = (_encode(r) for r in records)
-    count = _write_v1_atomic(path, _batched(encoded, _WRITE_BATCH_SIZE))
+    count = _write_atomic(path, _batched(encoded, _WRITE_BATCH_SIZE))
     return ShardRef(locator=str(path), position_count=count)
 
 
 def read_shard(shard: ShardRef) -> Iterator[PositionRecord]:
-    """Stream `PositionRecord`s from a V1 shard written by `write_shard`, via
+    """Stream `PositionRecord`s from a version 1 or version 2 shard, via
     `np.memmap` at the header's fixed offset -- the shard's bytes are not loaded
-    into memory all at once. Raises `ShardFormatError` for anything that isn't
-    exactly a valid V1 shard (wrong magic/version/stride, size mismatch, ...);
-    never guesses at a legacy layout.
+    into memory all at once. The record dtype comes from the header's version.
+    Raises `ShardFormatError` for anything that isn't exactly a valid shard of a
+    supported version (wrong magic/version/stride, size mismatch, ...); never
+    guesses at a legacy layout.
     """
     path = Path(shard.locator)
     header = _read_header(path)
     mapped = np.memmap(
-        path, dtype=SHARD_DTYPE, mode="r", offset=header.header_size, shape=(header.record_count,)
+        path,
+        dtype=_SUPPORTED_DTYPES[header.format_version],
+        mode="r",
+        offset=header.header_size,
+        shape=(header.record_count,),
     )
     for row in mapped:
         yield _decode(row)
@@ -344,7 +383,7 @@ def read_shard(shard: ShardRef) -> Iterator[PositionRecord]:
 
 _LEGACY119_DTYPE = np.dtype(
     [
-        ("fen", f"S{_FEN_BYTES}"),
+        ("fen", f"S{_FEN_BYTES_V1}"),
         ("eval_cp", "<i4"),
         ("has_eval_cp", "?"),
         ("eval_mate", "<i4"),
@@ -361,7 +400,7 @@ assert _LEGACY119_DTYPE.itemsize == 119
 
 _LEGACY124_DTYPE = np.dtype(
     [
-        ("fen", f"S{_FEN_BYTES}"),
+        ("fen", f"S{_FEN_BYTES_V1}"),
         ("eval_cp", "<i4"),
         ("has_eval_cp", "?"),
         ("eval_mate", "<i4"),
@@ -427,7 +466,7 @@ def _migrate_legacy(source: Path, dest: Path, *, legacy_dtype: np.dtype, has_wdl
         if batch:
             yield batch
 
-    count = _write_v1_atomic(dest, batches())
+    count = _write_atomic(dest, batches(), version=1)  # legacy FENs are <= 90 bytes, so v1 fits
     return ShardRef(locator=str(dest), position_count=count)
 
 

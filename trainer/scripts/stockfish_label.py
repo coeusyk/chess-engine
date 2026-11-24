@@ -37,6 +37,7 @@ from __future__ import annotations
 import hashlib
 import json
 import queue
+import shutil
 import subprocess
 import sys
 import threading
@@ -106,6 +107,22 @@ class LabelResult:
     search_nodes: Optional[int]
 
 
+def _resolve_engine_path(path: Path) -> Path:
+    """A bare name such as `stockfish` (what the committed config uses) is looked up on PATH,
+    the way a shell would, so it can be started and hashed. A path with a directory part, or one
+    that exists as given, is used as is. Raises FileNotFoundError with the name when neither works.
+    """
+    if path.is_file():
+        # Absolute, so the file that gets hashed is the file that gets started: Popen with a bare
+        # name would search PATH and could start a different binary than the one in the cwd.
+        return path.resolve()
+    if len(path.parts) == 1:
+        found = shutil.which(str(path))
+        if found:
+            return Path(found)
+    raise FileNotFoundError(f"UCI engine not found: {path} (not a file, and not on PATH)")
+
+
 class UciEngine:
     """Drives one persistent Stockfish (or any UCI-speaking) subprocess. One engine
     instance owns its subprocess exclusively for its entire lifetime -- UCI is a
@@ -140,9 +157,10 @@ class UciEngine:
         test-scope stub UCI engine. A real Stockfish binary is unaffected: it is
         never a `.py` file and is invoked directly, as before.
         """
-        self.engine_binary_sha256 = hashlib.sha256(self._engine_path.read_bytes()).hexdigest()
-        command = ([sys.executable, str(self._engine_path)] if self._engine_path.suffix == ".py"
-                   else [str(self._engine_path)])
+        engine_path = _resolve_engine_path(self._engine_path)
+        self.engine_binary_sha256 = hashlib.sha256(engine_path.read_bytes()).hexdigest()
+        command = ([sys.executable, str(engine_path)] if engine_path.suffix == ".py"
+                   else [str(engine_path)])
         try:
             self._process = subprocess.Popen(
                 command,
@@ -170,6 +188,13 @@ class UciEngine:
             raise
 
     def evaluate(self, fen: str, config: StockfishLabelConfig) -> LabelResult:
+        # Each position is labeled independently. Without ucinewgame the engine keeps its hash
+        # table and history from the previous position, so a label would depend on what was
+        # labeled before it. UCI requires isready after ucinewgame. (#275)
+        self._send("ucinewgame")
+        self._send("isready")
+        self._await(predicate=lambda line: line == "readyok", capture=lambda line: None,
+                     timeout_seconds=config.timeout_seconds)
         self._send(f"position fen {fen}")
         self._send(config.go_command())
 
@@ -182,6 +207,12 @@ class UciEngine:
             nonlocal last_score_cp, last_score_mate, last_depth, last_nodes
             tokens = line.split()
             if not tokens or tokens[0] != "info":
+                return
+            # A lowerbound/upperbound score is a fail-high/fail-low bound from an aspiration
+            # window, not the position's value; keeping it as the label would record a bound as
+            # if it were exact. The whole line is skipped, depth and nodes included, so the stored
+            # depth and node count are the ones from the line that gave the exact score. (#275)
+            if "lowerbound" in tokens or "upperbound" in tokens:
                 return
             for i, token in enumerate(tokens):
                 if token == "score" and i + 2 < len(tokens):

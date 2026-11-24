@@ -7,6 +7,7 @@ dev machine with Stockfish installed, but never block CI (trainer-ci.yml does no
 install one, matching this PR's grilled decision not to add that infra cost).
 """
 
+import hashlib
 import json
 import os
 import shutil
@@ -19,6 +20,7 @@ from scripts.stockfish_label import (
     EngineTimeoutError,
     StockfishLabelConfig,
     UciEngine,
+    _resolve_engine_path,
     label_positions,
 )
 from trainer.dataset.mmap_shard import read_shard
@@ -255,3 +257,91 @@ def test_two_runs_produce_identical_labels(tmp_path):
         assert a.label.eval_cp == b.label.eval_cp
         assert a.label.eval_mate == b.label.eval_mate
         assert a.metadata.search_nodes == b.metadata.search_nodes
+
+
+# --- #275: bound scores, ucinewgame, bare engine path ---------------------------
+def _evaluate(fen: str, monkeypatch=None, log=None):
+    if log is not None:
+        monkeypatch.setenv("STUB_LOG", str(log))
+    engine = UciEngine(STUB_ENGINE)
+    try:
+        engine.start()
+        config = StockfishLabelConfig(engine_path=STUB_ENGINE, nodes=100, timeout_seconds=2.0)
+        return engine.evaluate(fen, config)
+    finally:
+        engine.close()
+
+
+def test_a_later_bound_score_does_not_replace_the_last_exact_score():
+    result = _evaluate(STARTPOS + " BOUNDLAST")
+    assert result.eval_cp == 100, "the lowerbound 900 is a window fail-high, not the position's value"
+    assert result.eval_mate is None
+    # The depth and node count belong to the line that gave the exact score (depth 5, nodes 10),
+    # not to the later bound line (depth 6, nodes 20).
+    assert (result.search_depth, result.search_nodes) == (5, 10)
+
+
+def test_a_position_with_only_a_bound_score_is_a_protocol_error_not_a_label():
+    with pytest.raises(EngineProtocolError):
+        _evaluate(STARTPOS + " BOUNDONLY")
+
+
+def test_ucinewgame_and_isready_precede_every_position(tmp_path, monkeypatch):
+    log = tmp_path / "commands.log"
+    monkeypatch.setenv("STUB_LOG", str(log))
+    engine = UciEngine(STUB_ENGINE)
+    try:
+        engine.start()
+        config = StockfishLabelConfig(engine_path=STUB_ENGINE, nodes=100, timeout_seconds=2.0)
+        engine.evaluate(STARTPOS, config)
+        engine.evaluate(STARTPOS.replace(" w ", " b "), config)
+    finally:
+        engine.close()
+    commands = [c for c in log.read_text(encoding="utf-8").splitlines() if c.startswith(("ucinewgame", "isready", "position", "go"))]
+    positions = [i for i, c in enumerate(commands) if c.startswith("position")]
+    assert len(positions) == 2
+    for index in positions:
+        assert commands[index - 2:index] == ["ucinewgame", "isready"], commands
+
+
+def test_a_bare_engine_name_is_resolved_on_path(tmp_path, monkeypatch):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    engine_file = bin_dir / "fake-engine.py"
+    engine_file.write_text(STUB_ENGINE.read_text(encoding="utf-8"), encoding="utf-8")
+    engine_file.chmod(0o755)  # PATH lookup only finds executables, like a shell
+    monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ.get("PATH", ""))
+    monkeypatch.chdir(tmp_path)  # a bare name must not be found relative to the cwd by accident
+    engine = UciEngine(Path("fake-engine.py"))
+    try:
+        engine.start()
+        assert engine.uci_id_name == "StubEngine"
+        assert engine.engine_binary_sha256 == hashlib.sha256(engine_file.read_bytes()).hexdigest()
+    finally:
+        engine.close()
+
+
+def test_an_engine_file_in_the_cwd_is_hashed_and_started_as_the_same_absolute_file(tmp_path, monkeypatch):
+    # A different "fake-engine.py" on PATH must not be what runs while the cwd file is what is hashed.
+    cwd_dir, path_dir = tmp_path / "cwd", tmp_path / "pathdir"
+    cwd_dir.mkdir()
+    path_dir.mkdir()
+    (cwd_dir / "fake-engine.py").write_text(STUB_ENGINE.read_text(encoding="utf-8"), encoding="utf-8")
+    (path_dir / "fake-engine.py").write_text("raise SystemExit(3)\n", encoding="utf-8")
+    (path_dir / "fake-engine.py").chmod(0o755)
+    monkeypatch.setenv("PATH", str(path_dir) + os.pathsep + os.environ.get("PATH", ""))
+    monkeypatch.chdir(cwd_dir)
+    assert _resolve_engine_path(Path("fake-engine.py")).is_absolute()
+    engine = UciEngine(Path("fake-engine.py"))
+    try:
+        engine.start()  # the PATH decoy exits immediately and would fail the handshake
+        assert engine.uci_id_name == "StubEngine"
+        assert engine.engine_binary_sha256 == hashlib.sha256((cwd_dir / "fake-engine.py").read_bytes()).hexdigest()
+    finally:
+        engine.close()
+
+
+def test_a_bare_engine_name_that_is_nowhere_fails_with_its_name(monkeypatch):
+    monkeypatch.setenv("PATH", "")
+    with pytest.raises(FileNotFoundError, match="no-such-engine"):
+        UciEngine(Path("no-such-engine")).start()

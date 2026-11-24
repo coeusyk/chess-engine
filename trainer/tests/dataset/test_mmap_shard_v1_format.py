@@ -16,6 +16,7 @@ from trainer.contracts import PositionLabel, PositionMetadata, PositionRecord, S
 from trainer.dataset.mmap_shard import (
     HEADER_SIZE,
     SHARD_DTYPE,
+    SHARD_DTYPE_V1,
     ShardFormatError,
     _HEADER_STRUCT,
     _LEGACY119_DTYPE,
@@ -88,8 +89,8 @@ def test_bad_magic_rejected(tmp_path):
 
 def test_wrong_format_version_rejected(tmp_path):
     path = _valid_shard(tmp_path)
-    _corrupt_header(path, format_version=2)
-    with pytest.raises(ShardFormatError):
+    _corrupt_header(path, format_version=3)
+    with pytest.raises(ShardFormatError, match="unsupported format_version 3"):
         list(read_shard(ShardRef(locator=str(path))))
 
 
@@ -333,7 +334,7 @@ def test_migrated_v1_shard_passes_full_header_validation(tmp_path):
             f.read(HEADER_SIZE)
         )
     assert magic == _MAGIC
-    assert version == 1
+    assert version == 1  # migrations keep writing version 1; legacy FENs are at most 90 bytes
     assert header_size == HEADER_SIZE
-    assert record_size == SHARD_DTYPE.itemsize
+    assert record_size == SHARD_DTYPE_V1.itemsize
     assert record_count == 2
