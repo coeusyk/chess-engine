@@ -107,6 +107,8 @@ esac
         discover = [c for c in commands if "unittest discover" in c]
         self.assertEqual(len(discover), 1)
         self.assertNotIn(" -p ", discover[0], "tools/tests discovery must not be narrowed to one file")
+        tooling = step(CI, "build-and-test", "Tooling tests (tools/tests)")
+        self.assertEqual(tooling["env"]["REQUIRE_PWSH"], "1", "a missing pwsh must fail, not skip, the sprt.ps1 differential test")
 
     def test_nightly_sprt_uses_an_opening_book_and_the_vector_module(self):
         # #273/#269: the nightly match used to start every game from the initial position and
