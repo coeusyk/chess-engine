@@ -840,4 +840,73 @@ class SelfPlayCliTest {
         assertEquals(3, parsed.startFenSchedule().size(), "blank/whitespace-only lines must not count as entries");
         assertEquals(List.of(THREE_OPENINGS), parsed.startFenSchedule());
     }
+
+    // ---- #275: strict option parsing and streamed digest ---------------------------------------
+
+    private static String[] validArgs() {
+        return new String[] {
+                "--network", "n.nnue",
+                "--network-sha256", "a".repeat(64),
+                "--network-uuid", "u",
+                "--engine-build-id", "b",
+                "--search-depth", "6",
+                "--max-plies", "6",
+                "--max-games", "1",
+                "--seed", "1",
+                "--output-vspr", "out.vspr",
+                "--output-decision-record", "out.json",
+        };
+    }
+
+    private static String[] plus(String[] args, String... more) {
+        String[] result = java.util.Arrays.copyOf(args, args.length + more.length);
+        System.arraycopy(more, 0, result, args.length, more.length);
+        return result;
+    }
+
+    @Test
+    void theValidBaselineStillParses() {
+        assertEquals(1, SelfPlayCli.CliArgs.parse(validArgs()).maxGames());
+    }
+
+    @Test
+    void anOddNumberOfArgumentsIsRejectedNotSilentlyTruncated() {
+        // The dangling flag used to be dropped: "--max-positions" with no value parsed as "absent".
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> SelfPlayCli.CliArgs.parse(plus(validArgs(), "--max-positions")));
+        assertTrue(ex.getMessage().contains("--max-positions"), ex.getMessage());
+    }
+
+    @Test
+    void anUnknownOptionIsRejectedNotIgnored() {
+        // A misspelt flag used to be accepted and leave the default in force.
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> SelfPlayCli.CliArgs.parse(plus(validArgs(), "--max-gams", "5")));
+        assertTrue(ex.getMessage().contains("--max-gams"), ex.getMessage());
+    }
+
+    @Test
+    void aRepeatedOptionIsRejectedNotLastWins() {
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> SelfPlayCli.CliArgs.parse(plus(validArgs(), "--seed", "2")));
+        assertTrue(ex.getMessage().contains("--seed"), ex.getMessage());
+    }
+
+    @Test
+    void theDigestOfAFileIsStreamedAndMatchesTheWholeFileDigest(@TempDir Path tmp) throws Exception {
+        // Larger than the 1 MiB read buffer and not a multiple of it, so the loop runs more than once
+        // and ends on a partial chunk.
+        byte[] content = new byte[(3 << 20) + 12345];
+        new java.util.Random(275L).nextBytes(content);
+        Path file = tmp.resolve("big.bin");
+        Files.write(file, content);
+
+        String expected = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(content));
+        assertEquals(expected, SelfPlayCli.sha256HexOfFile(file));
+
+        Path empty = tmp.resolve("empty.bin");
+        Files.write(empty, new byte[0]);
+        assertEquals("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                SelfPlayCli.sha256HexOfFile(empty));
+    }
 }

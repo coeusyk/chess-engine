@@ -26,6 +26,18 @@ public class Searcher {
     @FunctionalInterface
     public interface IterationListener {
         void onIteration(IterationInfo info);
+
+        /**
+         * Called when a root iteration for {@code multipv} (1-based) at {@code depth} was stopped
+         * before it found any move, and it is not the first line. There is no {@link IterationInfo}
+         * to report for it (no move, no PV), so {@link #onIteration} is not called, which means a
+         * listener that only watches {@code onIteration} sees the earlier lines of that depth and
+         * then silence, indistinguishable from a position that simply has fewer legal moves than
+         * the requested MultiPV width. A listener that must tell the two apart overrides this.
+         * The default does nothing, so existing listeners (including lambdas) see no change. (#275)
+         */
+        default void onIterationAborted(int depth, int multipv) {
+        }
     }
 
     private static final Logger LOG = LoggerFactory.getLogger(Searcher.class);
@@ -640,6 +652,8 @@ public class Searcher {
                         } else {
                             depthAborted = true;
                         }
+                    } else if (iteration.aborted && listener != null) {
+                        listener.onIterationAborted(depth, pvIndex + 1);
                     }
                     break;
                 }

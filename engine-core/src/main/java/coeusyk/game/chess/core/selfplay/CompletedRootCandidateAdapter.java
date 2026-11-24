@@ -77,6 +77,21 @@ public final class CompletedRootCandidateAdapter implements Searcher.IterationLi
         }
     }
 
+    /** A line after the first was stopped before it found a move, so {@link Searcher} sent no
+     * {@link IterationInfo} for it. Without this the earlier lines of the same depth looked like a
+     * depth with fewer legal moves than requested, and {@link #finish()} or the next depth's first
+     * callback published them as a finished, under-width set that replaced the previous full one. */
+    @Override
+    public void onIterationAborted(int depth, int multipv) {
+        if (depth != bufferDepth) {
+            flushIfComplete();
+            buffer.clear();
+            bufferDepth = depth;
+        }
+        bufferAborted = true;
+        buffer.clear();
+    }
+
     /** Call once after the enclosing search call returns. The final depth reached never gets a
      * "next depth" {@link #onIteration} transition to flush it, so without this call a
      * fewer-legal-moves-than-requested final depth would be silently dropped. Idempotent and
