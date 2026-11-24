@@ -1,5 +1,6 @@
 package coeusyk.game.chess.controllers;
 
+import coeusyk.game.chess.core.models.InvalidFenException;
 import coeusyk.game.chess.services.AnalysisService;
 import coeusyk.game.chess.services.EvaluateRequest;
 import coeusyk.game.chess.services.EvaluateResponse;
@@ -54,16 +55,11 @@ public class AnalysisController {
     @PostMapping("/evaluate")
     public EvaluateResponse evaluate(@RequestBody EvaluateRequest request) {
         if (request.fen() == null || request.fen().isBlank()) {
-            throw new IllegalArgumentException("fen is required");
+            throw new InvalidFenException("fen is required");
         }
         int depth = request.depth() != null ? request.depth() : 15;
         int multiPv = request.multiPv() != null ? request.multiPv() : 1;
         return analysisService.evaluate(request.fen(), depth, multiPv);
-    }
-
-    @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<Map<String, String>> handleBadRequest(IllegalArgumentException ex) {
-        return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
     }
 
     @ExceptionHandler(SearchTimeoutException.class)

@@ -1,5 +1,6 @@
 package coeusyk.game.chess.controllers;
 
+import coeusyk.game.chess.core.models.InvalidFenException;
 import coeusyk.game.chess.services.ChessGameService;
 import coeusyk.game.chess.services.GameNotFoundException;
 import coeusyk.game.chess.services.GameStateResponse;
@@ -36,7 +37,7 @@ public class GameController {
             @RequestBody Map<String, String> body) {
         String fen = body.get("fen");
         if (fen == null || fen.isBlank()) {
-            throw new IllegalArgumentException("fen is required");
+            throw new InvalidFenException("fen is required");
         }
         gameService.loadFenForGame(gameId, fen);
         return ResponseEntity.ok().build();
@@ -57,11 +58,6 @@ public class GameController {
     @GetMapping("/{gameId}/state")
     public ResponseEntity<GameStateResponse> getState(@PathVariable(name = "gameId") String gameId) {
         return ResponseEntity.ok(gameService.getState(gameId));
-    }
-
-    @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<Map<String, String>> handleBadFen(IllegalArgumentException ex) {
-        return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
     }
 
     @ExceptionHandler(GameNotFoundException.class)

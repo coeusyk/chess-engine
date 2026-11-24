@@ -1,12 +1,23 @@
 package coeusyk.game.chess.core.movegen;
 
 import coeusyk.game.chess.core.models.Board;
+import coeusyk.game.chess.core.models.InvalidFenException;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class FenLegalityValidationTest {
+
+    @Test
+    void rejectsUnknownPieceAsAnInvalidFen() {
+        String fen = "4k3/8/8/8/8/8/4x3/4K3 w - - 0 1";
+        var error = assertThrows(InvalidFenException.class, () -> new Board(fen));
+        assertEquals("Invalid FEN piece character 'x'", error.getMessage());
+        assertFalse(Board.isLegalFen(fen));
+    }
 
     @Test
     void acceptsLegalStartPositionFen() {
