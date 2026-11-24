@@ -930,3 +930,27 @@ The raw files are preserved in the native checkout at `tools/results/tt-266/2026
 **Broke / Fixed:** The smoke postcheck initially treated Cute Chess's infinite-bound status line as evidence of SPRT. The effective argument manifest confirmed fixed-count execution. The corrected check verifies the absent flag and infinite bounds.
 
 **Measurements:** 23,222,204 nodes in every control run. WSL/native throughput ratio 1.034 (nominal 95% interval 0.978–1.092). The pilot completed 50 opening pairs at 497 games/hour, with no time forfeits, engine faults or VM swap traffic.
+
+### [2026-11-24] Native search checks and current develop reference
+
+**Built:** Integrated #298, #299, #300, #295 and #297 in that order, through merge commits `fd612ad`, `bbe48df`, `2e917ab`, `01f80c2` and `9902ac9`. Rebases preserved the reviewed implementation and both sides of the development log conflicts. Backend and applicable Trainer checks passed on the rebased heads. #299 keeps deduplication opt-in for callers reproducing historical splits, with new candidate training opting in.
+
+**Measurements:** Clean native Zulu 21 builds of the reviewed arms were compared with base `5334636`. #295 (`54bbe03`) and #297 (`12338dc`) matched every position in `--bench 13`, 23,222,204 nodes. #296 (`a924c72`) changed four positions and reached 23,460,621 nodes (+1.03%). Across 50 mate-in-2/3 EPDs and three direct forced-mate cases at depth 10, it changed nodes in two positions (77,882 to 69,499 and 17,048 to 13,565). All final scores, best moves and PVs in the mate set matched.
+
+A separate clean build of `9902ac94a4271a42aeb6af66d2abc823f2d70042` used the standard instrumented `--bench 13` five times on Windows. The fresh reference is 310,947 median NPS and 302,622 middle-three mean NPS, with all per-position counts identical to the control. Runs in order were 315,287, 281,631, 310,947, 319,280 and 279,190. Preflight averaged 7.0% host CPU with at least 9,711 MiB available. The sample CV was 6.40%.
+
+**Decisions Made:** Hold #296 for isolated native non-inferiority validation after approval. The mate guard changes search work, and the targeted mate results justify a correctness claim at the tested depth. The [#262 protocol](../docs/architecture/research/see-262-nonregression-protocol.md) provides a precedent for a proposed [-5, 0] Elo non-inferiority test. Freeze a current develop base, an isolated rebased candidate, artifact hashes and the command before any launch. The proposed native invocation, using prebuilt and approved arms and a verified argument manifest, is:
+
+```powershell
+.\tools\sprt.ps1 -New "$run\cand.jar" -Old "$run\base.jar" -Tag singular-mate-296-nonreg -Elo0 -5 -Elo1 0 -Alpha 0.05 -Beta 0.05 -BonferroniM 1 -MinGames 0 -MaxGames 30000 -TC '5+0.05' -Concurrency 6 -EngineThreads 1 -OpeningsFile tools\noob_3moves.epd -OpeningOrder random -NewOptions $opts -OldOptions $opts -LogPath "$run\match.log" -PgnPath "$run\match.pgn" -ExpectedArgumentManifestPath "$run\prepared-arguments.json"
+```
+
+Use the same options for both arms: `Hash=16`, `PawnHashSize=1`, `EvalType=Classical`, `MultiPV=1`, `Contempt=0`, `OwnBook=false`, `SyzygyOnline=false` and `SyzygyPath=`. Verify the opening book against the frozen #262 checksum. The historic 301,116 NPS floor remains the written native gate. The middle-three mean cleared it and two runs fell short. The historic Phase 14 calibration used a different search tree (101,771,086 nodes) and the present spread makes individual runs a weak hard gate. Keep the new series as a descriptive reference and calibrate the reporting protocol before proposing a replacement.
+
+**Broke / Fixed:** #273's CI and nightly fixes are in #291. The Windows launcher still falls back to startpos if no default or explicit book is present. `MinGames` changes the default cap without enforcing a minimum. The release runner's live loop can miss its final lines, although the final report re-reads both files. The release analyzer still raises `ZeroDivisionError` at zero scored games and uses population variance for dispersion. Future timing work should add in-JVM warm-up and monotonic, weighted search-only timing beside the legacy metrics so the old baselines and frozen runners stay reproducible.
+
+#260's snapshot and legal-en-passant fix merged through #258 as `c504253`. The `f48b752` golden update isolated the 6,136 to 6,128 main-node change to the legal EP key. CI covered repetition, quiescence, clock and EP behavior, and a targeted probe confirmed that `BookDepth=1` correctly skipped the same available book entry after a four-ply replay. The issue's native post-merge strength comparison against `61a3712` remains outstanding.
+
+#275's three PRs are in develop. The exact `valid_06_max_length_fen.vspr` fixture ingested and read back with an intact 100-byte FEN in shard v2. The issue still specifies shard v3 and rejection of `mate 0`. #298 introduced v2 as the successor to v1 and retained Stockfish's terminal checkmate label. Keep #275 open until those acceptance criteria are reconciled and the exact fixture round-trip is pinned in CI.
+
+Next localized fixes are #276's invalid-FEN handling at the API boundary (including Perft and the HTTP 400 regression) and #279's four Polyglot castling translations plus classpath resource cleanup. Online Syzygy ownership and root-only HTTP probing are a separate patch within #279.
