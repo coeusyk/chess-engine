@@ -90,6 +90,7 @@ public class Searcher {
     private long quiescenceNodes;
     private long checkExtensionsApplied;
     private long matingThreatExtensionsApplied;
+    private long singularExtensionsApplied;
     private int seldepth;
     private long betaCutoffs;
     private long firstMoveCutoffs;
@@ -512,6 +513,7 @@ public class Searcher {
         aborted = false;
         checkExtensionsApplied = 0;
         matingThreatExtensionsApplied = 0;
+        singularExtensionsApplied = 0;
         searchStartNanos = System.nanoTime();
         transpositionTable.resetStats();
         java.util.Arrays.fill(staticEvalStack, 0);
@@ -1249,8 +1251,9 @@ public class Searcher {
                     && childExtensionsUsed < maxExtensions) {
                 childDepth = Math.min(MAX_PLY - 1, childDepth + 1);
                 childExtensionsUsed++;
+                singularExtensionsApplied++;
             }
-            
+
             if (canPruneLosingCapture(
                     effectiveDepth,
                     isLosingCapture,
@@ -1695,6 +1698,11 @@ public class Searcher {
         int safeDepth = Math.max(0, Math.min(depth, MAX_PLY - 1));
         int safeMoveIndex = Math.max(0, Math.min(moveIndexOneBased, MAX_LEGAL_MOVES - 1));
         return lmrReductions[safeDepth][safeMoveIndex];
+    }
+
+    /** Number of times a verified-singular TT move received its extra ply since the last search began. */
+    long singularExtensionsAppliedForTesting() {
+        return singularExtensionsApplied;
     }
 
     int getSingularMarginForTesting(int depth) {

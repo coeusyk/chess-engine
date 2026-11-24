@@ -170,23 +170,31 @@ class SearchRegressionSuite {
         int passed = 0;
         int total  = 0;
 
+        // An unresolved bm SAN used to be skipped, which shrank the denominator and let a
+        // broken fixture or SanConverter regression pass silently (#273). Resolve every
+        // position first and fail loudly on any SAN that does not parse.
+        List<String> unresolved = new ArrayList<>();
+        List<Set<String>> expectedPerPosition = new ArrayList<>();
         for (EpdPosition pos : positions) {
             Board board = new Board(pos.fen());
-
-            // Convert SAN bm list to UCI using the board position context
             Set<String> expectedUci = new HashSet<>();
             for (String san : pos.bestMoveSans()) {
                 Move m = SanConverter.fromSan(san, board);
                 if (m != null) {
                     expectedUci.add(toUci(m));
+                } else {
+                    unresolved.add(pos.id() + " bm " + san);
                 }
             }
-            if (expectedUci.isEmpty()) {
-                System.out.printf(Locale.ROOT,
-                        "[wac] WARNING: bm SAN could not be resolved for %s — skipping%n",
-                        pos.id());
-                continue; // unresolvable bm: skip without penalising pass rate
-            }
+            expectedPerPosition.add(expectedUci);
+        }
+        assertTrue(unresolved.isEmpty(),
+                "WAC bm SAN(s) could not be resolved (" + unresolved.size() + " of "
+                        + positions.size() + " positions affected):\n  " + String.join("\n  ", unresolved));
+
+        for (int i = 0; i < positions.size(); i++) {
+            EpdPosition pos = positions.get(i);
+            Set<String> expectedUci = expectedPerPosition.get(i);
             total++;
 
             String engineMove = toUci(searcher.searchDepth(new Board(pos.fen()), PASS_DEPTH).bestMove());
@@ -305,8 +313,11 @@ class SearchRegressionSuite {
             }
 
             String[] tokens = line.split("\\s+");
+            // A malformed row used to be skipped, which silently shrank every check below (a
+            // typo such as "bM" removed the position from the gate). Fail with the line number.
             if (tokens.length < 5) {
-                continue; // need at least 4 FEN fields + at least one opcode token
+                throw new IllegalStateException("WAC line " + (i + 1)
+                        + ": need 4 FEN fields and a bm opcode: " + line);
             }
 
             // 4-field FEN → 6-field by appending "0 1" for halfmove/fullmove clocks
@@ -315,7 +326,7 @@ class SearchRegressionSuite {
 
             Matcher bmMatcher = bmPattern.matcher(opcodes);
             if (!bmMatcher.find()) {
-                continue;
+                throw new IllegalStateException("WAC line " + (i + 1) + ": no bm opcode: " + line);
             }
             List<String> bestMoveSans = new ArrayList<>();
             for (String token : bmMatcher.group(1).trim().split("\\s+")) {
@@ -325,7 +336,7 @@ class SearchRegressionSuite {
                 }
             }
             if (bestMoveSans.isEmpty()) {
-                continue;
+                throw new IllegalStateException("WAC line " + (i + 1) + ": empty bm opcode: " + line);
             }
 
             String id = "epd-line-" + (i + 1);

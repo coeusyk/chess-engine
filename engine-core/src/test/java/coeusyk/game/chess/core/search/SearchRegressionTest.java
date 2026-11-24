@@ -18,6 +18,7 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Tag("regression")
@@ -397,21 +398,83 @@ class SearchRegressionTest {
     @MethodSource("drawFailurePositions")
     @Tag("regression")
     void engineDoesNotDrawFromWinningPosition(String label, String fen) {
+        assertSearchAvoidsDraw(label, fen);
+    }
+
+    /**
+     * Negative control for {@link #assertSearchAvoidsDraw}: a dead-drawn position must trip the
+     * gate. Without this the gate could be weakened to a check that never fails (#273).
+     */
+    @Test
+    @Tag("regression")
+    void drawGateRejectsADeadDrawnPosition() {
+        // K+B vs K: insufficient material, so the score is 0 and the PV cannot make progress.
+        assertThrows(AssertionError.class,
+                () -> assertSearchAvoidsDraw("KBvK negative control", "4k3/8/8/8/8/8/8/4KB2 w - - 0 1"));
+    }
+
+    /**
+     * With contempt active a repetition draw scores {@code -contemptCp} for a side that is
+     * winning on material and 0 otherwise (Searcher.contemptScore). The old {@code != 0}
+     * assertion therefore passed on the very draw it was meant to catch. Scores are from the
+     * side to move, so a position the engine is genuinely converting scores above zero, and a
+     * PV that revisits a position is a repetition line.
+     */
+    private static void assertSearchAvoidsDraw(String label, String fen) {
         Board board = new Board(fen);
         Searcher searcher = new Searcher();
-        // Contempt must be active: repetition draws return ±contemptCp instead of 0,
-        // nudging the engine away from cycling in clearly winning positions.
         searcher.setContempt(Searcher.DEFAULT_CONTEMPT_CP);
+        assertTrue(Searcher.DEFAULT_CONTEMPT_CP > 0, "contempt must be active for this gate");
         SearchResult result = searcher.searchDepth(board, DRAW_FAILURE_DEPTH);
-        assertNotEquals(0, result.scoreCp(),
-                "Engine returned draw score 0 for draw-failure position: " + label + " | " + fen);
+
+        assertTrue(result.scoreCp() > 0,
+                "Draw-failure position " + label + " scored " + result.scoreCp()
+                        + " cp for the side to move (0 or -" + Searcher.DEFAULT_CONTEMPT_CP
+                        + " is a draw score) | " + fen);
+
+        assertPvHasNoRepetition(label, fen, result.principalVariation());
+    }
+
+    /**
+     * Best effort: the returned PV can be cut short (a transposition-table cutoff clears the line
+     * at that node), so a clean PV is supporting evidence, not proof of conversion. The score
+     * assertion above is the primary gate; this catches the case where the PV itself cycles.
+     */
+    private static void assertPvHasNoRepetition(String label, String fen, List<Move> pv) {
+        java.util.Set<Long> seen = new java.util.HashSet<>();
+        Board replay = new Board(fen);
+        seen.add(replay.getZobristHash());
+        for (Move move : pv) {
+            replay.makeMove(move);
+            assertTrue(seen.add(replay.getZobristHash()),
+                    "Principal variation repeats a position (repetition line) for " + label
+                            + " | " + fen + " | pv=" + pv);
+        }
+    }
+
+    /** Control for the repetition assertion: a PV that walks back to its start must trip it. */
+    @Test
+    @Tag("regression")
+    void repetitionCheckRejectsACyclingPv() {
+        String fen = "4k3/8/8/8/8/8/8/4KQ2 w - - 0 1";
+        Board board = new Board(fen);
+        List<Move> cycle = new java.util.ArrayList<>();
+        // Qf1-g1, Ke8-d8, Qg1-f1, Kd8-e8 returns to the starting position.
+        for (String uci : new String[] {"f1g1", "e8d8", "g1f1", "d8e8"}) {
+            Move m = new MovesGenerator(board).getActiveMoves(board.getActiveColor()).stream()
+                    .filter(c -> toUci(c).equals(uci)).findFirst().orElseThrow();
+            board.makeMove(m);
+            cycle.add(m);
+        }
+        assertThrows(AssertionError.class, () -> assertPvHasNoRepetition("cycle control", fen, cycle));
     }
 
     static Stream<Arguments> drawFailurePositions() throws Exception {
         URL url = SearchRegressionTest.class.getClassLoader()
                       .getResource("regression/draw_failures.epd");
         if (url == null) {
-            return Stream.empty(); // EPD not on classpath yet — skip gracefully
+            // A missing fixture used to yield zero parameterized cases, a vacuous pass (#273).
+            throw new IllegalStateException("regression/draw_failures.epd is missing from the test classpath");
         }
         try (BufferedReader br = new BufferedReader(new InputStreamReader(url.openStream()))) {
             return br.lines()
@@ -440,6 +503,8 @@ class SearchRegressionTest {
     // ── Discovery: run this to capture bestmoves at depth DEFAULT_DEPTH ──
 
     @Test
+    @org.junit.jupiter.api.Disabled("Manual discovery tool with no assertions; it cost 30 depth searches per CI run (#273)."
+            + " Remove @Disabled to capture new bestmoves.")
     void discoverBestMoves() {
         String[] names = {
             "T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8", "T9", "T10",
