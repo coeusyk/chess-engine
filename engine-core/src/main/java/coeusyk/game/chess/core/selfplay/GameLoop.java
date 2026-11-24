@@ -126,6 +126,9 @@ public final class GameLoop {
             candidateAdapter.reset();
 
             try {
+                // Speculative search moves do not need per-move FEN history. Search mode is scoped to the
+                // search and restored before the chosen game move is made. (#270)
+                board.setSearchMode(true);
                 searcher.iterativeDeepening(board, (int) config.searchBudgetValue(), () -> false, () -> false,
                         candidateAdapter);
                 // The final depth reached never gets a "next depth" callback to flush it -- see
@@ -137,6 +140,8 @@ public final class GameLoop {
                         SelfPlayGenerationException.Reason.SEARCH_INVARIANT_FAILURE,
                         "search threw " + e.getClass().getSimpleName() + " at ply " + ply + " (fen=" + rootFen
                                 + "): " + e.getMessage(), e);
+            } finally {
+                board.setSearchMode(false);
             }
 
             if (!rootFen.equals(board.toFen())) {

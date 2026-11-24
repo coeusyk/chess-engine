@@ -64,6 +64,7 @@ public class AnalysisService {
     public SseEmitter startAnalysis(String fen, int depth, Integer movetime, int multiPv) {
         // Validate FEN synchronously — throws IllegalArgumentException on bad input.
         Board board = KingValidator.requireKings(new Board(fen));
+        board.setSearchMode(true); // the search owns this board, so it needs no per-move FEN history (#270)
 
         // Take ownership of the active slot and cancel the previous search in one atomic step.
         AtomicBoolean cancelled = new AtomicBoolean(false);
@@ -221,6 +222,7 @@ public class AnalysisService {
     public EvaluateResponse evaluate(String fen, int rawDepth, int rawMultiPv) {
         // Validate FEN synchronously — throws IllegalArgumentException on bad input.
         Board board = KingValidator.requireKings(new Board(fen));
+        board.setSearchMode(true); // the search owns this board, so it needs no per-move FEN history (#270)
 
         int depth = Math.min(rawDepth < 1 ? EVALUATE_DEPTH_CAP : rawDepth, EVALUATE_DEPTH_CAP);
         int multiPv = Math.max(1, rawMultiPv);

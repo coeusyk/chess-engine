@@ -216,6 +216,20 @@ public class Searcher {
     private boolean syzygy50MoveRule = true;
 
     private boolean aborted;
+
+    // The hard-stop supplier of a timed search reads System.nanoTime(), so polling it at every node is
+    // visible in timed play and invisible to fixed-depth benchmarks. Interior and quiescence nodes ask it
+    // once per STOP_POLL_INTERVAL nodes. The root loop still asks at every root move, so a stop that is
+    // already pending is seen before any search work. (#271)
+    private static final int STOP_POLL_INTERVAL = 1024;
+    private int stopPollCounter;
+
+    private boolean hardStopRequested(BooleanSupplier shouldStopHard) {
+        if (aborted) {
+            return true;
+        }
+        return (++stopPollCounter & (STOP_POLL_INTERVAL - 1)) == 0 && shouldStopHard.getAsBoolean();
+    }
     // Set by searchRoot when the root position itself has no legal moves (checkmate or
     // stalemate), so iterative deepening can tell a terminal root from a cancelled search.
     private boolean rootTerminal;
@@ -1053,7 +1067,7 @@ public class Searcher {
             seldepth = ply;
         }
 
-        if (shouldStopHard.getAsBoolean()) {
+        if (hardStopRequested(shouldStopHard)) {
             aborted = true;
             return alpha;
         }
@@ -1262,7 +1276,6 @@ public class Searcher {
             boolean isLosingCapture = isCapture && seeEnabled && moveOrderingEnabled
                     && moveOrderer.scoringBufferForPly(orderPly)[mi] < 0;
             board.makeMove(move);
-            evaluator.onMake(board, move, board.lastCapturedPiece());
 
             boolean moveGivesCheck = board.isActiveColorInCheck();
             
@@ -1293,7 +1306,6 @@ public class Searcher {
                 if (instrumentationEnabled && !isPvNode && beta - alpha > 1) {
                     phase21WideLosingCaptureSkips++;
                 }
-                evaluator.onUnmake();
                 board.unmakeMove();
                 moveIndex++;
                 continue;
@@ -1314,11 +1326,14 @@ public class Searcher {
                 if (instrumentationEnabled && !isPvNode && beta - alpha > 1) {
                     phase21WideFutilitySkips++;
                 }
-                evaluator.onUnmake();
                 board.unmakeMove();
                 moveIndex++;
                 continue;
             }
+
+            // The evaluator is told about the move only once it is going to be searched. The pruning
+            // decisions above read the board alone, so a pruned move costs no accumulator update. (#271)
+            evaluator.onMake(board, move, board.lastCapturedPiece());
 
             int score;
             boolean fullWindowResearch = false;
@@ -1896,7 +1911,7 @@ public class Searcher {
             seldepth = ply;
         }
 
-        if (shouldStopHard.getAsBoolean()) {
+        if (hardStopRequested(shouldStopHard)) {
             aborted = true;
             return alpha;
         }
@@ -2118,11 +2133,13 @@ public class Searcher {
         return evaluate(board);
     }
 
+    /**
+     * Score of a node with no legal move. Every caller has just generated the legal moves and found none,
+     * so only the check state decides between mate and stalemate. Board.isCheckmate() would build a new
+     * MovesGenerator and both move lists to rediscover that. (#270)
+     */
     private int evaluateTerminal(Board board, int ply) {
-        if (board.isCheckmate()) {
-            return -MATE_SCORE + ply;
-        }
-        return 0;
+        return board.isActiveColorInCheck() ? -MATE_SCORE + ply : 0;
     }
 
     private int evaluate(Board board) {

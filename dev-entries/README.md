@@ -31,6 +31,7 @@ Use the active phase file for ongoing updates and outcomes.
 - [dev-entries/phase-25.md](dev-entries/phase-25.md)
 - [dev-entries/phase-26.md](dev-entries/phase-26.md)
 - [dev-entries/phase-27.md](dev-entries/phase-27.md)
+- [dev-entries/phase-28.md](dev-entries/phase-28.md)
 - [dev-entries/phase-30.md](dev-entries/phase-30.md)
 
 ## Logging Rule
