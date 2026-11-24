@@ -846,3 +846,60 @@ Select-String -Path "$run\match.log" -Pattern '^Elo difference' | Select-Object 
 ```
 
 Then send me `$run\match.log`, `$run\match.pgn` and `provenance.json` (or their paths in the repository's results folder). I will report the LLR progression, W-L-D, Elo with its interval, time forfeits, crashes, throughput and the terminal decision, and give a MERGE, REJECT or INCONCLUSIVE recommendation. I will not merge #290 or close #266 on the result.
+
+### [2026-11-24] Native-Windows SPRT result for the #266 collision policy (#290)
+
+**Result: H0 accepted. The run is valid. The candidate did not show the +10 Elo it was tested for.** Terminal LLR -2.97 against bounds of -2.94 and +2.94, reached at 3,552 scored games, well under the 20,000-game cap.
+
+**Run audited** (raw files in the native checkout under `tools/results/tt-266/20261124T120052`, not copied into the repository because `prepared-arguments.json` and `provenance.json` hold absolute local paths and I do not alter historical artifacts):
+
+| file | SHA-256 |
+|---|---|
+| `base.jar` | `cabf6a805bb5335bd28a19f4ea03648c31702be73ae833769c46fbd3e5cf6f9b` |
+| `cand.jar` | `fa8186cb21d94db13e2a616de28b879463ed2208d89e7e64c8f774918ee670fc` |
+| `prepared-arguments.json` | `876b55ac7990017b8006ec4fa2bd581280f65112ef0e15f9991af6bd08545335` |
+| `provenance.json` | `a7c0c33d65df29d2c239362826015b95ed0914d4b0b06487246643427f4eb832` |
+| `match.log` | `fc6d00df7ae8c61367e8fed8f56682835fc5fdb359519449241e361e56e0e27d` |
+| `match.pgn` | `f4dae62f41c308ca3eda2958a09fd6a793e133eff5bd41614aa0c85884ca2bc0` |
+
+The first four are in the run's `SHA256SUMS` and I recomputed all four to match. The log and PGN are written during the run, so they are not in `SHA256SUMS`; their hashes above are from this audit, after the run finished.
+
+**Protocol check, every item against the files:** baseline `a14a664fa40a80a9c2bfab952fbb34e788af6f62` and candidate `c9d20e607203283ecbd175701147cf976ccd863c` are the frozen identities and match `provenance.json`; the jar hashes match; the opening book hash matches the approved `2011193b...`; `elo0=0 elo1=10 alpha=0.05 beta=0.05`; `tc=5+0.05`; `-games 20000`; `-concurrency 6`; `-repeat` with `order=random plies=4`; `Threads=1` and `Hash=16` on both engines with identical option lists (`EvalType=Classical`, `OwnBook=false`, `Contempt=0`, `MultiPV=1`, `PawnHashSize=1`); `--add-modules jdk.incubator.vector` on both. Host headroom recorded before the run: 2.4% CPU busy (30 s average) and 16.4 GB free. `BonferroniM 1` and `MinGames 0` were on the script command line, not in the cutechess arguments, so I could not check them from the artifacts. No deviation found.
+
+**Numbers** (NEW is the candidate):
+
+| | |
+|---|---|
+| scored games | 3,552 (5 more were in flight at the stop and ended `unterminated`) |
+| W / D / L | 1,163 / 1,209 / 1,180 |
+| score | 0.4976 |
+| Elo | -1.7 +/- 9.3 as printed; I get -1.66, 95% interval -10.95 to +7.62; LOS 36.3% |
+| draw rate | 34.0% (932 repetition, 133 adjudication, 107 insufficient material, 36 fifty-move, 1 stalemate) |
+| colour | NEW as White 591-601-585 over 1,777; NEW as Black 572-579-624 over 1,775; White against Black overall 1,170-1,173-1,209 |
+| time forfeits | 1, and it was the baseline (game 886, OLD on White, move 59) |
+| crashes, stalls, disconnects, illegal moves | 0 (the protocol's fault search found none in the log or the PGN) |
+| elapsed | 2 h 19 min 41 s, from 12:01:39 to 14:21:20 IST |
+| throughput | 1,526 scored games per hour (1,528 started); a game lasts about 14 s of wall clock (mean 106 plies at about 0.13 s a move) |
+| move times | mean 0.1336 s for both engines, longest 0.41 s (NEW) and 0.38 s (OLD), none over 1 s |
+
+**LLR progression:** it never came near the upper bound (maximum +2.04 at game 1,090) and was above zero at 39.6% of the printed points. The candidate led early: +20.2 Elo at game 500, then drifted to +14.6 at 1,000, +5.3 at 1,500, +2.4 at 2,000, +0.3 at 3,000 and -1.2 at 3,500. The LLR was -2.72 at game 3,500, -2.89 at 3,550 and crossed at 3,552. My recomputation of the trinomial LLR matches the printed values at every printed point to within 0.016.
+
+**Anomalies:**
+- The final two scored games were both NEW losses and both were unpaired. Cutechess stopped with 5 games in flight; of the 4 openings involved, two had one scored NEW loss and an unfinished colour-reversed partner, one had both games unfinished and one had a single unfinished game. So of the 1,779 openings, 1,778 were started twice and 1,775 of those finished both games; the other 3 contain the 5 unscored games, and 2 scored games are orphans. Without those two losses the trinomial LLR is -2.88, inside the bounds.
+- That does not change the verdict. The protocol's rule is the trinomial test the script uses, and it crossed. Over complete pairs only, a paired (pentanomial) LLR on the same data is -3.14, past the bound without the orphans, and the paired Elo is -1.47 (95% interval -10.37 to +7.43). Pair scores in points of 2 for the candidate: 0 in 177, 0.5 in 389, 1 in 644, 1.5 in 402, 2 in 163, so the candidate won 565 pairs and lost 566. The paired LLR is a robustness check of mine, not the pre-registered rule.
+- One time forfeit in 3,552 games, against the baseline, with both engines using the same average time per move. A single event does not show a time-handling asymmetry and I do not read it as one.
+
+**Statistics versus infrastructure:** the decision is statistical. No infrastructure fault occurred (no crash, stall, disconnect, illegal move or restart; all 3,557 game numbers are unique and each started game finished or was cut by the stop). The only irregularity is the normal in-flight games at the stop.
+
+**Against the fixed-depth evidence above:** at 16 MB the candidate searched 17.5% fewer nodes to the same depth, at about the same NPS, with the best move equal in 31 of 31 positions. The match found no strength gain (-1.7 Elo, interval -11.0 to +7.6), so the node saving did not become Elo at 5+0.05 on a 16 MB table with one thread. I have not measured why. One possible reason is that games think about 0.13 s per move, much less than the bench's cold depth-13 searches, so the table is far less full and the replacement rule rarely decides anything; another is that keeping fresh deep entries costs reuse across moves. Neither was tested here: no in-game hashfull was recorded.
+
+**What the SPRT establishes:** under the approved [0, 10] test with 5% error rates, at Threads=1, Hash=16 MB, Classical evaluation and 5+0.05, this candidate is not +10 Elo stronger than the baseline; the upper end of the interval, +7.6, is below +10.
+**What it does not establish:** that the candidate is harmless (the lower end is -11.0), that it has no gain smaller than +7.6, or anything about 2 or 4 threads, the default 64 MB table (less pressure than 16 MB, so I would expect a smaller effect there), NNUE evaluation, longer time controls or a warm table across moves.
+
+**Recommendation: REJECT as a strength change.** The run is valid and the pre-registered test accepted H0. I am not merging #290 and I am not closing #266; both are for the owner to decide, and #266 still names the collision policy, which this result does not settle for multi-threaded search.
+
+**Separate 2T/4T SPRT:** not justified by this result alone. If #266 is to be pursued, a 4-thread run is the one worth its cost, because Lazy SMP puts several threads' probes and stores into one shared table, and the fixed-depth gain was larger at the smaller table (-43.9% nodes at 1 MB) than at 16 MB, so the effect should grow with pressure. Proposed protocol, to be pre-registered before any game: the same baseline and candidate commits, jars and opening book; `Threads=4`, `Hash=16`; `-repeat` with the same openings; `[0, 10]`, alpha = beta = 0.05; 5+0.05; concurrency 3 (16 logical processors, so 12 search threads leaves headroom for cutechess and the OS); cap 20,000 games. A game lasts about the same wall-clock time whatever the thread count (the clock sets it), so 3 slots against 6 gives roughly 770 games per hour and, if it needs a similar 3.5 to 4 thousand games, about 4.5 to 5.5 hours (the 20,000-game cap would be about 26 hours). That is an estimate from this run's game length, not a measurement, and four threads per game will not scale the way six single-thread slots did, so it needs a short check of per-game speed before the real run. I would not run 2T.
+
+**Deferred measurements that can resume now (not run here):** native `--bench` node-count identity against develop for the maximum-ply guard (#295) and the seventh-rank gate (#297), and a node-count comparison for the singular mate guard (#296), with an SPRT for #296 only if any node count moves; the native NPS floor check (301,116) on current develop; and the WSL qualification stages that need no games, the environment record and the relative-throughput measurement. The WSL stages that play games (A/A pilot, A/A at size, cross-platform replication), any new SPRT, and the 4T run above need explicit approval first.
+
+Nothing was merged or closed and no match or benchmark was started for this entry.
