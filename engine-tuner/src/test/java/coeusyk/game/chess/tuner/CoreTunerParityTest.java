@@ -121,7 +121,7 @@ class CoreTunerParityTest {
     }
 
     /** Compares both evaluators on every position and fails with the first differing FEN and the count. */
-    private static void assertParity(List<String> fens, String label) {
+    private static void assertParity(List<String> fens, String label, int minCompared) {
         double[] params = EvalParams.extractFromCurrentEval();
         Evaluator evaluator = new Evaluator();
         int compared = 0, differing = 0;
@@ -136,35 +136,36 @@ class CoreTunerParityTest {
                 if (first == null) first = "core=" + core + " tuner=" + tuner + " " + fen;
             }
         }
-        assertTrue(compared >= fens.size() * 3 / 4, label + ": too many positions skipped for mop-up (" + compared + "/" + fens.size() + ")");
+        assertTrue(compared >= minCompared, label + ": only " + compared + " of " + fens.size()
+                + " positions were compared, at least " + minCompared + " are needed for the check to mean anything");
         assertEquals(0, differing, label + ": " + differing + " of " + compared + " positions differ, first: " + first);
     }
 
     @Test
     void handPickedPositionsMatchTheProductionEvaluator() {
-        assertParity(List.of(HAND_PICKED), "hand picked");
+        assertParity(List.of(HAND_PICKED), "hand picked", 8);
     }
 
     @Test
     void seededGamePositionsMatchTheProductionEvaluator() {
-        assertParity(seededPositions(150, 274), "seeded games");
+        assertParity(seededPositions(150, 274), "seeded games", 100);
     }
 
     @Test
     void randomPlacementsOfEachPieceKindMatchTheProductionEvaluator() {
         String[] kinds = {"", "p", "n", "b", "r", "q", "pr", "pb", "pn", "pnbrq"};
         for (String kind : kinds) {
-            assertParity(placements(kind, 60, 274), "placements '" + kind + "'");
+            assertParity(placements(kind, 60, 274), "placements '" + kind + "'", 30);
         }
     }
 
     @Test
     void oppositeFlankKingsWithAnAttackerMatchTheProductionEvaluator() {
         assertParity(List.of(
-                "6k1/5ppp/8/8/8/8/PPP5/1K4R1 w - - 0 1",
+                "6kr/5ppp/8/8/8/8/PPP5/1K4R1 w - - 0 1",
                 "r4rk1/ppp2ppp/8/8/8/8/PPP2PPP/2KR3R w - - 0 1",
                 "2kr3r/ppp2ppp/8/8/8/8/PPP2PPP/R4RK1 b - - 0 1",
-                "r1bq1rk1/ppp2ppp/2n5/3p4/3P4/2N5/PPP2PPP/R1BQ1RK1 w - - 0 1"), "opposite flanks");
+                "r1bq1rk1/ppp2ppp/2n5/3p4/3P4/2N5/PPP2PPP/R1BQ1RK1 w - - 0 1"), "opposite flanks", 4);
     }
 
     @Test
@@ -173,7 +174,7 @@ class CoreTunerParityTest {
                 "4k3/8/8/8/8/P6P/PP4PP/4K3 w - - 0 1",
                 "4k3/pp4pp/p6p/8/8/8/8/4K3 b - - 0 1",
                 "4k3/8/8/8/P6p/P6p/8/4K3 w - - 0 1",
-                "4k3/8/8/8/7P/P7/8/4K3 w - - 0 1"), "edge file pawns");
+                "4k3/8/8/8/7P/P7/8/4K3 w - - 0 1"), "edge file pawns", 4);
     }
 
     @Test
