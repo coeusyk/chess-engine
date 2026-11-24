@@ -6,6 +6,7 @@ import coeusyk.game.chess.core.movegen.MovesGenerator;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -38,6 +39,7 @@ public final class OpeningBook {
     private final Random rng = new Random();
 
     private RandomAccessFile raf;
+    private Path extractedBook;
     private long entryCount;
     private boolean open;
 
@@ -53,33 +55,41 @@ public final class OpeningBook {
     public void open(Path path) throws IOException {
         close();
         raf = new RandomAccessFile(path.toFile(), "r");
-        long length = raf.length();
-        if (length % ENTRY_SIZE != 0) {
-            raf.close();
-            throw new IOException("Polyglot book has invalid file size: " + length);
+        try {
+            long length = raf.length();
+            if (length % ENTRY_SIZE != 0) {
+                throw new IOException("Polyglot book has invalid file size: " + length);
+            }
+            entryCount = length / ENTRY_SIZE;
+            open = true;
+        } catch (IOException e) {
+            close();
+            throw e;
         }
-        entryCount = length / ENTRY_SIZE;
-        open = true;
     }
 
     /** Attempts to open the book from a classpath resource (extracts to temp file). */
     public boolean openFromClasspath(String resourceName) {
+        var stream = OpeningBook.class.getResourceAsStream(resourceName);
+        if (stream == null) {
+            stream = OpeningBook.class.getResourceAsStream("/" + resourceName);
+        }
+        if (stream == null) {
+            return false;
+        }
+        Path temp = null;
         try {
-            var stream = OpeningBook.class.getResourceAsStream(resourceName);
-            if (stream == null) {
-                stream = OpeningBook.class.getResourceAsStream("/" + resourceName);
+            try (var source = stream) {
+                temp = Files.createTempFile("vex-book-", ".bin");
+                try (var output = Files.newOutputStream(temp)) {
+                    source.transferTo(output);
+                }
             }
-            if (stream == null) {
-                return false;
-            }
-            java.io.File tmp = java.io.File.createTempFile("vex-book-", ".bin");
-            tmp.deleteOnExit();
-            try (var out = new java.io.FileOutputStream(tmp)) {
-                stream.transferTo(out);
-            }
-            open(tmp.toPath());
+            open(temp);
+            extractedBook = temp;
             return true;
         } catch (IOException e) {
+            deleteExtractedBook(temp);
             return false;
         }
     }
@@ -90,8 +100,20 @@ public final class OpeningBook {
             try { raf.close(); } catch (IOException ignored) {}
             raf = null;
         }
+        deleteExtractedBook(extractedBook);
+        extractedBook = null;
         open = false;
         entryCount = 0;
+    }
+
+    private static void deleteExtractedBook(Path path) {
+        if (path != null) {
+            try {
+                Files.deleteIfExists(path);
+            } catch (IOException e) {
+                path.toFile().deleteOnExit();
+            }
+        }
     }
 
     public boolean isOpen() {
@@ -104,20 +126,22 @@ public final class OpeningBook {
      * @return a legal engine Move, or {@code null} if no book entry exists.
      */
     public Move probe(Board board) {
-        if (!open || entryCount == 0) {
+        RandomAccessFile file = raf;
+        long count = entryCount;
+        if (!open || file == null || count == 0) {
             return null;
         }
 
         long key = PolyglotKey.compute(board);
-        long firstIdx = bisectKeyLeft(key);
-        if (firstIdx >= entryCount) {
+        long firstIdx = bisectKeyLeft(file, count, key);
+        if (firstIdx >= count) {
             return null;
         }
 
         // Collect all entries matching this key
         List<long[]> candidates = new ArrayList<>(); // [weight, polyMove]
-        for (long i = firstIdx; i < entryCount; i++) {
-            long[] entry = readEntry(i);
+        for (long i = firstIdx; i < count; i++) {
+            long[] entry = readEntry(file, i);
             if (entry == null || entry[0] != key) {
                 break;
             }
@@ -182,34 +206,28 @@ public final class OpeningBook {
     }
 
     /** Returns {key, weight, rawMove} or null on IO error. */
-    private long[] readEntry(long index) {
+    private long[] readEntry(RandomAccessFile file, long index) {
         try {
-            raf.seek(index * ENTRY_SIZE);
-            long key    = raf.readLong();
-            int rawMove = readUShort();
-            int weight  = readUShort();
+            file.seek(index * ENTRY_SIZE);
+            long key    = file.readLong();
+            int rawMove = file.readUnsignedShort();
+            int weight  = file.readUnsignedShort();
             // learn (4 bytes) ignored
-            raf.skipBytes(4);
+            file.skipBytes(4);
             return new long[]{ key, weight, rawMove };
         } catch (IOException e) {
             return null;
         }
     }
 
-    private int readUShort() throws IOException {
-        int b0 = raf.read();
-        int b1 = raf.read();
-        return ((b0 & 0xFF) << 8) | (b1 & 0xFF);
-    }
-
     /** Binary search: returns the lowest index i such that entry[i].key >= targetKey. */
-    private long bisectKeyLeft(long targetKey) {
-        long lo = 0, hi = entryCount;
+    private long bisectKeyLeft(RandomAccessFile file, long count, long targetKey) {
+        long lo = 0, hi = count;
         while (lo < hi) {
             long mid = (lo + hi) >>> 1;
             try {
-                raf.seek(mid * ENTRY_SIZE);
-                long midKey = raf.readLong();
+                file.seek(mid * ENTRY_SIZE);
+                long midKey = file.readLong();
                 // Compare as unsigned longs
                 if (Long.compareUnsigned(midKey, targetKey) < 0) {
                     lo = mid + 1;
@@ -217,7 +235,7 @@ public final class OpeningBook {
                     hi = mid;
                 }
             } catch (IOException e) {
-                return entryCount;
+                return count;
             }
         }
         return lo;
@@ -242,7 +260,14 @@ public final class OpeningBook {
 
         List<Move> legal = new MovesGenerator(board).getActiveMoves(board.getActiveColor());
         for (Move m : legal) {
-            if (m.startSquare != engineFrom || m.targetSquare != engineTo) {
+            if (m.startSquare != engineFrom) {
+                continue;
+            }
+            // Polyglot encodes castling with the rook's square as the destination.
+            boolean castleToRook = promoIdx == 0
+                    && ((engineTo == engineFrom + 3 && "castle-k".equals(m.reaction))
+                    || (engineTo == engineFrom - 4 && "castle-q".equals(m.reaction)));
+            if (m.targetSquare != engineTo && !castleToRook) {
                 continue;
             }
             if (promoReaction == null) {

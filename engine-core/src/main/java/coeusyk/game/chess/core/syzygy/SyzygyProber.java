@@ -37,4 +37,12 @@ public interface SyzygyProber {
     default int getPieceLimit() {
         return 5;
     }
+
+    /**
+     * @return false if a probe can block (for example a network request), in which case the search
+     *         probes only at the root, where one wait is acceptable, and never at interior nodes
+     */
+    default boolean allowsInteriorProbing() {
+        return true;
+    }
 }

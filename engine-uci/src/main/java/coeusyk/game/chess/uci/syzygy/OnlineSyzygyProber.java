@@ -14,24 +14,60 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Syzygy tablebase prober using the lichess online API.
- * Endpoint: http://tablebase.lichess.ovh/standard?fen=...
+ * Endpoint: https://tablebase.lichess.ovh/standard?fen=...
  *
- * Results are cached by position FEN to avoid repeated API calls.
+ * Results are cached by position FEN to avoid repeated API calls. A request can block for up to
+ * the HTTP timeout, so the search probes this prober at the root only (see
+ * {@link #allowsInteriorProbing()}). One instance is meant to live as long as the UCI session so
+ * the cache and the client's threads are reused, and {@link #close()} releases them.
  */
-public class OnlineSyzygyProber implements SyzygyProber {
+public class OnlineSyzygyProber implements SyzygyProber, AutoCloseable {
 
-    private static final String API_BASE = "http://tablebase.lichess.ovh/standard";
+    static final String DEFAULT_ENDPOINT = "https://tablebase.lichess.ovh/standard";
     private static final Duration HTTP_TIMEOUT = Duration.ofSeconds(5);
 
+    private static final Duration FAILURE_TTL = Duration.ofSeconds(30);
+
+    private final String endpoint;
+    private final long failureTtlNanos;
+    private final ConcurrentHashMap<String, Long> recentFailures = new ConcurrentHashMap<>();
     private final HttpClient httpClient;
     private final ConcurrentHashMap<String, CachedProbe> cache = new ConcurrentHashMap<>();
     private final boolean respect50MoveRule;
 
     public OnlineSyzygyProber(boolean respect50MoveRule) {
+        this(respect50MoveRule, DEFAULT_ENDPOINT);
+    }
+
+    OnlineSyzygyProber(boolean respect50MoveRule, String endpoint) {
+        this(respect50MoveRule, endpoint, FAILURE_TTL);
+    }
+
+    OnlineSyzygyProber(boolean respect50MoveRule, String endpoint, Duration failureTtl) {
         this.respect50MoveRule = respect50MoveRule;
+        this.endpoint = endpoint;
+        this.failureTtlNanos = failureTtl.toNanos();
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(HTTP_TIMEOUT)
+                // NORMAL follows 301/302/303/307/308 but refuses an https to http downgrade.
+                .followRedirects(HttpClient.Redirect.NORMAL)
                 .build();
+    }
+
+    public boolean respects50MoveRule() {
+        return respect50MoveRule;
+    }
+
+    /** A probe is a network request that can block, so the search may call it at the root only. */
+    @Override
+    public boolean allowsInteriorProbing() {
+        return false;
+    }
+
+    /** Stops the client's selector thread. Later probes return INVALID instead of throwing. */
+    @Override
+    public void close() {
+        httpClient.shutdownNow();
     }
 
     @Override
@@ -42,7 +78,7 @@ public class OnlineSyzygyProber implements SyzygyProber {
             return cached.wdl;
         }
 
-        String json = fetchApi(board.toFen());
+        String json = fetchUnlessRecentlyFailed(posKey, board.toFen());
         if (json == null) {
             return WDLResult.INVALID;
         }
@@ -60,7 +96,7 @@ public class OnlineSyzygyProber implements SyzygyProber {
             return cached.dtz;
         }
 
-        String json = fetchApi(board.toFen());
+        String json = fetchUnlessRecentlyFailed(posKey, board.toFen());
         if (json == null) {
             return DTZResult.INVALID;
         }
@@ -75,10 +111,30 @@ public class OnlineSyzygyProber implements SyzygyProber {
         return true;
     }
 
+    /**
+     * A failed request is remembered for the failure TTL. The root is probed once per
+     * iterative-deepening iteration, so without this an unreachable server would cost one timeout
+     * per depth. The memory expires, so a short outage does not disable the position for the session.
+     */
+    private String fetchUnlessRecentlyFailed(String posKey, String fen) {
+        Long failedAt = recentFailures.get(posKey);
+        if (failedAt != null) {
+            if (System.nanoTime() - failedAt < failureTtlNanos) {
+                return null;
+            }
+            recentFailures.remove(posKey, failedAt);
+        }
+        String json = fetchApi(fen);
+        if (json == null) {
+            recentFailures.put(posKey, System.nanoTime());
+        }
+        return json;
+    }
+
     private String fetchApi(String fen) {
         try {
             String encodedFen = fen.replace(' ', '_');
-            URI uri = URI.create(API_BASE + "?fen=" + encodedFen);
+            URI uri = URI.create(endpoint + "?fen=" + encodedFen);
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(uri)
                     .timeout(HTTP_TIMEOUT)

@@ -1127,6 +1127,7 @@ public class Searcher {
 
         // Syzygy WDL probe in search: return tablebase score for positions with few pieces
         if (syzygyProber.isAvailable()
+                && syzygyProber.allowsInteriorProbing()
                 && effectiveDepth >= syzygyProbeDepth
                 && Long.bitCount(board.getAllOccupancy()) <= syzygyProber.getPieceLimit()) {
             WDLResult wdlResult = syzygyProber.probeWDL(board);
