@@ -96,6 +96,13 @@ public class Searcher {
     // positions cause unbounded evasion trees (B^k nodes). The cap still gives 3 extra plies of
     // check resolution before forcing a stand-pat return.
     private static final int MAX_Q_CHECK_EXTENSION = 3;
+    // Deepest ply at which alphaBeta still searches. A node at this ply is adjudicated exactly
+    // (mate, stalemate, or the static eval) and does not recurse. Iterative deepening reaches depth
+    // 127 and check extensions add up to 16 plies, so without a bound a node can sit at ply 143,
+    // past staticEvalStack (MAX_PLY + 2 entries). The margin leaves room for the deepest quiescence
+    // recursion (MAX_Q_DEPTH + MAX_Q_CHECK_EXTENSION plies) so that a mate found there is scored with
+    // ply <= MAX_PLY, the largest distance isMateWindow and scoreToTT still recognise as mate. (#267)
+    static final int MAX_SEARCH_PLY = MAX_PLY - MAX_Q_DEPTH - MAX_Q_CHECK_EXTENSION;
 
     private long nodesVisited;
     private long leafNodes;
@@ -1069,6 +1076,12 @@ public class Searcher {
             if (board.isRepetitionDraw()) {
                 return contemptScore(board);
             }
+        }
+
+        // Draws above are already exact. Past this point a node would index arrays sized for
+        // MAX_PLY, so stop here and adjudicate it without searching deeper.
+        if (ply >= MAX_SEARCH_PLY) {
+            return boundaryScore(board, ply);
         }
 
         int effectiveDepth = depth;
@@ -2082,6 +2095,19 @@ public class Searcher {
             return 0;
         }
         return DELTA_PIECE_VALUES[Piece.type(captured)];
+    }
+
+    /**
+     * Score of a node that sits at {@link #MAX_SEARCH_PLY}: exact for checkmate and stalemate (a legal
+     * move test, run only at this ply), the static evaluation otherwise.
+     */
+    private int boundaryScore(Board board, int ply) {
+        int[] moves = moveListPool[Math.min(ply, MOVE_LIST_POOL_SIZE - 1)];
+        if (MovesGenerator.generate(board, moves) == 0) {
+            leafNodes++;
+            return evaluateTerminal(board, ply);
+        }
+        return evaluate(board);
     }
 
     private int evaluateTerminal(Board board, int ply) {
