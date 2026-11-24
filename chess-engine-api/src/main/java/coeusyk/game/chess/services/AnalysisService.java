@@ -7,7 +7,9 @@ import coeusyk.game.chess.core.search.IterationInfo;
 import coeusyk.game.chess.core.search.SearchResult;
 import coeusyk.game.chess.core.search.Searcher;
 import coeusyk.game.chess.core.search.TimeManager;
+import coeusyk.game.chess.utils.KingValidator;
 import coeusyk.game.chess.utils.UciConverter;
+import jakarta.annotation.PreDestroy;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -33,8 +35,22 @@ public class AnalysisService {
     private static final int MAX_PLY = 128;
     private static final int MATE_THRESHOLD = MATE_SCORE - MAX_PLY;
 
-    private final ExecutorService searchExecutor = Executors.newSingleThreadExecutor();
+    // Daemon so an in-flight search can never keep the JVM alive; shutdown() below also cancels it.
+    private final ExecutorService searchExecutor = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "analysis-search");
+        thread.setDaemon(true);
+        return thread;
+    });
     private final AtomicReference<AtomicBoolean> activeCancellationFlag = new AtomicReference<>();
+
+    @PreDestroy
+    void shutdown() {
+        AtomicBoolean running = activeCancellationFlag.getAndSet(null);
+        if (running != null) {
+            running.set(true);
+        }
+        searchExecutor.shutdownNow();
+    }
 
     /**
      * Validates the FEN synchronously (throws {@code IllegalArgumentException} on invalid input),
@@ -47,16 +63,14 @@ public class AnalysisService {
     @SuppressWarnings("null")
     public SseEmitter startAnalysis(String fen, int depth, Integer movetime, int multiPv) {
         // Validate FEN synchronously — throws IllegalArgumentException on bad input.
-        Board board = new Board(fen);
+        Board board = KingValidator.requireKings(new Board(fen));
 
-        // Cancel the previous search if one is running.
-        AtomicBoolean previousFlag = activeCancellationFlag.get();
+        // Take ownership of the active slot and cancel the previous search in one atomic step.
+        AtomicBoolean cancelled = new AtomicBoolean(false);
+        AtomicBoolean previousFlag = activeCancellationFlag.getAndSet(cancelled);
         if (previousFlag != null) {
             previousFlag.set(true);
         }
-
-        AtomicBoolean cancelled = new AtomicBoolean(false);
-        activeCancellationFlag.set(cancelled);
 
         SseEmitter emitter = new SseEmitter(300_000L);
 
@@ -84,29 +98,50 @@ public class AnalysisService {
                     result = searcher.iterativeDeepening(board, depth, cancelled::get, cancelled::get, listener);
                 }
 
-                if (!cancelled.get()) {
-                    var best = result.bestMove();
-                    String bestUci = best != null ? UciConverter.toUci(best) : "0000";
-                    String bestSan = best != null ? SanConverter.toSan(best, new Board(fen)) : null;
-                    emitter.send(SseEmitter.event()
-                            .name("bestmove")
-                            .data(Map.of("type", "bestmove", "move", bestUci, "san", bestSan != null ? bestSan : bestUci)));
-                    emitter.complete();
+                var best = result.bestMove();
+                String bestUci = best != null ? UciConverter.toUci(best) : "0000";
+                String bestSan = best != null ? SanConverter.toSan(best, new Board(fen)) : null;
+                // Same monitor as sendInfoEvent. The Tomcat timeout thread runs cleanup() without it, so
+                // re-check the flag inside the lock and never send into an emitter that already completed.
+                synchronized (emitter) {
+                    if (!cancelled.get()) {
+                        emitter.send(SseEmitter.event()
+                                .name("bestmove")
+                                .data(Map.of("type", "bestmove", "move", bestUci, "san", bestSan != null ? bestSan : bestUci)));
+                        emitter.complete();
+                    } else {
+                        completeQuietly(emitter);
+                    }
                 }
             } catch (IOException ignored) {
                 // Client disconnected mid-stream; search already cancelled by onError/onCompletion.
             } catch (Exception e) {
-                try {
-                    emitter.send(SseEmitter.event()
-                            .name("error")
-                            .data(Map.of("type", "error", "message", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName())));
-                } catch (IOException ignored) {
+                synchronized (emitter) {
+                    if (!cancelled.get()) {
+                        try {
+                            emitter.send(SseEmitter.event()
+                                    .name("error")
+                                    .data(Map.of("type", "error", "message", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName())));
+                        } catch (IOException ignored) {
+                        }
+                        emitter.completeWithError(e);
+                    } else {
+                        completeQuietly(emitter);
+                    }
                 }
-                emitter.completeWithError(e);
             }
         }, searchExecutor);
 
         return emitter;
+    }
+
+    // A superseded stream would otherwise stay open until the 300 s emitter timeout with no terminal
+    // event. For a stream the client or the container already closed this is a no-op.
+    private static void completeQuietly(SseEmitter emitter) {
+        try {
+            emitter.complete();
+        } catch (IllegalStateException ignored) {
+        }
     }
 
     @SuppressWarnings("null")
@@ -185,20 +220,18 @@ public class AnalysisService {
      */
     public EvaluateResponse evaluate(String fen, int rawDepth, int rawMultiPv) {
         // Validate FEN synchronously — throws IllegalArgumentException on bad input.
-        Board board = new Board(fen);
+        Board board = KingValidator.requireKings(new Board(fen));
 
         int depth = Math.min(rawDepth < 1 ? EVALUATE_DEPTH_CAP : rawDepth, EVALUATE_DEPTH_CAP);
         int multiPv = Math.max(1, rawMultiPv);
 
-        // Cancel any running SSE analysis to free the executor thread immediately.
-        AtomicBoolean previousFlag = activeCancellationFlag.get();
+        // Register this evaluate search so a subsequent request can cancel it, and cancel any running
+        // analysis to free the executor thread immediately, in one atomic step.
+        AtomicBoolean cancelled = new AtomicBoolean(false);
+        AtomicBoolean previousFlag = activeCancellationFlag.getAndSet(cancelled);
         if (previousFlag != null) {
             previousFlag.set(true);
         }
-
-        AtomicBoolean cancelled = new AtomicBoolean(false);
-        // Register this evaluate search so a subsequent startAnalysis() can cancel it.
-        activeCancellationFlag.set(cancelled);
 
         // Collect iteration info events to populate MultiPV lines in the response.
         List<IterationInfo> currentDepthBuffer = new ArrayList<>();
@@ -238,6 +271,14 @@ public class AnalysisService {
             Throwable cause = e.getCause();
             if (cause instanceof IllegalArgumentException iae) throw iae;
             throw new RuntimeException("Analysis failed: " + cause.getMessage(), cause);
+        } finally {
+            // Release the slot so a finished search is not left registered as the active one.
+            activeCancellationFlag.compareAndSet(cancelled, null);
+        }
+
+        // A cancelled search returns a truncated result. Report it as superseded instead of HTTP 200.
+        if (cancelled.get()) {
+            throw new SearchAbortedException("Analysis was superseded by a newer request");
         }
 
         // Commit any events still in the current-depth buffer as the final iteration.

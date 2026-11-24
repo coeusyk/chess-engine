@@ -191,6 +191,10 @@ public class Board {
 
     // Initializing the board with a FEN string:
     private void initWithFEN(String fenString) {
+        if (fenString == null || fenString.isBlank()) {
+            throw new InvalidFenException("fen is required");
+        }
+
         // Clearing all bitboards
         whitePawns = whiteKnights = whiteBishops = whiteRooks = whiteQueens = whiteKing = 0L;
         blackPawns = blackKnights = blackBishops = blackRooks = blackQueens = blackKing = 0L;
@@ -200,9 +204,10 @@ public class Board {
         String[] fenFields = fenString.split(" ");
 
         if (fenFields.length != 6) {
-            throw new IllegalArgumentException("expected appropriate FEN String (\"<position> <color-to-move> <castling-availability> <en-passant-target-square> <halfmove-clock> <full-move>\")");
+            throw new InvalidFenException("expected appropriate FEN String (\"<position> <color-to-move> <castling-availability> <en-passant-target-square> <halfmove-clock> <full-move>\")");
         }
 
+        checkPiecePlacementShape(fenFields[0]);
         String piecePositions = String.join("", fenFields[0].split("/"));
         String[] boardInformation = Arrays.copyOfRange(fenFields, 1, fenFields.length);
 
@@ -227,12 +232,15 @@ public class Board {
             if (Character.isDigit(ch)) {
                 index += Character.getNumericValue(ch);
             } else {
-                if (Character.isUpperCase(ch)) {
-                    ch = Character.toLowerCase(ch);
+                boolean white = ch >= 'A' && ch <= 'Z';
+                if (white) {
                     value = Piece.White;
                 }
 
-                int pieceType = pieceChars.get(ch);
+                Integer pieceType = pieceChars.get(white ? Character.toLowerCase(ch) : ch);
+                if (pieceType == null) {
+                    throw new InvalidFenException("Invalid FEN piece character '" + ch + "'");
+                }
                 long bit = 1L << index;
                 
                 // Set piece in appropriate bitboard
@@ -269,7 +277,7 @@ public class Board {
         } else if (boardInformation[0].equals("w")) {
             activeColor = Piece.White;
         } else {
-            throw new IllegalArgumentException(
+            throw new InvalidFenException(
                     String.format("expected appropriate active color ('w' or 'b'); got '%s'", boardInformation[0])
             );
         }
@@ -282,7 +290,7 @@ public class Board {
                 if (validCAChars.indexOf(boardInformation[1].charAt(i)) != -1) {
                     castlingAvailability[castlingChars.get(boardInformation[1].charAt(i))] = true;
                 } else {
-                    throw new IllegalArgumentException(
+                    throw new InvalidFenException(
                             String.format("expected appropriate castling availability ('K', 'Q', 'k', and 'q'); " +
                                     "got '%s'", boardInformation[1].charAt(i))
                     );
@@ -299,11 +307,12 @@ public class Board {
             epTargetSquare = (8 - rank) * 8 + file;
         }
 
-        // Initializing the Halfmove Clock:
-        halfmoveClock = Integer.parseInt(boardInformation[3]);
-
-        // Initializing the Full Moves:
-        fullMoves = Integer.parseInt(boardInformation[4]);
+        try {
+            halfmoveClock = Integer.parseInt(boardInformation[3]);
+            fullMoves = Integer.parseInt(boardInformation[4]);
+        } catch (NumberFormatException e) {
+            throw new InvalidFenException("FEN move counters must be integers", e);
+        }
 
         // Adding the current FEN to the board states (only if it doesn't exist beforehand):
         if (!boardStates.contains(fenString)) {
@@ -463,20 +472,52 @@ public class Board {
 
     private void checkEPTargetSquare(String epts) {
         if (epts.length() != 2) {
-            throw new IllegalArgumentException("expected a valid square (length 2 : <file><rank>); got string of length " + epts.length());
+            throw new InvalidFenException("expected a valid square (length 2 : <file><rank>); got string of length " + epts.length());
         }
 
         char firstChar = epts.charAt(0);
         char secondChar = epts.charAt(1);
 
         if (!Character.isAlphabetic(firstChar)) {
-            throw new IllegalArgumentException("expected a valid file (a to h)");
+            throw new InvalidFenException("expected a valid file (a to h)");
         } else if (!Character.isLowerCase(firstChar)) {
-            throw new IllegalArgumentException("expected a valid file (lowercase)");
+            throw new InvalidFenException("expected a valid file (lowercase)");
         }
 
         if (!Character.isDigit(secondChar)) {
-            throw new IllegalArgumentException("expected a valid rank (digits)");
+            throw new InvalidFenException("expected a valid rank (digits)");
+        }
+
+        // The square index is computed from file and rank, so both must lie on the board.
+        if (firstChar > 'h') {
+            throw new InvalidFenException("expected a valid file (a to h)");
+        }
+        if (secondChar < '1' || secondChar > '8') {
+            throw new InvalidFenException("expected a valid rank (1 to 8)");
+        }
+    }
+
+    // Eight ranks, each exactly eight squares wide. Without this the flattened piece string let a short or
+    // long rank slide pieces onto the wrong squares, or past square 63, where the bit shift silently wraps.
+    private static void checkPiecePlacementShape(String placement) {
+        String[] ranks = placement.split("/", -1);
+        if (ranks.length != 8) {
+            throw new InvalidFenException("expected 8 ranks in the piece placement; got " + ranks.length);
+        }
+        for (String rank : ranks) {
+            int width = 0;
+            for (char ch : rank.toCharArray()) {
+                if (ch >= '1' && ch <= '8') {
+                    width += ch - '0';
+                } else if ("pnbrqkPNBRQK".indexOf(ch) >= 0) {
+                    width++;
+                } else {
+                    throw new InvalidFenException("Invalid FEN piece character '" + ch + "'");
+                }
+            }
+            if (width != 8) {
+                throw new InvalidFenException("expected every rank to cover 8 squares; got '" + rank + "'");
+            }
         }
     }
 
