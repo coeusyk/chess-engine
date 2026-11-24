@@ -10,6 +10,7 @@ import java.lang.reflect.Method;
 import java.util.function.BooleanSupplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -87,6 +88,49 @@ class SingularSearchBoundSemanticsTest {
                 "an exhausted extension budget must suppress the singular extension");
         assertEquals(0, noTtMove.singularExtensionsAppliedForTesting(),
                 "without a TT move there is nothing to extend");
+    }
+
+    // #267 item 3. The singular test compares a child's score against `ttScore - margin`. A mate TT score
+    // is node-relative (scoreToTT adds the ply) while the child's score is root-relative, and the window
+    // lands in the mate range where margins in centipawns mean nothing. Singular verification on a mate
+    // score is also unnecessary: the TT move already proves a forced mate.
+    private static final int MATE_SCORE = 100_000; // Searcher.MATE_SCORE is private
+
+    private static TranspositionTable.Entry entry(int score, TTBound bound) {
+        return new TranspositionTable.Entry(1L, TT_MOVE, DEPTH, score, bound, (byte) 0);
+    }
+
+    @Test
+    void singularVerificationIsNotAttemptedOnAMateScore() {
+        Searcher searcher = new Searcher();
+        assertTrue(searcher.canAttemptSingularityForTesting(DEPTH, entry(TT_SCORE, TTBound.LOWER_BOUND), false, false),
+                "control: an ordinary score still qualifies");
+        assertTrue(searcher.canAttemptSingularityForTesting(DEPTH, entry(MATE_SCORE - 1000, TTBound.LOWER_BOUND), false, false),
+                "control: a large but non-mate score still qualifies");
+        for (int mateScore : new int[] {MATE_SCORE - 6, MATE_SCORE - 127, -(MATE_SCORE - 6), -(MATE_SCORE - 127)}) {
+            assertFalse(searcher.canAttemptSingularityForTesting(DEPTH, entry(mateScore, TTBound.EXACT), false, false),
+                    "mate TT score " + mateScore);
+            assertFalse(searcher.canAttemptSingularityForTesting(DEPTH, entry(mateScore, TTBound.LOWER_BOUND), false, false),
+                    "mate TT score " + mateScore);
+        }
+    }
+
+    @Test
+    void aMateTtMoveDoesNotGetASingularExtension() throws Exception {
+        Board board = new Board(POSITION);
+        board.setSearchMode(true);
+        assertTtMoveIsLegal(board);
+        Searcher searcher = new Searcher(false, false, false, false, false, false);
+        searcher.setEvaluatorStrategy(new ConstantEvaluator(-4));
+        TranspositionTable table = new TranspositionTable(1);
+        // depth 6 < 8, so the entry is too shallow to cut off but deep enough to attempt singularity
+        table.store(board.getZobristHash(), TT_MOVE, DEPTH - 2, MATE_SCORE - 6, TTBound.LOWER_BOUND);
+        searcher.setSharedTranspositionTable(table);
+
+        invokeAlphaBeta(searcher, board, ONE_EXTENSION);
+
+        assertEquals(0, searcher.singularExtensionsAppliedForTesting(),
+                "a forced mate needs no singular extension, and its mate-range window must not be searched");
     }
 
     private static void assertTtMoveIsLegal(Board board) {

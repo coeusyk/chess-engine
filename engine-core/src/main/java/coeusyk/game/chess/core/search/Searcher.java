@@ -1639,6 +1639,13 @@ public class Searcher {
             return false;
         }
 
+        // A mate TT score is node-relative (scoreToTT adds the ply) while the verification search
+        // returns root-relative scores, and `score - margin` lands in the mate range where a margin in
+        // centipawns means nothing. The TT move already proves the mate, so there is nothing to verify. (#267)
+        if (Math.abs(ttEntry.score()) >= MATE_SCORE - MAX_PLY) {
+            return false;
+        }
+
         return ttEntry.bound() == TTBound.EXACT || ttEntry.bound() == TTBound.LOWER_BOUND;
     }
 
