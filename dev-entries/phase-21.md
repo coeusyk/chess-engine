@@ -824,3 +824,29 @@ Tests: a hand-computed case pins every arithmetic definition exactly (fractions,
 **Measurements:** none, no games were launched. Tests (`tools/tests/test_sprt_linux.py`, 29 tests): a hand-written golden argument list for the frozen #266 shape; a static parse of `sprt.ps1`'s own argument statements compared token for token with the Python builder (changing `-ratinginterval 10` or `score=400` on the Python side fails both); manifest shape, prepare-only, accept-and-refuse of an expected manifest, fail-closed book handling, log/PGN rules, missing cutechess and jars; log tee-ing and exit-code propagation using a fake shell script as cutechess; the provenance contents, that it records no absolute path and is never authoritative; WSL detection; host parsing. A differential test runs the real `sprt.ps1 -PrepareOnly` and the Linux launcher on six parameter sets (the output paths contain spaces in every case, and one case uses very small and very large doubles) and compares the manifests, and checks that each accepts the other's manifest and refuses a changed one. It needs pwsh 7. pwsh is not installed in the WSL environment used here, so that test has not run locally: CI sets `REQUIRE_PWSH=1` so that on the runner a missing pwsh fails instead of skipping, and the first CI run is its first execution.
 
 **Not done:** the staged qualification itself (environment record, relative throughput, A/A pilot, A/A at size, cross-platform replication), cutechess-cli is not installed in this environment, and nothing was run end to end against a real engine pair. Changing the policy in CLAUDE.md is the owner's decision after that evidence exists.
+
+### [2026-11-24] #290 rejected after the native Windows SPRT
+
+**Built:** The experimental TT policy retained fresh, deeper entries on different-key collisions. It used the same one-slot layout, memory budget and XOR publication as develop. The frozen baseline was `a14a664fa40a80a9c2bfab952fbb34e788af6f62`; the candidate was `c9d20e607203283ecbd175701147cf976ccd863c`. The [experiment branch](https://github.com/coeusyk/chess-engine/tree/fix/tt-collision-policy) retains the candidate, and the [frozen build and launch procedure](https://github.com/coeusyk/chess-engine/commit/945bc0f) records the exact arguments and opening-book checksum.
+
+**Decisions Made:** Reject the candidate and close PR #290. It failed the approved +10 Elo strength criterion. #266 remains open for the remaining TT work. This decision authorizes no new replacement-policy experiment or multi-thread SPRT.
+
+**Measurements:** Two cold, fixed-depth passes per arm agreed on all 31 positions at depth 13. At 16 MB, nodes fell from 23,222,204 to 19,146,122 (17.5%). At 1 MB, nodes fell from 44,040,937 to 24,719,457 (43.9%). At 16 MB the best move matched on every position, although scores changed by up to 33 cp. A warm 4 MB pass saved about 7% of nodes and had a lower probe hit rate, 24.2% versus 27.2%.
+
+The native Windows match used Classical evaluation, Threads=1, Hash=16 MB, 5+0.05, paired openings, concurrency 6 and the frozen [0, +10] Elo bounds at alpha=beta=0.05. It accepted H0 after 3,552 scored games (1,163 wins, 1,209 draws, 1,180 losses). Terminal LLR was -2.97 against a lower bound of -2.94. Estimated Elo was -1.7, with a 95% interval of [-10.95, +7.62]. There was one baseline time forfeit and no recorded crash, stall, disconnect or illegal move. Both arms averaged 0.1336 seconds per move.
+
+**Broke / Fixed:** Five games were in flight when cutechess stopped. Two scored losses had unfinished partners. The prescribed trinomial rule crossed the boundary with those losses included. A separate complete-pair check over 1,775 pairs yielded LLR -3.14 and Elo -1.47 (95% interval [-10.37, +7.43]). The [original audit](https://github.com/coeusyk/chess-engine/commit/3d236ce7f02bdb53998c78dcd9050851ac2a9503) records the pair counts, LLR progression and provenance checks.
+
+A cold fixed-depth node saving did not clear the match's strength criterion. The warm-table measurements show why hit rate and reuse across moves are worth measuring alongside nodes. The match did not log in-game hashfull, so it cannot establish whether table pressure or reuse explains the result.
+
+The raw files are preserved in the native checkout at `tools/results/tt-266/20261124T120052`. All six artifact hashes were recomputed and matched the audit. The original `SHA256SUMS` covers the four pre-run files and also passed verification.
+
+| File | SHA-256 |
+|---|---|
+| `SHA256SUMS` | `be211655c48b7d3a286748d3cd0551dfd25af2a3bcab40739cbc0af9bed88a95` |
+| `base.jar` | `cabf6a805bb5335bd28a19f4ea03648c31702be73ae833769c46fbd3e5cf6f9b` |
+| `cand.jar` | `fa8186cb21d94db13e2a616de28b879463ed2208d89e7e64c8f774918ee670fc` |
+| `prepared-arguments.json` | `876b55ac7990017b8006ec4fa2bd581280f65112ef0e15f9991af6bd08545335` |
+| `provenance.json` | `a7c0c33d65df29d2c239362826015b95ed0914d4b0b06487246643427f4eb832` |
+| `match.log` | `fc6d00df7ae8c61367e8fed8f56682835fc5fdb359519449241e361e56e0e27d` |
+| `match.pgn` | `f4dae62f41c308ca3eda2958a09fd6a793e133eff5bd41614aa0c85884ca2bc0` |
