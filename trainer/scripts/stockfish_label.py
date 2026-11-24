@@ -113,7 +113,9 @@ def _resolve_engine_path(path: Path) -> Path:
     that exists as given, is used as is. Raises FileNotFoundError with the name when neither works.
     """
     if path.is_file():
-        return path
+        # Absolute, so the file that gets hashed is the file that gets started: Popen with a bare
+        # name would search PATH and could start a different binary than the one in the cwd.
+        return path.resolve()
     if len(path.parts) == 1:
         found = shutil.which(str(path))
         if found:
@@ -206,14 +208,14 @@ class UciEngine:
             tokens = line.split()
             if not tokens or tokens[0] != "info":
                 return
+            # A lowerbound/upperbound score is a fail-high/fail-low bound from an aspiration
+            # window, not the position's value; keeping it as the label would record a bound as
+            # if it were exact. The whole line is skipped, depth and nodes included, so the stored
+            # depth and node count are the ones from the line that gave the exact score. (#275)
+            if "lowerbound" in tokens or "upperbound" in tokens:
+                return
             for i, token in enumerate(tokens):
                 if token == "score" and i + 2 < len(tokens):
-                    # A lowerbound/upperbound score is a fail-high/fail-low bound from an
-                    # aspiration window, not the position's value; keeping it as the label
-                    # would record a bound as if it were exact. Skip it and keep the last
-                    # exact score. (#275)
-                    if i + 3 < len(tokens) and tokens[i + 3] in ("lowerbound", "upperbound"):
-                        continue
                     if tokens[i + 1] == "cp":
                         last_score_cp, last_score_mate = int(tokens[i + 2]), None
                     elif tokens[i + 1] == "mate":

@@ -47,17 +47,28 @@ def _header(version: int, record_size: int, count: int) -> bytes:
     return _HEADER_STRUCT.pack(_MAGIC, version, HEADER_SIZE, record_size, count)
 
 
+# Version 1 record layout, written out field by field with struct (little-endian, no padding) rather
+# than with SHARD_DTYPE_V1, so a mistake shared by the reader's dtype and this helper cannot hide.
+_V1_RECORD = struct.Struct("<90si?i?f?i?i?q?q?")
+
+
 def _hand_built_v1(path: Path, records) -> Path:
-    rows = np.zeros(len(records), dtype=SHARD_DTYPE_V1)
-    for i, r in enumerate(records):
-        rows[i]["fen"] = r.fen.encode("ascii")
-        rows[i]["eval_cp"] = r.label.eval_cp
-        rows[i]["has_eval_cp"] = True
-        rows[i]["ply"] = r.metadata.ply
-        rows[i]["has_ply"] = True
+    assert _V1_RECORD.size == 133 == SHARD_DTYPE_V1.itemsize
     with open(path, "wb") as f:
-        f.write(_header(1, SHARD_DTYPE_V1.itemsize, len(records)))
-        rows.tofile(f)
+        f.write(_header(1, _V1_RECORD.size, len(records)))
+        for r in records:
+            f.write(
+                _V1_RECORD.pack(
+                    r.fen.encode("ascii"),  # struct pads the 90-byte field with NULs
+                    r.label.eval_cp, True,
+                    -3, True,  # eval_mate, populated, so a shifted field would show
+                    0.75, True,  # wdl
+                    r.metadata.ply, True,
+                    11, True,  # search_depth
+                    123456789012, True,  # search_nodes, beyond int32
+                    42, True,  # game_id
+                )
+            )
     return path
 
 
@@ -116,9 +127,21 @@ def test_a_hand_built_version_1_file_reads_identically_to_the_same_records_in_ve
     from_v1, from_v2 = _read(v1), _read(v2)
     assert [r.fen for r in from_v1] == [r.fen for r in records]
     assert [r.label.eval_cp for r in from_v1] == [11, -250]
-    assert [(r.fen, r.label, r.metadata.ply) for r in from_v1] == [
-        (r.fen, r.label, r.metadata.ply) for r in from_v2
+    assert [(r.fen, r.label.eval_cp, r.metadata.ply) for r in from_v1] == [
+        (r.fen, r.label.eval_cp, r.metadata.ply) for r in from_v2
     ]
+    # The optional fields the hand-built bytes populated come back where they were put.
+    first = from_v1[0]
+    assert (first.label.eval_mate, first.label.wdl) == (-3, 0.75)
+    assert (first.metadata.search_depth, first.metadata.search_nodes, first.metadata.game_id) == (
+        11, 123456789012, 42,
+    )
+
+
+def test_a_version_1_file_with_a_full_width_90_byte_fen_reads_back_exactly(tmp_path):
+    fen = _fen_of_length(90)
+    path = _hand_built_v1(tmp_path / "v1.bin", [_record(fen)])
+    assert _read(path)[0].fen == fen
 
 
 @pytest.mark.parametrize("version", [0, 3, 255])
@@ -177,7 +200,7 @@ def test_truncated_body_stray_byte_and_miscounted_header_are_rejected_for_both_v
 
     miscounted = fresh()
     raw = bytearray(miscounted.read_bytes())
-    version, record_size = struct.unpack_from("<II", raw, 8)[0], struct.unpack_from("<II", raw, 12)[0]
+    _, version, _, record_size, _ = _HEADER_STRUCT.unpack(bytes(raw[:HEADER_SIZE]))
     raw[:HEADER_SIZE] = _header(version, record_size, 3)
     miscounted.write_bytes(bytes(raw))
     with pytest.raises(ShardFormatError):
