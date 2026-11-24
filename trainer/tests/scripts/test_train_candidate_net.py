@@ -124,9 +124,14 @@ def test_combine_and_split_never_puts_one_position_in_both_the_training_and_held
     monkeypatch.setattr(tcn, "StockfishLabeledProvider", lambda directory, identifier, source_ref: fakes["s2"])
     monkeypatch.setattr(tcn, "_load_all", lambda provider: list(provider._records))
 
-    training, held_out, _ = tcn.combine_and_split(tmp_path / "a", tmp_path / "b", seed=3)
+    training, held_out, _ = tcn.combine_and_split(tmp_path / "a", tmp_path / "b", seed=3, drop_duplicates=True)
 
     keys = [position_key(r.fen) for r in training + held_out]
     assert len(keys) == len(set(keys)), "a position must appear once across the whole split"
     assert len(training) + len(held_out) == 17  # 18 loaded, one duplicate removed
     assert held_out, "the fixture must be large enough to produce a held-out set"
+
+    # Default (historical) behaviour is unchanged: nothing is removed, so a seeded split that a frozen
+    # checkpoint was trained on is reproduced exactly.
+    kept, held, _ = tcn.combine_and_split(tmp_path / "a", tmp_path / "b", seed=3)
+    assert len(kept) + len(held) == 18
