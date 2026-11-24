@@ -563,62 +563,67 @@ public final class EvalParams {
             }
         }
 
+        // The production evaluator is the reference (#274). Values it exposes are read from it, so the
+        // baseline cannot drift from it again. Values it keeps private are written out here and pinned
+        // by CoreTunerParityTest.
+        coeusyk.game.chess.core.eval.EvalConfig cfg = coeusyk.game.chess.core.eval.Evaluator.DEFAULT_CONFIG;
+
         // --- Pawn structure ---
-        // PASSED_MG = {0, 8, 4, 0, 8, 10, 52, 0} — indices 1..6 are tunable
-        int[] PASSED_MG = {0, 47, 40, 6, 52, 62, 122, 0};
-        int[] PASSED_EG = {0, 33, 24, 37, 53, 124, 152, 0};
+        // Passed-pawn bonus is indexed by rank 0..7; ranks 1..6 are tunable.
+        int[] passedMg = coeusyk.game.chess.core.eval.EvalParams.PASSED_PAWN_RANK_BONUS_MG;
+        int[] passedEg = coeusyk.game.chess.core.eval.EvalParams.PASSED_PAWN_RANK_BONUS_EG;
         for (int i = 0; i < 6; i++) {
-            p[IDX_PASSED_MG_START + i] = PASSED_MG[i + 1];
-            p[IDX_PASSED_EG_START + i] = PASSED_EG[i + 1];
+            p[IDX_PASSED_MG_START + i] = passedMg[i + 1];
+            p[IDX_PASSED_EG_START + i] = passedEg[i + 1];
         }
-        p[IDX_ISOLATED_MG] = 16;
-        p[IDX_ISOLATED_EG] = 13;
-        p[IDX_DOUBLED_MG]  = 6;
-        p[IDX_DOUBLED_EG]  = 34;
+        // PawnStructure keeps these four private (ISOLATED_MG/EG, DOUBLED_MG/EG).
+        p[IDX_ISOLATED_MG] = 14;
+        p[IDX_ISOLATED_EG] = 7;
+        p[IDX_DOUBLED_MG]  = 0;
+        p[IDX_DOUBLED_EG]  = 13;
 
         // --- King safety ---
-        p[IDX_SHIELD_RANK2]   = 12;
-        p[IDX_SHIELD_RANK3]   = 7;
-        p[IDX_OPEN_FILE]      = 45;
-        p[IDX_HALF_OPEN_FILE] = 13;
-        p[IDX_ATK_KNIGHT]     = 6;   // Run #171: synced with engine-core baseline (clamped to [25,45])
-        p[IDX_ATK_BISHOP]     = 2;   // Run #171: synced with engine-core baseline (pinned)
-        p[IDX_ATK_ROOK]       = 12;  // Run #171: synced with engine-core baseline (clamped to [20,45])
-        p[IDX_ATK_QUEEN]      = 0;   // Run #171: synced with engine-core baseline (pinned)
+        p[IDX_SHIELD_RANK2]   = coeusyk.game.chess.core.eval.EvalParams.SHIELD_RANK2;
+        p[IDX_SHIELD_RANK3]   = coeusyk.game.chess.core.eval.EvalParams.SHIELD_RANK3;
+        p[IDX_OPEN_FILE]      = coeusyk.game.chess.core.eval.EvalParams.OPEN_FILE_PENALTY;
+        p[IDX_HALF_OPEN_FILE] = coeusyk.game.chess.core.eval.EvalParams.HALF_OPEN_FILE_PENALTY;
+        p[IDX_ATK_KNIGHT]     = coeusyk.game.chess.core.eval.EvalParams.ATK_WEIGHT_KNIGHT;
+        p[IDX_ATK_BISHOP]     = coeusyk.game.chess.core.eval.EvalParams.ATK_WEIGHT_BISHOP;
+        p[IDX_ATK_ROOK]       = coeusyk.game.chess.core.eval.EvalParams.ATK_WEIGHT_ROOK;
+        p[IDX_ATK_QUEEN]      = coeusyk.game.chess.core.eval.EvalParams.ATK_WEIGHT_QUEEN;
 
         // --- Mobility ---
-        // MG: N=7, B=8, R=7, Q=2
+        // Evaluator keeps its mobility tables private: MG N=7 B=8 R=7 Q=2, EG N=1 B=3 R=2 Q=6.
         p[IDX_MOB_MG_START]     = 7;  // Knight
         p[IDX_MOB_MG_START + 1] = 8;  // Bishop
         p[IDX_MOB_MG_START + 2] = 7;  // Rook
         p[IDX_MOB_MG_START + 3] = 2;  // Queen
-        // EG: N=1, B=3, R=2, Q=6 (sync with EG_MOBILITY constants in Evaluator.java)
         p[IDX_MOB_EG_START]     = 1;  // Knight
         p[IDX_MOB_EG_START + 1] = 3;  // Bishop
         p[IDX_MOB_EG_START + 2] = 2;  // Rook
-        p[IDX_MOB_EG_START + 3] = 6;  // Queen (was -4 from a non-merged tuning run; engine baseline is 6)
+        p[IDX_MOB_EG_START + 3] = 6;  // Queen
 
         // --- Bonus eval terms ---
-        p[IDX_TEMPO]          = 12;  // Tempo bonus
-        p[IDX_BISHOP_PAIR_MG] = 29;   // Bishop pair MG
-        p[IDX_BISHOP_PAIR_EG] = 52;   // Bishop pair EG
-        p[IDX_ROOK_7TH_MG]          = 0;    // Rook on 7th rank MG
-        p[IDX_ROOK_7TH_EG]          = 32;   // Rook on 7th rank EG
-        p[IDX_ROOK_OPEN_FILE_MG]    = 50;   // Rook on open file MG
-        p[IDX_ROOK_OPEN_FILE_EG]    = 0;    // Rook on open file EG
-        p[IDX_ROOK_SEMI_OPEN_MG]    = 18;   // Rook on semi-open file MG
-        p[IDX_ROOK_SEMI_OPEN_EG]    = 19;   // Rook on semi-open file EG
-        p[IDX_KNIGHT_OUTPOST_MG]    = 40;   // Knight outpost MG
-        p[IDX_KNIGHT_OUTPOST_EG]    = 30;   // Knight outpost EG
-        p[IDX_CONNECTED_PAWN_MG]    = 7;    // Connected pawn bonus MG
-        p[IDX_CONNECTED_PAWN_EG]    = 6;    // Connected pawn bonus EG
-        p[IDX_BACKWARD_PAWN_MG]     = 6;    // Backward pawn penalty MG
-        p[IDX_BACKWARD_PAWN_EG]     = 20;    // Backward pawn penalty EG
-        p[IDX_ROOK_BEHIND_PASSER_MG] = 12; // Rook behind passer MG
-        p[IDX_ROOK_BEHIND_PASSER_EG] = 4;  // Rook behind passer EG
-        p[IDX_HANGING_PENALTY]       = 40;  // Hanging piece penalty
-        p[IDX_KING_SAFETY_SCALE]      = 100; // King safety scale (100 = neutral)
-        p[IDX_PIECE_ATK_BY_PAWN_MG]  = -20; // Piece attacked by pawn MG penalty
+        p[IDX_TEMPO]                 = coeusyk.game.chess.core.eval.EvalParams.TEMPO;
+        p[IDX_BISHOP_PAIR_MG]        = cfg.bishopPairMg();
+        p[IDX_BISHOP_PAIR_EG]        = cfg.bishopPairEg();
+        p[IDX_ROOK_7TH_MG]           = cfg.rook7thMg();
+        p[IDX_ROOK_7TH_EG]           = cfg.rook7thEg();
+        p[IDX_ROOK_OPEN_FILE_MG]     = cfg.rookOpenFileMg();
+        p[IDX_ROOK_OPEN_FILE_EG]     = cfg.rookOpenFileEg();
+        p[IDX_ROOK_SEMI_OPEN_MG]     = cfg.rookSemiOpenFileMg();
+        p[IDX_ROOK_SEMI_OPEN_EG]     = cfg.rookSemiOpenFileEg();
+        p[IDX_KNIGHT_OUTPOST_MG]     = cfg.knightOutpostMg();
+        p[IDX_KNIGHT_OUTPOST_EG]     = cfg.knightOutpostEg();
+        p[IDX_CONNECTED_PAWN_MG]     = cfg.connectedPawnMg();
+        p[IDX_CONNECTED_PAWN_EG]     = cfg.connectedPawnEg();
+        p[IDX_BACKWARD_PAWN_MG]      = cfg.backwardPawnMg();
+        p[IDX_BACKWARD_PAWN_EG]      = cfg.backwardPawnEg();
+        p[IDX_ROOK_BEHIND_PASSER_MG] = cfg.rookBehindPasserMg();
+        p[IDX_ROOK_BEHIND_PASSER_EG] = cfg.rookBehindPasserEg();
+        p[IDX_HANGING_PENALTY]       = coeusyk.game.chess.core.eval.EvalParams.HANGING_PENALTY;
+        p[IDX_KING_SAFETY_SCALE]     = coeusyk.game.chess.core.eval.EvalParams.KING_SAFETY_SCALE;
+        p[IDX_PIECE_ATK_BY_PAWN_MG]  = coeusyk.game.chess.core.eval.EvalParams.PIECE_ATTACKED_BY_PAWN_MG;
 
         return p;
     }
