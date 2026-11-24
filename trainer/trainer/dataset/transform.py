@@ -28,16 +28,28 @@ def compose(*transforms: Transform) -> Transform:
     return chained
 
 
+def position_key(fen: str) -> str:
+    """What makes two records "the same position" for deduplication and for keeping a held-out set
+    separate from training: the piece placement and the side to move, the first two FEN fields.
+    The network's input is exactly those two things, so two records that differ only in castling
+    rights, en passant square or the halfmove and fullmove counters present the network with the
+    same input and must not land on both sides of a split. (#275)
+    """
+    fields = fen.split(" ")
+    return " ".join(fields[:2])
+
+
 def deduplicate(records: Iterable[PositionRecord]) -> Iterator[PositionRecord]:
-    """Drop positions whose FEN has already been seen. Streaming, but the set of seen
-    FENs is held in memory for the duration of iteration -- an accepted cost for
-    deduplication, which is inherently a whole-stream concern.
+    """Drop positions whose `position_key` has already been seen (the first record wins).
+    Streaming, but the set of seen keys is held in memory for the duration of iteration -- an
+    accepted cost for deduplication, which is inherently a whole-stream concern.
     """
     seen: set[str] = set()
     for record in records:
-        if record.fen in seen:
+        key = position_key(record.fen)
+        if key in seen:
             continue
-        seen.add(record.fen)
+        seen.add(key)
         yield record
 
 

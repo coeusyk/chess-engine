@@ -37,6 +37,7 @@ import torch
 
 from trainer.contracts import DatasetProvider, PositionRecord
 from trainer.dataset import balance_phases, deduplicate, phase_of
+from trainer.dataset.transform import position_key
 from trainer.dataset.stockfish_provider import StockfishLabeledProvider
 from trainer.dataset.lichess_perspective import require_mover_relative_stage1
 from trainer.dataset.text_provider import TextDatasetProvider
@@ -89,6 +90,24 @@ def report_dataset_quality(records: List[PositionRecord]) -> None:
     )
 
 
+def _drop_duplicate_positions(tagged: list) -> list:
+    """Keeps the first entry for each `position_key`, in the given order (Stage 1 is loaded before
+    Stage 2, so a position present in both keeps its Stage 1 label). Prints how many were removed.
+    Entries are `(record, identifier, stage)` tuples.
+    """
+    seen: set = set()
+    unique = []
+    for entry in tagged:
+        key = position_key(entry[0].fen)
+        if key not in seen:
+            seen.add(key)
+            unique.append(entry)
+    removed = len(tagged) - len(unique)
+    if removed:
+        print(f"combine_and_split: removed {removed} duplicate positions before the split")
+    return unique
+
+
 def combine_and_split(
     stage1_dir: Path, stage2_dir: Path, seed: int
 ) -> Tuple[List[PositionRecord], List[PositionRecord], List[DatasetComposition]]:
@@ -114,6 +133,11 @@ def combine_and_split(
         raise ValueError("combine_and_split found no records in either stage1_dir or stage2_dir")
 
     report_dataset_quality([r for r, _, _ in tagged])
+
+    # The report above only counts duplicates. They are also removed here, before the split, so the
+    # same position (same placement and side to move) cannot be in both the training and the
+    # held-out set, which would make the held-out loss measure memorisation. (#275)
+    tagged = _drop_duplicate_positions(tagged)
 
     random.Random(seed).shuffle(tagged)
 

@@ -180,7 +180,9 @@ def texel_sigmoid(x: torch.Tensor, k: float) -> torch.Tensor:
     margins... are tuned to that scale"). `k` is taken from an existing `KFinder` run
     (config-supplied), never recomputed in Python.
     """
-    return 1.0 / (1.0 + torch.pow(torch.tensor(10.0), -k * x / 400.0))
+    # A Python-float base keeps the whole expression on x's device and dtype; a bare
+    # torch.tensor(10.0) is a CPU tensor that has to be reconciled with a CUDA x.
+    return 1.0 / (1.0 + torch.pow(10.0, -k * x / 400.0))
 
 
 def target_cp(label: PositionLabel, distance_aware: bool = False) -> float:
@@ -437,7 +439,10 @@ def train(
         predicted_cp = model(batch.us_indices, batch.us_offsets, batch.them_indices, batch.them_offsets)
         predicted_prob = texel_sigmoid(predicted_cp, config.k)
         weighted_squared_error = weights * (predicted_prob - targets) ** 2
-        loss = weighted_squared_error.sum() / weights.sum()
+        # Floored so a batch whose weights are all zero (an all-mate batch with mate_weight=0.0)
+        # gives a loss of exactly 0 instead of 0/0 = NaN, which would poison every later step.
+        # The floor is the smallest normal float32, so any real weight sum is unaffected.
+        loss = weighted_squared_error.sum() / weights.sum().clamp_min(torch.finfo(weights.dtype).tiny)
         # Phase 5 (`P5-AUXHEAD`): add the auxiliary game-outcome objective, if enabled. The
         # auxiliary term is a mean over *wdl-bearing records only* -- not over the whole
         # batch -- so its magnitude does not drift with a given batch's mask density; the

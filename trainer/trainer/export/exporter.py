@@ -119,6 +119,10 @@ def _write_utf(value: str) -> bytes:
     """
     if not value.isascii():
         raise ValueError(f"writeUTF-compatible encoding requires an ASCII-only string, got {value!r}")
+    if "\x00" in value:
+        # Java's modified UTF-8 writes NUL as the two bytes C0 80, plain UTF-8 as 00, so a NUL
+        # would produce a file the Java reader does not decode the same way.
+        raise ValueError(f"writeUTF-compatible encoding cannot contain a NUL character, got {value!r}")
     encoded = value.encode("utf-8")
     return struct.pack(">H", len(encoded)) + encoded
 

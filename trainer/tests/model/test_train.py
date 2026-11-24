@@ -627,3 +627,29 @@ def test_train_mate_target_distance_aware_true_changes_the_trained_model(tmp_pat
     )
     assert differing
     assert baseline_checkpoint["final_loss"] != distance_aware_checkpoint["final_loss"]
+
+
+def test_an_all_mate_batch_with_zero_mate_weight_gives_a_finite_loss(tmp_path):
+    # #275: with mate_weight=0.0 every weight in an all-mate batch is 0, and weights.sum() == 0 made
+    # the loss 0/0 = NaN, which then poisoned every later step.
+    mate_records = [
+        PositionRecord(fen=fen, label=PositionLabel(eval_mate=m), metadata=PositionMetadata())
+        for fen, m in [
+            ("4k3/8/8/8/8/8/4Q3/4K3 w - - 0 1", 3),
+            ("4k3/8/8/8/8/8/4q3/4K3 b - - 0 1", 3),
+        ]
+    ]
+    config = TrainingConfig(**{**vars(WDL_TINY_CONFIG), "mate_weight": 0.0, "wdl_lambda": 0.0, "batch_size": 2})
+    result = train(config, mate_records, tmp_path / "zero.pt")
+    assert all(torch.isfinite(torch.tensor(loss)) for loss in result["losses"]), result["losses"]
+    checkpoint = torch.load(tmp_path / "zero.pt", weights_only=False)
+    assert all(torch.isfinite(t).all() for t in checkpoint["model_state_dict"].values())
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_texel_sigmoid_matches_the_reference_formula_and_keeps_the_input_dtype(dtype):
+    x = torch.linspace(-3000.0, 3000.0, 121, dtype=dtype)
+    expected = 1.0 / (1.0 + torch.pow(torch.tensor(10.0, dtype=dtype), -1.3 * x / 400.0))
+    actual = texel_sigmoid(x, 1.3)
+    assert actual.dtype == dtype
+    assert torch.allclose(actual, expected, rtol=1e-6, atol=1e-7)

@@ -191,3 +191,39 @@ def test_quantized_canonical_network_round_trips_through_pickle():
     assert restored.ft_weights.dtype == np.int16
     assert restored.output_bias == quantized.output_bias
     assert restored.ft_weights.flags.writeable is False
+
+
+def test_checkpoint_to_canonical_moves_tensors_to_cpu_before_numpy():
+    # #275: a checkpoint saved from a CUDA run holds CUDA tensors; .numpy() on one raises. No GPU is
+    # assumed here, so the four tensors are wrapped in objects that behave like a tensor that is
+    # not on the CPU: numpy() fails unless cpu() was called first.
+    import torch
+
+    from trainer.export.canonical import checkpoint_to_canonical
+
+    class NotOnCpu:
+        def __init__(self, tensor):
+            self._tensor = tensor
+
+        def detach(self):
+            return self
+
+        def cpu(self):
+            return self._tensor
+
+        def numpy(self):
+            raise TypeError("can't convert a non-CPU tensor to a NumPy array")
+
+    hidden = 2
+    state_dict = {
+        "ft.weight": NotOnCpu(torch.ones(768, hidden)),
+        "ft_bias": NotOnCpu(torch.zeros(hidden)),
+        "output_layer.weight": NotOnCpu(torch.ones(1, 2 * hidden)),
+        "output_layer.bias": NotOnCpu(torch.zeros(1)),
+    }
+    checkpoint = {
+        "model_state_dict": state_dict,
+        "config": {"hidden_width": hidden, "qa": 127, "qb": 64, "output_scale": 400},
+    }
+    network = checkpoint_to_canonical(checkpoint)
+    assert network.hidden_width == hidden

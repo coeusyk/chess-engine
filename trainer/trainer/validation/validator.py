@@ -22,6 +22,7 @@ tracking.
 from __future__ import annotations
 
 import csv
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional
@@ -67,13 +68,30 @@ class EvalScaleCheck:
     position_count: int
 
 
+def _with_cp_target(records: Iterable[PositionRecord], caller: str) -> List[PositionRecord]:
+    """These metrics compare predicted centipawns against `target_cp`, which a WDL-only record
+    (no `eval_cp` and no `eval_mate`) does not have; `target_cp` raises for one. Such records are
+    left out with a warning that gives the count, and a set with nothing left is an error that
+    says why, instead of a bare ValueError from deep inside `target_cp`. (#275)
+    """
+    records = list(records)
+    usable = [r for r in records if r.label.eval_cp is not None or r.label.eval_mate is not None]
+    skipped = len(records) - len(usable)
+    if skipped:
+        warnings.warn(
+            f"{caller}: skipped {skipped} of {len(records)} WDL-only records that have no eval_cp or eval_mate",
+            stacklevel=3,
+        )
+    return usable
+
+
 def evaluate_held_out(model: NnueNet, records: Iterable[PositionRecord], k: float) -> ValidationReport:
     """Held-out loss (the same texel-sigmoid MSE `train.py`'s training loop
     minimizes) and label correlation, over records the model was not trained on.
     """
-    records = list(records)
+    records = _with_cp_target(records, "evaluate_held_out")
     if not records:
-        raise ValueError("evaluate_held_out requires at least one record")
+        raise ValueError("evaluate_held_out requires at least one record with an eval_cp or eval_mate label")
 
     batch = encode_batch(records)
     target_cps = torch.tensor([target_cp(r.label) for r in records], dtype=torch.float32)
@@ -130,9 +148,9 @@ def fit_affine_calibration(model: NnueNet, records: Iterable[PositionRecord]) ->
     up to (not past) the predictor's correlation with the target -- a mathematical
     property of OLS, not a bug -- see the research doc for why that ceiling matters.
     """
-    records = list(records)
+    records = _with_cp_target(records, "fit_affine_calibration")
     if not records:
-        raise ValueError("fit_affine_calibration requires at least one record")
+        raise ValueError("fit_affine_calibration requires at least one record with an eval_cp or eval_mate label")
 
     batch = encode_batch(records)
     target_cps = torch.tensor([target_cp(r.label) for r in records], dtype=torch.float32)
@@ -191,9 +209,9 @@ def calibration_report(
     post-hoc affine recalibration would do to these diagnostics, without touching
     the model or `output_scale` itself.
     """
-    records = list(records)
+    records = _with_cp_target(records, "calibration_report")
     if not records:
-        raise ValueError("calibration_report requires at least one record")
+        raise ValueError("calibration_report requires at least one record with an eval_cp or eval_mate label")
 
     batch = encode_batch(records)
     target_cps = torch.tensor([target_cp(r.label) for r in records], dtype=torch.float32)
