@@ -249,4 +249,62 @@ class GradientDescentTest {
         assertTrue(mseAfter <= mseBefore * 2.0,
                 "L-BFGS MSE must not more than double (" + mseBefore + " \u2192 " + mseAfter + ")");
     }
+
+    // ---- L-BFGS two-loop recursion (#274) -------------------------------------------------
+
+    /** Curvature pairs of f(x) = 0.5 * sum(a_i x_i^2) from steps along each axis and one mixed step. */
+    private static double[][][] quadraticPairs(double[] a, double[][] steps) {
+        double[][] s = new double[steps.length][];
+        double[][] y = new double[steps.length][];
+        for (int k = 0; k < steps.length; k++) {
+            s[k] = steps[k].clone();
+            y[k] = new double[a.length];
+            for (int i = 0; i < a.length; i++) y[k][i] = a[i] * steps[k][i];
+        }
+        return new double[][][]{s, y};
+    }
+
+    private static double[] rho(double[][] s, double[][] y) {
+        double[] r = new double[s.length];
+        for (int k = 0; k < s.length; k++) {
+            double ys = 0;
+            for (int i = 0; i < s[k].length; i++) ys += y[k][i] * s[k][i];
+            r[k] = 1.0 / ys;
+        }
+        return r;
+    }
+
+    @Test
+    void lbfgsDirectionSatisfiesTheSecantEquationForTheNewestPair() {
+        // BFGS maps the newest y back to its s: H * y_k = s_k. A mixed step makes the pairs non-orthogonal,
+        // so a wrong loop order or a wrong alpha pairing shows up.
+        double[] a = {1.0, 4.0, 9.0};
+        double[][] steps = {{1, 0, 0}, {0.3, 1, 0}, {0.2, -0.4, 1}};
+        double[][][] sy = quadraticPairs(a, steps);
+        double[][] s = sy[0], y = sy[1];
+        double[] direction = GradientDescent.lbfgsDirection(y[2], s, y, rho(s, y), 3, 3);
+        for (int i = 0; i < 3; i++) {
+            assertEquals(s[2][i], direction[i], 1e-9, "H*y must equal s for the newest pair, component " + i);
+        }
+    }
+
+    @Test
+    void lbfgsDirectionStillSatisfiesTheSecantEquationAfterTheBufferWraps() {
+        // Four pairs in a buffer of three: the oldest is overwritten and the head has wrapped to 1.
+        double[] a = {2.0, 3.0, 5.0};
+        double[][] steps = {{1, 0.1, 0}, {0, 1, 0.2}, {0.5, 0, 1}, {0.3, -0.6, 0.4}};
+        double[][][] sy = quadraticPairs(a, steps);
+        double[][] s = new double[3][], y = new double[3][];
+        for (int k = 0; k < 4; k++) { s[k % 3] = sy[0][k]; y[k % 3] = sy[1][k]; }
+        double[] direction = GradientDescent.lbfgsDirection(sy[1][3], s, y, rho(s, y), 3, 1);
+        for (int i = 0; i < 3; i++) {
+            assertEquals(sy[0][3][i], direction[i], 1e-9, "H*y must equal s for the newest pair, component " + i);
+        }
+    }
+
+    @Test
+    void lbfgsDirectionWithoutHistoryIsTheGradient() {
+        double[] g = {1, -2, 3};
+        assertArrayEquals(g, GradientDescent.lbfgsDirection(g, new double[3][], new double[3][], new double[3], 0, 0), 0.0);
+    }
 }

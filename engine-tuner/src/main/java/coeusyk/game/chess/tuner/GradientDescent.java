@@ -549,35 +549,8 @@ public final class GradientDescent {
                 break;
             }
 
-            // --- Two-loop recursion: compute search direction q = H^{-1} · grad ---
-            double[] q = grad.clone();
-            int k2 = Math.min(histLen, m);  // number of valid history entries
-            double[] alpha = new double[m];
-
-            // First loop (backward through history)
-            for (int i = k2 - 1; i >= 0; i--) {
-                int idx = ((histHead - 1 - i) % m + m) % m;
-                alpha[i] = rhoArr[idx] * dot(sList[idx], q);
-                axpy(-alpha[i], yList[idx], q);
-            }
-
-            // Scale by H_0 = (y^T s / y^T y) · I (Oren-Luenberger initial scaling)
-            if (k2 > 0) {
-                int last = ((histHead - 1) % m + m) % m;
-                double ys  = 1.0 / rhoArr[last];         // y·s = 1/ρ
-                double yy  = dot(yList[last], yList[last]);
-                if (yy > 1e-20) {
-                    double h0 = ys / yy;
-                    for (int j = 0; j < n; j++) q[j] *= h0;
-                }
-            }
-
-            // Second loop (forward through history)
-            for (int i = 0; i < k2; i++) {
-                int idx = ((histHead - k2 + i) % m + m) % m;
-                double beta = rhoArr[idx] * dot(yList[idx], q);
-                axpy(alpha[i] - beta, sList[idx], q);
-            }
+            // --- Two-loop recursion: search direction q = H^{-1} · grad ---
+            double[] q = lbfgsDirection(grad, sList, yList, rhoArr, histLen, histHead);
 
             // Verify descent direction: q · grad must be positive. If not, reset history
             // and fall back to steepest descent for this step.
@@ -732,6 +705,46 @@ public final class GradientDescent {
             grad[i] -= gamma / dist;
         }
         return grad;
+    }
+
+    /**
+     * L-BFGS two-loop recursion over the stored curvature pairs.
+     * Returns {@code H · grad} where H is the implicit inverse Hessian approximation.
+     */
+    static double[] lbfgsDirection(double[] grad, double[][] sList, double[][] yList, double[] rhoArr,
+                                   int histLen, int histHead) {
+        final int n = grad.length;
+        final int m = sList.length;
+        double[] q = grad.clone();
+        int k2 = Math.min(histLen, m);  // number of valid history entries
+        double[] alpha = new double[m];
+
+        // Pair j = 0 is the newest, j = k2 - 1 the oldest. The first loop walks newest to oldest and keeps
+        // alpha[j] for the pair it came from, so the second loop can read the same pair back (#274).
+        for (int j = 0; j < k2; j++) {
+            int idx = ((histHead - 1 - j) % m + m) % m;
+            alpha[j] = rhoArr[idx] * dot(sList[idx], q);
+            axpy(-alpha[j], yList[idx], q);
+        }
+
+        // Scale by H_0 = (y^T s / y^T y) · I (Oren-Luenberger initial scaling)
+        if (k2 > 0) {
+            int last = ((histHead - 1) % m + m) % m;
+            double ys  = 1.0 / rhoArr[last];         // y·s = 1/ρ
+            double yy  = dot(yList[last], yList[last]);
+            if (yy > 1e-20) {
+                double h0 = ys / yy;
+                for (int j = 0; j < n; j++) q[j] *= h0;
+            }
+        }
+
+        // Second loop: oldest to newest.
+        for (int j = k2 - 1; j >= 0; j--) {
+            int idx = ((histHead - 1 - j) % m + m) % m;
+            double beta = rhoArr[idx] * dot(yList[idx], q);
+            axpy(alpha[j] - beta, sList[idx], q);
+        }
+        return q;
     }
 
     /** Returns the dot product of two equal-length vectors. */
