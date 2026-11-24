@@ -11,7 +11,10 @@ import java.util.UUID;
  * In-memory session registry bounded by {@link #MAX_SESSIONS}. When the cap is exceeded the least
  * recently used session is dropped, except the legacy default session, which the unqualified
  * {@code /engine/*} endpoints depend on. A dropped id answers {@link GameNotFoundException} on the
- * {@code /api/game/{id}} endpoints, the same as an id that never existed.
+ * {@code /api/game/{id}} endpoints, the same as an id that never existed. The legacy endpoints go
+ * through {@link #getOrCreate}, which has always created a session for any id, so there a dropped
+ * id comes back as a fresh game. There is no per-client quota: enough distinct ids can push other
+ * sessions out, which is the price of a hard memory bound.
  */
 @Component
 public class GameSessionStore {

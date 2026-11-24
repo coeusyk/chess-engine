@@ -107,7 +107,8 @@ public class ChessGameService {
     /**
      * The generator returns the first legal move for a square pair, which for a promotion is the queen
      * move. An explicit promotion letter ("q", "r", "b" or "n") selects the matching underpromotion.
-     * An unknown letter matches nothing, so the request reports failure instead of promoting silently.
+     * An unknown letter on a promotion matches nothing, so the request reports failure instead of
+     * promoting silently. On a move that is not a promotion the letter is ignored, as before it existed.
      */
     private static Move findMove(GameSession session, int start, int target, String promotion) {
         if (promotion == null || promotion.isBlank()) {
@@ -120,7 +121,9 @@ public class ChessGameService {
                 return candidate;
             }
         }
-        return null;
+        Move plain = session.getMovesGenerator().findMove(start, target);
+        boolean isPromotion = plain != null && plain.reaction != null && plain.reaction.startsWith("promote-");
+        return isPromotion ? null : plain;
     }
 
     /**

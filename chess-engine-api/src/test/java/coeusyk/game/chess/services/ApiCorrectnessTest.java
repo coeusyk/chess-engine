@@ -98,7 +98,13 @@ class ApiCorrectnessTest {
 
         service.loadFenForGame(id, PROMOTION_FEN);
         assertFalse(service.makeMove(move(8, 0, "k"), id).success, "an unknown promotion piece must not promote");
+
         assertFalse(service.getState(id).canUndo(), "a refused move leaves the position untouched");
+        // A client that always sends a promotion letter must still be able to make ordinary moves.
+        service.loadFenForGame(id, START);
+        assertTrue(service.makeMove(move(52, 36, "q"), id).success, "the letter is ignored on a non-promotion move");
+        service.loadFenForGame(id, START);
+        assertTrue(service.makeMove(move(52, 36, "k"), id).success);
     }
 
     @Test

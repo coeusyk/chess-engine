@@ -109,6 +109,8 @@ public class AnalysisService {
                                 .name("bestmove")
                                 .data(Map.of("type", "bestmove", "move", bestUci, "san", bestSan != null ? bestSan : bestUci)));
                         emitter.complete();
+                    } else {
+                        completeQuietly(emitter);
                     }
                 }
             } catch (IOException ignored) {
@@ -123,12 +125,23 @@ public class AnalysisService {
                         } catch (IOException ignored) {
                         }
                         emitter.completeWithError(e);
+                    } else {
+                        completeQuietly(emitter);
                     }
                 }
             }
         }, searchExecutor);
 
         return emitter;
+    }
+
+    // A superseded stream would otherwise stay open until the 300 s emitter timeout with no terminal
+    // event. For a stream the client or the container already closed this is a no-op.
+    private static void completeQuietly(SseEmitter emitter) {
+        try {
+            emitter.complete();
+        } catch (IllegalStateException ignored) {
+        }
     }
 
     @SuppressWarnings("null")
