@@ -250,6 +250,8 @@ No stage launches a long match without approval. Stages 0 and 1 and the 100-game
 
 Not as it stands. `tools/sprt.ps1` builds the JVM path with `bin\java.exe`, documents `cutechess-cli.exe`, carries a Windows PowerShell 5.1 stderr workaround, and the surrounding runners verify `Win32NT`, paths and process ownership. PowerShell 7 is not installed here, and cutechess-cli is not either. Even with `pwsh`, the hard-coded `\` and `.exe` would have to change, and doing that would touch the launcher that the frozen preregistrations reference. A separate small Linux launcher that emits the same cutechess argument manifest (same `-each tc`, `-recover`, `-concurrency`, openings and engine options) is the safer shape, with a test that its argument list equals the one `sprt.ps1` produces for the same inputs.
 
+*Status (2026-11-24):* that launcher now exists as `tools/sprt_linux.py`, with `tools/tests/test_sprt_linux.py` comparing its argument manifest with the one `sprt.ps1 -PrepareOnly` writes. It launches nothing by itself in the tests, writes a provenance record marked `authoritative: false`, and fails closed on a missing opening book. It does not qualify WSL: the staged protocol above has not been run, no game has been played with it, and the native-Windows rule in CLAUDE.md is unchanged.
+
 ### Recommendation: ALLOW WSL CONDITIONALLY
 
 WSL2 may be used for relative, same-session, same-host comparisons at Threads=1, but only after the staged qualification above has produced acceptable numbers, and never as an equivalent of the native environment. Specifically:

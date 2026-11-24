@@ -60,6 +60,10 @@ jobs:
         if: steps.scope.outputs.backend == 'true'
         # Runs every tools/tests/test_*.py, not just the workflow contract file (#273).
         # ubuntu-latest ships pwsh, so the pwsh-gated comparison test runs here too.
+        # REQUIRE_PWSH makes a missing pwsh a failure for test_sprt_linux's differential test
+        # (the Linux launcher against the real sprt.ps1 -PrepareOnly) instead of a silent skip.
+        env:
+          REQUIRE_PWSH: "1"
         run: |
           python3 -m pip install --target "$RUNNER_TEMP/workflow-checks" PyYAML==6.0.2
           PYTHONPATH="$RUNNER_TEMP/workflow-checks" python3 -m unittest discover -s tools/tests -v
