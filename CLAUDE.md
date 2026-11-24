@@ -48,13 +48,16 @@ command and stop — never simulate or skip it.
 
 Threads=1 SPRTs may instead run on the qualified WSL2 setup through `tools/sprt_linux.py`, under
 the controls recorded in `docs/engineering/investigations/2026-11-24-wsl2-operational-qualification.md`
-(headroom gate, recorded identities and checksums, paired openings). Record such a run as "WSL,
-qualified". It does not decide a merge on its own without a native confirmation on record. Qualified
-WSL2 also allows relative NPS and fixed-depth comparisons of two builds in one session on one host.
-Everything else stays native Windows only: the absolute NPS floor, Lazy SMP and thread scaling,
-release comparisons, and any run whose preregistration freezes the host. WSL is not claimed to be
-statistically equivalent to native. Never run two matches at once, including a WSL job beside a
-native one. Preregistrations that name native Windows keep their wording.
+(headroom gate, recorded identities and checksums, paired openings, resource monitoring). Record
+such a run as "WSL, qualified". A valid qualified run can satisfy a strength-validation gate on its
+own, with no native repeat. Normal merge approval and evidence review still apply. Qualified WSL2
+also allows relative NPS and fixed-depth comparisons of two builds in one session on one host.
+Everything else stays native Windows only: the absolute NPS floor, release comparisons, Lazy SMP and
+thread scaling, and any run whose preregistration freezes the host. WSL is not claimed to be
+statistically equivalent to native. The preflight checks free host memory only at the start, and host
+memory has dipped during a qualified run, so keep the preflight and the pressure monitoring and
+record the host memory minimum with the result. Never run two matches at once, including a WSL job
+beside a native one. Preregistrations that name native Windows keep their wording.
 
 ## 7. Engineering Investigations
 

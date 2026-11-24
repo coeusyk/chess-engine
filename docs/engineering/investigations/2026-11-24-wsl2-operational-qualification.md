@@ -68,7 +68,7 @@ The headroom gate was a mean host CPU of at most 15% over a 30-second window, at
 | VM memory available, minimum | 8,177 MiB |
 | VM pressure and swap | memory stalls 0, swap pages in and out 0, steal 0, CPU partial stalls 8.4 s |
 
-The +7.99 Elo is an A/A result and carries no strength meaning. It shows how wide the noise is: the pair-score sample variance was 0.08216, a nominal 95% half-width of about +/-17.5 Elo at 1,000 games and about 3,050 games for +/-10 Elo. That is wider than the pilot's estimate of 2,812. The host's available memory fell to 1,908 MiB at one point while the VM kept 8 GiB or more and recorded no memory stall, so the dip did not reach the VM in any measured way, but I am recording it as seen.
+The +7.99 Elo is an A/A result and carries no strength meaning. It shows how wide the noise is: the pair-score sample variance was 0.08216, a nominal 95% half-width of about +/-17.5 Elo at 1,000 games and about 3,050 games for +/-10 Elo. That is wider than the pilot's estimate of 2,812. The host's available memory fell to 1,908 MiB at one point while the VM's available memory stayed at or above 8,177 MiB and it recorded no memory stall, so the dip did not reach the VM in any measured way, but I am recording it as seen.
 
 ## Stage 4: cross-platform replication
 
@@ -93,10 +93,11 @@ The Stage 4 criteria were overlapping intervals and the same verdict. Both hold:
 
 On 2026-11-24 the maintainer approved conditional WSL2 qualification for new Threads=1 SPRTs, subject to this evidence review being complete. The review covered the archived A/A and replication files, their checksums, the frozen protocol hash and the JAR identities, and found them consistent. What the approval permits, and what it leaves alone:
 
-- Permitted: Threads=1 SPRTs on this WSL2 setup, through `tools/sprt_linux.py`, with the gate, controls and records used here, recorded as "WSL, qualified". The existing condition in the throughput investigation stays: such a result is not the deciding result for a merge unless a native confirmation is also on record.
+- Permitted: Threads=1 SPRTs on this WSL2 setup, through `tools/sprt_linux.py`, with the gate, controls, monitoring and records used here, recorded as "WSL, qualified". A valid qualified run may satisfy a strength-validation gate on its own. The maintainer lifted the earlier condition that every such result needs a native confirmation. Normal merge approval and evidence review still apply to the change being tested.
 - Permitted: relative NPS comparisons of two builds inside one WSL session on one host (interleaved arms, headroom check recorded). They are never compared with the native absolute floor.
 - Unchanged: the 301,116 NPS floor and its native baseline, native-only qualification for anything with Lazy SMP or thread scaling, release comparisons, and any preregistration that freezes the host. Historical Windows-only preregistrations and their recorded results are not edited.
 - Not claimed: formal statistical equivalence between WSL and native. The result is one replication of one pair with the interval above.
+- Known limitation: the headroom gate looks at host memory for 30 seconds before the match. During the A/A, host available memory fell to 1,908 MiB mid-run, and during the replication to 3,385 MiB, while the VM kept at least 7,844 MiB available and recorded no memory stalls. The gate is therefore a start-of-run check, and not a guarantee about the run. Keep the preflight and the pressure sampling, and report the host memory minimum with every qualified result.
 - Not authorized: running two matches at once. One CPU-heavy job runs on a physical host at a time, which includes a WSL job beside a native one.
 
 Raw logs, PGNs, pressure samples, argument manifests, both JAR pairs and checksums are archived in the native checkout at `tools/results/vex-followup/20261124T1102Z`. The A/A directory has 11 files and `SHA256SUMS` hash `f02b2c2d6116661df1a1bd4f9315bb6cb36a5344549389f22ca6b64ab3305e2e`. The replication directory has 22 files and `SHA256SUMS` hash `6bea58d81feed5cc4dae22cc3a0d6c8a7e061ff741cb11020fcc6c4e6fad2405`. All files in both passed the checksum check on 2026-11-24.
