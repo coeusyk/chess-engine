@@ -126,20 +126,22 @@ public final class OpeningBook {
      * @return a legal engine Move, or {@code null} if no book entry exists.
      */
     public Move probe(Board board) {
-        if (!open || entryCount == 0) {
+        RandomAccessFile file = raf;
+        long count = entryCount;
+        if (!open || file == null || count == 0) {
             return null;
         }
 
         long key = PolyglotKey.compute(board);
-        long firstIdx = bisectKeyLeft(key);
-        if (firstIdx >= entryCount) {
+        long firstIdx = bisectKeyLeft(file, count, key);
+        if (firstIdx >= count) {
             return null;
         }
 
         // Collect all entries matching this key
         List<long[]> candidates = new ArrayList<>(); // [weight, polyMove]
-        for (long i = firstIdx; i < entryCount; i++) {
-            long[] entry = readEntry(i);
+        for (long i = firstIdx; i < count; i++) {
+            long[] entry = readEntry(file, i);
             if (entry == null || entry[0] != key) {
                 break;
             }
@@ -204,34 +206,28 @@ public final class OpeningBook {
     }
 
     /** Returns {key, weight, rawMove} or null on IO error. */
-    private long[] readEntry(long index) {
+    private long[] readEntry(RandomAccessFile file, long index) {
         try {
-            raf.seek(index * ENTRY_SIZE);
-            long key    = raf.readLong();
-            int rawMove = readUShort();
-            int weight  = readUShort();
+            file.seek(index * ENTRY_SIZE);
+            long key    = file.readLong();
+            int rawMove = file.readUnsignedShort();
+            int weight  = file.readUnsignedShort();
             // learn (4 bytes) ignored
-            raf.skipBytes(4);
+            file.skipBytes(4);
             return new long[]{ key, weight, rawMove };
         } catch (IOException e) {
             return null;
         }
     }
 
-    private int readUShort() throws IOException {
-        int b0 = raf.read();
-        int b1 = raf.read();
-        return ((b0 & 0xFF) << 8) | (b1 & 0xFF);
-    }
-
     /** Binary search: returns the lowest index i such that entry[i].key >= targetKey. */
-    private long bisectKeyLeft(long targetKey) {
-        long lo = 0, hi = entryCount;
+    private long bisectKeyLeft(RandomAccessFile file, long count, long targetKey) {
+        long lo = 0, hi = count;
         while (lo < hi) {
             long mid = (lo + hi) >>> 1;
             try {
-                raf.seek(mid * ENTRY_SIZE);
-                long midKey = raf.readLong();
+                file.seek(mid * ENTRY_SIZE);
+                long midKey = file.readLong();
                 // Compare as unsigned longs
                 if (Long.compareUnsigned(midKey, targetKey) < 0) {
                     lo = mid + 1;
@@ -239,7 +235,7 @@ public final class OpeningBook {
                     hi = mid;
                 }
             } catch (IOException e) {
-                return entryCount;
+                return count;
             }
         }
         return lo;
