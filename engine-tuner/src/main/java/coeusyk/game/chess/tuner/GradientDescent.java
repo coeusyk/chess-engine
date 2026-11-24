@@ -538,12 +538,8 @@ public final class GradientDescent {
                     : computeBarrierGradient(features, params, k, iter);
 
             // --- Gradient norm convergence check (Issue #137) ---
-            double gradNormSq = 0.0;
-            for (double g : grad) gradNormSq += g * g;
-            double gradNorm = Math.sqrt(gradNormSq);
+            double gradNorm = activeGradNorm(grad, groupMask);
             if (gradNorm < LBFGS_GRAD_NORM_THRESHOLD) {
-                System.out.printf("[L-BFGS] Converged at iteration %d — gradient norm: %.2e%n",
-                        iter, gradNorm);
                 LOG.info(String.format("[L-BFGS] converged at iteration %d — gradient norm: %.2e",
                         iter, gradNorm));
                 break;
@@ -745,6 +741,21 @@ public final class GradientDescent {
             axpy(alpha[j] - beta, sList[idx], q);
         }
         return q;
+    }
+
+    /**
+     * L2 norm of the gradient over the parameters this run can move: frozen parameters (min equals max)
+     * and, when a group mask is given, parameters outside the active group are left out, because their
+     * gradient never turns into a step and would keep the convergence test from ever firing (#274).
+     */
+    static double activeGradNorm(double[] grad, boolean[] groupMask) {
+        double sq = 0.0;
+        for (int i = 0; i < grad.length; i++) {
+            if (EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i]) continue;
+            if (groupMask != null && !groupMask[i]) continue;
+            sq += grad[i] * grad[i];
+        }
+        return Math.sqrt(sq);
     }
 
     /** Returns the dot product of two equal-length vectors. */

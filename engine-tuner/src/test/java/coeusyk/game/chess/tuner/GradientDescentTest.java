@@ -307,4 +307,26 @@ class GradientDescentTest {
         double[] g = {1, -2, 3};
         assertArrayEquals(g, GradientDescent.lbfgsDirection(g, new double[3][], new double[3][], new double[3], 0, 0), 0.0);
     }
+
+    @Test
+    void activeGradNormIgnoresFrozenParametersAndParametersOutsideTheGroup() {
+        double[] grad = new double[EvalParams.TOTAL_PARAMS];
+        int frozen = -1, free1 = -1, free2 = -1;
+        for (int i = 0; i < grad.length; i++) {
+            boolean isFrozen = EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i];
+            if (isFrozen && frozen < 0) frozen = i;
+            if (!isFrozen && free1 < 0) free1 = i;
+            else if (!isFrozen && free2 < 0) free2 = i;
+        }
+        assertTrue(frozen >= 0 && free2 >= 0, "the parameter table should have frozen and free entries");
+        grad[frozen] = 1000.0;
+        grad[free1] = 3.0;
+        grad[free2] = 4.0;
+
+        assertEquals(5.0, GradientDescent.activeGradNorm(grad, null), 1e-12, "frozen entry must not count");
+
+        boolean[] group = new boolean[grad.length];
+        group[free1] = true;
+        assertEquals(3.0, GradientDescent.activeGradNorm(grad, group), 1e-12, "entries outside the group must not count");
+    }
 }
