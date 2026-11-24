@@ -52,6 +52,17 @@ _PARITY_REQUIRED_NUMBER_FIELDS = (
     "weight_rounding_mae_cp", "integer_arithmetic_max_abs_cp", "qa", "qb", "output_scale",
 )
 
+# Optional `scale_utilization` object (issue #265): every field is a finite-or-plain number.
+_UTILIZATION_REQUIRED_NUMBER_FIELDS = (
+    "position_count", "accumulator_count", "qa", "frac_accumulator_below_zero",
+    "frac_accumulator_in_range", "frac_accumulator_at_or_above_qa", "accumulator_max",
+    "activation_mean", "activation_rms", "dead_neuron_fraction", "ft_weight_rms",
+    "ft_weight_max_abs", "ft_weight_int16_headroom_ratio", "ft_weight_fraction_rounding_to_zero",
+    "ft_rounding_error_to_weight_rms_ratio", "output_weight_rms", "output_weight_l2_norm",
+    "output_weight_max_abs", "output_weight_int16_headroom_ratio", "cp_per_accumulator_unit_rms",
+    "cp_per_accumulator_unit_max",
+)
+
 
 def validate_manifest(manifest: Dict[str, Any]) -> None:
     """Raises `ValueError` listing every violation found (not just the first) if
@@ -84,6 +95,16 @@ def validate_manifest(manifest: Dict[str, Any]) -> None:
                 errors.append("quantization_parity.'fen_corpus_sha256' must be a string")
             if not isinstance(parity.get("labels_sha256"), (str, type(None))):
                 errors.append("quantization_parity.'labels_sha256' must be a string or null")
+
+    utilization = manifest.get("scale_utilization")
+    if utilization is not None:
+        if not isinstance(utilization, dict):
+            errors.append("field 'scale_utilization' is not an object")
+        else:
+            for field in _UTILIZATION_REQUIRED_NUMBER_FIELDS:
+                value = utilization.get(field)
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    errors.append(f"scale_utilization.{field!r} must be a number, got {type(value).__name__}")
 
     dataset_composition = manifest.get("dataset_composition")
     if isinstance(dataset_composition, list):

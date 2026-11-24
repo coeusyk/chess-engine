@@ -41,6 +41,7 @@ from trainer.quantization.inference import (
     eval_quantized_fens,
 )
 from trainer.quantization.quantizer import quantize
+from trainer.validation.scale_utilization import compute_scale_utilization
 from trainer.reproducibility.experiment_metadata import ExperimentMetadata
 
 
@@ -183,18 +184,23 @@ def quantize_validate_export(
     labels_cp: Optional[Sequence[float]] = None,
     thresholds: Optional[ParityThresholds] = None,
     label_engine_version: Optional[str] = None,
+    utilization_max_positions: int = 5000,
 ) -> Tuple[ExportResult, QuantizationParityReport]:
     """Quantize, measure float32-versus-quantized parity on `fens`, gate it, then export with
     the report recorded in the provenance manifest. When `thresholds` is exceeded this raises
     `QuantizationParityError` before anything is written, so a rejected network never reaches
-    `output_dir`. With no thresholds the report is still computed and recorded.
+    `output_dir`. With no thresholds the report is still computed and recorded. The scale
+    utilization of the float32 network (`scale_utilization.py`) is measured on the first
+    `utilization_max_positions` FENs and recorded next to it.
     """
     report, quantized = compute_quantization_parity(canonical, fens, labels_cp)
     if thresholds is not None:
         violations = threshold_violations(report, thresholds)
         if violations:
             raise QuantizationParityError(violations, report)
+    utilization = compute_scale_utilization(canonical, list(fens)[:utilization_max_positions])
     result = export(quantized, experiment_metadata, dataset_composition, output_dir,
                     label_engine_version=label_engine_version,
-                    quantization_parity=report.to_manifest_dict())
+                    quantization_parity=report.to_manifest_dict(),
+                    scale_utilization=utilization.to_manifest_dict())
     return result, report
