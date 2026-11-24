@@ -1,0 +1,37 @@
+diff --git a/engine-core/src/main/java/coeusyk/game/chess/core/search/Searcher.java b/engine-core/src/main/java/coeusyk/game/chess/core/search/Searcher.java
+index 8927b9b..03612d5 100644
+--- a/engine-core/src/main/java/coeusyk/game/chess/core/search/Searcher.java
++++ b/engine-core/src/main/java/coeusyk/game/chess/core/search/Searcher.java
+@@ -1262,7 +1262,6 @@ public class Searcher {
+             boolean isLosingCapture = isCapture && seeEnabled && moveOrderingEnabled
+                     && moveOrderer.scoringBufferForPly(orderPly)[mi] < 0;
+             board.makeMove(move);
+-            evaluator.onMake(board, move, board.lastCapturedPiece());
+ 
+             boolean moveGivesCheck = board.isActiveColorInCheck();
+             
+@@ -1293,7 +1292,6 @@ public class Searcher {
+                 if (instrumentationEnabled && !isPvNode && beta - alpha > 1) {
+                     phase21WideLosingCaptureSkips++;
+                 }
+-                evaluator.onUnmake();
+                 board.unmakeMove();
+                 moveIndex++;
+                 continue;
+@@ -1314,12 +1312,15 @@ public class Searcher {
+                 if (instrumentationEnabled && !isPvNode && beta - alpha > 1) {
+                     phase21WideFutilitySkips++;
+                 }
+-                evaluator.onUnmake();
+                 board.unmakeMove();
+                 moveIndex++;
+                 continue;
+             }
+ 
++            // The evaluator is told about the move only once it is going to be searched. The pruning
++            // decisions above read the board alone, so a pruned move costs no accumulator update. (#271)
++            evaluator.onMake(board, move, board.lastCapturedPiece());
++
+             int score;
+             boolean fullWindowResearch = false;
+             boolean lmrMove = canApplyLmr(effectiveDepth, moveIndex, isQuiet, isKiller, isTtMove, sideToMoveInCheck, moveGivesCheck);
