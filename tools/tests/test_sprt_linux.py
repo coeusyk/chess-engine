@@ -436,6 +436,15 @@ class DifferentialAgainstSprtPs1(unittest.TestCase):
         self.assertIn("-MaxGames", done.stderr)
         self.assertFalse(path.exists())
 
+    def test_native_strict_inputs_keep_a_literal_opening_book_path(self):
+        literal_book = self.ws.dir / "openings [stage].epd"
+        self.ws.book.rename(literal_book)
+        self.ws.book = literal_book
+        done, path = self.ps_manifest(["-StrictInputs"], "literal-book.json")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        args = self.load(path)["Arguments"]
+        self.assertEqual(args[args.index("-openings") + 1], f"file={literal_book}")
+
     def test_release_log_watcher_drains_the_last_unterminated_line_after_exit(self):
         common = ps_quote(ROOT / "tools/release-strength-sprt-common.ps1")
         command = f"""$ErrorActionPreference = 'Stop'

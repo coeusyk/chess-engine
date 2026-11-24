@@ -170,7 +170,7 @@ if ($StrictInputs -and -not $AllowStartpos) {
     }
     if ((Get-Item -LiteralPath $OpeningsFile).Length -eq 0) { throw "Opening book is empty: $OpeningsFile" }
 }
-if ($OpeningsFile -ne "" -and (Test-Path $OpeningsFile)) {
+if ($OpeningsFile -ne "" -and ($StrictInputs -or (Test-Path $OpeningsFile))) {
     $openingsArgs = @("-openings", "file=$OpeningsFile", "format=epd", "order=$OpeningOrder", "plies=4")
 }
 
@@ -206,7 +206,7 @@ Write-Host "NEW : $($NewResolved.Path)"
 Write-Host "OLD : $($OldResolved.Path)"
 Write-Host "PGN : $PgnOut"
 Write-Host "LOG : $LogOut"
-if ($OpeningsFile -ne "" -and (Test-Path $OpeningsFile)) {
+if ($openingsArgs.Count -gt 0) {
     Write-Host "Opening book: $OpeningsFile"
 } else {
     Write-Host "Opening book: (none)"
