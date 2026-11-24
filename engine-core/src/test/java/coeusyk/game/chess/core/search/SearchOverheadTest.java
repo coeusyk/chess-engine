@@ -32,10 +32,13 @@ class SearchOverheadTest {
         SearchResult mateInOne = new Searcher().iterativeDeepening(new Board("7k/8/5K2/8/8/8/6Q1/8 w - - 0 1"), 3);
         assertEquals(MATE_SCORE - 1, mateInOne.scoreCp());
 
-        // Every white move but Qg6 or Qf7 keeps the game going. A search that treated stalemate as
-        // checkmate would prefer these stalemating moves, so the winning side must not choose them.
-        SearchResult trap = new Searcher().iterativeDeepening(new Board("7k/8/5K2/8/8/8/6Q1/8 w - - 0 1"), 4);
-        assertTrue(trap.scoreCp() > 1000);
+        // Qc7 stalemates the king on a8 and Qc8 mates it. A node with no legal move that was scored as
+        // mate whatever the check state would make the stalemating move look as good as the mate, so the
+        // search must pick the mating move and score it as a mate.
+        SearchResult trap = new Searcher().iterativeDeepening(new Board("k7/8/1K6/8/8/8/8/2Q5 w - - 0 1"), 3);
+        assertEquals(MATE_SCORE - 1, trap.scoreCp());
+        assertEquals(58, trap.bestMove().startSquare); // c1
+        assertEquals(2, trap.bestMove().targetSquare); // c8
     }
 
     @Test
