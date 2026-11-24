@@ -12,7 +12,14 @@ import pytest
 from trainer.dataset.mmap_shard import read_shard
 from trainer.dataset.selfplay_manifest import validate_selfplay_manifest
 from trainer.encoding.feature_spec import repo_root
-from scripts.selfplay_ingest import ConflictingGameError, DuplicateSourceError, ingest
+from scripts.selfplay_ingest import (
+    ConflictingGameError,
+    DuplicateSourceError,
+    _mate_plies_to_moves,
+    _sample_to_position_record,
+    ingest,
+)
+from trainer import vspr
 
 from tests.scripts._vspr_fixtures import (
     ADJUDICATED_SCORE,
@@ -407,3 +414,38 @@ def test_manifest_validates_against_schema(tmp_path):
     manifest = ingest([path], tmp_path / "out", "test-selfplay")
     validate_selfplay_manifest(manifest)  # must not raise
     assert manifest["assessment"] == {"status": "unassessed", "outcome": None, "evidence_ref": None}
+
+
+@pytest.mark.parametrize(
+    "plies, moves",
+    [(1, 1), (2, 1), (3, 2), (4, 2), (5, 3), (0, 0), (-1, -1), (-2, -1), (-3, -2), (-4, -2), (-6, -3)],
+)
+def test_mate_distance_is_converted_from_plies_to_moves(plies, moves):
+    # #275: GameLoop records plies, the trainer's eval_mate means moves. Winner mates on an odd ply
+    # (2n - 1), loser is mated on an even ply (2n); both are n moves.
+    assert _mate_plies_to_moves(plies) == moves
+
+
+def test_an_ingested_mate_sample_stores_moves_not_plies():
+    sample = vspr.TrainingSample(
+        ply=10,
+        fen="7k/6Q1/6K1/8/8/8/8/8 w - - 0 1",
+        on_trajectory=True,
+        eval_score_kind=vspr.ScoreKind.MATE,
+        eval_score=5,  # mate in 3 moves, expressed in plies
+        search_budget_kind=vspr.SearchBudgetKind.DEPTH,
+        search_budget_value=8,
+    )
+    frame = vspr.GameFrame(
+        game_id=1,
+        game_seed=None,
+        game_outcome=vspr.GameOutcome.UNRESOLVED,
+        termination_reason=vspr.TerminationReason.MOVE_CAP,
+        outcome_perspective=vspr.OutcomePerspective.WHITE,
+        played_moves=[],
+        samples=[sample],
+        candidate_sets=[],
+    )
+    record = _sample_to_position_record(sample, frame, 0)
+    assert record.label.eval_mate == 3
+    assert record.label.eval_cp is None

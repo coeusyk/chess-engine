@@ -12,6 +12,12 @@ Special triggers:
   with `bestmove` immediately, with no preceding `info ... score ...` line -- used
   to test UciEngine's EngineProtocolError path (a well-formed but score-less
   response) deterministically, distinct from a timeout.
+- If the position FEN contains "BOUNDLAST", this stub sends an exact `score cp 100`, then a later
+  `score cp 900 lowerbound` line, then bestmove: the exact score is the real result.
+- If the position FEN contains "BOUNDONLY", this stub sends only `score cp 900 upperbound`
+  before bestmove: there is no exact score at all.
+- If the environment variable `STUB_LOG` names a file, every command line received is appended
+  to it, so a test can check what the driver sent and in which order.
 - If the environment variable `STUB_HANG_ON_UCI=1` is set, this stub never responds
   to the initial `uci` handshake command at all -- used to test UciEngine.start()'s
   failure-cleanup path (a startup handshake timeout) deterministically.
@@ -30,8 +36,12 @@ def main() -> None:
         return
 
     position_fen = None
+    log_path = os.environ.get("STUB_LOG")
     for line in sys.stdin:
         line = line.strip()
+        if log_path:
+            with open(log_path, "a", encoding="utf-8") as log:
+                log.write(line + "\n")
         if line == "uci":
             print("id name StubEngine")
             print("id author test")
@@ -51,6 +61,17 @@ def main() -> None:
             if position_fen is not None and "NOSCORE" in position_fen:
                 # bestmove with no preceding score line -- exercises
                 # EngineProtocolError, distinct from a timeout.
+                print("bestmove e2e4")
+                sys.stdout.flush()
+                continue
+            if position_fen is not None and "BOUNDLAST" in position_fen:
+                print("info depth 5 score cp 100 nodes 10")
+                print("info depth 6 score cp 900 lowerbound nodes 20")
+                print("bestmove e2e4")
+                sys.stdout.flush()
+                continue
+            if position_fen is not None and "BOUNDONLY" in position_fen:
+                print("info depth 6 score cp 900 upperbound nodes 20")
                 print("bestmove e2e4")
                 sys.stdout.flush()
                 continue

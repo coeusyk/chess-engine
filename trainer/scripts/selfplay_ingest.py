@@ -229,12 +229,26 @@ def _mover_wdl(frame: "vspr.GameFrame", side_to_move: str) -> Optional[float]:
     return white_result if side_to_move == "w" else 1.0 - white_result
 
 
+def _mate_plies_to_moves(plies: int) -> int:
+    """VSPR carries the mate distance in plies (the engine's own unit: the side that mates does it
+    on an odd ply, the side that gets mated is mated on an even one), but `PositionLabel.eval_mate`
+    and the trainer (`train.py`, `MATE_EQUIVALENT_CP`) mean moves. Copying the number across would
+    make every mate look about twice as far away as it is. A mate in n moves is 2n - 1 plies for the
+    winner and 2n for the loser, so both convert with ceil(|plies| / 2); the sign is kept, and 0
+    (already mated) stays 0.
+    """
+    moves = (abs(plies) + 1) // 2
+    return -moves if plies < 0 else moves
+
+
 def _sample_to_position_record(
     sample: "vspr.TrainingSample", frame: "vspr.GameFrame", local_game_id: int
 ) -> PositionRecord:
     side_to_move = sample.fen.split(" ")[1]  # never inferred from ply parity
     eval_cp = sample.eval_score if sample.eval_score_kind == vspr.ScoreKind.CP else None
-    eval_mate = sample.eval_score if sample.eval_score_kind == vspr.ScoreKind.MATE else None
+    eval_mate = (
+        _mate_plies_to_moves(sample.eval_score) if sample.eval_score_kind == vspr.ScoreKind.MATE else None
+    )
     wdl = _mover_wdl(frame, side_to_move)
 
     search_depth = None
