@@ -1,0 +1,43 @@
+diff --git a/chess-engine-api/src/main/java/coeusyk/game/chess/services/AnalysisService.java b/chess-engine-api/src/main/java/coeusyk/game/chess/services/AnalysisService.java
+index da3c836..85023f2 100644
+--- a/chess-engine-api/src/main/java/coeusyk/game/chess/services/AnalysisService.java
++++ b/chess-engine-api/src/main/java/coeusyk/game/chess/services/AnalysisService.java
+@@ -64,6 +64,7 @@ public class AnalysisService {
+     public SseEmitter startAnalysis(String fen, int depth, Integer movetime, int multiPv) {
+         // Validate FEN synchronously — throws IllegalArgumentException on bad input.
+         Board board = KingValidator.requireKings(new Board(fen));
++        board.setSearchMode(true); // the search owns this board, so it needs no per-move FEN history (#270)
+ 
+         // Take ownership of the active slot and cancel the previous search in one atomic step.
+         AtomicBoolean cancelled = new AtomicBoolean(false);
+@@ -221,6 +222,7 @@ public class AnalysisService {
+     public EvaluateResponse evaluate(String fen, int rawDepth, int rawMultiPv) {
+         // Validate FEN synchronously — throws IllegalArgumentException on bad input.
+         Board board = KingValidator.requireKings(new Board(fen));
++        board.setSearchMode(true); // the search owns this board, so it needs no per-move FEN history (#270)
+ 
+         int depth = Math.min(rawDepth < 1 ? EVALUATE_DEPTH_CAP : rawDepth, EVALUATE_DEPTH_CAP);
+         int multiPv = Math.max(1, rawMultiPv);
+diff --git a/engine-core/src/main/java/coeusyk/game/chess/core/selfplay/GameLoop.java b/engine-core/src/main/java/coeusyk/game/chess/core/selfplay/GameLoop.java
+index f898c75..1731caf 100644
+--- a/engine-core/src/main/java/coeusyk/game/chess/core/selfplay/GameLoop.java
++++ b/engine-core/src/main/java/coeusyk/game/chess/core/selfplay/GameLoop.java
+@@ -126,6 +126,9 @@ public final class GameLoop {
+             candidateAdapter.reset();
+ 
+             try {
++                // Speculative search moves do not need per-move FEN history. Search mode is scoped to the
++                // search and restored before the chosen game move is made. (#270)
++                board.setSearchMode(true);
+                 searcher.iterativeDeepening(board, (int) config.searchBudgetValue(), () -> false, () -> false,
+                         candidateAdapter);
+                 // The final depth reached never gets a "next depth" callback to flush it -- see
+@@ -137,6 +140,8 @@ public final class GameLoop {
+                         SelfPlayGenerationException.Reason.SEARCH_INVARIANT_FAILURE,
+                         "search threw " + e.getClass().getSimpleName() + " at ply " + ply + " (fen=" + rootFen
+                                 + "): " + e.getMessage(), e);
++            } finally {
++                board.setSearchMode(false);
+             }
+ 
+             if (!rootFen.equals(board.toFen())) {
