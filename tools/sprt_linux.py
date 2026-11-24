@@ -12,7 +12,7 @@ cutechess argument array token for token (engine groups, `-each tc`, `-games`, `
 `-recover`, resign/draw adjudication, the `-sprt` group, concurrency, `-ratinginterval`, `-pgnout`,
 the `-openings` group), the `{Executable, Arguments}` argument manifest, `--prepare-only`,
 `--expected-argument-manifest-path` (refuse to launch if the arguments differ), the log/PGN path
-rules, and the exit-code handling. Numbers are formatted the way PowerShell 7 prints them.
+rules, and the exit-code handling. Numbers are formatted the way PowerShell prints them (15 significant digits).
 
 Scope of the equivalence: literal paths (sprt.ps1's `Resolve-Path` also expands wildcards in `-New`
 and `-Old`; this launcher does not, and fails with "JAR not found"), and numbers with |x| < 1e15.
@@ -64,20 +64,18 @@ class LauncherError(Exception):
 
 
 def ps_number(value: float) -> str:
-    """A double as PowerShell 7 prints it in a string: integral values without a decimal point,
-    otherwise the shortest round-trip form with an upper-case exponent. Supported range |x| < 1e15
-    (see below). Windows PowerShell 5.1 prints 15 significant digits instead; the two agree for the
-    frozen alpha = beta = 0.05."""
+    """A double as PowerShell prints it in a string: 15 significant digits (.NET "G15"), integral
+    values without a decimal point, and an upper-case exponent with at least two digits. Checked
+    against pwsh 7 on the CI runner: `0.05 / 3` prints `0.0166666666666667`, not the shortest
+    round-trip form. Supported range |x| < 1e15: that is the first magnitude where the exponent
+    form starts, and no SPRT parameter is anywhere near it, so larger values are refused instead of
+    relying on an unverified boundary."""
     value = float(value)
     if not math.isfinite(value):
         raise LauncherError(f"not a finite number: {value}")
     if abs(value) >= 1e15:
-        # .NET switches to exponent form at 1e15, Python's repr at 1e16, so values in between would
-        # print differently. No SPRT parameter is anywhere near this large; refuse instead of diverging.
         raise LauncherError(f"number outside the supported range (|x| < 1e15): {value}")
-    if value == int(value):
-        return str(int(value))
-    return repr(value).replace("e", "E")
+    return format(value, ".15g").replace("e", "E")
 
 
 def java_command(env: Mapping[str, str]) -> str:

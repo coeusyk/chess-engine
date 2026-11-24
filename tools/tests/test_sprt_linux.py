@@ -76,14 +76,14 @@ class Workspace:
 
 
 class NumberFormatting(unittest.TestCase):
-    def test_numbers_print_like_powershell_7(self):
+    def test_numbers_print_like_powershell_with_15_significant_digits(self):
         for value, text in ((0, "0"), (10.0, "10"), (0.05, "0.05"), (-2.5, "-2.5"), (7.5, "7.5"),
-                            (0.05 / 3, "0.016666666666666666"), (1e-05, "1E-05"), (1.5e-07, "1.5E-07"),
+                            (0.05 / 3, "0.0166666666666667"), (1e-05, "1E-05"), (1.5e-07, "1.5E-07"),
                             (0.0001, "0.0001"), (50, "50"), (999999999999999.0, "999999999999999")):
             self.assertEqual(sprt_linux.ps_number(value), text, value)
 
     def test_numbers_outside_the_supported_range_are_refused_not_formatted_differently(self):
-        # .NET prints 1e15 as 1E+15 but Python repr prints 1000000000000000.0, so the launcher refuses.
+        # The exponent form starts at 1e15; that boundary is not covered by the differential test, so it is refused.
         for value in (1e15, 1e16, -1e15):
             with self.assertRaisesRegex(sprt_linux.LauncherError, "supported range"):
                 sprt_linux.ps_number(value)
