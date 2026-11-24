@@ -1798,12 +1798,14 @@ public class Searcher {
             return false;
         }
 
-        // Verify the advance is not immediately losing by SEE (safe >= 0)
-        if (!seeEnabled) {
-            return false;
-        }
-
-        return staticExchangeEvaluator.evaluateSquareOccupation(board, targetSquare) >= 0;
+        // The extension is tied to the SEE switch with the rest of the SEE-dependent logic. There used to
+        // be a second condition here, evaluateSquareOccupation(board, targetSquare) >= 0, meant as "the
+        // advance is not immediately losing". For a pawn occupant that value is 100 - bestReplyGain with
+        // bestReplyGain bounded by the pawn's own value, so it is never negative: a pawn that hangs for
+        // nothing scores 0 and passed. The condition was always true, so it is removed rather than kept
+        // as a gate that looks like one. A gate that really rejects hanging pawns would change the search
+        // tree and is a separate strength experiment (#267).
+        return seeEnabled;
     }
 
     int getFutilityMarginForTesting(int depth) {
