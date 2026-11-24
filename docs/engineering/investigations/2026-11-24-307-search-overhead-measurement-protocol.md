@@ -45,7 +45,7 @@ Run `--bench-raw 13` for base, terminal and all with the same fixed heap and a s
 
 ## Search mode
 
-The UCI jar does not exercise search mode, so these runs cannot show it. Measuring it needs a small in-process timing of the API analysis path and of `GameLoop` with and without the flag. That harness does not exist yet. I did not write it, because nothing can run it until the hosts are free.
+The UCI jar does not exercise search mode, so `SearchModeWorkloadTest` (engine-core test scope, on the #307 branch) is the workload. API analysis and the self-play speculative search only toggle `Board.setSearchMode` and then run the same `Searcher`, so the workload is that same fixed-depth search over six positions with the flag off and on. An always-on test checks the flag does not change nodes, score or move. The harness is opt-in: `mvn -pl engine-core test -Dtest=SearchModeWorkloadTest#searchModeWorkload -Dworkload.run=true -Dworkload.depth=7 -Dworkload.rounds=9`. It alternates the two modes inside each round in a rotating order and prints the per-round times and the ratio of normal to search-mode time, with a final median. The node counts of the two modes must be equal. It stays out of the build, and like the other measurements it runs only on an idle host. It does not go through Spring or the SSE layer, which is outside the part this change touches.
 
 ## What gets recorded
 
