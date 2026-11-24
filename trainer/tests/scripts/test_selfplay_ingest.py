@@ -1,4 +1,4 @@
-"""#210 -- selfplay_ingest.py: VSPR -> V1 shard + dataset-generation manifest.
+"""#210 -- selfplay_ingest.py: VSPR -> v2 shard + dataset-generation manifest.
 Uses the shared golden VSPR fixtures (`fixtures/vspr/`) where their fixed
 gameId/runId values are enough, and the synthetic `_vspr_fixtures` builder for
 cases those fixtures don't cover (a second runId, raw gameId=0, deliberately
@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from trainer.dataset.mmap_shard import read_shard
+from trainer.dataset.mmap_shard import _read_header, read_shard
 from trainer.dataset.selfplay_manifest import validate_selfplay_manifest
 from trainer.encoding.feature_spec import repo_root
 from scripts.selfplay_ingest import (
@@ -55,7 +55,7 @@ def _write(tmp_path: Path, name: str, data: bytes) -> Path:
 # =====================================================================================
 
 
-def test_single_vspr_to_v1_shard(tmp_path):
+def test_single_vspr_to_shard(tmp_path):
     source = FIXTURES / "valid_01_ordinary_cp_sample.vspr"
     out = tmp_path / "out"
     manifest = ingest([source], out, "test-selfplay")
@@ -66,6 +66,21 @@ def test_single_vspr_to_v1_shard(tmp_path):
     assert len(records) == 1
     assert records[0].metadata.game_id == 0  # first game in first file -> dataset-local 0
     assert records[0].label.eval_cp == 35
+
+
+def test_max_length_vspr_fen_round_trips_through_v2_shard(tmp_path):
+    source = FIXTURES / "valid_06_max_length_fen.vspr"
+    expected = vspr.read(source.read_bytes()).frames[0].samples[0].fen
+    assert len(expected.encode("ascii")) == 100
+
+    out = tmp_path / "out"
+    manifest = ingest([source], out, "test-selfplay")
+    shard = _shard_ref(manifest, out)
+
+    assert manifest["record_count"] == 1
+    assert _read_header(Path(shard.locator)).format_version == 2
+    record, = read_shard(shard)
+    assert record.fen == expected
 
 
 def _shard_ref(manifest, out_dir):

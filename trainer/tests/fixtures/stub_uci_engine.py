@@ -16,6 +16,7 @@ Special triggers:
   `score cp 900 lowerbound` line, then bestmove: the exact score is the real result.
 - If the position FEN contains "BOUNDONLY", this stub sends only `score cp 900 upperbound`
   before bestmove: there is no exact score at all.
+- For the checkmated position, this stub sends Stockfish's `score mate 0` response.
 - If the environment variable `STUB_LOG` names a file, every command line received is appended
   to it, so a test can check what the driver sent and in which order.
 - If the environment variable `STUB_HANG_ON_UCI=1` is set, this stub never responds
@@ -25,6 +26,9 @@ Special triggers:
 
 import os
 import sys
+
+
+CHECKMATED_FEN = "7k/6Q1/5K2/8/8/8/8/8 b - - 0 1"
 
 
 def main() -> None:
@@ -74,6 +78,10 @@ def main() -> None:
                 print("info depth 6 score cp 900 upperbound nodes 20")
                 print("bestmove e2e4")
                 sys.stdout.flush()
+                continue
+            if position_fen == CHECKMATED_FEN:
+                print("info depth 0 score mate 0")
+                print("bestmove (none)", flush=True)
                 continue
             score = (len(position_fen) * 7) % 2000 - 1000 if position_fen else 0
             depth = int(line.split()[-1]) if line.split()[-1].isdigit() else 1

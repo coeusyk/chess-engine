@@ -3,7 +3,7 @@ dataset-generation manifest. Narrow responsibility, matching the layering
 #210's own task text lays out:
 
     trainer.vspr        -- VSPR bytes -> semantic records (decode only, not duplicated here)
-    selfplay_ingest      -- semantic records -> V1 shard + dataset manifest (this module)
+    selfplay_ingest      -- semantic records -> v2 shard + dataset manifest (this module)
     mmap_shard           -- V1 physical shard format (write_shard(), not duplicated here)
     SelfPlayProvider      -- consumes already-ingested shards (separate module, no VSPR import)
 
@@ -268,7 +268,7 @@ def _sample_to_position_record(
 
 
 def ingest(vspr_paths: List[Path], output_dir: Path, dataset_identifier: str) -> dict:
-    """Ingests one or more VSPR V1 files into a new V1 shard + manifest under
+    """Ingests one or more VSPR V1 files into a new v2 shard and manifest under
     `output_dir`. `output_dir` must not already contain `shard-0.bin` or
     `manifest.json` -- this function only ever creates a new dataset, never
     silently overwrites one (see module docstring: resume is deferred).
