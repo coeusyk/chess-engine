@@ -5,6 +5,8 @@ import org.junit.jupiter.api.Test;
 import java.util.Random;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -94,4 +96,79 @@ class NnueAccumulatorVectorOpsEquivalenceTest {
         }
         return values;
     }
+
+    // ---- Output dot product with clipped ReLU (#272) ------------------------------------------------
+
+    private static short[] weightsFittingInt(Random random, int width, int qa) {
+        // Keep qa * sum(|w|) under Integer.MAX_VALUE so the int-lane path is the one that must match.
+        int limit = (int) Math.min(32767, Integer.MAX_VALUE / ((long) qa * 2 * width + 1));
+        return randomShorts(random, 2 * width, Math.max(1, limit));
+    }
+
+    @Test
+    void vectorDotCreluMatchesScalarAcrossWidthsAndQa() {
+        org.junit.jupiter.api.Assumptions.assumeTrue(VectorCapabilities.AVAILABLE,
+                "jdk.incubator.vector not available");
+        Random random = new Random(272L);
+        for (int width : WIDTHS) {
+            for (int qa : new int[] {127, 255, 1016}) {
+                for (int trial = 0; trial < TRIALS_PER_WIDTH; trial++) {
+                    short[] us = randomShorts(random, width, 32767);
+                    short[] them = randomShorts(random, width, 32767);
+                    short[] weights = weightsFittingInt(random, width, qa);
+                    assertTrue(NnueEvaluator.dotFitsInt(weights, qa), "test weights must satisfy the guard");
+                    assertEquals(NnueEvaluator.dotCreluScalar(us, them, weights, qa),
+                            NnueAccumulatorVectorOps.dotCrelu(us, them, weights, qa),
+                            "width=" + width + " qa=" + qa + " trial=" + trial);
+                }
+            }
+        }
+    }
+
+    @Test
+    void vectorDotCreluAgreesOnTheShortBoundaryValues() {
+        org.junit.jupiter.api.Assumptions.assumeTrue(VectorCapabilities.AVAILABLE,
+                "jdk.incubator.vector not available");
+        int width = 256;
+        int qa = 255;
+        short[] weights = new short[2 * width];
+        for (int i = 0; i < weights.length; i++) {
+            weights[i] = (short) (i % 2 == 0 ? 4000 : -4000);
+        }
+        assertTrue(NnueEvaluator.dotFitsInt(weights, qa));
+        for (short value : new short[] {Short.MIN_VALUE, -1, 0, 1, (short) qa, (short) (qa + 1), Short.MAX_VALUE}) {
+            short[] us = new short[width];
+            short[] them = new short[width];
+            java.util.Arrays.fill(us, value);
+            java.util.Arrays.fill(them, (short) -value);
+            assertEquals(NnueEvaluator.dotCreluScalar(us, them, weights, qa),
+                    NnueAccumulatorVectorOps.dotCrelu(us, them, weights, qa), "value=" + value);
+        }
+    }
+
+    @Test
+    void theIntLanePathIsOnlyAllowedWhenTheProductsCannotOverflow() {
+        short[] small = new short[512];
+        java.util.Arrays.fill(small, (short) 20);
+        assertTrue(NnueEvaluator.dotFitsInt(small, 127));
+        assertTrue(NnueEvaluator.dotFitsInt(small, 1016));
+
+        // 32767 * 127 * 512 = 2.13e9 still fits in an int, 32767 * 127 * 1024 does not.
+        short[] justFits = new short[512];
+        java.util.Arrays.fill(justFits, Short.MAX_VALUE);
+        assertTrue(NnueEvaluator.dotFitsInt(justFits, 127));
+        short[] huge = new short[1024];
+        java.util.Arrays.fill(huge, Short.MAX_VALUE);
+        assertFalse(NnueEvaluator.dotFitsInt(huge, 127), "32767 * 127 * 1024 does not fit in an int");
+        assertTrue(NnueEvaluator.dotFitsInt(justFits, 128), "2,147,418,112 is the last QA that fits");
+        assertFalse(NnueEvaluator.dotFitsInt(justFits, 129), "32767 * 129 * 512 = 2,164,194,816 overflows an int");
+        // Extreme magnitudes at width 256 with the largest QA still decide correctly: the scalar long path is used.
+        short[] us = new short[256];
+        short[] them = new short[256];
+        java.util.Arrays.fill(us, Short.MAX_VALUE);
+        java.util.Arrays.fill(them, Short.MAX_VALUE);
+        long expected = 127L * Short.MAX_VALUE * 512;
+        assertEquals(expected, NnueEvaluator.dotCreluScalar(us, them, justFits, 127));
+    }
 }
+

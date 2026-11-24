@@ -62,6 +62,7 @@ public final class NnueEvaluator implements EvaluatorStrategy, FeatureExtractor.
     // explicitly opts in via enableAccumulatorTiming(). Monotonic for this
     // instance's lifetime; callers wanting a single search's contribution take a
     // before/after delta (see Searcher's own use of this).
+    private final boolean vectorDot;
     private boolean accumulatorTimingEnabled;
     private long accumulatorNanos;
 
@@ -83,6 +84,7 @@ public final class NnueEvaluator implements EvaluatorStrategy, FeatureExtractor.
         this.blackAcc = new short[ACCUMULATOR_POOL_SIZE][width];
         this.sp = 0;
         this.debugMode = debugMode;
+        this.vectorDot = VectorCapabilities.AVAILABLE && dotFitsInt(network.outputWeights(), network.qa());
     }
 
     @Override
@@ -218,13 +220,34 @@ public final class NnueEvaluator implements EvaluatorStrategy, FeatureExtractor.
         short[] outWeights = network.outputWeights();
         int qa = network.qa();
 
+        long sum = vectorDot
+                ? NnueAccumulatorVectorOps.dotCrelu(us, them, outWeights, qa)
+                : dotCreluScalar(us, them, outWeights, qa);
+        sum += network.outputBias();
+        return (int) (sum * network.outputScale() / ((long) qa * network.qb()));
+    }
+
+    /** The clipped-ReLU output dot product with {@code long} products. The reference the vector kernel must equal. */
+    static long dotCreluScalar(short[] us, short[] them, short[] outWeights, int qa) {
+        int width = us.length;
         long sum = 0;
         for (int i = 0; i < width; i++) {
             sum += clamp(us[i], qa) * (long) outWeights[i];
             sum += clamp(them[i], qa) * (long) outWeights[width + i];
         }
-        sum += network.outputBias();
-        return (int) (sum * network.outputScale() / ((long) qa * network.qb()));
+        return sum;
+    }
+
+    /**
+     * True when {@code qa * sum(|w|)} fits in an int, which bounds every partial sum of the products and so makes
+     * summing them in int lanes exact. Checked once per network, not per evaluation (#272).
+     */
+    static boolean dotFitsInt(short[] outWeights, int qa) {
+        long absSum = 0;
+        for (short w : outWeights) {
+            absSum += Math.abs((long) w);
+        }
+        return (long) qa * absSum <= Integer.MAX_VALUE;
     }
 
     private static int clamp(short value, int qa) {

@@ -1,6 +1,8 @@
 package coeusyk.game.chess.core.eval.nnue;
 
+import jdk.incubator.vector.IntVector;
 import jdk.incubator.vector.ShortVector;
+import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
 
 /**
@@ -23,6 +25,8 @@ import jdk.incubator.vector.VectorSpecies;
 final class NnueAccumulatorVectorOps {
 
     private static final VectorSpecies<Short> SPECIES = ShortVector.SPECIES_PREFERRED;
+    /** Same register size as {@link #SPECIES}, so a short vector widens into two of these. */
+    private static final VectorSpecies<Integer> INT_SPECIES = VectorSpecies.of(int.class, SPECIES.vectorShape());
 
     private NnueAccumulatorVectorOps() {
     }
@@ -55,5 +59,45 @@ final class NnueAccumulatorVectorOps {
         for (; i < width; i++) {
             acc[i] = (short) (acc[i] - weights[base + i]);
         }
+    }
+
+    /**
+     * Output layer: {@code sum(clamp(us[i], 0, qa) * w[i]) + sum(clamp(them[i], 0, qa) * w[width + i])},
+     * exactly equal to {@link NnueEvaluator#dotCreluScalar}. The products are summed in {@code int} lanes, so the
+     * caller must have checked {@link NnueEvaluator#dotFitsInt}: when {@code qa * sum(|w|)} fits in an int, no
+     * lane or partial sum can overflow, and the result is the same integer the {@code long} loop gives (#272).
+     */
+    static long dotCrelu(short[] us, short[] them, short[] outWeights, int qa) {
+        int width = us.length;
+        int bound = SPECIES.loopBound(width);
+        ShortVector zero = ShortVector.zero(SPECIES);
+        ShortVector top = ShortVector.broadcast(SPECIES, (short) qa);
+        IntVector acc = IntVector.zero(INT_SPECIES);
+        int i = 0;
+        for (; i < bound; i += SPECIES.length()) {
+            acc = acc.add(product(ShortVector.fromArray(SPECIES, us, i).max(zero).min(top),
+                    ShortVector.fromArray(SPECIES, outWeights, i)));
+            acc = acc.add(product(ShortVector.fromArray(SPECIES, them, i).max(zero).min(top),
+                    ShortVector.fromArray(SPECIES, outWeights, width + i)));
+        }
+        long sum = acc.reduceLanesToLong(VectorOperators.ADD);
+        for (; i < width; i++) {
+            sum += (long) clampScalar(us[i], qa) * outWeights[i];
+            sum += (long) clampScalar(them[i], qa) * outWeights[width + i];
+        }
+        return sum;
+    }
+
+    /** Widens both short vectors to int halves and returns the sum of the two halves' elementwise products. */
+    private static IntVector product(ShortVector activation, ShortVector weight) {
+        IntVector low = ((IntVector) activation.convertShape(VectorOperators.S2I, INT_SPECIES, 0))
+                .mul((IntVector) weight.convertShape(VectorOperators.S2I, INT_SPECIES, 0));
+        IntVector high = ((IntVector) activation.convertShape(VectorOperators.S2I, INT_SPECIES, 1))
+                .mul((IntVector) weight.convertShape(VectorOperators.S2I, INT_SPECIES, 1));
+        return low.add(high);
+    }
+
+    private static int clampScalar(short value, int qa) {
+        return value < 0 ? 0 : Math.min(value, qa);
     }
 }
