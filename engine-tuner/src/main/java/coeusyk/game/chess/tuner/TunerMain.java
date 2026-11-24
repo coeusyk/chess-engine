@@ -336,7 +336,7 @@ public final class TunerMain {
         } else {
             LOG.warn("[TunerMain] WARN: coordinate descent uses full positions list; feature-level train/val split is not enforced for this optimizer.");
             LOG.info(String.format("[TunerMain] Running coordinate descent (K=%.6f, maxIters=%d)...", k, maxIters));
-            tuned = CoordinateDescent.tune(positions, params, k, maxIters, recalibrateK);
+            tuned = CoordinateDescent.tune(positions, params, k, maxIters, recalibrateK, metrics);
         }
 
         // Final K — fitted on val features only

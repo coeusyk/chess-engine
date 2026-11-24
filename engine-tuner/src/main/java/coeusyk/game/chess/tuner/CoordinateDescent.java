@@ -70,18 +70,34 @@ public final class CoordinateDescent {
                                 double k,
                                 int maxIters,
                                 boolean recalibrateK) {
+        return tune(positions, initialParams, k, maxIters, recalibrateK, null);
+    }
+
+    /**
+     * Same as above and, when {@code metrics} is not null, records the pass count, the MSE trail, whether the
+     * run stopped on the pass cap, and the final and minimum MSE for the post-run convergence gate (#274).
+     */
+    public static double[] tune(List<LabelledPosition> positions,
+                                double[] initialParams,
+                                double k,
+                                int maxIters,
+                                boolean recalibrateK,
+                                TunerRunMetrics metrics) {
         double[] params = initialParams.clone();
         // Clamp initial params to legal bounds before the first MSE computation
         for (int i = 0; i < params.length; i++) {
             params[i] = EvalParams.clampOne(i, params[i]);
         }
         double currentMse = TunerEvaluator.computeMse(positions, params, k);
+        if (metrics != null) metrics.minMse = Math.min(metrics.minMse, currentMse);
+        boolean converged = false;
 
         LOG.info(String.format("[Tuner] start  MSE=%.8f  params=%d  positions=%d",
                 currentMse, params.length, positions.size()));
 
         for (int iter = 1; iter <= maxIters; iter++) {
             Instant iterStart = Instant.now();
+            double mseAtPassStart = currentMse;
             boolean improved = false;
 
             for (int i = 0; i < params.length; i++) {
@@ -135,8 +151,11 @@ public final class CoordinateDescent {
             LOG.info(String.format("[Tuner] iter %3d  K=%.6f  MSE=%.8f  improved=%b  time=%dms",
                     iter, k, currentMse, improved, ms));
 
+            if (metrics != null) metrics.recordIteration(iter, mseAtPassStart, currentMse);
+
             if (!improved) {
                 LOG.info(String.format("[Tuner] converged after %d iterations", iter));
+                converged = true;
                 break;
             }
         }

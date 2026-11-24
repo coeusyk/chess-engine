@@ -329,4 +329,42 @@ class GradientDescentTest {
         group[free1] = true;
         assertEquals(3.0, GradientDescent.activeGradNorm(grad, group), 1e-12, "entries outside the group must not count");
     }
+
+    // ---- TunerRunMetrics wiring (#274) ----------------------------------------------------
+
+    @Test
+    void adamFeaturePathFillsTheRunMetrics() {
+        List<PositionFeatures> features = PositionFeatures.buildList(mixedOutcomePositions());
+        TunerRunMetrics metrics = new TunerRunMetrics();
+        GradientDescent.tuneWithFeatures(features, EvalParams.extractFromCurrentEval(), 1.0, 2, false, null, features, metrics);
+
+        assertEquals(2, metrics.itersCompleted);
+        assertTrue(metrics.hitIterCap, "two iterations is far below the convergence patience, so the cap was hit");
+        assertFalse(Double.isNaN(metrics.finalMse));
+        assertTrue(metrics.minMse <= metrics.finalMse);
+        assertEquals(2, metrics.getRecentRelDeltas().length);
+    }
+
+    @Test
+    void lbfgsPathFillsTheRunMetrics() {
+        List<PositionFeatures> features = PositionFeatures.buildList(mixedOutcomePositions());
+        TunerRunMetrics metrics = new TunerRunMetrics();
+        GradientDescent.tuneWithFeaturesLBFGS(features, EvalParams.extractFromCurrentEval(), 1.0, 2, false, null, features, metrics);
+
+        assertTrue(metrics.itersCompleted >= 1 && metrics.itersCompleted <= 2);
+        assertFalse(Double.isNaN(metrics.finalMse));
+        assertTrue(metrics.minMse <= metrics.finalMse);
+        assertEquals(metrics.itersCompleted, metrics.getRecentRelDeltas().length);
+    }
+
+    @Test
+    void aCappedRunThatIsStillMovingFailsTheConvergenceGate() {
+        // Gate 1 used to see an empty metrics object and pass every run, whatever the optimiser had done.
+        List<PositionFeatures> features = PositionFeatures.buildList(mixedOutcomePositions());
+        TunerRunMetrics metrics = new TunerRunMetrics();
+        GradientDescent.tuneWithFeatures(features, EvalParams.extractFromCurrentEval(), 1.0, 1, false, null, features, metrics);
+
+        String verdict = TunerPostRunValidator.checkConvergence(metrics);
+        assertTrue(verdict.contains("FAIL"), "a run stopped by the cap while the MSE still moved must fail: " + verdict);
+    }
 }

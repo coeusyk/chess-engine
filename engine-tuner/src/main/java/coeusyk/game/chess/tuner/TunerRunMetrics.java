@@ -30,6 +30,14 @@ public final class TunerRunMetrics {
     private int ringFilled = 0; // number of values written (capped at 20)
 
     /** Record a new per-iteration relative delta. */
+    /** Records one finished iteration: count, latest MSE, running minimum and the relative change from the previous MSE. */
+    public void recordIteration(int iter, double previousMse, double newMse) {
+        itersCompleted = iter;
+        finalMse = newMse;
+        minMse = Math.min(minMse, newMse);
+        if (previousMse > 0) recordRelDelta(Math.abs(previousMse - newMse) / previousMse);
+    }
+
     public void recordRelDelta(double relDelta) {
         relDeltaRing[ringHead % 20] = relDelta;
         ringHead++;

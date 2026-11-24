@@ -226,6 +226,21 @@ public final class GradientDescent {
                                             boolean recalibrateK,
                                             boolean[] groupMask,
                                             List<PositionFeatures> valFeatures) {
+        return tuneWithFeatures(features, initialParams, k, maxIters, recalibrateK, groupMask, valFeatures, null);
+    }
+
+    /**
+     * Same as above and, when {@code metrics} is not null, records the iteration count, the MSE trail, whether the
+     * run stopped on the iteration cap, and the final and minimum MSE for the post-run convergence gate (#274).
+     */
+    public static double[] tuneWithFeatures(List<PositionFeatures> features,
+                                            double[] initialParams,
+                                            double k,
+                                            int maxIters,
+                                            boolean recalibrateK,
+                                            boolean[] groupMask,
+                                            List<PositionFeatures> valFeatures,
+                                            TunerRunMetrics metrics) {
         int n = initialParams.length;
         double[] params = initialParams.clone();
 
@@ -238,6 +253,8 @@ public final class GradientDescent {
         double[] v = new double[n];
 
         double currentMse = TunerEvaluator.computeMseFromFeatures(features, params, k);
+        if (metrics != null) metrics.minMse = Math.min(metrics.minMse, currentMse);
+        boolean converged = false;
 
         LOG.info(String.format("[Adam/fast] start  MSE=%.8f  params=%d  positions=%d  threads=%d",
                 currentMse, n, features.size(), Runtime.getRuntime().availableProcessors()));
@@ -300,12 +317,15 @@ public final class GradientDescent {
             LOG.info(String.format("[Adam/fast] iter %3d  K=%.6f  MSE=%.8f  time=%dms",
                     iter, k, newMse, ms));
 
+            if (metrics != null) metrics.recordIteration(iter, currentMse, newMse);
+
             if (currentMse > 0 && Math.abs(currentMse - newMse) / currentMse < CONVERGENCE_THRESHOLD) {
                 belowThresholdCount++;
                 if (belowThresholdCount >= CONVERGENCE_PATIENCE) {
                     LOG.info(String.format("[Adam/fast] converged after %d iterations (MSE delta < %.1e for %d consecutive iters)",
                             iter, CONVERGENCE_THRESHOLD, CONVERGENCE_PATIENCE));
                     currentMse = newMse;
+                    converged = true;
                     break;
                 }
             } else {
@@ -314,6 +334,7 @@ public final class GradientDescent {
             currentMse = newMse;
         }
 
+        if (metrics != null) metrics.hitIterCap = !converged;
         return params;
     }
 
@@ -336,21 +357,6 @@ public final class GradientDescent {
                                             int maxIters,
                                             boolean recalibrateK) {
         return tuneWithFeatures(features, initialParams, k, maxIters, recalibrateK, null, features);
-    }
-
-    /**
-     * Metrics-collecting overload — metrics parameter accepted for API
-     * symmetry with eval-mode; WDL convergence metrics are not yet instrumented.
-     */
-    public static double[] tuneWithFeatures(List<PositionFeatures> features,
-                                            double[] initialParams,
-                                            double k,
-                                            int maxIters,
-                                            boolean recalibrateK,
-                                            boolean[] groupMask,
-                                            List<PositionFeatures> valFeatures,
-                                            TunerRunMetrics metrics) {
-        return tuneWithFeatures(features, initialParams, k, maxIters, recalibrateK, groupMask, valFeatures);
     }
 
     /**
@@ -506,6 +512,21 @@ public final class GradientDescent {
                                                  boolean recalibrateK,
                                                  boolean[] groupMask,
                                                  List<PositionFeatures> valFeatures) {
+        return tuneWithFeaturesLBFGS(features, initialParams, k, maxIters, recalibrateK, groupMask, valFeatures, null);
+    }
+
+    /**
+     * Same as above and, when {@code metrics} is not null, records the iteration count, the MSE trail, whether the
+     * run stopped on the iteration cap, and the final and minimum MSE for the post-run convergence gate (#274).
+     */
+    public static double[] tuneWithFeaturesLBFGS(List<PositionFeatures> features,
+                                                 double[] initialParams,
+                                                 double k,
+                                                 int maxIters,
+                                                 boolean recalibrateK,
+                                                 boolean[] groupMask,
+                                                 List<PositionFeatures> valFeatures,
+                                                 TunerRunMetrics metrics) {
         final int n = initialParams.length;
         final int m = LBFGS_M;
 
@@ -524,6 +545,8 @@ public final class GradientDescent {
         int histHead = 0;  // next write position in the circular buffer
 
         double currentMse = TunerEvaluator.computeMseFromFeatures(features, params, k);
+        if (metrics != null) metrics.minMse = Math.min(metrics.minMse, currentMse);
+        boolean converged = false;
         LOG.info(String.format("[L-BFGS] start  MSE=%.8f  n=%d  positions=%d  m=%d",
                 currentMse, n, features.size(), m));
 
@@ -542,6 +565,7 @@ public final class GradientDescent {
             if (gradNorm < LBFGS_GRAD_NORM_THRESHOLD) {
                 LOG.info(String.format("[L-BFGS] converged at iteration %d — gradient norm: %.2e",
                         iter, gradNorm));
+                converged = true;
                 break;
             }
 
@@ -619,12 +643,15 @@ public final class GradientDescent {
             LOG.info(String.format("[L-BFGS] iter %3d  K=%.6f  MSE=%.8f  ||\u2207L||=%.2e  time=%dms",
                     iter, k, newMse, gradNorm, ms));
 
+            if (metrics != null) metrics.recordIteration(iter, currentMse, newMse);
+
             // MSE flat-line secondary convergence check (patience window)
             if (currentMse > 0 && Math.abs(currentMse - newMse) / currentMse < CONVERGENCE_THRESHOLD) {
                 belowThresholdCount++;
                 if (belowThresholdCount >= CONVERGENCE_PATIENCE) {
                     LOG.info(String.format("[L-BFGS] converged after %d iterations (MSE delta < %.1e for %d consecutive iters)",
                             iter, CONVERGENCE_THRESHOLD, CONVERGENCE_PATIENCE));
+                    converged = true;
                     break;
                 }
             } else {
@@ -633,6 +660,7 @@ public final class GradientDescent {
             currentMse = newMse;
         }
 
+        if (metrics != null) metrics.hitIterCap = !converged;
         return params;
     }
 
@@ -655,21 +683,6 @@ public final class GradientDescent {
                                                  int maxIters,
                                                  boolean recalibrateK) {
         return tuneWithFeaturesLBFGS(features, initialParams, k, maxIters, recalibrateK, null, features);
-    }
-
-    /**
-     * Metrics-collecting overload — metrics parameter accepted for API
-     * symmetry with eval-mode; L-BFGS convergence metrics are not yet instrumented.
-     */
-    public static double[] tuneWithFeaturesLBFGS(List<PositionFeatures> features,
-                                                 double[] initialParams,
-                                                 double k,
-                                                 int maxIters,
-                                                 boolean recalibrateK,
-                                                 boolean[] groupMask,
-                                                 List<PositionFeatures> valFeatures,
-                                                 TunerRunMetrics metrics) {
-        return tuneWithFeaturesLBFGS(features, initialParams, k, maxIters, recalibrateK, groupMask, valFeatures);
     }
 
     // -------------------------------------------------------------------------

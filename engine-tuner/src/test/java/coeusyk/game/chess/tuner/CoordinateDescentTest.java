@@ -111,4 +111,17 @@ class CoordinateDescentTest {
         assertEquals(before[2], tuned[2], "knight MG must not move, it cannot change the MSE");
         assertEquals(before[4], tuned[4], "bishop MG must not be left raised by a rejected knight trial");
     }
+
+    @Test
+    void convergedRunRecordsMetricsWithoutHittingTheCap() {
+        TunerRunMetrics metrics = new TunerRunMetrics();
+        double[] params = EvalParams.extractFromCurrentEval();
+        // Fully tuned drawn positions: after enough passes no single step improves the MSE, so the run converges.
+        double[] tuned = CoordinateDescent.tune(perfectlyDrawnPositions(), params, 1.0, 200, false, metrics);
+
+        assertTrue(metrics.itersCompleted >= 1);
+        assertFalse(Double.isNaN(metrics.finalMse));
+        assertEquals(metrics.itersCompleted < 200, !metrics.hitIterCap);
+        assertEquals(params.length, tuned.length);
+    }
 }
