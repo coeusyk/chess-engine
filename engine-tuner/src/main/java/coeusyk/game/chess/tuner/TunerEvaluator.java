@@ -429,23 +429,26 @@ public final class TunerEvaluator {
     private static int kingSafety(PositionData pos, double[] params) {
         long wKing = pos.getWhiteKing();
         long bKing = pos.getBlackKing();
-        int wScore = wKing != 0 ? kingShieldAndFiles(pos, true,  params) : 0;
-        int bScore = bKing != 0 ? kingShieldAndFiles(pos, false, params) : 0;
+        int wShield = wKing != 0 ? kingShield(pos, true,  params) : 0;
+        int bShield = bKing != 0 ? kingShield(pos, false, params) : 0;
+        int wOpen   = wKing != 0 ? kingOpenFiles(pos, true,  params) : 0;
+        int bOpen   = bKing != 0 ? kingOpenFiles(pos, false, params) : 0;
         int wAttackWeight = bKing != 0 ? attackWeight(pos, false, params) : 0; // white pieces on the black king
         int bAttackWeight = wKing != 0 ? attackWeight(pos, true,  params) : 0; // black pieces on the white king
         // Opposite flanks: the shelter of the side under heavier attack is discounted, as in the
         // production KingSafety.evaluatePawnShieldAndFiles (#274).
         if (wKing != 0 && bKing != 0 && oppositeFlanks(wKing, bKing)) {
             int scale = coeusyk.game.chess.core.eval.EvalParams.OPPOSITE_FLANK_SHIELD_SCALE;
+            // Only the shield bonus is discounted, as in the core evaluator (#278).
             if (bAttackWeight > wAttackWeight) {
-                wScore = (wScore * scale) / 100;
+                wShield = (wShield * scale) / 100;
             } else if (wAttackWeight > bAttackWeight) {
-                bScore = (bScore * scale) / 100;
+                bShield = (bShield * scale) / 100;
             }
         }
         int wPenalty = wKing != 0 ? attackerPenalty(bAttackWeight, params) : 0;
         int bPenalty = bKing != 0 ? attackerPenalty(wAttackWeight, params) : 0;
-        return (wScore + wPenalty) - (bScore + bPenalty);
+        return (wShield + wOpen + wPenalty) - (bShield + bOpen + bPenalty);
     }
 
     /** One king on the queenside (files a to d) and the other on the kingside (files e to h). */
@@ -455,10 +458,14 @@ public final class TunerEvaluator {
         return (wFile < 4) != (bFile < 4);
     }
 
-    private static int kingShieldAndFiles(PositionData pos, boolean white, double[] params) {
+    private static int kingShield(PositionData pos, boolean white, double[] params) {
         long kingBb = white ? pos.getWhiteKing() : pos.getBlackKing();
-        int kingSq = Long.numberOfTrailingZeros(kingBb);
-        return pawnShield(pos, white, kingSq, params) + openFiles(pos, white, kingSq, params);
+        return pawnShield(pos, white, Long.numberOfTrailingZeros(kingBb), params);
+    }
+
+    private static int kingOpenFiles(PositionData pos, boolean white, double[] params) {
+        long kingBb = white ? pos.getWhiteKing() : pos.getBlackKing();
+        return openFiles(pos, white, Long.numberOfTrailingZeros(kingBb), params);
     }
 
     private static boolean isCastled(boolean white, int kingSq) {

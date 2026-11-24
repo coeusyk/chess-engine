@@ -69,29 +69,36 @@ public final class KingSafety {
     public static int evaluatePawnShieldAndFiles(Board board, int whiteAttackWeight, int blackAttackWeight) {
         long wKing = board.getWhiteKing();
         long bKing = board.getBlackKing();
-        int wScore = wKing != 0L ? evaluateCheapSide(board, true)  : 0;
-        int bScore = bKing != 0L ? evaluateCheapSide(board, false) : 0;
+        int wShield = wKing != 0L ? shieldOf(board, true)  : 0;
+        int bShield = bKing != 0L ? shieldOf(board, false) : 0;
+        int wOpen   = wKing != 0L ? openFilesOf(board, true)  : 0;
+        int bOpen   = bKing != 0L ? openFilesOf(board, false) : 0;
         // Opposite flanks: one king on queenside (files 0-3), the other on kingside (files 4-7).
         if (wKing != 0L && bKing != 0L) {
             int wFile = Long.numberOfTrailingZeros(wKing) % 8;
             int bFile = Long.numberOfTrailingZeros(bKing) % 8;
             if ((wFile < 4) != (bFile < 4)) {
                 int scale = EvalParams.OPPOSITE_FLANK_SHIELD_SCALE;
+                // Only the shield bonus is discounted. The open-file term is a penalty, and scaling it
+                // would reward the defender for the open files (#278).
                 if (blackAttackWeight > whiteAttackWeight) {
-                    wScore = (wScore * scale) / 100;
+                    wShield = (wShield * scale) / 100;
                 } else if (whiteAttackWeight > blackAttackWeight) {
-                    bScore = (bScore * scale) / 100;
+                    bShield = (bShield * scale) / 100;
                 }
             }
         }
-        return wScore - bScore;
+        return (wShield + wOpen) - (bShield + bOpen);
     }
 
-    private static int evaluateCheapSide(Board board, boolean white) {
-        long kingBb = white ? board.getWhiteKing() : board.getBlackKing();
-        if (kingBb == 0) return 0;
-        int kingSq = Long.numberOfTrailingZeros(kingBb);
-        return pawnShield(board, white, kingSq) + openFiles(board, white, kingSq);
+    private static int shieldOf(Board board, boolean white) {
+        int kingSq = Long.numberOfTrailingZeros(white ? board.getWhiteKing() : board.getBlackKing());
+        return pawnShield(board, white, kingSq);
+    }
+
+    private static int openFilesOf(Board board, boolean white) {
+        int kingSq = Long.numberOfTrailingZeros(white ? board.getWhiteKing() : board.getBlackKing());
+        return openFiles(board, white, kingSq);
     }
 
     private static int evaluateSide(Board board, boolean white) {
