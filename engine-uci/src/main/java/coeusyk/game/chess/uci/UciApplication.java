@@ -63,6 +63,7 @@ public class UciApplication {
     @SuppressWarnings("unused") // UCI setoption stub — wired up when local Syzygy probing is added
     private String syzygyPath = "";
     private boolean syzygyOnline = false;
+    private OnlineSyzygyProber onlineSyzygyProber;
     private int syzygyProbeDepth = 1;
     private boolean syzygy50MoveRule = true;
 
@@ -304,7 +305,27 @@ public class UciApplication {
         // them can outlive it, and a worker that is still busy is simply abandoned with the JVM.
         requestStop();
         stopAndJoinSearch();
+        closeOnlineSyzygyProber();
         System.out.flush();
+    }
+
+    // One prober per session keeps its position cache and HTTP client across `go` commands. The
+    // 50-move flag is fixed at construction, so a change of that option builds a fresh one.
+    private OnlineSyzygyProber onlineSyzygyProber() {
+        if (onlineSyzygyProber != null && onlineSyzygyProber.respects50MoveRule() != syzygy50MoveRule) {
+            closeOnlineSyzygyProber();
+        }
+        if (onlineSyzygyProber == null) {
+            onlineSyzygyProber = new OnlineSyzygyProber(syzygy50MoveRule);
+        }
+        return onlineSyzygyProber;
+    }
+
+    private void closeOnlineSyzygyProber() {
+        if (onlineSyzygyProber != null) {
+            onlineSyzygyProber.close();
+            onlineSyzygyProber = null;
+        }
     }
 
     /**
@@ -530,6 +551,9 @@ public class UciApplication {
             syzygyPath = valuePart.trim();
         } else if ("syzygyonline".equals(optionNameLower)) {
             syzygyOnline = "true".equalsIgnoreCase(valuePart);
+            if (!syzygyOnline) {
+                closeOnlineSyzygyProber();
+            }
         } else if ("syzygyprobedepth".equals(optionNameLower)) {
             try {
                 int value = Integer.parseInt(valuePart);
@@ -992,7 +1016,7 @@ public class UciApplication {
 
             // Configure Syzygy probing
             if (syzygyOnline) {
-                searcher.setSyzygyProber(new OnlineSyzygyProber(syzygy50MoveRule));
+                searcher.setSyzygyProber(onlineSyzygyProber());
                 searcher.setSyzygyProbeDepth(syzygyProbeDepth);
                 searcher.setSyzygy50MoveRule(syzygy50MoveRule);
             }
