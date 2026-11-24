@@ -68,6 +68,11 @@ class NpsBenchmarkTest {
         System.out.println("-------------|-------|--------------|-----------|----------------");
 
         long[] positionMeanNps = new long[POSITION_FENS.length];
+        long searchNanos = 0;
+        long searchNodes = 0;
+        long quiescenceNodes = 0;
+        int minReachedDepth = Integer.MAX_VALUE;
+        int maxReachedDepth = 0;
 
         for (int p = 0; p < POSITION_FENS.length; p++) {
             String posName = POSITION_NAMES[p];
@@ -92,9 +97,15 @@ class NpsBenchmarkTest {
 
                 long t0     = System.nanoTime();
                 SearchResult result = searcher.searchDepth(board, BENCH_DEPTH);
-                long ms     = Math.max(1L, (System.nanoTime() - t0) / 1_000_000L);
+                long nanos  = System.nanoTime() - t0;
+                long ms     = Math.max(1L, nanos / 1_000_000L);
                 long nodes  = result.nodesVisited();
                 long nps    = nodes * 1_000L / ms;
+                searchNanos += nanos;
+                searchNodes += nodes;
+                quiescenceNodes += result.quiescenceNodes();
+                minReachedDepth = Math.min(minReachedDepth, result.depthReached());
+                maxReachedDepth = Math.max(maxReachedDepth, result.depthReached());
 
                 roundNps[r] = nps;
                 System.out.printf(Locale.US, "%-12s | %5d | %12d | %9d | %,15d%n",
@@ -125,6 +136,9 @@ class NpsBenchmarkTest {
 
         System.out.printf(Locale.US,
             "[NpsBenchmark] AGGREGATE MEAN NPS: %,d  +/- %,d%n", aggMean, aggStddev);
+        System.out.printf(Locale.US, "[NpsBenchmark] Search-only: %d ns | nodes=%d | qnodes=%d | reached-depth=%d..%d | nps=%d%n",
+            searchNanos, searchNodes, quiescenceNodes, minReachedDepth, maxReachedDepth,
+            (long) (searchNodes * 1_000_000_000.0 / Math.max(1L, searchNanos)));
 
         // TT statistics: run all 4 positions once more through a dedicated Searcher
         // so that TT stats reflect a realistic cross-position end-of-benchmark state.

@@ -69,6 +69,11 @@ public class BenchMain {
         System.out.println("-------------|-------|--------------|-----------|----------------");
 
         long[] positionMeanNps = new long[POSITION_FENS.length];
+        long searchNanos = 0;
+        long searchNodes = 0;
+        long quiescenceNodes = 0;
+        int minReachedDepth = Integer.MAX_VALUE;
+        int maxReachedDepth = 0;
 
         for (int p = 0; p < POSITION_FENS.length; p++) {
             String posName = POSITION_NAMES[p];
@@ -93,9 +98,15 @@ public class BenchMain {
 
                 long t0      = System.nanoTime();
                 SearchResult result = searcher.searchDepth(board, depth);
-                long ms      = Math.max(1L, (System.nanoTime() - t0) / 1_000_000L);
+                long nanos   = System.nanoTime() - t0;
+                long ms      = Math.max(1L, nanos / 1_000_000L);
                 long nodes   = result.nodesVisited();
                 long nps     = nodes * 1_000L / ms;
+                searchNanos += nanos;
+                searchNodes += nodes;
+                quiescenceNodes += result.quiescenceNodes();
+                minReachedDepth = Math.min(minReachedDepth, result.depthReached());
+                maxReachedDepth = Math.max(maxReachedDepth, result.depthReached());
 
                 roundNps[r] = nps;
                 System.out.printf(Locale.US, "%-12s | %5d | %12d | %9d | %,15d%n",
@@ -127,5 +138,8 @@ public class BenchMain {
         long aggStddev = (long) Math.sqrt((double) aggSumSq / POSITION_FENS.length);
 
         System.out.printf(Locale.US, "[Bench] AGGREGATE MEAN NPS: %,d  +/- %,d%n", aggMean, aggStddev);
+        System.out.printf(Locale.US, "[Bench] Search-only: %d ns | nodes=%d | qnodes=%d | reached-depth=%d..%d | nps=%d%n",
+            searchNanos, searchNodes, quiescenceNodes, minReachedDepth, maxReachedDepth,
+            (long) (searchNodes * 1_000_000_000.0 / Math.max(1L, searchNanos)));
     }
 }

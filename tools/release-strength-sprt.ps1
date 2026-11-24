@@ -226,18 +226,8 @@ try { & '__RUNNER__' @argsTable; exit 0 } catch { Write-Error $_ -ErrorAction Co
         $child = Start-Process -FilePath $facts.PowerShellExecutable -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded) -WorkingDirectory $repo -PassThru -RedirectStandardOutput (Join-Path $output 'console.stdout.log') -RedirectStandardError (Join-Path $output 'console.stderr.log')
         Save-Stage6Json @{ ProcessId = $child.Id; StartedUtc = [DateTime]::UtcNow.ToString('o') } (Join-Path $output 'owned-runner.json')
         $reader = New-Object IO.StreamReader([IO.File]::Open($parameters.LogPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite))
-        $pending = ''
         try {
-            while (-not $child.HasExited) {
-                $pending += $reader.ReadToEnd()
-                $lines = $pending -split "`n"; $pending = $lines[$lines.Count - 1]
-                for ($n = 0; $n -lt $lines.Count - 1; $n++) {
-                    Write-Host $lines[$n]
-                    if (Test-ReleaseSprtFaultLine $lines[$n]) { throw 'Match fault detected; stopping the owned process tree. Inspect preserved evidence.' }
-                }
-                Start-Sleep -Milliseconds 200
-            }
-            $child.WaitForExit()
+            Watch-ReleaseSprtLog $reader $child
             if ($null -eq $child.ExitCode) { throw 'Owned runner exit code is unavailable; result cannot be accepted.' }
             $exitCode = $child.ExitCode
             # The child writes match-launched.txt as the last step before it invokes the match runner. An exit without it means the child never

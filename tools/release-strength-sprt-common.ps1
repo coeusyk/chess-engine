@@ -133,6 +133,24 @@ function Test-ReleaseSprtFaultLine([string]$Line) {
     return $Line -match "(?i)(doesn't|does not|has no|have no)\s+(have\s+)?(an?\s+)?option|option\s+\S+\s+(not found|not supported|is unknown)"
 }
 
+function Watch-ReleaseSprtLog([IO.StreamReader]$Reader, $Child) {
+    $pending = ''
+    do {
+        $exited = $Child.HasExited
+        if ($exited) { $Child.WaitForExit() }
+        $lines = ($pending + $Reader.ReadToEnd()) -split "`n"
+        $pending = $lines[-1]
+        $complete = $lines.Count - 1
+        if ($exited -and $pending.Length -gt 0) { $complete++ }
+        for ($n = 0; $n -lt $complete; $n++) {
+            $line = $lines[$n].TrimEnd("`r")
+            Write-Host $line
+            if (Test-ReleaseSprtFaultLine $line) { throw 'Match fault detected; stopping the owned process tree. Inspect preserved evidence.' }
+        }
+        if (-not $exited) { Start-Sleep -Milliseconds 200 }
+    } while (-not $exited)
+}
+
 function Assert-ReleaseSprtOpenings([string]$Path, [int]$Count = 10000) {
     $bytes = [IO.File]::ReadAllBytes($Path)
     if ($bytes -contains 13) { throw 'Opening list must use LF line endings.' }

@@ -954,3 +954,13 @@ Use the same options for both arms: `Hash=16`, `PawnHashSize=1`, `EvalType=Class
 #275's three PRs are in develop. The exact `valid_06_max_length_fen.vspr` fixture ingested and read back with an intact 100-byte FEN in shard v2. The issue still specifies shard v3 and rejection of `mate 0`. #298 introduced v2 as the successor to v1 and retained Stockfish's terminal checkmate label. Keep #275 open until those acceptance criteria are reconciled and the exact fixture round-trip is pinned in CI.
 
 Next localized fixes are #276's invalid-FEN handling at the API boundary (including Perft and the HTTP 400 regression) and #279's four Polyglot castling translations plus classpath resource cleanup. Online Syzygy ownership and root-only HTTP probing are a separate patch within #279.
+
+### [2026-11-24] #273 SPRT tooling and benchmark timing
+
+**Built:** The native runner accepts `-StrictInputs` to require a usable EPD book or explicit `-AllowStartpos`. The release supervisor drains the final log records after the child exits, including an unterminated last line. The read-only analyzer reports unavailable estimates for zero scored games and offers `--sample-variance` for descriptive intervals.
+
+**Decisions Made:** Keep the historical launcher arguments, archived evidence, preregistrations, and original NPS checks. The analyzer defaults to the historical denominator. Run a frozen experiment from its recorded commit and verify the archived script hashes before replay. Add `--bench-timing` to measure a warmed JVM with a fresh searcher for each position. Both bench commands still report their original wall-time figures. The additive search-only rate uses summed monotonic search intervals, with quiescence nodes and measured depths reported separately.
+
+**Broke / Fixed:** The failing benchmark assertion reproduced the missing search-only line in [Backend CI](https://github.com/coeusyk/chess-engine/actions/runs/45380909121). Focused analyzer tests reproduced the zero-game division by zero and verified that the sample denominator retains the original legacy intervals when the option is omitted.
+
+**Measurements:** The two timing figures describe different intervals. The existing native floor still applies to the legacy measurement protocol. Same-commit native A/B timing belongs in the serial host experiment queue.

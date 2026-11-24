@@ -186,6 +186,7 @@ public class UciApplication {
                 app.evalFile = args[i + 1];
             }
         }
+        boolean reportSearchTiming = java.util.Arrays.asList(args).contains("--bench-timing");
         for (int i = 0; i < args.length; i++) {
             // --bench-raw: same 31-position suite/protocol as --bench, with the
             // per-node eval-timing instrumentation disabled (Phase 16 P16-2: a
@@ -201,7 +202,7 @@ public class UciApplication {
                     } catch (NumberFormatException ignored) {
                     }
                 }
-                app.runBench(depth, false);
+                app.runBench(depth, false, reportSearchTiming);
                 return;
             }
             if ("--bench".equals(args[i])) {
@@ -213,7 +214,7 @@ public class UciApplication {
                     } catch (NumberFormatException ignored) {
                     }
                 }
-                app.runBench(depth, true);
+                app.runBench(depth, true, reportSearchTiming);
                 return;
             }
         }
@@ -1167,18 +1168,22 @@ public class UciApplication {
     }
 
     private void runBench(int depth, boolean instrumentationEnabled) {
+        runBench(depth, instrumentationEnabled, false);
+    }
+
+    private void runBench(int depth, boolean instrumentationEnabled, boolean reportSearchTiming) {
         if (!"NNUE".equals(evalType)) {
-            new BenchRunner().run(depth, null, "Classical", instrumentationEnabled);
+            new BenchRunner().run(depth, null, "Classical", instrumentationEnabled, reportSearchTiming);
             return;
         }
         NnueNetwork network = resolveNnueNetworkForSearch();
         if (network == null) {
             // resolveNnueNetworkForSearch() already printed its own fallback info string.
-            new BenchRunner().run(depth, null, "Classical", instrumentationEnabled);
+            new BenchRunner().run(depth, null, "Classical", instrumentationEnabled, reportSearchTiming);
             return;
         }
         new BenchRunner().run(depth, () -> new NnueEvaluator(network),
-                "NNUE (" + network.networkUuid() + ")", instrumentationEnabled);
+                "NNUE (" + network.networkUuid() + ")", instrumentationEnabled, reportSearchTiming);
     }
 
     private void printInfoLine(IterationInfo info) {
