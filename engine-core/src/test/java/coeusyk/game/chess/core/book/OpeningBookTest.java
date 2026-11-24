@@ -39,7 +39,7 @@ class OpeningBookTest {
 
     @Test
     void rookMoveFromTheKingsHomeSquareRemainsARookMove() throws IOException {
-        Board board = new Board("4k3/8/8/8/8/8/8/4R1K1 w - - 0 1");
+        Board board = new Board("k7/8/8/8/8/8/8/4R1K1 w - - 0 1");
         Move move = probe(board, "e1a1");
         assertNotNull(move);
         assertEquals(60, move.startSquare);

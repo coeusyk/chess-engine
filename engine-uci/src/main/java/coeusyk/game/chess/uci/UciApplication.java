@@ -217,7 +217,11 @@ public class UciApplication {
                 return;
             }
         }
-        app.run();
+        try {
+            app.run();
+        } finally {
+            app.openingBook.close();
+        }
     }
 
     private void run() throws IOException {

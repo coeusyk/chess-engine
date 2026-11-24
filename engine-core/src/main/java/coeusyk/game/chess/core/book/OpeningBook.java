@@ -6,6 +6,7 @@ import coeusyk.game.chess.core.movegen.MovesGenerator;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -38,6 +39,7 @@ public final class OpeningBook {
     private final Random rng = new Random();
 
     private RandomAccessFile raf;
+    private Path extractedBook;
     private long entryCount;
     private boolean open;
 
@@ -53,33 +55,41 @@ public final class OpeningBook {
     public void open(Path path) throws IOException {
         close();
         raf = new RandomAccessFile(path.toFile(), "r");
-        long length = raf.length();
-        if (length % ENTRY_SIZE != 0) {
-            raf.close();
-            throw new IOException("Polyglot book has invalid file size: " + length);
+        try {
+            long length = raf.length();
+            if (length % ENTRY_SIZE != 0) {
+                throw new IOException("Polyglot book has invalid file size: " + length);
+            }
+            entryCount = length / ENTRY_SIZE;
+            open = true;
+        } catch (IOException e) {
+            close();
+            throw e;
         }
-        entryCount = length / ENTRY_SIZE;
-        open = true;
     }
 
     /** Attempts to open the book from a classpath resource (extracts to temp file). */
     public boolean openFromClasspath(String resourceName) {
+        var stream = OpeningBook.class.getResourceAsStream(resourceName);
+        if (stream == null) {
+            stream = OpeningBook.class.getResourceAsStream("/" + resourceName);
+        }
+        if (stream == null) {
+            return false;
+        }
+        Path temp = null;
         try {
-            var stream = OpeningBook.class.getResourceAsStream(resourceName);
-            if (stream == null) {
-                stream = OpeningBook.class.getResourceAsStream("/" + resourceName);
+            try (var source = stream) {
+                temp = Files.createTempFile("vex-book-", ".bin");
+                try (var output = Files.newOutputStream(temp)) {
+                    source.transferTo(output);
+                }
             }
-            if (stream == null) {
-                return false;
-            }
-            java.io.File tmp = java.io.File.createTempFile("vex-book-", ".bin");
-            tmp.deleteOnExit();
-            try (var out = new java.io.FileOutputStream(tmp)) {
-                stream.transferTo(out);
-            }
-            open(tmp.toPath());
+            open(temp);
+            extractedBook = temp;
             return true;
         } catch (IOException e) {
+            deleteExtractedBook(temp);
             return false;
         }
     }
@@ -90,8 +100,20 @@ public final class OpeningBook {
             try { raf.close(); } catch (IOException ignored) {}
             raf = null;
         }
+        deleteExtractedBook(extractedBook);
+        extractedBook = null;
         open = false;
         entryCount = 0;
+    }
+
+    private static void deleteExtractedBook(Path path) {
+        if (path != null) {
+            try {
+                Files.deleteIfExists(path);
+            } catch (IOException e) {
+                path.toFile().deleteOnExit();
+            }
+        }
     }
 
     public boolean isOpen() {
@@ -242,7 +264,14 @@ public final class OpeningBook {
 
         List<Move> legal = new MovesGenerator(board).getActiveMoves(board.getActiveColor());
         for (Move m : legal) {
-            if (m.startSquare != engineFrom || m.targetSquare != engineTo) {
+            if (m.startSquare != engineFrom) {
+                continue;
+            }
+            // Polyglot encodes castling with the rook's square as the destination.
+            boolean castleToRook = promoIdx == 0
+                    && ((engineTo == engineFrom + 3 && "castle-k".equals(m.reaction))
+                    || (engineTo == engineFrom - 4 && "castle-q".equals(m.reaction)));
+            if (m.targetSquare != engineTo && !castleToRook) {
                 continue;
             }
             if (promoReaction == null) {
