@@ -144,8 +144,27 @@ jobs:
           $devBat  = Join-Path $wrappersDir 'vex-dev.bat'
           $baseBat = Join-Path $wrappersDir 'vex-base.bat'
 
-          "@echo off`n`"$javaExe`" -jar `"$devJar`"" | Set-Content -Path $devBat  -Encoding ASCII
-          "@echo off`n`"$javaExe`" -jar `"$baselineJar`"" | Set-Content -Path $baseBat -Encoding ASCII
+          # --add-modules jdk.incubator.vector: without it the engine silently falls back to the
+          # scalar NNUE accumulator path (VectorCapabilities.AVAILABLE=false), so the nightly
+          # would not measure the vectorised build (#269). Both wrappers get it so the two
+          # sides run under identical JVM flags.
+          "@echo off`n`"$javaExe`" --add-modules jdk.incubator.vector -jar `"$devJar`"" | Set-Content -Path $devBat  -Encoding ASCII
+          "@echo off`n`"$javaExe`" --add-modules jdk.incubator.vector -jar `"$baselineJar`"" | Set-Content -Path $baseBat -Encoding ASCII
+
+          # Opening book is mandatory (#273). Without -openings every game started from the
+          # initial position, and with a deterministic engine pair the 1000 games collapsed into
+          # a handful of repeated lines. tools/noob_3moves.epd is gitignored, so use the
+          # byte-identical tracked copy and refuse to run if its hash ever changes.
+          $book = Join-Path $PWD 'tools/results/phase21-stage6/20261011T061318503Z-b5a507c6/noob_3moves.epd'
+          $bookSha = '2011193b4854e9a8cfdc05312ca2dbaffa6ceae3abbdee20e2ead2a18a603347'
+          if (-not (Test-Path -LiteralPath $book -PathType Leaf)) {
+            throw "Opening book not found: $book"
+          }
+          $actualSha = (Get-FileHash -LiteralPath $book -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualSha -ne $bookSha) {
+            throw "Opening book checksum mismatch: expected $bookSha, got $actualSha"
+          }
+          Write-Host "Opening book: $book ($actualSha)"
 
           Write-Host "Dev JAR:      $devJar"
           Write-Host "Baseline JAR: $baselineJar"
@@ -159,6 +178,7 @@ jobs:
             -engine name=Vex-dev  cmd=$devBat  proto=uci `
             -engine name=Vex-base cmd=$baseBat proto=uci `
             -each tc=5+0.05 `
+            -openings file=$book format=epd order=random plies=4 `
             -games 1000 `
             -repeat `
             -recover `

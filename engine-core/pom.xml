@@ -79,6 +79,10 @@
                         <artifactId>maven-surefire-plugin</artifactId>
                         <version>3.2.5</version>
                         <configuration combine.self="override">
+                            <!-- combine.self="override" replaces the whole base configuration, so the
+                                 argLine must be repeated or the vector module silently drops out
+                                 (#269, #273). -->
+                            <argLine>--add-modules jdk.incubator.vector</argLine>
                             <includes>
                                 <include>**/SearchRegressionSuite.java</include>
                             </includes>

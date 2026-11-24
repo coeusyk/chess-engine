@@ -13,6 +13,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 RELEASE = yaml.load((ROOT / ".github/workflows/release.yml").read_text(), Loader=yaml.BaseLoader)
 CI = yaml.load((ROOT / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)
+NIGHTLY = yaml.load((ROOT / ".github/workflows/nightly-sprt.yml").read_text(), Loader=yaml.BaseLoader)
 
 
 def step(workflow, job, name):
@@ -93,6 +94,29 @@ esac
         self.assertEqual(CI["on"]["push"]["paths-ignore"], ["trainer/**"])
         for item in CI["jobs"]["build-and-test"]["steps"][1:]:
             self.assertEqual(item["if"], "steps.scope.outputs.backend == 'true'")
+
+    def test_ci_runs_the_intended_suites_once(self):
+        # #273: the search-regression suite needs its Maven profile (the default surefire
+        # config excludes that tag), every tools/tests file must run, and the tags the default
+        # build already covers must not be re-run by separate -Dgroups steps.
+        commands = [s.get("run", "") for s in CI["jobs"]["build-and-test"]["steps"]]
+        mvn = [c for c in commands if "mvn" in c]
+        self.assertTrue(any("-Psearch-regression" in c for c in mvn))
+        for rerun in ("-Dgroups=regression", "-Dgroups=nnue-mode", "-Dgroups=nnue-golden"):
+            self.assertFalse(any(rerun in c for c in mvn), rerun + " duplicates the default build")
+        discover = [c for c in commands if "unittest discover" in c]
+        self.assertEqual(len(discover), 1)
+        self.assertNotIn(" -p ", discover[0], "tools/tests discovery must not be narrowed to one file")
+
+    def test_nightly_sprt_uses_an_opening_book_and_the_vector_module(self):
+        # #273/#269: the nightly match used to start every game from the initial position and
+        # launched the engine without the incubator module, silently measuring the scalar path.
+        run = step(NIGHTLY, "sprt", "Run SPRT match")["run"]
+        self.assertIn("-openings file=$book format=epd", run)
+        self.assertEqual(run.count("--add-modules jdk.incubator.vector -jar"), 2)
+        book = ROOT / "tools/results/phase21-stage6/20261011T061318503Z-b5a507c6/noob_3moves.epd"
+        self.assertIn(book.relative_to(ROOT).as_posix(), run)
+        self.assertIn(hashlib.sha256(book.read_bytes()).hexdigest(), run)
 
     def test_embedded_python_and_shell_syntax(self):
         for workflow in (RELEASE, CI):

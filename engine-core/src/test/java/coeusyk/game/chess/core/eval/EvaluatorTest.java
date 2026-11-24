@@ -599,26 +599,45 @@ class EvaluatorTest {
                 + "score difference should reflect only rook-PST(d1 vs a1), not a hanging penalty");
     }
 
+    // Hanging-penalty term, isolated (#273). The previous test compared a position against one
+    // with an extra Black bishop, so it passed on 330 cp of material and would have passed with
+    // the penalty deleted. These tests evaluate the SAME board with HANGING_PENALTY at its
+    // configured value and at 0, so only the hanging term can explain the difference.
+    private int hangingTermDelta(String fen) {
+        int old = EvalParams.HANGING_PENALTY;
+        try {
+            int withPenalty = evaluator.evaluate(new Board(fen));
+            EvalParams.HANGING_PENALTY = 0;
+            int withoutPenalty = evaluator.evaluate(new Board(fen));
+            return withPenalty - withoutPenalty;
+        } finally {
+            EvalParams.HANGING_PENALTY = old;
+        }
+    }
+
     @Test
-    void hangingPenaltyFiresWhenKingIsOnlyDefenderButExchangeProfitable() {
-        // Regression for Fix 3: the old isSquareAttackedBy check treated the King as a real
-        // defender regardless of exchange result. If Black attacks with a piece LESS valuable than
-        // the target, the King recapture doesn't compensate — the piece IS genuinely hanging.
-        //
-        // Position: White Rook on d5 (value 500), Black Bishop on a2 attacks d5 diagonally,
-        //           White King on c4 "defends" d5 adjacently.  Black King on h8.
-        // Exchange: Ba2xd5 (Black gains 500), Kc4xd5 (White gains bishop=330 back).
-        // Net for Black = 500 - 330 = +170 → Rook IS hanging.
-        // Old code: isSquareAttackedBy(d5, White) == true (king) → NOT penalised (WRONG).
-        // New SEE code: captureGainFor(d5, Black) = 170 → penalised by -170 (correct).
-        Board hangingRookKingDefender = new Board("7k/8/8/3R4/2K5/8/b7/8 w - - 0 1");
-        Board noAttackerBaseline      = new Board("7k/8/8/3R4/2K5/8/8/8 w - - 0 1");
+    void hangingPenaltyChargesWhiteForAnAttackedUndefendedRook() {
+        // White Rd5 is attacked by Black's Ba2 and nothing of White's covers d5.
+        assertEquals(-EvalParams.HANGING_PENALTY, hangingTermDelta("7k/8/8/3R4/8/8/b7/6K1 w - - 0 1"),
+                "an attacked, undefended White rook must cost exactly one HANGING_PENALTY");
+    }
 
-        int hangingScore  = evaluator.evaluate(hangingRookKingDefender);
-        int baselineScore = evaluator.evaluate(noAttackerBaseline);
+    @Test
+    void hangingPenaltyChargesBlackForAnAttackedUndefendedRook() {
+        // Colour-reversed twin: Black Rd4 is attacked by White's Ba1 and undefended.
+        assertEquals(EvalParams.HANGING_PENALTY, hangingTermDelta("6k1/8/8/8/3r4/8/8/B6K w - - 0 1"),
+                "an attacked, undefended Black rook must gain White exactly one HANGING_PENALTY");
+    }
 
-        assertTrue(hangingScore < baselineScore,
-                "Rook attacked by lesser-value piece with only king-defender must be penalised by SEE score");
+    @Test
+    void hangingPenaltyIsNotChargedForAPieceTheKingDefends() {
+        // Current behaviour, pinned: Evaluator.hangingPenalty treats any defended piece as safe,
+        // including a rook whose only defender is the king against a lesser attacker (Ba2xd5,
+        // Kxd5 loses a bishop for a rook, so the rook is arguably still hanging). The old test
+        // for this scenario claimed the opposite and passed only through extra Black material.
+        // Changing the evaluator is a strength change that needs an SPRT, so this documents it.
+        assertEquals(0, hangingTermDelta("7k/8/8/3R4/2K5/8/b7/8 w - - 0 1"),
+                "king-defended rook is not penalised by the current hanging term");
     }
 
     // --- Piece bonus tests (Phase 10 — #10.5 exit criteria) ---

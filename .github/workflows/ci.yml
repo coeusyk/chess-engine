@@ -56,11 +56,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Validate release workflow contracts
+      - name: Tooling tests (tools/tests)
         if: steps.scope.outputs.backend == 'true'
+        # Runs every tools/tests/test_*.py, not just the workflow contract file (#273).
+        # ubuntu-latest ships pwsh, so the pwsh-gated comparison test runs here too.
         run: |
           python3 -m pip install --target "$RUNNER_TEMP/workflow-checks" PyYAML==6.0.2
-          PYTHONPATH="$RUNNER_TEMP/workflow-checks" python3 -m unittest discover -s tools/tests -p test_release_workflow.py -v
+          PYTHONPATH="$RUNNER_TEMP/workflow-checks" python3 -m unittest discover -s tools/tests -v
 
       - name: Set up JDK 21
         if: steps.scope.outputs.backend == 'true'
@@ -74,9 +76,15 @@ jobs:
         if: steps.scope.outputs.backend == 'true'
         run: mvn -B clean test
 
-      - name: Run search regression suite
+      # The "regression", "nnue-mode" and "nnue-golden" tags are not excluded by the default
+      # surefire config, so "Build and test modules" above already runs SearchRegressionTest,
+      # EvalMirrorSymmetryPropertyTest, NnueModeSearchRegressionTest and the NNUE golden tests.
+      # Separate -Dgroups steps for them only re-ran the same classes (#273). The one suite the
+      # default build excludes is @Tag("search-regression") (SearchRegressionSuite: depth
+      # stability, WAC pass rate, WAC material-blunder check), which needs its profile.
+      - name: Run search regression suite (WAC, depth stability, material blunders)
         if: steps.scope.outputs.backend == 'true'
-        run: mvn -B -pl engine-core -Dgroups=regression test
+        run: mvn -B -pl engine-core -Psearch-regression test
 
       - name: NPS benchmark gate
         if: steps.scope.outputs.backend == 'true'
@@ -93,14 +101,6 @@ jobs:
       # which asserts the positive "NNUE network loaded" info string, not just the
       # absence of a fallback string — ADR-005) are both untagged and already covered
       # by "Build and test modules" above; no separate step needed for either.
-
-      - name: NNUE-mode regression (search tree under EvalType=NNUE)
-        if: steps.scope.outputs.backend == 'true'
-        run: mvn -B test -pl engine-core -Dgroups=nnue-mode
-
-      - name: NNUE golden-eval regression
-        if: steps.scope.outputs.backend == 'true'
-        run: mvn -B test -pl engine-core -Dgroups=nnue-golden
 
       - name: NNUE benchmark throughput (tracked, not gated)
         if: steps.scope.outputs.backend == 'true'

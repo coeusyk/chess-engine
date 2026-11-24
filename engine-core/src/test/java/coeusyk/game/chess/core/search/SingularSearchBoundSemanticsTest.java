@@ -20,7 +20,11 @@ class SingularSearchBoundSemanticsTest {
     private static final int CALLER_BETA = 100;
     private static final int DEPTH = 8;
     private static final int TT_SCORE = 50; // margin(8)=54 => singularBeta=-3
-    private static final int TT_MOVE = Move.of(12, 28, 0); // e2-e4
+    // e2-e4 as the generator packs it (square 52 = e2, 36 = e4; 12 would be e7). The old
+    // Move.of(12, 28, 0) was not a legal move here, so the "TT move" was never in the move list.
+    private static final int TT_MOVE = Move.of(52, 36, Move.FLAG_EP_TARGET);
+    private static final int NO_EXTENSIONS = 0;
+    private static final int ONE_EXTENSION = 1;
 
     @Test
     void disprovingSingularityDoesNotProveCallerBeta() throws Exception {
@@ -33,7 +37,8 @@ class SingularSearchBoundSemanticsTest {
         table.store(board.getZobristHash(), TT_MOVE, DEPTH, TT_SCORE, TTBound.LOWER_BOUND);
         searcher.setSharedTranspositionTable(table);
 
-        int result = invokeAlphaBeta(searcher, board);
+        assertTtMoveIsLegal(board);
+        int result = invokeAlphaBeta(searcher, board, ONE_EXTENSION);
 
         assertNotEquals(CALLER_BETA, result,
                 "an alternative at singularBeta must not manufacture the caller beta cutoff");
@@ -58,18 +63,40 @@ class SingularSearchBoundSemanticsTest {
 
     @Test
     void verifiedSingularMoveStillGetsTheExistingExtension() throws Exception {
-        Board extendedBoard = new Board(POSITION);
-        extendedBoard.setSearchMode(true);
-        Searcher extended = configuredSearcher(extendedBoard, TT_MOVE);
-        invokeAlphaBeta(extended, extendedBoard);
+        Board board = new Board(POSITION);
+        board.setSearchMode(true);
+        assertTtMoveIsLegal(board);
 
-        Board ordinaryBoard = new Board(POSITION);
-        ordinaryBoard.setSearchMode(true);
-        Searcher ordinary = configuredSearcher(ordinaryBoard, Move.NONE);
-        invokeAlphaBeta(ordinary, ordinaryBoard);
+        // Identical search, identical singularity probe; only the extension budget differs.
+        Searcher budgeted = configuredSearcher(board, TT_MOVE);
+        invokeAlphaBeta(budgeted, board, ONE_EXTENSION);
 
-        assertTrue(nodesVisited(extended) > nodesVisited(ordinary),
+        Board noBudgetBoard = new Board(POSITION);
+        noBudgetBoard.setSearchMode(true);
+        Searcher noBudget = configuredSearcher(noBudgetBoard, TT_MOVE);
+        invokeAlphaBeta(noBudget, noBudgetBoard, NO_EXTENSIONS);
+
+        Board noTtBoard = new Board(POSITION);
+        noTtBoard.setSearchMode(true);
+        Searcher noTtMove = configuredSearcher(noTtBoard, Move.NONE);
+        invokeAlphaBeta(noTtMove, noTtBoard, ONE_EXTENSION);
+
+        assertEquals(1, budgeted.singularExtensionsAppliedForTesting(),
                 "a proven singular TT move must retain its extra search ply");
+        assertEquals(0, noBudget.singularExtensionsAppliedForTesting(),
+                "an exhausted extension budget must suppress the singular extension");
+        assertEquals(0, noTtMove.singularExtensionsAppliedForTesting(),
+                "without a TT move there is nothing to extend");
+    }
+
+    private static void assertTtMoveIsLegal(Board board) {
+        int[] moves = new int[256];
+        int count = MovesGenerator.generate(board, moves);
+        boolean found = false;
+        for (int i = 0; i < count; i++) {
+            found |= moves[i] == TT_MOVE;
+        }
+        assertTrue(found, "TT_MOVE must be a legal move of POSITION as the generator packs it");
     }
 
     @Test
@@ -87,7 +114,7 @@ class SingularSearchBoundSemanticsTest {
                 "an interrupted verification must not be treated as a proven singularity");
     }
 
-    private static int invokeAlphaBeta(Searcher searcher, Board board) throws Exception {
+    private static int invokeAlphaBeta(Searcher searcher, Board board, int maxExtensions) throws Exception {
         Method alphaBeta = Searcher.class.getDeclaredMethod(
                 "alphaBeta",
                 Board.class,
@@ -112,7 +139,7 @@ class SingularSearchBoundSemanticsTest {
                 (BooleanSupplier) () -> false,
                 false,
                 0,
-                0,
+                maxExtensions,
                 false
         );
     }
@@ -161,12 +188,6 @@ class SingularSearchBoundSemanticsTest {
         table.store(board.getZobristHash(), bestMove, DEPTH, TT_SCORE, TTBound.LOWER_BOUND);
         searcher.setSharedTranspositionTable(table);
         return searcher;
-    }
-
-    private static long nodesVisited(Searcher searcher) throws Exception {
-        var field = Searcher.class.getDeclaredField("nodesVisited");
-        field.setAccessible(true);
-        return field.getLong(searcher);
     }
 
     private record ConstantEvaluator(int score) implements EvaluatorStrategy {
