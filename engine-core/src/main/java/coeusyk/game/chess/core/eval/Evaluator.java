@@ -700,8 +700,8 @@ public class Evaluator {
             long passedOnFile = whitePawns & fileMask & ((1L << sq) - 1);
             while (passedOnFile != 0) {
                 int psq = Long.numberOfTrailingZeros(passedOnFile);
-                // Check if this pawn is actually passed (no enemy pawn blocking ahead)
-                if ((blackPawns & fileMask & ((1L << psq) - 1)) == 0) {
+                // Passed in the pawn-structure sense: no enemy pawn ahead on this or an adjacent file (#278)
+                if (PawnStructure.isPassed(psq, true, blackPawns)) {
                     mg += config.rookBehindPasserMg();
                     eg += config.rookBehindPasserEg();
                 }
@@ -717,7 +717,7 @@ public class Evaluator {
             long passedOnFile = blackPawns & fileMask & ~((1L << sq) - 1) & ~(1L << sq);
             while (passedOnFile != 0) {
                 int psq = Long.numberOfTrailingZeros(passedOnFile);
-                if ((whitePawns & fileMask & ~((1L << psq) - 1) & ~(1L << psq)) == 0) {
+                if (PawnStructure.isPassed(psq, false, whitePawns)) {
                     mg -= config.rookBehindPasserMg();
                     eg -= config.rookBehindPasserEg();
                 }
