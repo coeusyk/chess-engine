@@ -177,6 +177,60 @@ class LogOnlyUnterminated(unittest.TestCase):
         self.assertEqual(mv.COMPLETE_BOUNDARY, v.state, v.describe())
 
 
+class LogOnlyTwinColours(unittest.TestCase):
+    """A log-only game has no opening to check, but its colours must be those a twin would have."""
+
+    BOUNDARY = "SPRT: llr 3.00 (100.0%), lbound -2.94, ubound 2.94 - H1 was accepted"
+
+    def three_games(self):
+        return build(cap_run(2)[:3], sprt_line=self.BOUNDARY)  # the orphan is game 3, NEW as White
+
+    def test_a_log_only_game_with_the_same_colours_as_the_orphan_is_not_its_twin(self):
+        log, pgn = self.three_games()
+        log = log.replace("Score of", "Finished game 4 (NEW vs OLD): * {No result}\nScore of", 1)
+        v = mv.classify_run(log, pgn, sprt=True)
+        self.assertEqual(mv.INTERRUPTED, v.state, v.describe())
+        self.assertEqual(1, v.unexplained_orphans)
+
+    def test_a_log_only_game_with_the_opposite_colours_can_be_its_twin(self):
+        log, pgn = self.three_games()
+        log = log.replace("Score of", "Finished game 4 (OLD vs NEW): * {No result}\nScore of", 1)
+        self.assertEqual(mv.COMPLETE_BOUNDARY, mv.classify_run(log, pgn, sprt=True).state)
+
+    def test_one_log_only_game_explains_one_orphan_only(self):
+        games = [(1, "NEW", "OLD", "1-0", "White mates", OPEN_A, None),
+                 (2, "NEW", "OLD", "1-0", "White mates", OPEN_B, None)]  # two orphans, both need OLD as White
+        log, pgn = build(games, sprt_line=self.BOUNDARY)
+        log = log.replace("Score of", "Finished game 3 (OLD vs NEW): * {No result}\nScore of", 1)
+        v = mv.classify_run(log, pgn, sprt=True)
+        self.assertEqual(mv.INTERRUPTED, v.state, v.describe())
+        self.assertEqual(1, v.unexplained_orphans)
+
+
+class MalformedStatistics(unittest.TestCase):
+    """A later unparseable statistics line must not be hidden by an earlier good one."""
+
+    def corrupt(self, extra):
+        log = read("boundary-real.log.txt").replace("Finished match", extra + "\nFinished match")
+        return mv.classify_run(log, read("boundary-real.pgn"), sprt=True)
+
+    def test_a_corrupted_sprt_line_is_invalid(self):
+        v = self.corrupt("SPRT: corrupted")
+        self.assertEqual(mv.INVALID_EVIDENCE, v.state, v.describe())
+        self.assertTrue(any("SPRT:" in r for r in v.reasons))
+
+    def test_a_corrupted_score_line_is_invalid(self):
+        v = self.corrupt("Score of NEW vs OLD: corrupted")
+        self.assertEqual(mv.INVALID_EVIDENCE, v.state, v.describe())
+        self.assertTrue(any("Score of" in r for r in v.reasons))
+
+    def test_both_corrupted_together_are_invalid(self):
+        self.assertEqual(mv.INVALID_EVIDENCE, self.corrupt("SPRT: corrupted\nScore of NEW vs OLD: corrupted").state)
+
+    def test_the_unmodified_real_run_still_passes(self):
+        self.assertEqual(mv.COMPLETE_BOUNDARY, self.corrupt("").state)
+
+
 class OpeningPairs(unittest.TestCase):
     """Amendment 3: pair completeness comes from the openings, not from the game count."""
 

@@ -291,6 +291,80 @@ class Completion(unittest.TestCase):
         self.assertNotIn("Completion:", out, "nothing was launched")
 
 
+class OutputsMayNotOverwriteInputs(unittest.TestCase):
+    """The outputs are written after the hash check, so an output that aliased a verified input would destroy it
+    before Cute Chess loads it."""
+
+    def prepared(self, ws):
+        with mock.patch.object(sprt_linux, "first_line_of", return_value="x"), contextlib.redirect_stdout(io.StringIO()):
+            fixed.run(ws.fargv("--prepare-only", "--argument-manifest-path", str(ws.dir / "m.json")), env=ws.env)
+        saved = ws.dir / "expected.json"
+        saved.write_text((ws.dir / "provenance.json").read_text())
+        return saved
+
+    def launch(self, ws, saved, *override):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(sprt_linux, "first_line_of", return_value="x"), mock.patch.dict(os.environ, ws.env), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = fixed.main(ws.fargv("--expected-provenance-path", str(saved), *override))
+        return code, out.getvalue(), err.getvalue()
+
+    def assert_refused(self, ws, saved, override, before, name):
+        code, out, err = self.launch(ws, saved, *override)
+        self.assertEqual(1, code)
+        self.assertIn("refusing to overwrite an input", err)
+        self.assertNotIn("Completion:", out, "nothing was launched")
+        for path, content in before.items():
+            self.assertEqual(content, path.read_bytes(), f"{path.name} must be untouched ({name})")
+
+    def test_the_provenance_path_may_not_be_the_candidate_jar(self):
+        ws = FixedWorkspace(self)
+        ws.stub_files(*good_run())
+        saved = self.prepared(ws)
+        before = {ws.new: ws.new.read_bytes()}
+        self.assert_refused(ws, saved, ["--provenance-path", str(ws.new)], before, "candidate JAR")
+
+    def test_the_manifest_path_may_not_be_the_opening_book_or_the_baseline_jar(self):
+        ws = FixedWorkspace(self)
+        saved = self.prepared(ws)
+        for target in (ws.book, ws.old):
+            with self.subTest(target=target.name):
+                before = {target: target.read_bytes()}
+                self.assert_refused(ws, saved, ["--argument-manifest-path", str(target)], before, target.name)
+
+    def test_a_symlink_to_an_input_is_the_same_file(self):
+        ws = FixedWorkspace(self)
+        saved = self.prepared(ws)
+        link = ws.dir / "provenance-link.json"
+        link.symlink_to(ws.new)
+        before = {ws.new: ws.new.read_bytes()}
+        self.assert_refused(ws, saved, ["--provenance-path", str(link)], before, "symlink to the candidate JAR")
+
+    def test_the_provenance_path_may_not_be_the_expected_record_or_the_launcher(self):
+        ws = FixedWorkspace(self)
+        saved = self.prepared(ws)
+        before = {saved: saved.read_bytes()}
+        self.assert_refused(ws, saved, ["--provenance-path", str(saved)], before, "expected record")
+        launcher = ROOT / "tools/fixed_count_match.py"
+        code, _, err = self.launch(ws, saved, "--provenance-path", str(launcher))
+        self.assertEqual(1, code)
+        self.assertIn("refusing to overwrite an input", err)
+
+    def test_the_outputs_may_not_be_the_same_file_as_each_other(self):
+        ws = FixedWorkspace(self)
+        saved = self.prepared(ws)
+        code, _, err = self.launch(ws, saved, "--argument-manifest-path", str(ws.dir / "provenance.json"))
+        self.assertEqual(1, code)
+        self.assertIn("are the same file", err)
+
+    def test_distinct_outputs_are_still_accepted(self):
+        ws = FixedWorkspace(self)
+        ws.stub_files(*good_run())
+        saved = self.prepared(ws)
+        code, out, _ = self.launch(ws, saved)
+        self.assertEqual(0, code, out)
+
+
 class Hygiene(unittest.TestCase):
     def test_no_absolute_paths_and_one_sprt_token_only_to_remove_it(self):
         source = (ROOT / "tools/fixed_count_match.py").read_text(encoding="utf-8")

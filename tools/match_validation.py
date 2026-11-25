@@ -153,9 +153,13 @@ def parse_log(log_text: str):
         if m:
             score = (m.group(1), m.group(2), int(m.group(3)), int(m.group(4)), int(m.group(5)), int(m.group(6)))
             continue
+        if line.startswith("Score of "):
+            raise _Invalid(f"unparseable 'Score of' line: {line[:80]}")
         m = _SPRT.match(line)
         if m:
             sprt = (float(m.group(1)), float(m.group(2)), float(m.group(3)), m.group(4))
+        elif line.startswith("SPRT:"):
+            raise _Invalid(f"unparseable 'SPRT:' line: {line[:80]}")
     return games, score, sprt, last_line == "Finished match"
 
 
@@ -214,7 +218,8 @@ def _opening_pairs(finished: List[_Game], unterminated: List[_Game], engines: Tu
     for g in finished:
         (white_a if g.white == a else white_b)[g.opening] += 1
     twins: Counter = Counter((g.opening, g.white) for g in unterminated)
-    pairs = orphans = unexplained = 0
+    pairs = orphans = 0
+    unexplained: Counter = Counter()  # by the colour the missing twin would need
     for opening in set(white_a) | set(white_b):
         na, nb = white_a[opening], white_b[opening]
         pairs += min(na, nb)
@@ -223,7 +228,7 @@ def _opening_pairs(finished: List[_Game], unterminated: List[_Game], engines: Tu
         need_white = b if na > nb else a  # the missing twin has the other engine as White
         take = min(excess, twins[(opening, need_white)])
         twins[(opening, need_white)] -= take
-        unexplained += excess - take
+        unexplained[need_white] += excess - take
     return pairs, orphans, unexplained
 
 
@@ -284,9 +289,12 @@ def classify_run(log_text: Optional[str], pgn_text: Optional[str], expected_game
     finished = [g for g in pgn_games if g.cls != UNTERMINATED]
     unterminated = [g for g in pgn_games if g.cls == UNTERMINATED]
     abandoned = [g for g in pgn_games if g.cls == ABANDONED]
-    pairs, orphans, unexplained = _opening_pairs(finished, unterminated, (a, b))
-    # A log-only unterminated game has no FEN to match, so it can stand in for one otherwise unexplained orphan.
-    unexplained = max(0, unexplained - log_only_unterminated)
+    pairs, orphans, unexplained_by_white = _opening_pairs(finished, unterminated, (a, b))
+    # A log-only unterminated game has no FEN, so its opening cannot be checked, but its colours are in the log
+    # line and a twin must have the opposite colours to the orphan it would complete. It can stand in only for an
+    # orphan that needs exactly that colour.
+    log_only_whites = Counter(key[0] for key in log_only.elements())
+    unexplained = sum(max(0, count - log_only_whites[white]) for white, count in unexplained_by_white.items())
     verdict = RunVerdict(INTERRUPTED, games=wins + losses + draws, unterminated=len(unterminated) + log_only_unterminated,
                          abandoned=len(abandoned), orphan_openings=orphans, unexplained_orphans=unexplained,
                          complete_pairs=pairs)

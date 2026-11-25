@@ -84,6 +84,25 @@ def build_record(*, args: argparse.Namespace, cutechess: str, java: str, new_jar
     return record
 
 
+def refuse_aliases(outputs: Mapping[str, Optional[str]], inputs: Mapping[str, Optional[str]]) -> None:
+    """No output file may be, or resolve (symlinks included) to, an input or another output. The launcher writes the
+    manifest, the provenance, the log and the PGN, and an output that aliased a verified JAR or book would destroy
+    it after its hash had been checked and before Cute Chess loaded it."""
+    def same(a: str, b: str) -> bool:
+        if os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b)):
+            return True
+        return os.path.exists(a) and os.path.exists(b) and os.path.samefile(a, b)
+
+    given_outputs = [(name, path) for name, path in outputs.items() if path]
+    for i, (name, path) in enumerate(given_outputs):
+        for other_name, other in given_outputs[i + 1:]:
+            if same(path, other):
+                raise LauncherError(f"{name} and {other_name} are the same file.")
+        for input_name, input_path in inputs.items():
+            if input_path and same(path, input_path):
+                raise LauncherError(f"{name} is the same file as the {input_name}; refusing to overwrite an input.")
+
+
 def check_expected(expected: Mapping[str, Any], actual: Mapping[str, Any]) -> None:
     """Refuse to launch unless every relevant hash and the argument array equal the prepared record."""
     def get(record, *path):
@@ -147,6 +166,14 @@ def run(argv: Optional[Sequence[str]] = None, env: Optional[Mapping[str, str]] =
     pgn_out, log_out = os.path.abspath(args.pgn_path), os.path.abspath(args.log_path)
     if pgn_out == log_out:
         raise LauncherError("--log-path and --pgn-path must be different files.")
+    refuse_aliases(
+        outputs={"--log-path": log_out, "--pgn-path": pgn_out, "--provenance-path": args.provenance_path,
+                 "--argument-manifest-path": args.argument_manifest_path},
+        inputs={"candidate JAR": new_jar, "baseline JAR": old_jar, "opening book": book, "Cute Chess executable": cutechess,
+                "launcher": __file__, "sprt_linux.py": sprt_linux.__file__,
+                "match_validation.py": str(SCRIPT_DIR / "match_validation.py"),
+                "--expected-argument-manifest-path": args.expected_argument_manifest_path,
+                "--expected-provenance-path": args.expected_provenance_path})
     for output in (pgn_out, log_out):
         Path(output).parent.mkdir(parents=True, exist_ok=True)
 
