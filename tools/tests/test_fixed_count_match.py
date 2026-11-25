@@ -212,6 +212,8 @@ class Completion(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(sprt_linux, "first_line_of", return_value="x"), mock.patch.dict(os.environ, ws.env), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            os.environ.pop("JAVA", None)
+            os.environ.pop("JAVA_HOME", None)
             code = fixed.main(ws.fargv(*extra, **kw))
         return code, out.getvalue(), err.getvalue()
 
@@ -306,6 +308,10 @@ class OutputsMayNotOverwriteInputs(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(sprt_linux, "first_line_of", return_value="x"), mock.patch.dict(os.environ, ws.env), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            # prepared() used an explicit environment, so the real JAVA and JAVA_HOME (set on CI runners) must not
+            # change the java command here, or every hash and argument comparison would differ for that reason alone
+            os.environ.pop("JAVA", None)
+            os.environ.pop("JAVA_HOME", None)
             code = fixed.main(ws.fargv("--expected-provenance-path", str(saved), *override))
         return code, out.getvalue(), err.getvalue()
 
