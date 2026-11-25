@@ -18,7 +18,8 @@ final class NnueFixtureGoldenSupport {
 
     static final List<Fixture> FIXTURES = List.of(
             new Fixture("d6-export-fixture.nnue", "fixture-d6-golden-evals.csv"),
-            new Fixture("parity-w32-fixture.nnue", "fixture-w32-golden-evals.csv"));
+            new Fixture("parity-w32-fixture.nnue", "fixture-w32-golden-evals.csv"),
+            new Fixture("parity-w64-qa1016-fixture.nnue", "fixture-w64-qa1016-golden-evals.csv"));
 
     private NnueFixtureGoldenSupport() {
     }
