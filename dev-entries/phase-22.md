@@ -83,3 +83,13 @@ Phase 15 keeps its status (the self-play/Stage-3 line is paused and every `[P15]
 **Broke / Fixed:** The core penalty with -3, core evaluation with ATK_WEIGHT_KNIGHT = -5 and the tuner evaluator with the same override all threw before the clamp.
 
 **Measurements:** Rebased on develop after #309. engine-core 541 tests and engine-tuner 162 pass locally with 0 failures, and the regression group (NodeCountRegressionTest, SearchRegressionTest, NnueModeSearchRegressionTest) passes with no golden value changed. No match or benchmark was run.
+
+### [2026-11-25] QA 1016 / QB 128 end-to-end compatibility evidence (#265; NNUE and tuner integrity)
+
+**Built:** A frozen synthetic QA 1016 / QB 128 fixture (width 64, seeded random) with a Java golden CSV, a row in the Python and Java fixture lists, and tests. The trainer parity test compares Python with the Java CSV, the Java test pins the live evaluator against it and asserts both accumulator clamps are reached. The incremental-versus-rebuild fuzz also runs at width 256, QA 1016 / QB 128. Two loader tests cover an output layer whose `qa * sum|w|` exceeds int32 on the scalar path and an accumulator at the loader's int16 bound. The real-checkpoint probe is preserved under `docs/engineering/investigations/2026-11-25-265-qa1016-qb128-probe/` with its scripts, hashes and commands, next to the case study. Test and documentation files only.
+
+**Decisions Made:** No production file, default scale or network changes, and nothing is retrained. Agreement is asserted within each scale, Java against Python on the same bytes, and nothing compares scores across scales, since a different grid rounds differently. Synthetic compatibility evidence and the one-checkpoint real measurement are recorded separately. The guard-rejection and vector-fallback assertions exist only on #313, so they are not claimed. The overflow test is named as scalar coverage, and the #313 assertions stay as Task 5 of the plan until #313 merges. #265 stays open.
+
+**Broke / Fixed:** Nothing was broken. The gap was that no committed test evaluated a network at any QA other than 127.
+
+**Measurements:** Real checkpoint (P5 control final, 393-position corpus): Java equals the Python reference on 393 of 393 at QA 127 and at QA 1016, 0 of 2,400 incremental-accumulator checks diverge at either scale, FT max weight 19 against 156, and `qa * sum|w|` is 0.0007 and 0.0106 of the int32 limit. The vector dot kernel on #313 matched scalar on 393 of 393. Synthetic fixture: 8.93 percent of accumulator values above `qa`, 35.29 percent below zero, 178 of 393 negative scores, Python equals Java with zero difference. Local runs: the focused NNUE test classes and the trainer parity tests pass. No match or benchmark was run.

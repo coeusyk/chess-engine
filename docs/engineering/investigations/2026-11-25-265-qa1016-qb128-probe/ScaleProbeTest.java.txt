@@ -1,0 +1,111 @@
+package coeusyk.game.chess.core.eval.nnue;
+
+import coeusyk.game.chess.core.models.Board;
+import coeusyk.game.chess.core.models.Move;
+import coeusyk.game.chess.core.models.Piece;
+import coeusyk.game.chess.core.movegen.MovesGenerator;
+import org.junit.jupiter.api.Test;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
+
+/**
+ * Probe for #265, kept as a text file so it is not compiled. To run it, copy it to
+ * engine-core/src/test/java/coeusyk/game/chess/core/eval/nnue/ScaleProbeTest.java on a checkout that has
+ * the #313 vector dot kernel (NnueEvaluator.dotFitsInt and dotCreluScalar, NnueAccumulatorVectorOps.dotCrelu),
+ * and do not commit the copy. It reads exported nets and the Python scores from -Dprobe.dir.
+ */
+class ScaleProbeTest {
+
+    @Test
+    void probe() throws Exception {
+        String dir = System.getProperty("probe.dir");
+        if (dir == null) return;
+        System.out.println("PROBE vectorAvailable=" + VectorCapabilities.AVAILABLE
+                + " lanes=" + VectorCapabilities.PREFERRED_SHORT_LANES);
+        for (String tag : new String[] {"qa127_qb64", "qa1016_qb128"}) {
+            NnueNetwork net = NnueNetwork.load(Path.of(dir, tag + ".nnue"));
+            int qa = net.qa();
+            long absSum = 0;
+            for (short w : net.outputWeights()) absSum += Math.abs((long) w);
+            System.out.println("PROBE " + tag + " loaded qa=" + qa + " qb=" + net.qb() + " width=" + net.hiddenWidth()
+                    + " dotFitsInt=" + NnueEvaluator.dotFitsInt(net.outputWeights(), qa)
+                    + " qa*sum|w|/intMax=" + String.format("%.4f", (double) qa * absSum / Integer.MAX_VALUE));
+
+            // 1. Java evaluate vs the Python bit-exact reference, from-scratch accumulators.
+            List<String> lines = Files.readAllLines(Path.of(dir, tag + ".scores.tsv"));
+            NnueEvaluator ev = new NnueEvaluator(net);
+            int mismatches = 0, dotMismatch = 0, n = 0;
+            int accMin = Integer.MAX_VALUE, accMax = Integer.MIN_VALUE, clippedHi = 0, clippedLo = 0;
+            for (String line : lines) {
+                if (line.isBlank()) continue;
+                String[] p = line.split("\t");
+                Board b = new Board(p[0] + " 0 1");
+                ev.reset(b);
+                int java = ev.evaluate(b);
+                if (java != Integer.parseInt(p[1])) mismatches++;
+                short[] us = ev.currentAccumulator(Piece.isWhite(b.getActiveColor()) ? Piece.White : Piece.Black);
+                short[] them = ev.currentAccumulator(Piece.isWhite(b.getActiveColor()) ? Piece.Black : Piece.White);
+                long scalar = NnueEvaluator.dotCreluScalar(us, them, net.outputWeights(), qa);
+                if (VectorCapabilities.AVAILABLE && NnueEvaluator.dotFitsInt(net.outputWeights(), qa)) {
+                    long vec = NnueAccumulatorVectorOps.dotCrelu(us, them, net.outputWeights(), qa);
+                    if (vec != scalar) dotMismatch++;
+                }
+                for (short[] acc : new short[][] {us, them}) {
+                    for (short v : acc) {
+                        accMin = Math.min(accMin, v);
+                        accMax = Math.max(accMax, v);
+                        if (v > qa) clippedHi++;
+                        if (v < 0) clippedLo++;
+                    }
+                }
+                n++;
+            }
+            System.out.println("PROBE " + tag + " positions=" + n + " javaVsPythonMismatches=" + mismatches
+                    + " vectorDotVsScalarMismatches=" + dotMismatch
+                    + " accRange=[" + accMin + "," + accMax + "] valuesAboveQa=" + clippedHi + " valuesBelowZero=" + clippedLo);
+
+            // 2. Incremental accumulator vs scalar rebuild and evaluate() agreement over random games.
+            NnueEvaluator inc = new NnueEvaluator(net);
+            NnueEvaluator oracle = new NnueEvaluator(net);
+            Random random = new Random(20260725L);
+            int checks = 0, accDiverged = 0, evalDiverged = 0, aMin = Integer.MAX_VALUE, aMax = Integer.MIN_VALUE;
+            for (int game = 0; game < 40; game++) {
+                Board board = new Board();
+                inc.reset(board);
+                int played = 0;
+                for (int ply = 0; ply < 60; ply++) {
+                    ArrayList<Move> legal = new MovesGenerator(board).getActiveMoves(board.getActiveColor());
+                    if (legal.isEmpty()) break;
+                    Move move = legal.get(random.nextInt(legal.size()));
+                    board.makeMove(move);
+                    inc.onMake(board, move.pack(), board.lastCapturedPiece());
+                    played++;
+                    oracle.reset(board);
+                    for (int color : new int[] {Piece.White, Piece.Black}) {
+                        short[] a = inc.currentAccumulator(color);
+                        if (!java.util.Arrays.equals(scalarRebuild(net, board, color), a)) accDiverged++;
+                        for (short v : a) { aMin = Math.min(aMin, v); aMax = Math.max(aMax, v); }
+                    }
+                    if (inc.evaluate(board) != oracle.evaluate(board)) evalDiverged++;
+                    checks++;
+                }
+                for (int i = 0; i < played; i++) { inc.onUnmake(); board.unmakeMove(); }
+            }
+            System.out.println("PROBE " + tag + " fuzzChecks=" + checks + " incrementalVsScalarRebuildDiverged=" + accDiverged
+                    + " incrementalEvalVsRebuildEvalDiverged=" + evalDiverged + " accRange=[" + aMin + "," + aMax + "]");
+        }
+    }
+
+    private static short[] scalarRebuild(NnueNetwork network, Board board, int perspectiveColor) {
+        short[] acc = network.ftBiases().clone();
+        short[] weights = network.ftWeights();
+        FeatureExtractor.forEachPiece(board, (pieceColor, pieceType, square) ->
+                NnueEvaluator.addFeatureScalar(acc,
+                        FeatureExtractor.featureIndex(perspectiveColor, pieceColor, pieceType, square), weights));
+        return acc;
+    }
+}
