@@ -23,7 +23,13 @@ class ScaleProbeTest {
     @Test
     void probe() throws Exception {
         String dir = System.getProperty("probe.dir");
-        if (dir == null) return;
+        if (dir == null || dir.isBlank()) {
+            throw new IllegalStateException("probe.dir is not set: pass the same output directory the Python half wrote,"
+                    + " as -DargLine=\"... -Dprobe.dir=<dir>\" (surefire does not forward a plain -Dprobe.dir to the test JVM)");
+        }
+        if (!java.nio.file.Files.isDirectory(Path.of(dir))) {
+            throw new IllegalStateException("probe.dir is not a directory: " + dir);
+        }
         System.out.println("PROBE vectorAvailable=" + VectorCapabilities.AVAILABLE
                 + " lanes=" + VectorCapabilities.PREFERRED_SHORT_LANES);
         for (String tag : new String[] {"qa127_qb64", "qa1016_qb128"}) {
@@ -67,6 +73,9 @@ class ScaleProbeTest {
             System.out.println("PROBE " + tag + " positions=" + n + " javaVsPythonMismatches=" + mismatches
                     + " vectorDotVsScalarMismatches=" + dotMismatch
                     + " accRange=[" + accMin + "," + accMax + "] valuesAboveQa=" + clippedHi + " valuesBelowZero=" + clippedLo);
+            org.junit.jupiter.api.Assertions.assertEquals(393, n, tag + ": expected the 393 corpus positions");
+            org.junit.jupiter.api.Assertions.assertEquals(0, mismatches, tag + ": Java differs from the Python reference");
+            org.junit.jupiter.api.Assertions.assertEquals(0, dotMismatch, tag + ": vector dot differs from scalar");
 
             // 2. Incremental accumulator vs scalar rebuild and evaluate() agreement over random games.
             NnueEvaluator inc = new NnueEvaluator(net);
@@ -97,6 +106,9 @@ class ScaleProbeTest {
             }
             System.out.println("PROBE " + tag + " fuzzChecks=" + checks + " incrementalVsScalarRebuildDiverged=" + accDiverged
                     + " incrementalEvalVsRebuildEvalDiverged=" + evalDiverged + " accRange=[" + aMin + "," + aMax + "]");
+            org.junit.jupiter.api.Assertions.assertEquals(2400, checks, tag + ": expected 2400 fuzz checks");
+            org.junit.jupiter.api.Assertions.assertEquals(0, accDiverged, tag + ": incremental accumulator differs from rebuild");
+            org.junit.jupiter.api.Assertions.assertEquals(0, evalDiverged, tag + ": incremental evaluate differs from rebuild");
         }
     }
 

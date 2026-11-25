@@ -513,8 +513,9 @@ class NnueNetworkLoaderTest {
 
     /**
      * An accumulator at the loader's own worst-case limit at qa 1016 must load and must not wrap: every
-     * feature weight is the largest the production clip allows, so a start position (32 active features)
-     * sits at {@code bias + 32 * weight}, just under the int16 maximum, and then clamps to qa.
+     * feature weight is the largest the production clip allows and the bias is 1023, so a start position
+     * (32 active features) sits at {@code bias + 32 * weight} = 32767 exactly, the int16 maximum, and then
+     * clamps to qa.
      */
     @Test
     void evaluateAtTheLoaderBoundEdgeDoesNotWrap() throws IOException {
@@ -524,7 +525,8 @@ class NnueNetworkLoaderTest {
         short[] ftWeights = new short[FeatureExtractor.FEATURES_PER_PERSPECTIVE * width];
         java.util.Arrays.fill(ftWeights, weightClip);
         short[] ftBiases = new short[width];
-        java.util.Arrays.fill(ftBiases, (short) qa);
+        short bias = (short) (Short.MAX_VALUE - 32 * weightClip);   // 1023
+        java.util.Arrays.fill(ftBiases, bias);
         short[] outputWeights = new short[2 * width];
         java.util.Arrays.fill(outputWeights, 0, width, (short) 1);
         java.util.Arrays.fill(outputWeights, width, 2 * width, (short) 2);
@@ -536,11 +538,12 @@ class NnueNetworkLoaderTest {
         coeusyk.game.chess.core.models.Board board = new coeusyk.game.chess.core.models.Board();
         evaluator.reset(board);
 
-        int expectedAccumulator = qa + 32 * weightClip;
-        assertTrue(expectedAccumulator <= Short.MAX_VALUE, "the edge case must sit inside int16");
+        assertEquals(1023, bias);
+        assertEquals(Short.MAX_VALUE, bias + 32 * weightClip, "the edge case must sit exactly on the int16 maximum");
+        // Raw accumulators first: all 32 start-position pieces fire, so every neuron must reach exactly 32767.
         for (int color : new int[] {coeusyk.game.chess.core.models.Piece.White, coeusyk.game.chess.core.models.Piece.Black}) {
             for (short value : evaluator.currentAccumulator(color)) {
-                assertEquals(expectedAccumulator, value, "accumulator wrapped or moved");
+                assertEquals(Short.MAX_VALUE, value, "accumulator wrapped or did not reach 32767");
             }
         }
         // Every neuron clamps to qa on both sides: us weights 1, them weights 2.
