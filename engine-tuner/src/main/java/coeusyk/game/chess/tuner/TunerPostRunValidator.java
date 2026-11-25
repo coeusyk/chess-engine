@@ -125,12 +125,11 @@ public final class TunerPostRunValidator {
         // --- Gate 1: Convergence (mandatory) ---
         String convergenceVerdict;
         if (metrics == null) {
-            convergenceVerdict = "[Convergence] SKIPPED — no metrics collected";
+            convergenceVerdict = "[Convergence] FAIL — no metrics collected, so there is no convergence evidence";
         } else {
             convergenceVerdict = checkConvergence(metrics);
         }
-        boolean convergencePassed = convergenceVerdict.contains("PASS")
-                || convergenceVerdict.contains("SKIPPED");
+        boolean convergencePassed = convergenceVerdict.contains("PASS");
         if (!convergencePassed) allPassed = false;
         report.append(convergenceVerdict).append('\n');
 
@@ -184,10 +183,37 @@ public final class TunerPostRunValidator {
         boolean fail = false;
         StringBuilder reasons = new StringBuilder();
 
-        // Check 1: hit iter cap with non-trivial remaining delta
+        // Check 0: no evidence is a failure. A run that recorded no termination reason, no iterations or no MSE
+        // cannot be called converged, whatever the remaining numbers say.
+        if ("NOT_RUN".equals(metrics.terminationReason)) {
+            reasons.append("no termination reason recorded (optimizer never reported how it ended); ");
+            fail = true;
+        }
+        if (metrics.itersCompleted < 1) {
+            // Zero iterations is legitimate only as convergence on the initial gradient, and then the starting
+            // MSE and a gradient norm below the L-BFGS threshold must both be on record. Nothing is invented here.
+            boolean immediate = "CONVERGED".equals(metrics.terminationReason)
+                    && Double.isFinite(metrics.initialMse)
+                    && Double.isFinite(metrics.initialGradNorm)
+                    && metrics.initialGradNorm >= 0.0
+                    && metrics.initialGradNorm < GradientDescent.LBFGS_GRAD_NORM_THRESHOLD;
+            if (!immediate) {
+                reasons.append("no iterations completed and no valid initial-convergence evidence; ");
+                fail = true;
+            }
+        }
+        if (!Double.isFinite(metrics.finalMse) || metrics.minMse == Double.MAX_VALUE) {
+            reasons.append("no MSE recorded; ");
+            fail = true;
+        }
+
+        // Check 1: hit iter cap with non-trivial remaining delta (or no delta evidence at all)
         if (metrics.hitIterCap) {
             double meanDelta = metrics.meanRecentRelDelta(20);
-            if (!Double.isNaN(meanDelta) && meanDelta > CONVERGENCE_DELTA_THRESHOLD) {
+            if (Double.isNaN(meanDelta)) {
+                reasons.append("hit the iteration cap with no relative-delta evidence; ");
+                fail = true;
+            } else if (meanDelta > CONVERGENCE_DELTA_THRESHOLD) {
                 reasons.append(String.format(
                         "hit maxIters cap with meanRelDelta=%.2e > %.2e (still moving); ",
                         meanDelta, CONVERGENCE_DELTA_THRESHOLD));
@@ -196,7 +222,7 @@ public final class TunerPostRunValidator {
         }
 
         // Check 2: MSE overshoot — finalMse > minMse * 1.15
-        if (!Double.isNaN(metrics.finalMse) && metrics.minMse < Double.MAX_VALUE) {
+        if (Double.isFinite(metrics.finalMse) && metrics.minMse < Double.MAX_VALUE) {
             if (metrics.finalMse > metrics.minMse * MSE_OVERSHOOT_FACTOR) {
                 reasons.append(String.format(
                         "MSE overshot minimum (final=%.6f > min=%.6f × %.2f); ",
@@ -209,6 +235,10 @@ public final class TunerPostRunValidator {
             sb.append("FAIL — ").append(reasons);
         } else {
             sb.append("PASS — iters=").append(metrics.itersCompleted)
+              .append(" termination=").append(metrics.terminationReason)
+              .append(metrics.itersCompleted < 1
+                      ? String.format(" initialMse=%.6f initialGradNorm=%.2e", metrics.initialMse, metrics.initialGradNorm)
+                      : "")
               .append(" hitCap=").append(metrics.hitIterCap)
               .append(String.format(" finalMse=%.6f", Double.isNaN(metrics.finalMse) ? 0 : metrics.finalMse))
               .append(String.format(" meanRelDelta=%.2e", metrics.meanRecentRelDelta(20)));

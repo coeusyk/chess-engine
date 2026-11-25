@@ -427,17 +427,38 @@ public final class TunerEvaluator {
     // =========================================================================
 
     private static int kingSafety(PositionData pos, double[] params) {
-        return kingSafetySide(pos, true,  params)
-             - kingSafetySide(pos, false, params);
+        long wKing = pos.getWhiteKing();
+        long bKing = pos.getBlackKing();
+        int wScore = wKing != 0 ? kingShieldAndFiles(pos, true,  params) : 0;
+        int bScore = bKing != 0 ? kingShieldAndFiles(pos, false, params) : 0;
+        int wAttackWeight = bKing != 0 ? attackWeight(pos, false, params) : 0; // white pieces on the black king
+        int bAttackWeight = wKing != 0 ? attackWeight(pos, true,  params) : 0; // black pieces on the white king
+        // Opposite flanks: the shelter of the side under heavier attack is discounted, as in the
+        // production KingSafety.evaluatePawnShieldAndFiles (#274).
+        if (wKing != 0 && bKing != 0 && oppositeFlanks(wKing, bKing)) {
+            int scale = coeusyk.game.chess.core.eval.EvalParams.OPPOSITE_FLANK_SHIELD_SCALE;
+            if (bAttackWeight > wAttackWeight) {
+                wScore = (wScore * scale) / 100;
+            } else if (wAttackWeight > bAttackWeight) {
+                bScore = (bScore * scale) / 100;
+            }
+        }
+        int wPenalty = wKing != 0 ? attackerPenalty(bAttackWeight, params) : 0;
+        int bPenalty = bKing != 0 ? attackerPenalty(wAttackWeight, params) : 0;
+        return (wScore + wPenalty) - (bScore + bPenalty);
     }
 
-    private static int kingSafetySide(PositionData pos, boolean white, double[] params) {
+    /** One king on the queenside (files a to d) and the other on the kingside (files e to h). */
+    static boolean oppositeFlanks(long whiteKing, long blackKing) {
+        int wFile = Long.numberOfTrailingZeros(whiteKing) % 8;
+        int bFile = Long.numberOfTrailingZeros(blackKing) % 8;
+        return (wFile < 4) != (bFile < 4);
+    }
+
+    private static int kingShieldAndFiles(PositionData pos, boolean white, double[] params) {
         long kingBb = white ? pos.getWhiteKing() : pos.getBlackKing();
-        if (kingBb == 0) return 0;
         int kingSq = Long.numberOfTrailingZeros(kingBb);
-        return pawnShield(pos, white, kingSq, params)
-             + openFiles(pos, white, kingSq, params)
-             + attackerPenalty(pos, white, kingSq, params);
+        return pawnShield(pos, white, kingSq, params) + openFiles(pos, white, kingSq, params);
     }
 
     private static boolean isCastled(boolean white, int kingSq) {
@@ -492,7 +513,11 @@ public final class TunerEvaluator {
         56, 62, 68, 75, 82, 89, 97, 105, 113, 122, 131, 140, 150, 160
     };
 
-    private static int attackerPenalty(PositionData pos, boolean white, int kingSq, double[] params) {
+    /** Attacker weight of the enemy pieces on the king of {@code white}. Zero when that king is missing. */
+    private static int attackWeight(PositionData pos, boolean white, double[] params) {
+        long kingBb = white ? pos.getWhiteKing() : pos.getBlackKing();
+        if (kingBb == 0) return 0;
+        int kingSq = Long.numberOfTrailingZeros(kingBb);
         long zone   = white ? WHITE_KING_ZONE[kingSq] : BLACK_KING_ZONE[kingSq];
         long allOcc = pos.getWhiteOccupancy() | pos.getBlackOccupancy();
 
@@ -506,7 +531,10 @@ public final class TunerEvaluator {
         w += countAttackers(eBishops, Piece.Bishop, zone, allOcc) * (int) params[EvalParams.IDX_ATK_BISHOP];
         w += countAttackers(eRooks,   Piece.Rook,   zone, allOcc) * (int) params[EvalParams.IDX_ATK_ROOK];
         w += countAttackers(eQueens,  Piece.Queen,  zone, allOcc) * (int) params[EvalParams.IDX_ATK_QUEEN];
+        return w;
+    }
 
+    private static int attackerPenalty(int w, double[] params) {
         int base = w < SAFETY_TABLE.length ? SAFETY_TABLE[w] : SAFETY_TABLE[SAFETY_TABLE.length - 1];
         return -(int) (base * params[EvalParams.IDX_KING_SAFETY_SCALE] / 100);
     }
@@ -556,10 +584,17 @@ public final class TunerEvaluator {
 
     /**
      * Hanging piece penalty from White's perspective (positive = Black has more
-     * hanging pieces). Mirrors the engine-core {@code Evaluator.hangingPenalty()}
-     * logic without the mating-net suppression (not needed for gradient signal).
+     * hanging pieces). Mirrors the engine-core {@code Evaluator.hangingPenalty()}.
      */
     private static int hangingPenalty(PositionData pos, double[] params) {
+        return netHanging(pos) * (int) params[EvalParams.IDX_HANGING_PENALTY];
+    }
+
+    /**
+     * Net hanging count (positive = Black has more hanging pieces) after the #138 mating-net suppression. The
+     * static evaluator and the Adam/L-BFGS feature extraction both call this, so the two cannot disagree.
+     */
+    static int netHanging(PositionData pos) {
         long allOcc = pos.getWhiteOccupancy() | pos.getBlackOccupancy();
         long attackedByWhite = computeAttackedBy(pos, true,  allOcc);
         long attackedByBlack = computeAttackedBy(pos, false, allOcc);
@@ -567,8 +602,38 @@ public final class TunerEvaluator {
                           & attackedByBlack & ~attackedByWhite;
         long blackHanging = (pos.getBlackOccupancy() & ~pos.getBlackKing())
                           & attackedByWhite & ~attackedByBlack;
-        return (Long.bitCount(blackHanging) - Long.bitCount(whiteHanging))
-             * (int) params[EvalParams.IDX_HANGING_PENALTY];
+
+        // Issue #138 suppression, as in the production Evaluator.hangingPenalty (#274): a piece that
+        // attacks the ring of a king with at most one safe escape square is part of a mating net.
+        long bKing = pos.getBlackKing();
+        if (bKing != 0L && whiteHanging != 0L) {
+            long ring = AttackTables.KING_ATTACKS[Long.numberOfTrailingZeros(bKing)];
+            if (Long.bitCount(ring & ~pos.getBlackOccupancy() & ~attackedByWhite) <= 1) {
+                whiteHanging &= ~kingRingAttackers(pos, true, allOcc, ring);
+            }
+        }
+        long wKing = pos.getWhiteKing();
+        if (wKing != 0L && blackHanging != 0L) {
+            long ring = AttackTables.KING_ATTACKS[Long.numberOfTrailingZeros(wKing)];
+            if (Long.bitCount(ring & ~pos.getWhiteOccupancy() & ~attackedByBlack) <= 1) {
+                blackHanging &= ~kingRingAttackers(pos, false, allOcc, ring);
+            }
+        }
+        return Long.bitCount(blackHanging) - Long.bitCount(whiteHanging);
+    }
+
+    /** Squares of the knights, bishops, rooks and queens of one side whose attacks reach {@code ring}. */
+    private static long kingRingAttackers(PositionData pos, boolean white, long allOcc, long ring) {
+        long result = 0L;
+        long pieces = white ? pos.getWhiteKnights() : pos.getBlackKnights();
+        while (pieces != 0) { int sq = Long.numberOfTrailingZeros(pieces); if ((Attacks.knightAttacks(sq) & ring) != 0) result |= 1L << sq; pieces &= pieces - 1; }
+        pieces = white ? pos.getWhiteBishops() : pos.getBlackBishops();
+        while (pieces != 0) { int sq = Long.numberOfTrailingZeros(pieces); if ((Attacks.bishopAttacks(sq, allOcc) & ring) != 0) result |= 1L << sq; pieces &= pieces - 1; }
+        pieces = white ? pos.getWhiteRooks() : pos.getBlackRooks();
+        while (pieces != 0) { int sq = Long.numberOfTrailingZeros(pieces); if ((Attacks.rookAttacks(sq, allOcc) & ring) != 0) result |= 1L << sq; pieces &= pieces - 1; }
+        pieces = white ? pos.getWhiteQueens() : pos.getBlackQueens();
+        while (pieces != 0) { int sq = Long.numberOfTrailingZeros(pieces); if ((Attacks.queenAttacks(sq, allOcc) & ring) != 0) result |= 1L << sq; pieces &= pieces - 1; }
+        return result;
     }
 
     // =========================================================================
@@ -671,8 +736,10 @@ public final class TunerEvaluator {
 
     private static int connectedPawnCount(long pawns) {
         long attacks = ((pawns & NOT_A_FILE) >>> 1) | ((pawns & NOT_H_FILE) << 1);
-        attacks |= ((pawns & NOT_A_FILE) >>> 9) | ((pawns & NOT_H_FILE) << 7)
-                 | ((pawns & NOT_A_FILE) << 7)  | ((pawns & NOT_H_FILE) >>> 9);
+        // Same four diagonals as the core evaluator (#213, #274). The old << 7 / >>> 9 file masks
+        // dropped one diagonal and wrapped across the a and h files.
+        attacks |= ((pawns & NOT_A_FILE) >>> 9) | ((pawns & NOT_H_FILE) >>> 7)
+                 | ((pawns & NOT_A_FILE) << 7)  | ((pawns & NOT_H_FILE) << 9);
         return Long.bitCount(pawns & attacks);
     }
 
@@ -1251,14 +1318,8 @@ public final class TunerEvaluator {
      * (positive = Black has more hanging pieces).
      */
     private static void addHangingPenaltyFeatures(PositionData pos, float[] tmp) {
-        long allOcc = pos.getWhiteOccupancy() | pos.getBlackOccupancy();
-        long attackedByWhite = computeAttackedBy(pos, true,  allOcc);
-        long attackedByBlack = computeAttackedBy(pos, false, allOcc);
-        long whiteHanging = (pos.getWhiteOccupancy() & ~pos.getWhiteKing())
-                          & attackedByBlack & ~attackedByWhite;
-        long blackHanging = (pos.getBlackOccupancy() & ~pos.getBlackKing())
-                          & attackedByWhite & ~attackedByBlack;
-        int net = Long.bitCount(blackHanging) - Long.bitCount(whiteHanging);
+        // Same count, including the #138 mating-net suppression, as the static evaluator uses.
+        int net = netHanging(pos);
         if (net != 0) {
             tmp[EvalParams.IDX_HANGING_PENALTY] = net;
         }

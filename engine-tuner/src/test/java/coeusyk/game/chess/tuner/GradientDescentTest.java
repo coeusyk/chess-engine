@@ -249,4 +249,122 @@ class GradientDescentTest {
         assertTrue(mseAfter <= mseBefore * 2.0,
                 "L-BFGS MSE must not more than double (" + mseBefore + " \u2192 " + mseAfter + ")");
     }
+
+    // ---- L-BFGS two-loop recursion (#274) -------------------------------------------------
+
+    /** Curvature pairs of f(x) = 0.5 * sum(a_i x_i^2) from steps along each axis and one mixed step. */
+    private static double[][][] quadraticPairs(double[] a, double[][] steps) {
+        double[][] s = new double[steps.length][];
+        double[][] y = new double[steps.length][];
+        for (int k = 0; k < steps.length; k++) {
+            s[k] = steps[k].clone();
+            y[k] = new double[a.length];
+            for (int i = 0; i < a.length; i++) y[k][i] = a[i] * steps[k][i];
+        }
+        return new double[][][]{s, y};
+    }
+
+    private static double[] rho(double[][] s, double[][] y) {
+        double[] r = new double[s.length];
+        for (int k = 0; k < s.length; k++) {
+            double ys = 0;
+            for (int i = 0; i < s[k].length; i++) ys += y[k][i] * s[k][i];
+            r[k] = 1.0 / ys;
+        }
+        return r;
+    }
+
+    @Test
+    void lbfgsDirectionSatisfiesTheSecantEquationForTheNewestPair() {
+        // BFGS maps the newest y back to its s: H * y_k = s_k. A mixed step makes the pairs non-orthogonal,
+        // so a wrong loop order or a wrong alpha pairing shows up.
+        double[] a = {1.0, 4.0, 9.0};
+        double[][] steps = {{1, 0, 0}, {0.3, 1, 0}, {0.2, -0.4, 1}};
+        double[][][] sy = quadraticPairs(a, steps);
+        double[][] s = sy[0], y = sy[1];
+        double[] direction = GradientDescent.lbfgsDirection(y[2], s, y, rho(s, y), 3, 3);
+        for (int i = 0; i < 3; i++) {
+            assertEquals(s[2][i], direction[i], 1e-9, "H*y must equal s for the newest pair, component " + i);
+        }
+    }
+
+    @Test
+    void lbfgsDirectionStillSatisfiesTheSecantEquationAfterTheBufferWraps() {
+        // Four pairs in a buffer of three: the oldest is overwritten and the head has wrapped to 1.
+        double[] a = {2.0, 3.0, 5.0};
+        double[][] steps = {{1, 0.1, 0}, {0, 1, 0.2}, {0.5, 0, 1}, {0.3, -0.6, 0.4}};
+        double[][][] sy = quadraticPairs(a, steps);
+        double[][] s = new double[3][], y = new double[3][];
+        for (int k = 0; k < 4; k++) { s[k % 3] = sy[0][k]; y[k % 3] = sy[1][k]; }
+        double[] direction = GradientDescent.lbfgsDirection(sy[1][3], s, y, rho(s, y), 3, 1);
+        for (int i = 0; i < 3; i++) {
+            assertEquals(sy[0][3][i], direction[i], 1e-9, "H*y must equal s for the newest pair, component " + i);
+        }
+    }
+
+    @Test
+    void lbfgsDirectionWithoutHistoryIsTheGradient() {
+        double[] g = {1, -2, 3};
+        assertArrayEquals(g, GradientDescent.lbfgsDirection(g, new double[3][], new double[3][], new double[3], 0, 0), 0.0);
+    }
+
+    @Test
+    void activeGradNormIgnoresFrozenParametersAndParametersOutsideTheGroup() {
+        double[] grad = new double[EvalParams.TOTAL_PARAMS];
+        int frozen = -1, free1 = -1, free2 = -1;
+        for (int i = 0; i < grad.length; i++) {
+            boolean isFrozen = EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i];
+            if (isFrozen && frozen < 0) frozen = i;
+            if (!isFrozen && free1 < 0) free1 = i;
+            else if (!isFrozen && free2 < 0) free2 = i;
+        }
+        assertTrue(frozen >= 0 && free2 >= 0, "the parameter table should have frozen and free entries");
+        grad[frozen] = 1000.0;
+        grad[free1] = 3.0;
+        grad[free2] = 4.0;
+
+        assertEquals(5.0, GradientDescent.activeGradNorm(grad, null), 1e-12, "frozen entry must not count");
+
+        boolean[] group = new boolean[grad.length];
+        group[free1] = true;
+        assertEquals(3.0, GradientDescent.activeGradNorm(grad, group), 1e-12, "entries outside the group must not count");
+    }
+
+    // ---- TunerRunMetrics wiring (#274) ----------------------------------------------------
+
+    @Test
+    void adamFeaturePathFillsTheRunMetrics() {
+        List<PositionFeatures> features = PositionFeatures.buildList(mixedOutcomePositions());
+        TunerRunMetrics metrics = new TunerRunMetrics();
+        GradientDescent.tuneWithFeatures(features, EvalParams.extractFromCurrentEval(), 1.0, 2, false, null, features, metrics);
+
+        assertEquals(2, metrics.itersCompleted);
+        assertTrue(metrics.hitIterCap, "two iterations is far below the convergence patience, so the cap was hit");
+        assertFalse(Double.isNaN(metrics.finalMse));
+        assertTrue(metrics.minMse <= metrics.finalMse);
+        assertEquals(2, metrics.getRecentRelDeltas().length);
+    }
+
+    @Test
+    void lbfgsPathFillsTheRunMetrics() {
+        List<PositionFeatures> features = PositionFeatures.buildList(mixedOutcomePositions());
+        TunerRunMetrics metrics = new TunerRunMetrics();
+        GradientDescent.tuneWithFeaturesLBFGS(features, EvalParams.extractFromCurrentEval(), 1.0, 2, false, null, features, metrics);
+
+        assertTrue(metrics.itersCompleted >= 1 && metrics.itersCompleted <= 2);
+        assertFalse(Double.isNaN(metrics.finalMse));
+        assertTrue(metrics.minMse <= metrics.finalMse);
+        assertEquals(metrics.itersCompleted, metrics.getRecentRelDeltas().length);
+    }
+
+    @Test
+    void aCappedRunThatIsStillMovingFailsTheConvergenceGate() {
+        // Gate 1 used to see an empty metrics object and pass every run, whatever the optimiser had done.
+        List<PositionFeatures> features = PositionFeatures.buildList(mixedOutcomePositions());
+        TunerRunMetrics metrics = new TunerRunMetrics();
+        GradientDescent.tuneWithFeatures(features, EvalParams.extractFromCurrentEval(), 1.0, 1, false, null, features, metrics);
+
+        String verdict = TunerPostRunValidator.checkConvergence(metrics);
+        assertTrue(verdict.contains("FAIL"), "a run stopped by the cap while the MSE still moved must fail: " + verdict);
+    }
 }

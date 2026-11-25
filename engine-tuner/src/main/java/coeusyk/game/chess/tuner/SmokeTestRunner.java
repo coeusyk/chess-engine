@@ -2,6 +2,7 @@ package coeusyk.game.chess.tuner;
 
 import coeusyk.game.chess.core.models.Board;
 import coeusyk.game.chess.core.models.Move;
+import coeusyk.game.chess.core.models.Piece;
 import coeusyk.game.chess.core.movegen.MovesGenerator;
 
 import java.util.ArrayList;
@@ -105,9 +106,9 @@ public final class SmokeTestRunner {
     // Internal game play
     // -----------------------------------------------------------------------
 
-    private enum GameOutcome { CANDIDATE_WIN, BASELINE_WIN, DRAW }
+    enum GameOutcome { CANDIDATE_WIN, BASELINE_WIN, DRAW }
 
-    private static GameOutcome playGame(String fen, double[] candidateParams, double[] baselineParams,
+    static GameOutcome playGame(String fen, double[] candidateParams, double[] baselineParams,
                                         boolean candidateIsWhite, int depth) {
         Board board = new Board(fen);
         ArrayList<Move> moveBuffer = new ArrayList<>(64);
@@ -119,7 +120,7 @@ public final class SmokeTestRunner {
 
         for (int ply = 0; ply < MAX_PLIES; ply++) {
             // Determine whose params to use this move
-            boolean isWhiteToMove = (board.getActiveColor() == 0); // 0 = WHITE
+            boolean isWhiteToMove = Piece.isWhite(board.getActiveColor());
             double[] params = (isWhiteToMove == candidateIsWhite) ? candidateParams : baselineParams;
 
             // Generate legal moves
@@ -197,7 +198,7 @@ public final class SmokeTestRunner {
     /** Negamax α-β, using TunerEvaluator at leaf nodes. */
     private static int negamax(Board board, int depth, int alpha, int beta, double[] params) {
         if (depth <= 0) {
-            boolean isWhite = (board.getActiveColor() == 0);
+            boolean isWhite = Piece.isWhite(board.getActiveColor());
             int eval = TunerEvaluator.evaluate(board, params);
             return isWhite ? eval : -eval;
         }

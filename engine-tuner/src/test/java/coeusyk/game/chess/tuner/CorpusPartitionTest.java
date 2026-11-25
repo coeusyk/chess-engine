@@ -277,4 +277,53 @@ class CorpusPartitionTest {
         assertEquals(1.0, result.get(0).outcome(), 1e-9, "Base outcome must be 1.0 (white win)");
         assertEquals(0.0, result.get(1).outcome(), 1e-9, "Flipped outcome must be 0.0 (black win)");
     }
+
+    // -----------------------------------------------------------------------
+    // Colour-flipped twins stay together (#274)
+    // -----------------------------------------------------------------------
+
+    @Test
+    void aPositionAndItsColourFlippedTwinLandInTheSamePartition(@TempDir Path tempDir) throws Exception {
+        List<String> lines = new ArrayList<>();
+        String[] results = {"1-0", "0-1", "1/2-1/2"};
+        int i = 0;
+        for (String fen : CoreTunerParityTest.seededPositions(150, 5)) {
+            lines.add(fen + " c9 \"" + results[i++ % 3] + "\";");
+        }
+        Path epd = tempDir.resolve("twins.epd");
+        Files.write(epd, lines);
+        List<LabelledPosition> corpus = PositionLoader.loadBalanced(epd, Integer.MAX_VALUE);
+        assertTrue(corpus.size() > 250, "the corpus must contain the flipped twins, got " + corpus.size());
+
+        CorpusPartition part = PositionLoader.split(corpus, 0.8, 0.1, 42L);
+
+        java.util.Set<String> train = keys(part.train()), val = keys(part.val()), test = keys(part.test());
+        for (String key : val) assertFalse(train.contains(key), "a validation position has its twin in train: " + key);
+        for (String key : test) assertFalse(train.contains(key), "a test position has its twin in train: " + key);
+        for (String key : test) assertFalse(val.contains(key), "a test position has its twin in validation: " + key);
+        assertEquals(corpus.size(), part.train().size() + part.val().size() + part.test().size());
+    }
+
+    private static java.util.Set<String> keys(List<LabelledPosition> list) {
+        java.util.Set<String> out = new java.util.HashSet<>();
+        for (LabelledPosition lp : list) out.add(PositionLoader.twinKey(lp.pos().fen()));
+        return out;
+    }
+
+    @Test
+    void twinKeyIsTheSameForAPositionAndItsColourFlip() {
+        String fen = "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4";
+        String flipped = "rnbqk2r/pppp1ppp/5n2/2b1p3/4P3/2N2N2/PPPP1PPP/R1BQKB1R b kqKQ - 4 4";
+        assertEquals(PositionLoader.twinKey(fen), PositionLoader.twinKey(flipped));
+        assertNotEquals(PositionLoader.twinKey(fen), PositionLoader.twinKey(START_FEN));
+    }
+
+    @Test
+    void exactDuplicatesAreNotGroupedTogether(@TempDir Path tempDir) throws Exception {
+        // 1000 copies of one position with one outcome must still be split by proportion, not kept as one block.
+        List<LabelledPosition> corpus = buildPositions(tempDir.resolve("dups.txt"), makeLines(1000, 0, 0));
+        CorpusPartition part = PositionLoader.split(corpus, 0.8, 0.1, 7L);
+        assertEquals(800, part.train().size(), 5);
+        assertEquals(100, part.val().size(), 5);
+    }
 }
