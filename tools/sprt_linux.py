@@ -21,6 +21,10 @@ What differs, on purpose:
 - It fails closed on a missing opening book even when no book was named: no `tools/noob_3moves.epd`
   and no `--openings-file` is an error unless `--allow-startpos` is given. sprt.ps1 silently
   plays from the initial position in that case (tracked as a deferred item on #273).
+- After a run it decides completion from the log and PGN with tools/match_validation.py and refuses to print
+  `SPRT complete` for an interrupted or inconsistent run, because Cute Chess exits 0 under `-recover` even when
+  its engines are killed (#296, #319). A non-zero Cute Chess exit is a failure on its own. sprt.ps1 does the same.
+- `--seed N` is an opt-in `-srand N`, absent from the arguments by default, recorded in the provenance when given.
 - `--min-games` is accepted and only changes the default game cap, exactly like sprt.ps1, where it
   is not enforced as a minimum either.
 - The informational White/Black colour-balance printout is not reproduced. It never affects
@@ -39,6 +43,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -99,8 +104,9 @@ def max_games_for(max_games: int, min_games: int) -> int:
 def build_arguments(java: str, new_jar: str, old_jar: str, tc: str, max_games: int, elo0: float,
                     elo1: float, alpha: float, beta: float, concurrency: int, engine_threads: int,
                     new_options: Sequence[str], old_options: Sequence[str], pgn_out: str,
-                    openings_file: Optional[str], opening_order: str) -> List[str]:
-    """The cutechess argument array, in the order sprt.ps1 builds it."""
+                    openings_file: Optional[str], opening_order: str, seed: Optional[int] = None) -> List[str]:
+    """The cutechess argument array, in the order sprt.ps1 builds it. `seed` is opt-in (#319): absent by
+    default, so the arguments of every existing run are unchanged, and `-srand N` is appended last when given."""
     def engine(name: str, jar: str, options: Sequence[str]) -> List[str]:
         return (["-engine", f"name={name}", f"cmd={java}", "arg=--add-modules",
                  "arg=jdk.incubator.vector", "arg=-jar", f"arg={jar}", "proto=uci",
@@ -122,7 +128,19 @@ def build_arguments(java: str, new_jar: str, old_jar: str, tc: str, max_games: i
     ]
     if openings_file:
         args += ["-openings", f"file={openings_file}", "format=epd", f"order={opening_order}", "plies=4"]
+    if seed is not None:
+        args += ["-srand", str(seed)]
     return args
+
+
+def load_match_validation():
+    """tools/match_validation.py, loaded by path so this launcher works whether or not tools/ is on sys.path."""
+    spec = importlib.util.spec_from_file_location("match_validation", SCRIPT_DIR / "match_validation.py")
+    if spec is None or spec.loader is None:
+        raise LauncherError("tools/match_validation.py is missing: completion cannot be validated.")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def file_sha256(path: Path) -> str:
@@ -272,6 +290,8 @@ def parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     p.add_argument("--openings-file", default=None)
     p.add_argument("--allow-startpos", action="store_true")
     p.add_argument("--opening-order", choices=("random", "sequential"), default="random")
+    p.add_argument("--seed", type=int, default=None,
+                   help="Opt-in: pass -srand N so the opening order can be replayed. Recorded in the provenance.")
     p.add_argument("--new-option", action="append", default=[], metavar="NAME=VALUE")
     p.add_argument("--old-option", action="append", default=[], metavar="NAME=VALUE")
     p.add_argument("--log-path", default="")
@@ -321,7 +341,7 @@ def run(argv: Optional[Sequence[str]] = None, env: Optional[Mapping[str, str]] =
     max_games = max_games_for(args.max_games, args.min_games)
     cc_args = build_arguments(java, new_jar, old_jar, args.tc, max_games, args.elo0, args.elo1, alpha, beta,
                               args.concurrency, args.engine_threads, args.new_option, args.old_option,
-                              pgn_out, book, args.opening_order)
+                              pgn_out, book, args.opening_order, args.seed)
 
     if args.prepare_only and not args.argument_manifest_path:
         raise LauncherError("--prepare-only requires --argument-manifest-path.")
@@ -348,6 +368,7 @@ def run(argv: Optional[Sequence[str]] = None, env: Optional[Mapping[str, str]] =
         parameters = {"tc": args.tc, "concurrency": args.concurrency, "engine_threads": args.engine_threads,
                       "elo0": args.elo0, "elo1": args.elo1, "alpha": alpha, "beta": beta, "max_games": max_games,
                       "opening_order": args.opening_order,
+                      **({"seed": args.seed} if args.seed is not None else {}),
                       "new_options": [redact_option(o) for o in args.new_option],
                       "old_options": [redact_option(o) for o in args.old_option]}
         provenance = build_provenance(
@@ -367,8 +388,21 @@ def run(argv: Optional[Sequence[str]] = None, env: Optional[Mapping[str, str]] =
         provenance["finished_utc"] = utc_now()
         provenance["exit_code"] = exit_code
         write_json(Path(args.provenance_path), provenance)
+    # A non-zero exit is a failure on its own, whatever the artifacts say.
     if exit_code != 0:
         raise LauncherError(f"Cute Chess exited with code {exit_code}. Evidence retained at {log_out}")
+    # Exit 0 does not mean the SPRT finished: with -recover Cute Chess ends the match after its engines are
+    # killed and still exits 0 (#296). Completion is decided from the log and PGN.
+    verdict = load_match_validation().classify_files(log_out, pgn_out, expected_games=max_games, sprt=True,
+                                                    max_unterminated=args.concurrency)
+    if provenance is not None:
+        provenance["completion"] = {"state": verdict.state, "games": verdict.games, "abandoned": verdict.abandoned,
+                                    "unterminated": verdict.unterminated, "complete_pairs": verdict.complete_pairs,
+                                    "reasons": verdict.reasons, "notes": verdict.notes}
+        write_json(Path(args.provenance_path), provenance)
+    print(f"\nCompletion: {verdict.describe()}")
+    if not verdict.success:
+        raise LauncherError(f"The run did not complete ({verdict.state}). Evidence retained at {log_out}")
     print(f"\nSPRT complete. Log: {log_out}")
     return 0
 

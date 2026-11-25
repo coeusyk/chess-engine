@@ -1,0 +1,678 @@
+Indexing opening suite...
+Started game 2 of 20000 (OLD vs NEW)
+Started game 1 of 20000 (NEW vs OLD)
+Finished game 1 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 0 - 0 - 1  [0.500] 1
+Started game 3 of 20000 (NEW vs OLD)
+Finished game 2 (OLD vs NEW): 1/2-1/2 {Draw by insufficient mating material}
+Score of NEW vs OLD: 0 - 0 - 2  [0.500] 2
+Started game 4 of 20000 (OLD vs NEW)
+Finished game 3 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 1 - 0 - 2  [0.667] 3
+Started game 5 of 20000 (NEW vs OLD)
+Finished game 4 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 2 - 0 - 2  [0.750] 4
+Started game 6 of 20000 (OLD vs NEW)
+Finished game 5 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 2 - 0 - 3  [0.700] 5
+Started game 7 of 20000 (NEW vs OLD)
+Finished game 6 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 3 - 0 - 3  [0.750] 6
+Started game 8 of 20000 (OLD vs NEW)
+Finished game 8 (OLD vs NEW): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 3 - 1 - 3  [0.643] 7
+Started game 9 of 20000 (NEW vs OLD)
+Finished game 7 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 3 - 1 - 4  [0.625] 8
+Started game 10 of 20000 (OLD vs NEW)
+Finished game 9 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 4 - 1 - 4  [0.667] 9
+Started game 11 of 20000 (NEW vs OLD)
+Finished game 10 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 5 - 1 - 4  [0.700] 10
+...      NEW playing White: 2 - 0 - 3  [0.700] 5
+...      NEW playing Black: 3 - 1 - 1  [0.700] 5
+...      White vs Black: 3 - 3 - 4  [0.500] 10
+Elo difference: 147.2 +/- 197.9, LOS: 94.9 %, DrawRatio: 40.0 %
+SPRT: llr 0.204 (5.0%), lbound -4.08, ubound 4.08
+Started game 12 of 20000 (OLD vs NEW)
+Finished game 11 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 6 - 1 - 4  [0.727] 11
+Started game 13 of 20000 (NEW vs OLD)
+Finished game 12 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 7 - 1 - 4  [0.750] 12
+Started game 14 of 20000 (OLD vs NEW)
+Finished game 13 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 7 - 1 - 5  [0.731] 13
+Started game 15 of 20000 (NEW vs OLD)
+Finished game 14 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 8 - 1 - 5  [0.750] 14
+Started game 16 of 20000 (OLD vs NEW)
+Finished game 16 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 9 - 1 - 5  [0.767] 15
+Started game 17 of 20000 (NEW vs OLD)
+Finished game 15 (NEW vs OLD): 1/2-1/2 {Draw by insufficient mating material}
+Score of NEW vs OLD: 9 - 1 - 6  [0.750] 16
+Started game 18 of 20000 (OLD vs NEW)
+Finished game 17 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 9 - 1 - 7  [0.735] 17
+Started game 19 of 20000 (NEW vs OLD)
+Finished game 18 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 9 - 1 - 8  [0.722] 18
+Started game 20 of 20000 (OLD vs NEW)
+Finished game 19 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 10 - 1 - 8  [0.737] 19
+Started game 21 of 20000 (NEW vs OLD)
+Finished game 20 (OLD vs NEW): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 10 - 2 - 8  [0.700] 20
+...      NEW playing White: 4 - 0 - 6  [0.700] 10
+...      NEW playing Black: 6 - 2 - 2  [0.700] 10
+...      White vs Black: 6 - 6 - 8  [0.500] 20
+Elo difference: 147.2 +/- 128.3, LOS: 99.0 %, DrawRatio: 40.0 %
+SPRT: llr 0.424 (10.4%), lbound -4.08, ubound 4.08
+Started game 22 of 20000 (OLD vs NEW)
+Finished game 21 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 11 - 2 - 8  [0.714] 21
+Started game 23 of 20000 (NEW vs OLD)
+Finished game 22 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 12 - 2 - 8  [0.727] 22
+Started game 24 of 20000 (OLD vs NEW)
+Finished game 23 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 12 - 2 - 9  [0.717] 23
+Started game 25 of 20000 (NEW vs OLD)
+Finished game 24 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 12 - 2 - 10  [0.708] 24
+Started game 26 of 20000 (OLD vs NEW)
+Finished game 25 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 12 - 2 - 11  [0.700] 25
+Started game 27 of 20000 (NEW vs OLD)
+Finished game 26 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 13 - 2 - 11  [0.712] 26
+Started game 28 of 20000 (OLD vs NEW)
+Finished game 27 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 14 - 2 - 11  [0.722] 27
+Started game 29 of 20000 (NEW vs OLD)
+Finished game 28 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 15 - 2 - 11  [0.732] 28
+Started game 30 of 20000 (OLD vs NEW)
+Finished game 29 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 15 - 2 - 12  [0.724] 29
+Started game 31 of 20000 (NEW vs OLD)
+Finished game 31 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 16 - 2 - 12  [0.733] 30
+...      NEW playing White: 7 - 0 - 9  [0.719] 16
+...      NEW playing Black: 9 - 2 - 3  [0.750] 14
+...      White vs Black: 9 - 9 - 12  [0.500] 30
+Elo difference: 175.7 +/- 102.9, LOS: 100.0 %, DrawRatio: 40.0 %
+SPRT: llr 0.83 (20.4%), lbound -4.08, ubound 4.08
+Started game 32 of 20000 (OLD vs NEW)
+Finished game 30 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 16 - 2 - 13  [0.726] 31
+Started game 33 of 20000 (NEW vs OLD)
+Finished game 32 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 17 - 2 - 13  [0.734] 32
+Started game 34 of 20000 (OLD vs NEW)
+Finished game 33 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 18 - 2 - 13  [0.742] 33
+Started game 35 of 20000 (NEW vs OLD)
+Finished game 35 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 19 - 2 - 13  [0.750] 34
+Started game 36 of 20000 (OLD vs NEW)
+Finished game 34 (OLD vs NEW): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 19 - 3 - 13  [0.729] 35
+Started game 37 of 20000 (NEW vs OLD)
+Finished game 36 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 19 - 3 - 14  [0.722] 36
+Started game 38 of 20000 (OLD vs NEW)
+Finished game 37 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 19 - 4 - 14  [0.703] 37
+Started game 39 of 20000 (NEW vs OLD)
+Finished game 38 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 20 - 4 - 14  [0.711] 38
+Started game 40 of 20000 (OLD vs NEW)
+Finished game 39 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 20 - 4 - 15  [0.705] 39
+Started game 41 of 20000 (NEW vs OLD)
+Finished game 40 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 20 - 4 - 16  [0.700] 40
+...      NEW playing White: 9 - 1 - 10  [0.700] 20
+...      NEW playing Black: 11 - 3 - 6  [0.700] 20
+...      White vs Black: 12 - 12 - 16  [0.500] 40
+Elo difference: 147.2 +/- 87.6, LOS: 99.9 %, DrawRatio: 40.0 %
+SPRT: llr 0.867 (21.3%), lbound -4.08, ubound 4.08
+Started game 42 of 20000 (OLD vs NEW)
+Finished game 41 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 21 - 4 - 16  [0.707] 41
+Started game 43 of 20000 (NEW vs OLD)
+Finished game 42 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 21 - 4 - 17  [0.702] 42
+Started game 44 of 20000 (OLD vs NEW)
+Finished game 43 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 21 - 4 - 18  [0.698] 43
+Started game 45 of 20000 (NEW vs OLD)
+Finished game 44 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 22 - 4 - 18  [0.705] 44
+Started game 46 of 20000 (OLD vs NEW)
+Finished game 45 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 23 - 4 - 18  [0.711] 45
+Started game 47 of 20000 (NEW vs OLD)
+Finished game 46 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 24 - 4 - 18  [0.717] 46
+Started game 48 of 20000 (OLD vs NEW)
+Finished game 47 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 25 - 4 - 18  [0.723] 47
+Started game 49 of 20000 (NEW vs OLD)
+Finished game 48 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 25 - 4 - 19  [0.719] 48
+Started game 50 of 20000 (OLD vs NEW)
+Finished game 49 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 26 - 4 - 19  [0.724] 49
+Started game 51 of 20000 (NEW vs OLD)
+Finished game 50 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 26 - 4 - 20  [0.720] 50
+...      NEW playing White: 13 - 1 - 11  [0.740] 25
+...      NEW playing Black: 13 - 3 - 9  [0.700] 25
+...      White vs Black: 16 - 14 - 20  [0.520] 50
+Elo difference: 164.1 +/- 78.1, LOS: 100.0 %, DrawRatio: 40.0 %
+SPRT: llr 1.27 (31.1%), lbound -4.08, ubound 4.08
+Started game 52 of 20000 (OLD vs NEW)
+Finished game 51 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 27 - 4 - 20  [0.725] 51
+Started game 53 of 20000 (NEW vs OLD)
+Finished game 52 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 28 - 4 - 20  [0.731] 52
+Started game 54 of 20000 (OLD vs NEW)
+Finished game 54 (OLD vs NEW): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 28 - 5 - 20  [0.717] 53
+Started game 55 of 20000 (NEW vs OLD)
+Finished game 53 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 28 - 5 - 21  [0.713] 54
+Started game 56 of 20000 (OLD vs NEW)
+Finished game 55 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 28 - 6 - 21  [0.700] 55
+Started game 57 of 20000 (NEW vs OLD)
+Finished game 56 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 29 - 6 - 21  [0.705] 56
+Started game 58 of 20000 (OLD vs NEW)
+Finished game 57 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 30 - 6 - 21  [0.711] 57
+Started game 59 of 20000 (NEW vs OLD)
+Finished game 58 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 30 - 6 - 22  [0.707] 58
+Started game 60 of 20000 (OLD vs NEW)
+Finished game 59 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 30 - 6 - 23  [0.703] 59
+Started game 61 of 20000 (NEW vs OLD)
+Finished game 60 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 31 - 6 - 23  [0.708] 60
+...      NEW playing White: 15 - 2 - 13  [0.717] 30
+...      NEW playing Black: 16 - 4 - 10  [0.700] 30
+...      White vs Black: 19 - 18 - 23  [0.508] 60
+Elo difference: 154.1 +/- 72.3, LOS: 100.0 %, DrawRatio: 38.3 %
+SPRT: llr 1.34 (32.7%), lbound -4.08, ubound 4.08
+Started game 62 of 20000 (OLD vs NEW)
+Finished game 61 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 31 - 6 - 24  [0.705] 61
+Started game 63 of 20000 (NEW vs OLD)
+Finished game 62 (OLD vs NEW): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 31 - 7 - 24  [0.694] 62
+Started game 64 of 20000 (OLD vs NEW)
+Finished game 63 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 32 - 7 - 24  [0.698] 63
+Started game 65 of 20000 (NEW vs OLD)
+Finished game 64 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 32 - 7 - 25  [0.695] 64
+Started game 66 of 20000 (OLD vs NEW)
+Finished game 65 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 32 - 7 - 26  [0.692] 65
+Started game 67 of 20000 (NEW vs OLD)
+Finished game 66 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 33 - 7 - 26  [0.697] 66
+Started game 68 of 20000 (OLD vs NEW)
+Finished game 67 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 34 - 7 - 26  [0.701] 67
+Started game 69 of 20000 (NEW vs OLD)
+Finished game 69 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 34 - 8 - 26  [0.691] 68
+Started game 70 of 20000 (OLD vs NEW)
+Finished game 68 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 35 - 8 - 26  [0.696] 69
+Started game 71 of 20000 (NEW vs OLD)
+Finished game 70 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 36 - 8 - 26  [0.700] 70
+...      NEW playing White: 17 - 3 - 15  [0.700] 35
+...      NEW playing Black: 19 - 5 - 11  [0.700] 35
+...      White vs Black: 22 - 22 - 26  [0.500] 70
+Elo difference: 147.2 +/- 67.5, LOS: 100.0 %, DrawRatio: 37.1 %
+SPRT: llr 1.43 (35.0%), lbound -4.08, ubound 4.08
+Started game 72 of 20000 (OLD vs NEW)
+Finished game 71 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 36 - 8 - 27  [0.697] 71
+Started game 73 of 20000 (NEW vs OLD)
+Finished game 72 (OLD vs NEW): 0-1 {Black mates}
+Score of NEW vs OLD: 37 - 8 - 27  [0.701] 72
+Started game 74 of 20000 (OLD vs NEW)
+Finished game 73 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 38 - 8 - 27  [0.705] 73
+Started game 75 of 20000 (NEW vs OLD)
+Finished game 75 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 39 - 8 - 27  [0.709] 74
+Started game 76 of 20000 (OLD vs NEW)
+Finished game 74 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 39 - 8 - 28  [0.707] 75
+Started game 77 of 20000 (NEW vs OLD)
+Finished game 76 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 39 - 8 - 29  [0.704] 76
+Started game 78 of 20000 (OLD vs NEW)
+Finished game 77 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 40 - 8 - 29  [0.708] 77
+Started game 79 of 20000 (NEW vs OLD)
+Finished game 78 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 40 - 8 - 30  [0.705] 78
+Started game 80 of 20000 (OLD vs NEW)
+Finished game 79 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 41 - 8 - 30  [0.709] 79
+Started game 81 of 20000 (NEW vs OLD)
+Finished game 80 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 42 - 8 - 30  [0.713] 80
+...      NEW playing White: 21 - 3 - 16  [0.725] 40
+...      NEW playing Black: 21 - 5 - 14  [0.700] 40
+...      White vs Black: 26 - 24 - 30  [0.512] 80
+Elo difference: 157.7 +/- 62.9, LOS: 100.0 %, DrawRatio: 37.5 %
+SPRT: llr 1.8 (44.2%), lbound -4.08, ubound 4.08
+Started game 82 of 20000 (OLD vs NEW)
+Finished game 81 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 42 - 8 - 31  [0.710] 81
+Started game 83 of 20000 (NEW vs OLD)
+Finished game 82 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 42 - 8 - 32  [0.707] 82
+Started game 84 of 20000 (OLD vs NEW)
+Finished game 83 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 42 - 8 - 33  [0.705] 83
+Started game 85 of 20000 (NEW vs OLD)
+Finished game 84 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 42 - 8 - 34  [0.702] 84
+Started game 86 of 20000 (OLD vs NEW)
+Finished game 85 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 42 - 9 - 34  [0.694] 85
+Started game 87 of 20000 (NEW vs OLD)
+Finished game 86 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 43 - 9 - 34  [0.698] 86
+Started game 88 of 20000 (OLD vs NEW)
+Finished game 87 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 44 - 9 - 34  [0.701] 87
+Started game 89 of 20000 (NEW vs OLD)
+Finished game 88 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 44 - 9 - 35  [0.699] 88
+Started game 90 of 20000 (OLD vs NEW)
+Finished game 89 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 44 - 9 - 36  [0.697] 89
+Started game 91 of 20000 (NEW vs OLD)
+Finished game 90 (OLD vs NEW): 1/2-1/2 {Draw by insufficient mating material}
+Score of NEW vs OLD: 44 - 9 - 37  [0.694] 90
+...      NEW playing White: 22 - 4 - 19  [0.700] 45
+...      NEW playing Black: 22 - 5 - 18  [0.689] 45
+...      White vs Black: 27 - 26 - 37  [0.506] 90
+Elo difference: 142.6 +/- 56.6, LOS: 100.0 %, DrawRatio: 41.1 %
+SPRT: llr 1.95 (47.9%), lbound -4.08, ubound 4.08
+Started game 92 of 20000 (OLD vs NEW)
+Finished game 91 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 44 - 10 - 37  [0.687] 91
+Started game 93 of 20000 (NEW vs OLD)
+Finished game 92 (OLD vs NEW): 1/2-1/2 {Draw by insufficient mating material}
+Score of NEW vs OLD: 44 - 10 - 38  [0.685] 92
+Started game 94 of 20000 (OLD vs NEW)
+Finished game 93 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 45 - 10 - 38  [0.688] 93
+Started game 95 of 20000 (NEW vs OLD)
+Finished game 94 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 46 - 10 - 38  [0.691] 94
+Started game 96 of 20000 (OLD vs NEW)
+Finished game 95 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 47 - 10 - 38  [0.695] 95
+Started game 97 of 20000 (NEW vs OLD)
+Finished game 96 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 48 - 10 - 38  [0.698] 96
+Started game 98 of 20000 (OLD vs NEW)
+Finished game 97 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 49 - 10 - 38  [0.701] 97
+Started game 99 of 20000 (NEW vs OLD)
+Finished game 98 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 49 - 10 - 39  [0.699] 98
+Started game 100 of 20000 (OLD vs NEW)
+Finished game 99 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 50 - 10 - 39  [0.702] 99
+Started game 101 of 20000 (NEW vs OLD)
+Finished game 100 (OLD vs NEW): 1/2-1/2 {Draw by insufficient mating material}
+Score of NEW vs OLD: 50 - 10 - 40  [0.700] 100
+...      NEW playing White: 26 - 5 - 19  [0.710] 50
+...      NEW playing Black: 24 - 5 - 21  [0.690] 50
+...      White vs Black: 31 - 29 - 40  [0.510] 100
+Elo difference: 147.2 +/- 54.3, LOS: 100.0 %, DrawRatio: 40.0 %
+SPRT: llr 2.2 (54.0%), lbound -4.08, ubound 4.08
+Started game 102 of 20000 (OLD vs NEW)
+Finished game 101 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 50 - 10 - 41  [0.698] 101
+Started game 103 of 20000 (NEW vs OLD)
+Finished game 102 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 51 - 10 - 41  [0.701] 102
+Started game 104 of 20000 (OLD vs NEW)
+Finished game 103 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 51 - 11 - 41  [0.694] 103
+Started game 105 of 20000 (NEW vs OLD)
+Finished game 104 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 51 - 11 - 42  [0.692] 104
+Started game 106 of 20000 (OLD vs NEW)
+Finished game 106 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 51 - 11 - 43  [0.690] 105
+Started game 107 of 20000 (NEW vs OLD)
+Finished game 105 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 51 - 11 - 44  [0.689] 106
+Started game 108 of 20000 (OLD vs NEW)
+Finished game 108 (OLD vs NEW): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 51 - 12 - 44  [0.682] 107
+Started game 109 of 20000 (NEW vs OLD)
+Finished game 107 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 51 - 12 - 45  [0.681] 108
+Started game 110 of 20000 (OLD vs NEW)
+Finished game 109 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 52 - 12 - 45  [0.683] 109
+Started game 111 of 20000 (NEW vs OLD)
+Finished game 110 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 52 - 12 - 46  [0.682] 110
+...      NEW playing White: 27 - 6 - 22  [0.691] 55
+...      NEW playing Black: 25 - 6 - 24  [0.673] 55
+...      White vs Black: 33 - 31 - 46  [0.509] 110
+Elo difference: 132.4 +/- 50.6, LOS: 100.0 %, DrawRatio: 41.8 %
+SPRT: llr 2.21 (54.1%), lbound -4.08, ubound 4.08
+Started game 112 of 20000 (OLD vs NEW)
+Finished game 111 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 53 - 12 - 46  [0.685] 111
+Started game 113 of 20000 (NEW vs OLD)
+Finished game 112 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 54 - 12 - 46  [0.688] 112
+Started game 114 of 20000 (OLD vs NEW)
+Finished game 113 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 54 - 12 - 47  [0.686] 113
+Started game 115 of 20000 (NEW vs OLD)
+Finished game 114 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 54 - 12 - 48  [0.684] 114
+Started game 116 of 20000 (OLD vs NEW)
+Finished game 115 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 54 - 12 - 49  [0.683] 115
+Started game 117 of 20000 (NEW vs OLD)
+Finished game 116 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 54 - 12 - 50  [0.681] 116
+Started game 118 of 20000 (OLD vs NEW)
+Finished game 117 (NEW vs OLD): 1-0 {White mates}
+Score of NEW vs OLD: 55 - 12 - 50  [0.684] 117
+Started game 119 of 20000 (NEW vs OLD)
+Finished game 118 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 55 - 12 - 51  [0.682] 118
+Started game 120 of 20000 (OLD vs NEW)
+Finished game 119 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 56 - 12 - 51  [0.685] 119
+Started game 121 of 20000 (NEW vs OLD)
+Finished game 120 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 56 - 12 - 52  [0.683] 120
+...      NEW playing White: 30 - 6 - 24  [0.700] 60
+...      NEW playing Black: 26 - 6 - 28  [0.667] 60
+...      White vs Black: 36 - 32 - 52  [0.517] 120
+Elo difference: 133.6 +/- 47.6, LOS: 100.0 %, DrawRatio: 43.3 %
+SPRT: llr 2.54 (62.3%), lbound -4.08, ubound 4.08
+Started game 122 of 20000 (OLD vs NEW)
+Finished game 122 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 57 - 12 - 52  [0.686] 121
+Started game 123 of 20000 (NEW vs OLD)
+Finished game 121 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 57 - 12 - 53  [0.684] 122
+Started game 124 of 20000 (OLD vs NEW)
+Finished game 124 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 57 - 12 - 54  [0.683] 123
+Started game 125 of 20000 (NEW vs OLD)
+Finished game 123 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 57 - 13 - 54  [0.677] 124
+Started game 126 of 20000 (OLD vs NEW)
+Finished game 126 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 58 - 13 - 54  [0.680] 125
+Started game 127 of 20000 (NEW vs OLD)
+Finished game 125 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 59 - 13 - 54  [0.683] 126
+Started game 128 of 20000 (OLD vs NEW)
+Finished game 128 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 60 - 13 - 54  [0.685] 127
+Started game 129 of 20000 (NEW vs OLD)
+Finished game 127 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 61 - 13 - 54  [0.688] 128
+Started game 130 of 20000 (OLD vs NEW)
+Finished game 129 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 62 - 13 - 54  [0.690] 129
+Started game 131 of 20000 (NEW vs OLD)
+Finished game 130 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 62 - 13 - 55  [0.688] 130
+...      NEW playing White: 33 - 7 - 25  [0.700] 65
+...      NEW playing Black: 29 - 6 - 30  [0.677] 65
+...      White vs Black: 39 - 36 - 55  [0.512] 130
+Elo difference: 137.7 +/- 46.2, LOS: 100.0 %, DrawRatio: 42.3 %
+SPRT: llr 2.79 (68.4%), lbound -4.08, ubound 4.08
+Started game 132 of 20000 (OLD vs NEW)
+Finished game 131 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 62 - 13 - 56  [0.687] 131
+Started game 133 of 20000 (NEW vs OLD)
+Finished game 132 (OLD vs NEW): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 62 - 14 - 56  [0.682] 132
+Started game 134 of 20000 (OLD vs NEW)
+Finished game 133 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 63 - 14 - 56  [0.684] 133
+Started game 135 of 20000 (NEW vs OLD)
+Finished game 134 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 64 - 14 - 56  [0.687] 134
+Started game 136 of 20000 (OLD vs NEW)
+Finished game 136 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 65 - 14 - 56  [0.689] 135
+Started game 137 of 20000 (NEW vs OLD)
+Finished game 135 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 65 - 14 - 57  [0.688] 136
+Started game 138 of 20000 (OLD vs NEW)
+Finished game 137 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 65 - 15 - 57  [0.682] 137
+Started game 139 of 20000 (NEW vs OLD)
+Finished game 138 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 66 - 15 - 57  [0.685] 138
+Started game 140 of 20000 (OLD vs NEW)
+Finished game 139 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 66 - 16 - 57  [0.680] 139
+Started game 141 of 20000 (NEW vs OLD)
+Finished game 140 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 66 - 16 - 58  [0.679] 140
+...      NEW playing White: 34 - 9 - 27  [0.679] 70
+...      NEW playing Black: 32 - 7 - 31  [0.679] 70
+...      White vs Black: 41 - 41 - 58  [0.500] 140
+Elo difference: 129.8 +/- 44.9, LOS: 100.0 %, DrawRatio: 41.4 %
+SPRT: llr 2.71 (66.5%), lbound -4.08, ubound 4.08
+Started game 142 of 20000 (OLD vs NEW)
+Finished game 141 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 66 - 16 - 59  [0.677] 141
+Started game 143 of 20000 (NEW vs OLD)
+Finished game 142 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 67 - 16 - 59  [0.680] 142
+Started game 144 of 20000 (OLD vs NEW)
+Finished game 143 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 68 - 16 - 59  [0.682] 143
+Started game 145 of 20000 (NEW vs OLD)
+Finished game 144 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 69 - 16 - 59  [0.684] 144
+Started game 146 of 20000 (OLD vs NEW)
+Finished game 145 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 70 - 16 - 59  [0.686] 145
+Started game 147 of 20000 (NEW vs OLD)
+Finished game 146 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 71 - 16 - 59  [0.688] 146
+Started game 148 of 20000 (OLD vs NEW)
+Finished game 147 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 72 - 16 - 59  [0.690] 147
+Started game 149 of 20000 (NEW vs OLD)
+Finished game 149 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 73 - 16 - 59  [0.693] 148
+Started game 150 of 20000 (OLD vs NEW)
+Finished game 148 (OLD vs NEW): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 73 - 17 - 59  [0.688] 149
+Started game 151 of 20000 (NEW vs OLD)
+Finished game 151 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 74 - 17 - 59  [0.690] 150
+...      NEW playing White: 39 - 9 - 28  [0.697] 76
+...      NEW playing Black: 35 - 8 - 31  [0.682] 74
+...      White vs Black: 47 - 44 - 59  [0.510] 150
+Elo difference: 139.0 +/- 44.5, LOS: 100.0 %, DrawRatio: 39.3 %
+SPRT: llr 3.01 (73.9%), lbound -4.08, ubound 4.08
+Started game 152 of 20000 (OLD vs NEW)
+Finished game 150 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 74 - 17 - 60  [0.689] 151
+Started game 153 of 20000 (NEW vs OLD)
+Finished game 152 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 75 - 17 - 60  [0.691] 152
+Started game 154 of 20000 (OLD vs NEW)
+Finished game 153 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 75 - 18 - 60  [0.686] 153
+Started game 155 of 20000 (NEW vs OLD)
+Finished game 155 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 76 - 18 - 60  [0.688] 154
+Started game 156 of 20000 (OLD vs NEW)
+Finished game 154 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 77 - 18 - 60  [0.690] 155
+Started game 157 of 20000 (NEW vs OLD)
+Finished game 156 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 78 - 18 - 60  [0.692] 156
+Started game 158 of 20000 (OLD vs NEW)
+Finished game 157 (NEW vs OLD): 0-1 {Black mates}
+Score of NEW vs OLD: 78 - 19 - 60  [0.688] 157
+Started game 159 of 20000 (NEW vs OLD)
+Finished game 158 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 79 - 19 - 60  [0.690] 158
+Started game 160 of 20000 (OLD vs NEW)
+Finished game 159 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 80 - 19 - 60  [0.692] 159
+Started game 161 of 20000 (NEW vs OLD)
+Finished game 160 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 80 - 19 - 61  [0.691] 160
+...      NEW playing White: 41 - 11 - 28  [0.688] 80
+...      NEW playing Black: 39 - 8 - 33  [0.694] 80
+...      White vs Black: 49 - 50 - 61  [0.497] 160
+Elo difference: 139.5 +/- 43.6, LOS: 100.0 %, DrawRatio: 38.1 %
+SPRT: llr 3.14 (76.9%), lbound -4.08, ubound 4.08
+Started game 162 of 20000 (OLD vs NEW)
+Finished game 161 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 80 - 19 - 62  [0.689] 161
+Started game 163 of 20000 (NEW vs OLD)
+Finished game 162 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 81 - 19 - 62  [0.691] 162
+Started game 164 of 20000 (OLD vs NEW)
+Finished game 163 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 82 - 19 - 62  [0.693] 163
+Started game 165 of 20000 (NEW vs OLD)
+Finished game 165 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 82 - 19 - 63  [0.692] 164
+Started game 166 of 20000 (OLD vs NEW)
+Finished game 164 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 83 - 19 - 63  [0.694] 165
+Started game 167 of 20000 (NEW vs OLD)
+Finished game 167 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 84 - 19 - 63  [0.696] 166
+Started game 168 of 20000 (OLD vs NEW)
+Finished game 166 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 85 - 19 - 63  [0.698] 167
+Started game 169 of 20000 (NEW vs OLD)
+Finished game 168 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 86 - 19 - 63  [0.699] 168
+Started game 170 of 20000 (OLD vs NEW)
+Finished game 169 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 86 - 19 - 64  [0.698] 169
+Started game 171 of 20000 (NEW vs OLD)
+Finished game 170 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 87 - 19 - 64  [0.700] 170
+...      NEW playing White: 43 - 11 - 31  [0.688] 85
+...      NEW playing Black: 44 - 8 - 33  [0.712] 85
+...      White vs Black: 51 - 55 - 64  [0.488] 170
+Elo difference: 147.2 +/- 42.6, LOS: 100.0 %, DrawRatio: 37.6 %
+SPRT: llr 3.53 (86.6%), lbound -4.08, ubound 4.08
+Started game 172 of 20000 (OLD vs NEW)
+Finished game 171 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 88 - 19 - 64  [0.702] 171
+Started game 173 of 20000 (NEW vs OLD)
+Finished game 172 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 89 - 19 - 64  [0.703] 172
+Started game 174 of 20000 (OLD vs NEW)
+Finished game 173 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 90 - 19 - 64  [0.705] 173
+Started game 175 of 20000 (NEW vs OLD)
+Finished game 174 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 91 - 19 - 64  [0.707] 174
+Started game 176 of 20000 (OLD vs NEW)
+Finished game 175 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 92 - 19 - 64  [0.709] 175
+Started game 177 of 20000 (NEW vs OLD)
+Finished game 176 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 93 - 19 - 64  [0.710] 176
+Started game 178 of 20000 (OLD vs NEW)
+Finished game 178 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Score of NEW vs OLD: 94 - 19 - 64  [0.712] 177
+Started game 179 of 20000 (NEW vs OLD)
+Finished game 177 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 94 - 19 - 65  [0.711] 178
+Started game 180 of 20000 (OLD vs NEW)
+Finished game 179 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 95 - 19 - 65  [0.712] 179
+Started game 181 of 20000 (NEW vs OLD)
+Finished game 180 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 95 - 19 - 66  [0.711] 180
+...      NEW playing White: 47 - 11 - 32  [0.700] 90
+...      NEW playing Black: 48 - 8 - 34  [0.722] 90
+...      White vs Black: 55 - 59 - 66  [0.489] 180
+Elo difference: 156.5 +/- 41.9, LOS: 100.0 %, DrawRatio: 36.7 %
+SPRT: llr 3.95 (97.0%), lbound -4.08, ubound 4.08
+Started game 182 of 20000 (OLD vs NEW)
+Finished game 182 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 95 - 19 - 67  [0.710] 181
+Started game 183 of 20000 (NEW vs OLD)
+Finished game 181 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 96 - 19 - 67  [0.712] 182
+Started game 184 of 20000 (OLD vs NEW)
+Finished game 184 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 96 - 19 - 68  [0.710] 183
+Started game 185 of 20000 (NEW vs OLD)
+Finished game 183 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Score of NEW vs OLD: 96 - 19 - 69  [0.709] 184
+Started game 186 of 20000 (OLD vs NEW)
+Finished game 185 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 97 - 19 - 69  [0.711] 185
+Finished game 186 (OLD vs NEW): * {No result}
+Score of NEW vs OLD: 97 - 19 - 69  [0.711] 185
+...      NEW playing White: 49 - 11 - 33  [0.704] 93
+...      NEW playing Black: 48 - 8 - 36  [0.717] 92
+...      White vs Black: 57 - 59 - 69  [0.495] 185
+Elo difference: 156.2 +/- 41.0, LOS: 100.0 %, DrawRatio: 37.3 %
+SPRT: llr 4.12 (101.1%), lbound -4.08, ubound 4.08 - H1 was accepted
+
+Player: NEW
+   "Draw by 3-fold repetition": 64
+   "Draw by insufficient mating material": 5
+   "Loss: Black mates": 1
+   "Loss: Black wins by adjudication": 10
+   "Loss: White wins by adjudication": 8
+   "No result": 1
+   "Win: Black mates": 1
+   "Win: Black wins by adjudication": 47
+   "Win: White mates": 1
+   "Win: White wins by adjudication": 48
+Player: OLD
+   "Draw by 3-fold repetition": 64
+   "Draw by insufficient mating material": 5
+   "Loss: Black mates": 1
+   "Loss: Black wins by adjudication": 47
+   "Loss: White mates": 1
+   "Loss: White wins by adjudication": 48
+   "No result": 1
+   "Win: Black mates": 1
+   "Win: Black wins by adjudication": 10
+   "Win: White wins by adjudication": 8
+Finished match

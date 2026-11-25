@@ -113,3 +113,13 @@ Phase 15 keeps its status (the self-play/Stage-3 line is paused and every `[P15]
 **Broke / Fixed:** Corrected the note and its dev entry.
 
 **Measurements:** Pair variance 0.0799 from the 5,379 clean #296 pairs gives a standard error of 4.4 Elo and a 95 percent half-width of 8.6 Elo at 4,000 games, about 2.6 hours at the speed #296 ran. Power to show non-inferiority at -5 Elo is about 31 percent even at a true difference of 0, and 90 percent power needs about 26,450 games. No match or benchmark was run.
+
+### [2026-11-25] Match completion integrity, opt-in seeds and a fixed-count launcher (#319; validation infrastructure)
+
+**Built:** `tools/match_validation.py`, which puts a finished Cute Chess 1.5.1 run in one of five states (complete by cap, complete by boundary, interrupted, overrun, invalid evidence) from its log and PGN. Both SPRT launchers use it after checking the exit code, an opt-in `-Seed` and `--seed` append `-srand`, and `tools/fixed_count_match.py` is a fixed-count launcher with a required seed, a prepared manifest and a provenance record whose hashes it checks before launching. Fixtures are the real completed H1 run and the real #296 tail.
+
+**Decisions Made:** Completeness is judged from opening pair identity and game identity, not from counts, because a real boundary run ends with a game still in flight and an odd number of finished games. Anything outside the supported Cute Chess vocabulary is invalid evidence, never a pass, and a non-zero Cute Chess exit fails the launcher on its own. The fixed-count launcher reuses `sprt_linux.py` for the argument construction, so its arguments are the `sprt.ps1` arguments minus `-sprt`, and it is Python so it runs on native Windows and on Linux. Resumable SPRT state stays out of scope.
+
+**Broke / Fixed:** Running the validator on the real full #296 files showed that the log can list a `No result` game that the PGN never recorded (a game that made no move). That asymmetry is now tolerated and counted, and any other log versus PGN difference is still invalid. An existing launcher test treated exit 0 as success and was changed to use a recorded valid run.
+
+**Measurements:** The real completed H1 run (185 finished games, one in flight) classifies as complete by boundary with 92 complete pairs and one explained orphan. The real full #296 run classifies as interrupted with 6 abandoned and 5 unterminated games and 5,382 complete pairs. 64 new tests pass locally and each rule fails a test when disabled. No match or benchmark was run.
