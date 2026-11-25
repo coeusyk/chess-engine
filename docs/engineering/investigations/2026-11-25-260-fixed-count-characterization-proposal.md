@@ -1,6 +1,6 @@
-# #260 fixed-count paired characterization: proposal
+# #260 fixed-count paired characterization
 
-2026-11-25. This is a proposal for the owner to approve or change. Nothing is launched and nothing here authorizes a launch. It describes a fixed-count native comparison of the merged #258 tree against its first parent, where the question is how large the strength difference is, not whether a stopping rule fires. It also lists where that conflicts with the preparation already on disk, and what 4,000 games can and cannot show.
+2026-11-25. Approved by the owner as a fixed-count characterization (see the last section); nothing is launched and nothing here authorizes a launch. It describes a fixed-count native comparison of the merged #258 tree against its first parent, where the question is how large the strength difference is, not whether a stopping rule fires. It also lists where that conflicts with the preparation already on disk, and what 4,000 games can and cannot show.
 
 ## What is being compared
 
@@ -19,7 +19,8 @@ The reason to measure at timed play is that #258 changes more than repetition ha
 
 - 4,000 games, so 2,000 opening pairs (`-repeat` plays each opening with both colours).
 - No stopping rule is part of the design. The result is the pooled pair-level estimate and its 95 percent interval, computed offline from the PGN.
-- The Cute Chess `-sprt` option cannot be removed without changing `sprt.ps1`, which would change the runner hash the frozen wrapper checks. So the existing runner is kept and its SPRT is made inert: `Alpha = Beta = 0.001`, bounds of plus or minus 6.91. Cute Chess's LLR is not used for any conclusion. A run that did stop on a bound would be reported as it is, and that would only happen for a candidate far worse than anything expected (a true difference near -30 Elo gives an expected LLR of about -7 at 2,000 pairs).
+- The invocation is an actual fixed-count one, with no SPRT of any kind: the Cute Chess arguments are the ones `sprt.ps1` builds, minus `-sprt`, plus `-games 4000` and an explicit `-srand`. Loosening alpha and beta would not have done this, because `-sprt` with any alpha and beta still stops a match when a bound is crossed, which would make the game count depend on the results. The historical `sprt.ps1`, its SHA-256 and everything under `history-260/` stay exactly as they are. `sprt.ps1` has no mode without `-sprt`, so the new invocation comes from a new, separate launcher, written under the #319 plan.
+- The opening order is seeded and the seed is part of the design: `-srand 260258`. It is recorded in the prepared manifest and in the run provenance, so the sequence of openings can be replayed and the run can be audited against it.
 - Analysis, fixed in advance: pair scores over complete pairs among the first 4,000 games, mean, standard error, Elo with a 95 percent interval, and the draw rate. Reported next to it, for diagnosis only: colour split, time losses, adjudication counts, mean game length, and a count of games that ended abandoned, disconnected or unterminated.
 - No decision threshold is attached. What the number means for #260 is decided after it exists, and that is the owner's call.
 
@@ -44,21 +45,41 @@ Time: at that speed 4,000 games take about 2.6 hours.
 ## Conflicts with the existing preparation
 
 1. **Hypothesis.** The prepared manifest is a non-inferiority SPRT, Elo0 -5 and Elo1 0, alpha = beta = 0.05, and the #260 issue asks for a "controlled native SPRT". A fixed-count run has no hypothesis and no stopping rule. The issue text and the preparation note would have to be amended, with the owner's approval, to say the first measurement is an estimate.
-2. **Cap and alpha and beta.** 30,000 becomes 4,000 and 0.05 becomes 0.001. Both change the Cute Chess arguments, so `prepared-arguments.json` (hash `08da4d42...`) no longer applies. The new run needs its own prepared manifest in a new run folder. `history-260/` stays exactly as it is and is not edited.
+2. **Cap, alpha and beta, seed.** 30,000 becomes 4,000, `-sprt` and with it alpha and beta are gone, and `-srand 260258` is added. All of that changes the Cute Chess arguments, so `prepared-arguments.json` (hash `08da4d42...`) no longer applies. The new run needs its own prepared manifest in a new run folder, produced by the new launcher in its prepare-only mode and compared with the argument list in the next section. `history-260/` stays exactly as it is and is not edited.
 3. **Claims.** The issue says not to claim Elo gains before an SPRT completes. A fixed-count run cannot complete an SPRT, so it supports no gain claim and no non-inferiority claim, only the estimate and its interval.
 4. **Preparation note.** The existing note says a future launch needs separate approval for the hypothesis, the cap and the frozen manifest. All three are different in this proposal, so all three need that approval.
 5. **Pooling.** The 5,379 clean #296 pairs are for a different candidate and cannot be pooled into this estimate.
-6. **Opening order.** Unseeded, as in #296. Nothing in `sprt.ps1` passes `-srand`. For a 2.6 hour run I do not think it is worth changing the runner hash to add one: the openings actually played are in the PGN, so the data can be audited even though the order cannot be replayed. A seeded order is the opt-in change in #319, and it is only needed if an interrupted run ever has to be continued.
+6. **Opening order.** #296 used an unseeded order and nothing in `sprt.ps1` passes `-srand`. This run is seeded (`-srand 260258`), which is a difference from the historical protocol and is deliberate. The seed comes from the new launcher and is recorded in the manifest.
 7. **Host.** The native Windows machine is the same physical host as the WSL2 environment where the #307 and #313 measurements are running. A native match during those measurements would disturb both, so the launch has to wait until they finish.
-8. **Rules in `CLAUDE.md`.** SPRTs run on native Windows only. When a launch is approved, the exact `sprt.ps1` command is given and stops there. It is not run from here.
+8. **Rules in `CLAUDE.md`.** Native matches run on native Windows only. When a launch is approved, the exact command of the new launcher is given and stops there. It is not run from here.
+
+## The invocation
+
+Same arguments as `sprt.ps1` builds for the historical preparation, with three differences: `-sprt` is removed, `-games` is 4000, and `-srand 260258` is added. In order (paths are inside the new run folder, written relative here):
+
+```
+-engine name=NEW cmd=java arg=--add-modules arg=jdk.incubator.vector arg=-jar arg=<cand.jar> proto=uci option.Threads=1
+        option.Hash=16 option.PawnHashSize=1 option.EvalType=Classical option.MultiPV=1 option.Contempt=0
+        option.OwnBook=false option.SyzygyOnline=false option.SyzygyPath=
+-engine name=OLD cmd=java arg=--add-modules arg=jdk.incubator.vector arg=-jar arg=<base.jar> proto=uci option.Threads=1
+        (the same options)
+-each tc=5+0.05 -games 4000 -repeat -recover -resign movecount=5 score=400 -draw movenumber=40 movecount=8 score=10
+-concurrency 6 -ratinginterval 10 -pgnout <match.pgn> -srand 260258
+-openings file=<noob_3moves.epd> format=epd order=random plies=4
+```
+
+`-recover` is kept so the engine settings and the game flow are the same as in the historical run. The consequence is that Cute Chess finishes a match after engines it cannot restart, so completion is decided from the log and PGN by the new launcher's own validation and not from the exit code (#319).
 
 ## Interruption
 
-The #296 run was lost to a host power off, and the launcher reported it as finished (#319). The launcher is not fixed. So for this run the pre-registered rule is: if it ends before 4,000 games for any reason, it is recorded as interrupted and inconclusive and is not resumed. After it ends, before anything is read from it, the PGN is checked for abandoned, disconnected and unterminated games and the game count is compared with 4,000.
+The #296 run was lost to a host power off, and the launcher reported it as finished (#319). The new launcher validates the log and PGN after the run, and for this run the pre-registered rule is: if it ends before 4,000 games for any reason, or any game ended abandoned, disconnected or unterminated, it is recorded as interrupted and inconclusive and is not resumed. The result is not read until that validation has passed.
 
-## What would be needed to launch
+## Status and what is still needed to launch
 
-1. The owner approves the hypothesis change (estimation, no stopping rule), the 4,000 cap, the 0.001 alpha and beta, and the analysis plan above, and amends the #260 issue text.
-2. A new run is prepared from the frozen builds with `-PrepareOnly`, its hashes are compared with the table above and recorded, and the prepared manifest is approved.
-3. The #307 and #313 measurements are finished and the host is idle.
-4. Explicit launch authorization. None has been given.
+The owner approved the 4,000 game fixed-count characterization on 2026-11-25 (an estimate, not a non-inferiority experiment). That covers the design above, the seed and the analysis plan. Still to do before a launch:
+
+1. The new launcher and its post-run validation, under the #319 plan. It is not written yet, so the prepared manifest cannot exist yet.
+2. The #260 issue wording is amended (done together with this note).
+3. A new run folder is prepared from the frozen builds with the launcher's prepare-only mode. The jar, book, runner and toolchain hashes are compared with the table above and recorded, and the argument list is compared with the one above.
+4. The #307 and #313 measurements are finished and the host-idle checks pass.
+5. Explicit launch authorization. None has been given.
