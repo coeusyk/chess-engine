@@ -97,8 +97,9 @@ public final class EvalParams {
     /**
      * Default draw-contempt penalty in centipawns.  Applied as a negative score to
      * repetition/50-move draws when the side to move holds an advantage exceeding
-     * {@link #CONTEMPT_THRESHOLD}.  Also the value exposed via the UCI {@code Contempt}
-     * option spin default.
+     * {@link #CONTEMPT_THRESHOLD}.  This is the default of a bare {@code Searcher}
+     * ({@code Searcher.DEFAULT_CONTEMPT_CP}). The UCI {@code Contempt} option does not use it: the
+     * UCI front end starts at 0 and passes its own value to every searcher (#278).
      */
     public static int CONTEMPT_VALUE = 50;
 
