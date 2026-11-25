@@ -328,7 +328,10 @@ class SearchRegressionTest {
             //     Both e1e2 and f1f6 are correct KRK technique; equivalent.
             // Phase 21 PVS chooses king activation e1d2. At depths 9 and 10 the control
             // also selects a king-activation move (e1e2), with scores within 4 cp.
-            Arguments.of("E2",  E2_FEN,  "e1d2"),
+            // Updated #278 opposite-flank discount: the open-file penalty is no longer softened, which
+            // moves depth-8 from e1d2 (+682) to f1f6 (+698). Both are winning KRK moves, the score
+            // rises by 16 cp, and depths 9 and 10 stay king or rook technique (e1e2 +686, f1h1 +701).
+            Arguments.of("E2",  E2_FEN,  "f1f6"),
             Arguments.of("E3",  E3_FEN,  "f4f5"),
             // E4: e4d4 and e4f4 are symmetric king moves to break e-file direct opposition.
             //     Both win; equivalent by symmetry for a central pawn.
@@ -345,7 +348,10 @@ class SearchRegressionTest {
             // Phase 21 PVS chooses Ra6 at depths 8 and 9 (scores +844/+876 versus +989/+1768
             // for Ra2-e2). Its depth-9 PV is truncated to this one legal move. At depth 10
             // the candidate returns to Ra2-e2, 44 cp below the control's Ke1-f1.
-            Arguments.of("E5",  E5_FEN,  "a2a6"),
+            // Updated #278 opposite-flank discount: depth 8 picks Ra2-e2 (+994) over Ra6 (+844), the same
+            // move the control already chose at depth 10, and depths 9 and 10 also pick Ra2-e2
+            // (+971, +1807). Both moves keep a won position.
+            Arguments.of("E5",  E5_FEN,  "a2e2"),
             // E6: 8/8/8/5k2/1PP5/8/2K5/8 — Kc2+Pb4c4 vs Kf5. Both b4b5 and c4c5 advance
             //     connected pawns; BK on f5 is far from both.
             //     Updated 2026-04-03: SEE-based hanging-piece penalty (gain/4) causes a small
