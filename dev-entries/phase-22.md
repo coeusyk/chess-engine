@@ -83,3 +83,13 @@ Phase 15 keeps its status (the self-play/Stage-3 line is paused and every `[P15]
 **Broke / Fixed:** The core penalty with -3, core evaluation with ATK_WEIGHT_KNIGHT = -5 and the tuner evaluator with the same override all threw before the clamp.
 
 **Measurements:** Rebased on develop after #309. engine-core 541 tests and engine-tuner 162 pass locally with 0 failures, and the regression group (NodeCountRegressionTest, SearchRegressionTest, NnueModeSearchRegressionTest) passes with no golden value changed. No match or benchmark was run.
+
+### [2026-11-25] Diagnosis of the abnormal #296 native SPRT termination (validation infrastructure)
+
+**Built:** A case study, `docs/engineering/investigations/2026-11-25-296-native-sprt-abnormal-termination.md`. Read-only: no match or watcher was resumed or restarted and no artifact in the run archive was changed.
+
+**Decisions Made:** The run is treated as an aborted, inconclusive attempt, not a result. Cause: the host was powered off from the Start menu at 02:45:08 IST (21:15:08 UTC), which killed all twelve engine processes at once and abandoned the six games in flight. It was not an engine fault, a crash or an update. The 5,379 complete pairs from games 1 to 10,758 are a valid interim sample and the six abandoned games, which Cute Chess counted as wins and losses, are excluded. A protocol-correct continuation is not possible as the run was invoked (unseeded random opening order, no tournament state file), so continuing, restarting or leaving it inconclusive is the owner's decision and any continuation needs a written amendment.
+
+**Broke / Fixed:** The native launcher reported success for an aborted run: it writes `finished.txt` and `native.complete` unconditionally after the runner returns, and never checks Cute Chess's exit code or abandoned and no-result games, so a zero status meant only that the script ended. Not changed here. The #260 comparison never launched because it is prepared with the launch flag false and nothing is queued behind #296. Its prepared files verify intact and no launcher or watcher can start it.
+
+**Measurements:** Clean 10,758 games: 3,533 wins, 3,607 draws, 3,618 losses for NEW. Pair level, 5,379 pairs: score 49.605 percent, standard error 0.385 points, Elo -2.75 with a 95 percent interval of -8.00 to +2.50, approximate LLR -0.17 against bounds of plus or minus 2.94 (the same method reproduces Cute Chess's logged -0.12 on its own tally). Cute Chess's final tally of 3537-3620-3607 over 10,764 games includes the six abandoned games.
