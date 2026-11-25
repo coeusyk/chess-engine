@@ -83,3 +83,13 @@ Phase 15 keeps its status (the self-play/Stage-3 line is paused and every `[P15]
 **Broke / Fixed:** The core penalty with -3, core evaluation with ATK_WEIGHT_KNIGHT = -5 and the tuner evaluator with the same override all threw before the clamp.
 
 **Measurements:** Rebased on develop after #309. engine-core 541 tests and engine-tuner 162 pass locally with 0 failures, and the regression group (NodeCountRegressionTest, SearchRegressionTest, NnueModeSearchRegressionTest) passes with no golden value changed. No match or benchmark was run.
+
+### [2026-11-25] Rook-behind-passer predicate candidate (#278; legacy Phase 31, engine correctness)
+
+**Built:** The rook-behind-passer bonus checked only the pawn's own file for an enemy pawn ahead, but the pawn structure terms call a pawn passed only when no enemy pawn is ahead on its own or an adjacent file. PawnStructure.isPassed now exposes the existing three-file masks, and the core evaluator and the tuner (static evaluation and feature extractor) use it for both colours. The branch is fix/rook-behind-passer-predicate, based on the same baseline as the opposite-flank candidate, and the golden update is a separate commit.
+
+**Decisions Made:** This is an evaluation change, so it is a candidate and not merged. The classical weights were fitted with the old definition, so it needs an isolated native SPRT, and that has not been authorized or started. It uses the existing pawn-structure definition and does not add a new one.
+
+**Broke / Fixed:** A rook behind d5 got the same +12 MG / +4 EG with a black pawn on c6, which can capture on d5, as with one on b6, which cannot.
+
+**Measurements:** Tests: white and black rooks behind a capturable pawn get no bonus and behind a real passer still do (core), and the tuner's static evaluation and feature extractor agree on the same four positions (parity). With the core Evaluator reverted to the baseline both capturable-pawn core tests fail (+5 and -5 against 0) and CoreTunerParityTest fails (28 of 146 seeded positions differ). With only the tuner's static copy reverted RookBehindPasserParityTest and CoreTunerParityTest fail, and with only the feature extractor reverted theFeatureExtractorUsesTheSamePredicate fails. Golden changes, in their own commit: NodeCountRegressionTest FEN[2] 32082 to 32241, FEN[3] 6128 to 6026 and FEN[4] 7829 to 7825, all from positions with rooks behind pawns a neighbouring file can capture. No SearchRegressionTest best move changes (39 pass). engine-core 549 tests and engine-tuner 165 pass locally and the regression group passes. No match or benchmark was run.

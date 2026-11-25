@@ -39,6 +39,15 @@ public final class PawnStructure {
         }
     }
 
+    /**
+     * True when no enemy pawn stands ahead of the pawn on {@code sq} on its own or an adjacent file, which is the
+     * passed-pawn definition used by the pawn structure terms. Shared so the other terms read "passed" the same
+     * way (#278).
+     */
+    public static boolean isPassed(int sq, boolean white, long enemyPawns) {
+        return (enemyPawns & (white ? WHITE_PASSED_MASKS[sq] : BLACK_PASSED_MASKS[sq])) == 0L;
+    }
+
     public static int[] evaluate(long whitePawns, long blackPawns) {
         int mg = 0, eg = 0;
 

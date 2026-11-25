@@ -803,7 +803,7 @@ public final class TunerEvaluator {
             long passedOnFile = wPawns & fileMask & ((1L << sq) - 1);
             while (passedOnFile != 0) {
                 int psq = Long.numberOfTrailingZeros(passedOnFile);
-                if ((bPawns & fileMask & ((1L << psq) - 1)) == 0) {
+                if (coeusyk.game.chess.core.eval.PawnStructure.isPassed(psq, true, bPawns)) {
                     mg += (int) params[EvalParams.IDX_ROOK_BEHIND_PASSER_MG];
                     eg += (int) params[EvalParams.IDX_ROOK_BEHIND_PASSER_EG];
                 }
@@ -820,7 +820,7 @@ public final class TunerEvaluator {
             long passedOnFile = bPawns & fileMask & ~((1L << sq) - 1) & ~(1L << sq);
             while (passedOnFile != 0) {
                 int psq = Long.numberOfTrailingZeros(passedOnFile);
-                if ((wPawns & fileMask & ~((1L << psq) - 1) & ~(1L << psq)) == 0) {
+                if (coeusyk.game.chess.core.eval.PawnStructure.isPassed(psq, false, wPawns)) {
                     mg -= (int) params[EvalParams.IDX_ROOK_BEHIND_PASSER_MG];
                     eg -= (int) params[EvalParams.IDX_ROOK_BEHIND_PASSER_EG];
                 }
@@ -1272,7 +1272,7 @@ public final class TunerEvaluator {
     }
 
     /** Accumulates rook-behind-passed-pawn feature weights (tapered). */
-    private static void addRookBehindPasserFeatures(PositionData pos, float[] tmp,
+    static void addRookBehindPasserFeatures(PositionData pos, float[] tmp,
                                                      float mgTaper, float egTaper) {
         long wRooks = pos.getWhiteRooks();
         long wPawns = pos.getWhitePawns();
@@ -1286,7 +1286,7 @@ public final class TunerEvaluator {
             long passedOnFile = wPawns & fileMask & ((1L << sq) - 1);
             while (passedOnFile != 0) {
                 int psq = Long.numberOfTrailingZeros(passedOnFile);
-                if ((bPawns & fileMask & ((1L << psq) - 1)) == 0) {
+                if (coeusyk.game.chess.core.eval.PawnStructure.isPassed(psq, true, bPawns)) {
                     tmp[EvalParams.IDX_ROOK_BEHIND_PASSER_MG] += mgTaper;
                     tmp[EvalParams.IDX_ROOK_BEHIND_PASSER_EG] += egTaper;
                 }
@@ -1302,7 +1302,7 @@ public final class TunerEvaluator {
             long passedOnFile = bPawns & fileMask & ~((1L << sq) - 1) & ~(1L << sq);
             while (passedOnFile != 0) {
                 int psq = Long.numberOfTrailingZeros(passedOnFile);
-                if ((wPawns & fileMask & ~((1L << psq) - 1) & ~(1L << psq)) == 0) {
+                if (coeusyk.game.chess.core.eval.PawnStructure.isPassed(psq, false, wPawns)) {
                     tmp[EvalParams.IDX_ROOK_BEHIND_PASSER_MG] -= mgTaper;
                     tmp[EvalParams.IDX_ROOK_BEHIND_PASSER_EG] -= egTaper;
                 }
