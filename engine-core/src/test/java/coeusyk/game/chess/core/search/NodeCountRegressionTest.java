@@ -24,9 +24,9 @@ class NodeCountRegressionTest {
     private static final long[] EXPECTED_NODES = {
         14312, // #262: pin-aware SEE (was 14776). Same best move, score and PV; verified against a legal-move SEE oracle.
         1287,
-        32082, // #262: pin-aware SEE (was 32267). Same best move, score and PV.
-        6128, // Legal EP hashing omits c6 when b5xc6 would expose the king to the h5 rook.
-        7829,
+        32241, // Rook-behind-passer uses the pawn-structure passed test (#278; was 32082, itself 32267 before #262 pin-aware SEE).
+        6026, // Same change (#278; was 6128, which came from legal EP hashing omitting c6 when b5xc6 would expose the king to the h5 rook).
+        7825, // Same change (#278; was 7829).
     };
 
     @Test
