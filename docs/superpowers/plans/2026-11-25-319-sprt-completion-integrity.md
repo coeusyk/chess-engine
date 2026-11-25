@@ -1,6 +1,31 @@
 # Match completion integrity (#319) Implementation Plan
 
-Written under the engineering-plan policy. This is the plan for owner approval. Nothing in it is implemented yet.
+Written under the engineering-plan policy.
+
+## Approval and amendments (owner, 2026-11-25)
+
+Approved with six amendments, all incorporated below and in the Amended rules section:
+
+1. `COMPLETE_BOUNDARY` requires normal final match termination, consistent final statistics and complete opening pairs, not merely an SPRT acceptance message.
+2. Validate log and PGN game identities and outcomes, not only aggregate counts. Reject duplicate identifiers and contradictory evidence.
+3. Verify actual opening-pair completeness. An even game count alone is insufficient.
+4. Recognize supported normal termination categories explicitly. Unknown or unparseable termination evidence must not silently pass.
+5. A non-zero Cute Chess process exit prevents successful launcher completion, independently of artifact validation.
+6. The fixed-count expected-manifest check verifies the relevant artifact hashes as well as the arguments, reusing the existing provenance mechanisms.
+
+Focused regressions for each are added alongside the real-artifact fixtures. Parsing stays scoped to supported Cute Chess 1.5.1 output, with no general tournament framework. Tasks 1 to 3 are to be implemented now with lightweight fixture tests and GitHub CI, followed by one focused independent final review after integrated verification. Task 4 (preparing the #260 manifest) happens when the native resources can be read safely, modifies nothing under `history-260/` or any frozen artifact, and launches no match, which needs separate authorization. Resumable SPRT state stays out of scope.
+
+## Amended rules (what the real artifacts showed)
+
+A real completed SPRT run (the 2026-04-21 `phase14-a4-aspiration-25cp-s2` run: 185 finished games, H1 accepted, 1 game `No result`, PGN `unterminated`) shows that Cute Chess ends the games still in flight when a boundary is reached. So at a boundary `unterminated` games are normal, and an odd number of finished games is normal, because the in-flight game's twin is the orphan. Completeness is therefore judged by opening pair identity, not by counts:
+
+- A pair is two games from the same opening (the PGN `FEN` tag, or the start position when there is none) with the two engines on opposite colours. For each opening, finished games with engine A as White must equal those with engine B as White. Any excess is an orphan. At a boundary an orphan is acceptable only when an `unterminated` game with the same opening and the opposite colours explains it. For a capped or fixed-count run any orphan, and any `unterminated` game, fails.
+- Game identity: log game numbers must be unique, and each PGN game record must be unique as a whole (an exact duplicate record is rejected; the same opening and colour can legitimately recur in a random book, so that alone is not a duplicate). The multiset of (White, Black, Result, termination class) from the log's `Finished game` lines must equal the one from the PGN. Any difference is contradictory evidence.
+- Final statistics: the last `Score of A vs B: w - l - d [x] n` line must equal the counts recomputed from the PGN (games with a result, which includes games Cute Chess scored by disconnection). At a boundary the final `SPRT:` line must carry the acceptance text and its `llr` must be consistent with it (at or beyond the matching bound within rounding).
+- Final termination: the last non-empty log line must be `Finished match`, and a log with no such line is `INTERRUPTED`.
+- Termination vocabulary (explicit, Cute Chess 1.5.1). Normal log texts: `White mates`, `Black mates`, `White wins by adjudication`, `Black wins by adjudication`, `White loses on time`, `Black loses on time`, `White makes an illegal move...`, `Black makes an illegal move...`, `Draw by 3-fold repetition`, `Draw by fifty moves rule`, `Draw by insufficient mating material`, `Draw by stalemate`, `Draw by adjudication`. Abnormal: `White disconnects`, `Black disconnects`, `White's connection stalls`, `Black's connection stalls` and `No result`. Normal PGN `Termination` values: absent, `normal`, `adjudication`, `time forfeit`, `rules infraction`. Abnormal: `abandoned`, `unterminated`. Each log text must also agree with its Result token (for example `White mates` with `1-0`). Anything not listed is `INVALID_EVIDENCE`, never a pass.
+- A non-zero Cute Chess exit status ends the launcher with failure before any validation result is considered, and is recorded in the provenance whatever the validator says.
+- The fixed-count `--expected-provenance` check compares the argument array hash, both engine JAR hashes, the opening book hash, the launcher hash, the Cute Chess executable hash and the seed with the prepared record, and refuses to launch on any difference.
 
 **Goal:** A match launcher can no longer report success for an interrupted or damaged run, every run ends in an explicit termination state decided from its log and PGN, opening order is reproducible from a recorded seed, and the approved #260 fixed-count characterization has a launcher to run on.
 
@@ -32,11 +57,11 @@ Decided by `classify_run(log_text, pgn_text, expected_games, sprt)`:
 
 | State | Meaning | Reported as success |
 |---|---|---|
-| `COMPLETE_CAP` | Exactly `expected_games` games, all with a normal termination, no abandoned, disconnected or unterminated game, no orphan opening, log ends with `Finished match` | yes |
-| `COMPLETE_BOUNDARY` | SPRT only. Log contains `SPRT: H0 was accepted` or `SPRT: H1 was accepted`, and all games are normal | yes |
-| `INTERRUPTED` | Any game abandoned, disconnected or unterminated, or fewer games than expected with no boundary | no |
+| `COMPLETE_CAP` | Exactly `expected_games` finished games, all normal, no unterminated game, no orphan opening, consistent identities and final statistics, log ends with `Finished match` | yes |
+| `COMPLETE_BOUNDARY` | SPRT only. Final `SPRT:` line carries an acceptance consistent with its llr, normal final termination, consistent identities and final statistics, every orphan opening explained by an in-flight `unterminated` twin, no abandoned or disconnected game | yes |
+| `INTERRUPTED` | Any abandoned or disconnected game, an unterminated game without a boundary, an unexplained orphan, no `Finished match`, or fewer games than expected with no boundary | no |
 | `OVERRUN` | More finished games than `expected_games` (fixed-count only) | no |
-| `INVALID_EVIDENCE` | PGN or log missing, empty or unparseable, or the games in the PGN disagree with the games in the log | no |
+| `INVALID_EVIDENCE` | PGN or log missing, empty or unparseable, duplicate identifiers, an unknown termination, a contradiction between the log and the PGN or inside the log, or final statistics that do not match the PGN | no |
 
 The only PGN `Termination` values in the #296 run are `adjudication` (7,184 games, all of its normal games), `abandoned` (6) and `unterminated` (4). A normal termination is any value other than `abandoned`, `unterminated` and a log result text containing `disconnects`, with `stalled connection` also treated as not normal. The accepted and rejected sets are pinned by a test against the real #296 PGN, and extended when other completed runs are added as fixtures.
 
@@ -99,7 +124,7 @@ One branch (`infra/319-sprt-completion-integrity`), one PR, assigned to the owne
 
 ## Execution record
 
-- **Approved revision and approval reference:** none yet. This revision is submitted for approval.
-- **Slice progress and verification evidence:** none, nothing implemented.
-- **Outstanding work and next action:** owner approval of this plan, then Task 1.
+- **Approved revision and approval reference:** this revision (the plan as first submitted in PR #321 plus the six amendments and the Amended rules section above), approved by the owner in the session on 2026-11-25. Approval covers Tasks 1 to 3 and the preparation in Task 4. No launch is authorized.
+- **Slice progress and verification evidence:** see below, updated as slices finish.
+- **Outstanding work and next action:** Task 1.
 - **Integrated verification and final review status:** pending.

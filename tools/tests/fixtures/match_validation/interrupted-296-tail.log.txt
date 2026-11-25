@@ -1,0 +1,37 @@
+Indexing opening suite...
+Finished game 10741 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Finished game 10739 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Finished game 10740 (OLD vs NEW): 1-0 {White wins by adjudication}
+Finished game 10744 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Finished game 10743 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Finished game 10742 (OLD vs NEW): 1-0 {White wins by adjudication}
+Finished game 10745 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Finished game 10747 (NEW vs OLD): 1-0 {White wins by adjudication}
+Finished game 10746 (OLD vs NEW): 1-0 {White wins by adjudication}
+Finished game 10749 (NEW vs OLD): 1-0 {White wins by adjudication}
+Finished game 10751 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Finished game 10748 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Finished game 10750 (OLD vs NEW): 1/2-1/2 {Draw by stalemate}
+Finished game 10752 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Finished game 10755 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Finished game 10754 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Finished game 10753 (NEW vs OLD): 1-0 {White wins by adjudication}
+Finished game 10756 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Finished game 10757 (NEW vs OLD): 1/2-1/2 {Draw by adjudication}
+Finished game 10758 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Finished game 10764 (OLD vs NEW): 1-0 {Black disconnects}
+Finished game 10762 (OLD vs NEW): 0-1 {White disconnects}
+Finished game 10763 (NEW vs OLD): 0-1 {White disconnects}
+Finished game 10760 (OLD vs NEW): 0-1 {White disconnects}
+Finished game 10759 (NEW vs OLD): 1-0 {Black disconnects}
+Finished game 10761 (NEW vs OLD): 1-0 {Black disconnects}
+Finished game 10765 (NEW vs OLD): * {No result}
+Finished game 10767 (NEW vs OLD): * {No result}
+Finished game 10768 (OLD vs NEW): * {No result}
+Finished game 10770 (OLD vs NEW): * {No result}
+Score of NEW vs OLD: 10 - 9 - 7  [0.500] 26
+Elo difference: 0.0 +/- 0.0, LOS: 50.0 %, DrawRatio: 0.0 %
+SPRT: llr -0.12 (-4.1%), lbound -2.94, ubound 2.94
+
+Warning: Could not initialize player OLD: 
+Finished match
