@@ -445,6 +445,109 @@ class NnueNetworkLoaderTest {
         assertTrue(loaded.hiddenWidth() > 0);
     }
 
+    /**
+     * Scalar coverage only (develop has no vector dot kernel or guard): an output layer whose
+     * {@code qa * sum(|w|)} exceeds the int32 range must still evaluate exactly, because the scalar loop
+     * sums {@code long} products. The weights are asserted to exceed the bound, and the test asserts that
+     * real positions produced a raw sum outside int32, so it cannot pass vacuously.
+     */
+    @Test
+    void scalarEvaluationIsExactWhenTheOutputSumExceedsInt32() throws IOException {
+        int width = 64;
+        int qa = 1016;
+        int qb = 128;
+        int outputScale = 400;
+        java.util.Random random = new java.util.Random(1016L);
+        short[] ftWeights = new short[FeatureExtractor.FEATURES_PER_PERSPECTIVE * width];
+        for (int i = 0; i < ftWeights.length; i++) {
+            ftWeights[i] = (short) (random.nextInt(321) - 160);
+        }
+        short[] ftBiases = new short[width];
+        java.util.Arrays.fill(ftBiases, (short) 800);
+        short[] outputWeights = new short[2 * width];
+        java.util.Arrays.fill(outputWeights, (short) 32767);
+
+        long absSum = 0;
+        for (short w : outputWeights) {
+            absSum += Math.abs((long) w);
+        }
+        assertTrue((long) qa * absSum > Integer.MAX_VALUE,
+                "the fixture must exceed the int32 bound, qa * sum|w| = " + (long) qa * absSum);
+
+        NnueNetwork network = NnueNetwork.load(new ByteArrayInputStream(writeNetwork(width, ftWeights, ftBiases,
+                outputWeights, 0, qa, qb, outputScale, "overflow-uuid", "commit", 0L)));
+        NnueEvaluator evaluator = new NnueEvaluator(network);
+
+        int beyondInt32 = 0;
+        java.util.List<String> fens = NnueFixtureGoldenSupport.corpusFens().subList(0, 50);
+        for (String fen : fens) {
+            coeusyk.game.chess.core.models.Board board = NnueCorpusCategories.toBoard(fen);
+            evaluator.reset(board);
+            boolean whiteToMove = coeusyk.game.chess.core.models.Piece.isWhite(board.getActiveColor());
+            long sum = 0;
+            int usColor = board.getActiveColor();
+            int themColor = whiteToMove ? coeusyk.game.chess.core.models.Piece.Black : coeusyk.game.chess.core.models.Piece.White;
+            for (int perspective = 0; perspective < 2; perspective++) {
+                int color = perspective == 0 ? usColor : themColor;
+                // Independent of NnueEvaluator: sum the active feature rows into an int16 accumulator by hand.
+                short[] acc = ftBiases.clone();
+                for (int feature : FeatureExtractor.activeFeatureIndices(board, color)) {
+                    for (int j = 0; j < width; j++) {
+                        acc[j] = (short) (acc[j] + ftWeights[feature * width + j]);
+                    }
+                }
+                int weightBase = perspective == 0 ? 0 : width;
+                for (int j = 0; j < width; j++) {
+                    long activation = Math.max(0, Math.min(acc[j], qa));
+                    sum += activation * outputWeights[weightBase + j];
+                }
+            }
+            if (Math.abs(sum) > Integer.MAX_VALUE) {
+                beyondInt32++;
+            }
+            int expected = (int) (sum * outputScale / ((long) qa * qb));
+            assertEquals(expected, evaluator.evaluate(board), "scalar evaluate differs from the long reference for " + fen);
+        }
+        assertTrue(beyondInt32 > 0, "no position produced a raw output sum outside int32, the test proved nothing");
+    }
+
+    /**
+     * An accumulator at the loader's own worst-case limit at qa 1016 must load and must not wrap: every
+     * feature weight is the largest the production clip allows, so a start position (32 active features)
+     * sits at {@code bias + 32 * weight}, just under the int16 maximum, and then clamps to qa.
+     */
+    @Test
+    void evaluateAtTheLoaderBoundEdgeDoesNotWrap() throws IOException {
+        int width = 8;
+        int qa = 1016;
+        short weightClip = (short) ((Short.MAX_VALUE - qa) / 32);   // 992
+        short[] ftWeights = new short[FeatureExtractor.FEATURES_PER_PERSPECTIVE * width];
+        java.util.Arrays.fill(ftWeights, weightClip);
+        short[] ftBiases = new short[width];
+        java.util.Arrays.fill(ftBiases, (short) qa);
+        short[] outputWeights = new short[2 * width];
+        java.util.Arrays.fill(outputWeights, 0, width, (short) 1);
+        java.util.Arrays.fill(outputWeights, width, 2 * width, (short) 2);
+        int outputBias = 500;
+
+        NnueNetwork network = NnueNetwork.load(new ByteArrayInputStream(writeNetwork(width, ftWeights, ftBiases,
+                outputWeights, outputBias, qa, 128, 400, "edge-uuid", "commit", 0L)));
+        NnueEvaluator evaluator = new NnueEvaluator(network);
+        coeusyk.game.chess.core.models.Board board = new coeusyk.game.chess.core.models.Board();
+        evaluator.reset(board);
+
+        int expectedAccumulator = qa + 32 * weightClip;
+        assertTrue(expectedAccumulator <= Short.MAX_VALUE, "the edge case must sit inside int16");
+        for (int color : new int[] {coeusyk.game.chess.core.models.Piece.White, coeusyk.game.chess.core.models.Piece.Black}) {
+            for (short value : evaluator.currentAccumulator(color)) {
+                assertEquals(expectedAccumulator, value, "accumulator wrapped or moved");
+            }
+        }
+        // Every neuron clamps to qa on both sides: us weights 1, them weights 2.
+        long sum = (long) qa * width * 1 + (long) qa * width * 2 + outputBias;
+        assertEquals((int) (sum * 400 / ((long) qa * 128)), evaluator.evaluate(board));
+    }
+
     private static byte[] writeNetwork(int width, short[] ftWeights, short[] ftBiases, short[] outputWeights,
                                         int outputBias, int qa, int qb, int outputScale,
                                         String uuid, String commit, long createdAt) throws IOException {

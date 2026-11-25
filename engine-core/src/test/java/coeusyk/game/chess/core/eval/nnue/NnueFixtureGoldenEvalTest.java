@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Issue #265: pins the exact int16 output of {@link NnueEvaluator} for each committed Python-exported
@@ -38,6 +39,48 @@ class NnueFixtureGoldenEvalTest {
                         fixture.nnueFile() + " golden mismatch for FEN: " + fens.get(i));
             }
         }
+    }
+
+    /**
+     * Synthetic compatibility evidence, not a real-checkpoint measurement: the QA 1016 / QB 128 fixture is a
+     * seeded random network. The golden comparison above is within this one scale, Java against the CSV the
+     * Python reference also matches. No test compares its scores with a QA 127 network's.
+     */
+    @Test
+    void qa1016FixtureLoadsWithItsDocumentedHeader() throws IOException {
+        NnueNetwork network = NnueNetwork.load(NnueFixtureGoldenSupport.fixturePath(NnueFixtureGoldenSupport.FIXTURES.get(2)));
+        assertEquals(64, network.hiddenWidth());
+        assertEquals(1016, network.qa());
+        assertEquals(128, network.qb());
+        assertEquals(400, network.outputScale());
+        assertEquals(-123, network.outputBias());
+        assertEquals("bccce5bc-0538-4c33-8350-0f15e5270496", network.networkUuid());
+        assertEquals("eeeeeeee", network.trainerCommit());
+        assertEquals(1795583643L, network.createdAtEpochSeconds());
+    }
+
+    @Test
+    void qa1016FixtureAccumulatorsClipAtBothBoundaries() throws IOException {
+        NnueNetwork network = NnueNetwork.load(NnueFixtureGoldenSupport.fixturePath(NnueFixtureGoldenSupport.FIXTURES.get(2)));
+        NnueEvaluator evaluator = new NnueEvaluator(network);
+        int above = 0;
+        int below = 0;
+        for (String fen : NnueFixtureGoldenSupport.corpusFens()) {
+            coeusyk.game.chess.core.models.Board board = NnueCorpusCategories.toBoard(fen);
+            evaluator.reset(board);
+            for (int color : new int[] {coeusyk.game.chess.core.models.Piece.White, coeusyk.game.chess.core.models.Piece.Black}) {
+                for (short value : evaluator.currentAccumulator(color)) {
+                    if (value > network.qa()) {
+                        above++;
+                    }
+                    if (value < 0) {
+                        below++;
+                    }
+                }
+            }
+        }
+        assertTrue(above > 0, "no accumulator value exceeds qa, the upper clamp is never reached");
+        assertTrue(below > 0, "no accumulator value is below zero, the lower clamp is never reached");
     }
 
     @Test
