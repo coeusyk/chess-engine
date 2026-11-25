@@ -493,7 +493,7 @@ public final class GradientDescent {
     private static final int LBFGS_M = 10;
 
     /** Gradient norm convergence threshold for L-BFGS: stop when ||∇L||₂ < this. */
-    private static final double LBFGS_GRAD_NORM_THRESHOLD = 1e-5;
+    static final double LBFGS_GRAD_NORM_THRESHOLD = 1e-5;
 
     /**
      * Runs L-BFGS gradient descent using precomputed {@link PositionFeatures}.
@@ -579,6 +579,8 @@ public final class GradientDescent {
                 LOG.info(String.format("[L-BFGS] converged at iteration %d — gradient norm: %.2e",
                         iter, gradNorm));
                 converged = true;
+                // Zero iterations ran: keep the starting MSE and gradient norm as the evidence for Gate 1.
+                if (iter == 1 && metrics != null) metrics.recordImmediateConvergence(currentMse, gradNorm);
                 break;
             }
 

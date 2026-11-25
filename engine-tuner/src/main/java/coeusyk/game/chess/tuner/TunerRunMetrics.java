@@ -22,6 +22,23 @@ public final class TunerRunMetrics {
         terminationReason = converged ? "CONVERGED" : "ITERATION_CAP";
     }
 
+    /** MSE of the starting parameters, set only when the run stopped before its first iteration. */
+    public double initialMse = Double.NaN;
+
+    /** Active-coordinate gradient norm at the start, set only when the run stopped before its first iteration. */
+    public double initialGradNorm = Double.NaN;
+
+    /**
+     * Evidence for a run that converged on its initial gradient and so completed zero iterations. No iteration
+     * is recorded; the MSE and gradient norm of the starting point are what Gate 1 checks.
+     */
+    public void recordImmediateConvergence(double mse, double gradNorm) {
+        initialMse = mse;
+        initialGradNorm = gradNorm;
+        finalMse = mse;
+        minMse = Math.min(minMse, mse);
+    }
+
     /** Number of optimizer iterations that actually ran. */
     public int itersCompleted = 0;
 

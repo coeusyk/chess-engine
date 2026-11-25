@@ -190,10 +190,19 @@ public final class TunerPostRunValidator {
             fail = true;
         }
         if (metrics.itersCompleted < 1) {
-            reasons.append("no iterations completed; ");
-            fail = true;
+            // Zero iterations is legitimate only as convergence on the initial gradient, and then the starting
+            // MSE and a gradient norm below the L-BFGS threshold must both be on record. Nothing is invented here.
+            boolean immediate = "CONVERGED".equals(metrics.terminationReason)
+                    && Double.isFinite(metrics.initialMse)
+                    && Double.isFinite(metrics.initialGradNorm)
+                    && metrics.initialGradNorm >= 0.0
+                    && metrics.initialGradNorm < GradientDescent.LBFGS_GRAD_NORM_THRESHOLD;
+            if (!immediate) {
+                reasons.append("no iterations completed and no valid initial-convergence evidence; ");
+                fail = true;
+            }
         }
-        if (Double.isNaN(metrics.finalMse) || metrics.minMse == Double.MAX_VALUE) {
+        if (!Double.isFinite(metrics.finalMse) || metrics.minMse == Double.MAX_VALUE) {
             reasons.append("no MSE recorded; ");
             fail = true;
         }
@@ -213,7 +222,7 @@ public final class TunerPostRunValidator {
         }
 
         // Check 2: MSE overshoot — finalMse > minMse * 1.15
-        if (!Double.isNaN(metrics.finalMse) && metrics.minMse < Double.MAX_VALUE) {
+        if (Double.isFinite(metrics.finalMse) && metrics.minMse < Double.MAX_VALUE) {
             if (metrics.finalMse > metrics.minMse * MSE_OVERSHOOT_FACTOR) {
                 reasons.append(String.format(
                         "MSE overshot minimum (final=%.6f > min=%.6f × %.2f); ",
@@ -227,6 +236,9 @@ public final class TunerPostRunValidator {
         } else {
             sb.append("PASS — iters=").append(metrics.itersCompleted)
               .append(" termination=").append(metrics.terminationReason)
+              .append(metrics.itersCompleted < 1
+                      ? String.format(" initialMse=%.6f initialGradNorm=%.2e", metrics.initialMse, metrics.initialGradNorm)
+                      : "")
               .append(" hitCap=").append(metrics.hitIterCap)
               .append(String.format(" finalMse=%.6f", Double.isNaN(metrics.finalMse) ? 0 : metrics.finalMse))
               .append(String.format(" meanRelDelta=%.2e", metrics.meanRecentRelDelta(20)));
