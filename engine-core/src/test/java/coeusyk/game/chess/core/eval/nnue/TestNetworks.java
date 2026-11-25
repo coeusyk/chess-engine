@@ -16,13 +16,19 @@ public final class TestNetworks {
     }
 
     public static NnueNetwork synthetic(int hiddenWidth) {
+        return synthetic(hiddenWidth, 127, 64, 20);
+    }
+
+    /**
+     * Same generator at another scale. {@code ftBound} bounds the feature weights and output weights, and
+     * half of it bounds the biases, which gives the historical 20 / 10 / 20 at {@code ftBound = 20}.
+     */
+    public static NnueNetwork synthetic(int hiddenWidth, int qa, int qb, int ftBound) {
         Random random = new Random(SEED);
-        short[] ftWeights = randomShorts(random, FeatureExtractor.FEATURES_PER_PERSPECTIVE * hiddenWidth, 20);
-        short[] ftBiases = randomShorts(random, hiddenWidth, 10);
-        short[] outputWeights = randomShorts(random, 2 * hiddenWidth, 20);
+        short[] ftWeights = randomShorts(random, FeatureExtractor.FEATURES_PER_PERSPECTIVE * hiddenWidth, ftBound);
+        short[] ftBiases = randomShorts(random, hiddenWidth, ftBound / 2);
+        short[] outputWeights = randomShorts(random, 2 * hiddenWidth, ftBound);
         int outputBias = 0;
-        int qa = 127;
-        int qb = 64;
         int outputScale = 400;
         return new NnueNetwork(hiddenWidth, ftWeights, ftBiases, outputWeights, outputBias,
                 qa, qb, outputScale, "test-uuid", "test-commit", 0L);
