@@ -17,7 +17,7 @@ So the cause is a clean, user-initiated power off of the host during the run, no
 
 ## Exit status
 
-Every success signal was misleading. The launcher wrote `finished.txt` at 21:15:10 UTC and `SPRT complete`, `native.complete` contains `0`, and the scheduled task's last result is `0`. The reason is in `native-followup.ps1`: after `& $runner ...` returns it writes `finished.txt` unconditionally, and nothing looks at Cute Chess's exit code, at games abandoned or without a result, or at the games played against the cap. The shutdown killed the engines but let the launcher script reach its last lines. A zero exit status here means "the script ended", not "the SPRT finished".
+Every success signal was misleading. The launcher wrote `finished.txt` at 21:15:10 UTC and `SPRT complete`, `native.complete` contains `0`, and the scheduled task's last result is `0`. The chain is this. Cute Chess ran with `-recover`, which restarts crashed engines instead of stopping the match. When the shutdown killed the engines they could not be restarted, Cute Chess logged `Could not initialize player OLD:` and `Finished match`, and it exited with status 0. `sprt.ps1` does check the exit code (it throws on a non-zero one), saw 0, and printed `SPRT complete` (the last line of `launcher-console.log`). Back in `native-followup.ps1`, `& $runner ...` returned normally, so it wrote `finished.txt` unconditionally and then `native.complete` with `0`. Nothing in that chain looks at the outcome: not at games abandoned or without a result, not at the games played against the cap, not at whether a boundary was reached. A zero exit status here means "Cute Chess and the script ended", not "the SPRT finished". (An earlier version of this note said nothing checks the exit code. The launcher does, and it was 0.)
 
 ## Affected games
 
@@ -45,7 +45,7 @@ The 5,379 pairs are a valid interim sample. The interruption was a power off tha
 Not as it stands. The frozen invocation has three properties that block a protocol-correct continuation:
 
 1. `-openings ... order=random plies=4` with no `-srand`, so the opening sequence was drawn from an unseeded generator and cannot be replayed.
-2. No tournament state file (`-tournamentfile`) was passed, so Cute Chess has nothing to resume from, and a new invocation starts its SPRT at LLR 0. It would stop on its own bounds and ignore the 5,379 pairs already played.
+2. cutechess-cli 1.5.1 (the version used) has no tournament file or resume option, so there is nothing to resume from, and a new invocation starts its SPRT at LLR 0. It would stop on its own bounds and ignore the 5,379 pairs already played. The only related handles it offers are `-srand N` and `-openings ... start=START`.
 3. The protocol requires the frozen manifest to be replayed exactly, and a second run is a different run.
 
 What would be valid, each needing the owner's decision and a written amendment to the protocol:
@@ -69,4 +69,4 @@ So #260 is prepared and verified, but not launched, and nothing can launch it un
 
 ## What to change in the launcher before the next native SPRT
 
-These are observations, not changes made here. The runner should check Cute Chess's exit code and refuse to write a success marker when any game ended abandoned, disconnected or without a result before the cap or a bound. It should also pass `-srand` and a tournament file, so an interruption can be continued without breaking the paired design.
+These are observations, not changes made here, and they are tracked in #319. After the run the launcher should read the log and PGN and refuse to report completion when any game ended abandoned, disconnected or unterminated, or when the run ended below the cap with no boundary reached, because the exit code alone cannot show that. It should also be able to pass a recorded `-srand`. Continuation cannot rely on a state file, since Cute Chess has none, so it would mean a seeded, fixed-block run with the pooled LLR computed offline.
