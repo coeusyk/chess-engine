@@ -391,25 +391,48 @@ public final class PositionLoader {
         LOG.info("[PositionLoader] loadBalanced: {} base + {} flipped = {} total",
                  base.size(), validFlipIdx.length, base.size() + validFlipIdx.length);
 
-        return Collections.unmodifiableList(new AbstractList<LabelledPosition>() {
-            @Override
-            public LabelledPosition get(int i) {
-                if (i < base.size()) return base.get(i);
-                int srcIdx = validFlipIdx[i - base.size()];
-                LabelledPosition src = base.get(srcIdx);
-                String flippedFen = colorFlipFen(src.pos().fen()); // non-null by construction
-                TunerPosition flipped = parseFen(flippedFen);
-                if (flipped == null) {
-                    // Extremely rare: FEN was valid at validation time but failed now.
-                    // Fall back to the unflipped original to avoid NPE.
-                    return src;
-                }
-                return new LabelledPosition(flipped, 1.0 - src.outcome());
-            }
+        return new BalancedList(base, validFlipIdx);
+    }
 
-            @Override
-            public int size() { return base.size() + validFlipIdx.length; }
-        });
+    /** A corpus that knows which records are generated twins, so splitting does not have to infer it. */
+    interface TwinIdentified {
+        /** Index of the record that is the colour-flipped twin of record {@code i}, or -1 if it has none. */
+        int twinOf(int i);
+    }
+
+    /** Read-only base records followed by the colour-flipped copies of the ones that flip. */
+    private static final class BalancedList extends AbstractList<LabelledPosition> implements TwinIdentified {
+        private final List<LabelledPosition> base;
+        private final int[] flipSource;   // flipped record r (index base.size() + r) copies base[flipSource[r]]
+        private final int[] flipOfBase;   // base record i has its flip at index flipOfBase[i], or -1
+
+        BalancedList(List<LabelledPosition> base, int[] flipSource) {
+            this.base = base;
+            this.flipSource = flipSource;
+            this.flipOfBase = new int[base.size()];
+            java.util.Arrays.fill(flipOfBase, -1);
+            for (int r = 0; r < flipSource.length; r++) flipOfBase[flipSource[r]] = base.size() + r;
+        }
+
+        @Override
+        public LabelledPosition get(int i) {
+            if (i < base.size()) return base.get(i);
+            LabelledPosition src = base.get(flipSource[i - base.size()]);
+            String flippedFen = colorFlipFen(src.pos().fen()); // non-null by construction
+            TunerPosition flipped = parseFen(flippedFen);
+            if (flipped == null) {
+                // Extremely rare: FEN was valid at validation time but failed now.
+                // Fall back to the unflipped original to avoid NPE.
+                return src;
+            }
+            return new LabelledPosition(flipped, 1.0 - src.outcome());
+        }
+
+        @Override
+        public int size() { return base.size() + flipSource.length; }
+
+        @Override
+        public int twinOf(int i) { return i < base.size() ? flipOfBase[i] : flipSource[i - base.size()]; }
     }
 
     /**
@@ -575,23 +598,45 @@ public final class PositionLoader {
      * did when single indices were shuffled.
      */
     static List<int[]> twinGroups(List<LabelledPosition> positions) {
+        return twinGroups(positions, PositionLoader::hash64);
+    }
+
+    /** Same with the hash supplied, so a test can force every record into one hash run. */
+    static List<int[]> twinGroups(List<LabelledPosition> positions, java.util.function.ToLongFunction<String> hasher) {
         final int n = positions.size();
-        // One 64-bit hash per record for (canonical position, canonical outcome), and the orientation bit. This
-        // keeps the pass at a few primitive arrays and one sort, where a map of key strings would hold a string
-        // and a queue per position on a corpus of a million.
-        long[] hash = new long[n];
-        boolean[] canonicalSide = new boolean[n];
-        for (int i = 0; i < n; i++) {
-            LabelledPosition lp = positions.get(i);
-            String fen = lp.pos().fen();
-            String own = positionKey(fen);
-            String flipped = colorFlipFen(fen);
-            String other = flipped == null ? own : positionKey(flipped);
-            boolean canonical = own.compareTo(other) <= 0;
-            double canonicalOutcome = canonical ? lp.outcome() : 1.0 - lp.outcome();
-            hash[i] = hash64((canonical ? own : other) + "|" + Math.round(canonicalOutcome * 1000));
-            canonicalSide[i] = canonical;
+        int[] partner = new int[n];
+        java.util.Arrays.fill(partner, -1);
+        if (positions instanceof TwinIdentified known) {
+            // Generated corpora say which records are twins, so no label or hash comparison is involved.
+            for (int i = 0; i < n; i++) {
+                int t = known.twinOf(i);
+                if (t >= 0 && t != i && partner[i] == -1 && partner[t] == -1) { partner[i] = t; partner[t] = i; }
+            }
+        } else {
+            inferTwins(positions, partner, hasher);
         }
+        List<int[]> groups = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            if (partner[i] == -1) groups.add(new int[]{i});
+            else if (partner[i] > i) groups.add(new int[]{i, partner[i]});
+        }
+        return groups;
+    }
+
+    /** Outcomes of a twin pair sum to 1 up to the rounding of {@code 1.0 - o} applied twice. */
+    private static final double TWIN_OUTCOME_TOLERANCE = 1e-9;
+
+    /**
+     * Pairs twins in a corpus that does not say which they are. A 64-bit hash of the twin key only narrows the
+     * search. Records pair up only when their twin keys are equal strings (so a hash collision never pairs two
+     * different positions), they are on opposite orientations, and their outcomes mirror within a tolerance
+     * (no rounding of labels into buckets).
+     */
+    private static void inferTwins(List<LabelledPosition> positions, int[] partner,
+                                   java.util.function.ToLongFunction<String> hasher) {
+        final int n = positions.size();
+        long[] hash = new long[n];
+        for (int i = 0; i < n; i++) hash[i] = hasher.applyAsLong(twinKey(positions.get(i).pos().fen()));
 
         Integer[] order = new Integer[n];
         for (int i = 0; i < n; i++) order[i] = i;
@@ -600,29 +645,50 @@ public final class PositionLoader {
             return c != 0 ? c : Integer.compare(x, y);
         });
 
-        int[] partner = new int[n];
-        java.util.Arrays.fill(partner, -1);
-        java.util.ArrayDeque<Integer> waitingA = new java.util.ArrayDeque<>();
-        java.util.ArrayDeque<Integer> waitingB = new java.util.ArrayDeque<>();
-        for (int r = 0; r < n; r++) {
-            int i = order[r];
-            if (r > 0 && hash[order[r - 1]] != hash[i]) { waitingA.clear(); waitingB.clear(); }
-            java.util.ArrayDeque<Integer> own = canonicalSide[i] ? waitingA : waitingB;
-            java.util.ArrayDeque<Integer> opposite = canonicalSide[i] ? waitingB : waitingA;
-            if (opposite.isEmpty()) {
-                own.add(i);
-            } else {
-                int j = opposite.poll();
+        int start = 0;
+        while (start < n) {
+            int end = start + 1;
+            while (end < n && hash[order[end]] == hash[order[start]]) end++;
+            if (end - start > 1) {
+                java.util.Map<String, List<Integer>> byKey = new java.util.LinkedHashMap<>();
+                for (int r = start; r < end; r++) {
+                    int i = order[r];
+                    byKey.computeIfAbsent(twinKey(positions.get(i).pos().fen()), key -> new ArrayList<>()).add(i);
+                }
+                for (List<Integer> sameKey : byKey.values()) {
+                    if (sameKey.size() > 1) pairMirrored(positions, sameKey, partner);
+                }
+            }
+            start = end;
+        }
+    }
+
+    /** Within records that share a twin key, pairs an opposite-orientation record whose outcome mirrors this one's. */
+    private static void pairMirrored(List<LabelledPosition> positions, List<Integer> sameKey, int[] partner) {
+        List<Integer> ordered = new ArrayList<>(sameKey);
+        Collections.sort(ordered);
+        java.util.TreeMap<Double, java.util.ArrayDeque<Integer>> waitingCanonical = new java.util.TreeMap<>();
+        java.util.TreeMap<Double, java.util.ArrayDeque<Integer>> waitingFlipped = new java.util.TreeMap<>();
+        for (int i : ordered) {
+            LabelledPosition lp = positions.get(i);
+            String fen = lp.pos().fen();
+            String own = positionKey(fen);
+            String flipped = colorFlipFen(fen);
+            boolean canonical = flipped == null || own.compareTo(positionKey(flipped)) <= 0;
+            var opposite = canonical ? waitingFlipped : waitingCanonical;
+            var mine = canonical ? waitingCanonical : waitingFlipped;
+            double target = 1.0 - lp.outcome();
+            Double key = opposite.floorKey(target + TWIN_OUTCOME_TOLERANCE);
+            if (key != null && key >= target - TWIN_OUTCOME_TOLERANCE) {
+                var queue = opposite.get(key);
+                int j = queue.poll();
+                if (queue.isEmpty()) opposite.remove(key);
                 partner[i] = j;
                 partner[j] = i;
+            } else {
+                mine.computeIfAbsent(lp.outcome(), o -> new java.util.ArrayDeque<>()).add(i);
             }
         }
-        List<int[]> groups = new ArrayList<>();
-        for (int i = 0; i < n; i++) {
-            if (partner[i] == -1) groups.add(new int[]{i});
-            else if (partner[i] > i) groups.add(new int[]{i, partner[i]});
-        }
-        return groups;
     }
 
     /** FNV-1a over the characters with a final avalanche; collisions are far below one in 10^9 for a million keys. */

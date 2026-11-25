@@ -241,12 +241,15 @@ public final class GradientDescent {
                                             boolean[] groupMask,
                                             List<PositionFeatures> valFeatures,
                                             TunerRunMetrics metrics) {
+        requireIterations(maxIters);
         int n = initialParams.length;
         double[] params = initialParams.clone();
 
+        // Only active params are clamped; frozen and out-of-group ones keep their input value for the whole run.
         for (int i = 0; i < n; i++) {
-            params[i] = EvalParams.clampOne(i, params[i]);
+            if (EvalParams.isActive(i, groupMask)) params[i] = EvalParams.clampOne(i, params[i]);
         }
+        final double[] owned = params.clone();
 
         double[] accum = params.clone();
         double[] m = new double[n];
@@ -293,9 +296,10 @@ public final class GradientDescent {
             }
 
             EvalParams.enforceMaterialOrdering(params);
+            EvalParams.restoreInactive(params, owned, groupMask);
 
             for (int i = 0; i < n; i++) {
-                if (EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i]) {
+                if (EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i] || !EvalParams.isActive(i, groupMask)) {
                     accum[i] = params[i];
                 }
             }
@@ -334,8 +338,14 @@ public final class GradientDescent {
             currentMse = newMse;
         }
 
-        if (metrics != null) metrics.hitIterCap = !converged;
+        if (metrics != null) metrics.recordTermination(converged);
         return params;
+    }
+
+    private static void requireIterations(int maxIters) {
+        if (maxIters < 1) {
+            throw new IllegalArgumentException("maxIters must be at least 1, got " + maxIters);
+        }
     }
 
     /**
@@ -527,13 +537,16 @@ public final class GradientDescent {
                                                  boolean[] groupMask,
                                                  List<PositionFeatures> valFeatures,
                                                  TunerRunMetrics metrics) {
+        requireIterations(maxIters);
         final int n = initialParams.length;
         final int m = LBFGS_M;
 
         double[] params = initialParams.clone();
+        // Only active params are clamped; frozen and out-of-group ones keep their input value for the whole run.
         for (int i = 0; i < n; i++) {
-            params[i] = EvalParams.clampOne(i, params[i]);
+            if (EvalParams.isActive(i, groupMask)) params[i] = EvalParams.clampOne(i, params[i]);
         }
+        final double[] owned = params.clone();
         // Float accumulator — same purpose as in the Adam path: tracks sub-integer moves
         double[] accum = params.clone();
 
@@ -551,14 +564,14 @@ public final class GradientDescent {
                 currentMse, n, features.size(), m));
 
         // Compute initial gradient (barrier included) — reused in first iteration
-        double[] prevGrad = computeBarrierGradient(features, params, k, 1);
+        double[] prevGrad = computeBarrierGradient(features, params, k, 1, groupMask);
         int belowThresholdCount = 0;
 
         for (int iter = 1; iter <= maxIters; iter++) {
             Instant iterStart = Instant.now();
 
             double[] grad = (iter == 1) ? prevGrad
-                    : computeBarrierGradient(features, params, k, iter);
+                    : computeBarrierGradient(features, params, k, iter, groupMask);
 
             // --- Gradient norm convergence check (Issue #137) ---
             double gradNorm = activeGradNorm(grad, groupMask);
@@ -595,7 +608,7 @@ public final class GradientDescent {
             // --- Discretize and clamp (same logic as Adam path) ---
             double[] newParams = new double[n];
             for (int i = 0; i < n; i++) {
-                if (EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i]) {
+                if (!EvalParams.isActive(i, groupMask)) {
                     newParams[i] = params[i];
                     continue;
                 }
@@ -606,9 +619,10 @@ public final class GradientDescent {
                 }
             }
             EvalParams.enforceMaterialOrdering(newParams);
+            EvalParams.restoreInactive(newParams, owned, groupMask);
 
             // --- Build curvature pair (s, y) in float-accumulator space ---
-            double[] newGrad = computeBarrierGradient(features, newParams, k, iter);
+            double[] newGrad = computeBarrierGradient(features, newParams, k, iter, groupMask);
             double[] sNew = new double[n];
             double[] yNew = new double[n];
             for (int i = 0; i < n; i++) {
@@ -660,7 +674,7 @@ public final class GradientDescent {
             currentMse = newMse;
         }
 
-        if (metrics != null) metrics.hitIterCap = !converged;
+        if (metrics != null) metrics.recordTermination(converged);
         return params;
     }
 
@@ -700,15 +714,18 @@ public final class GradientDescent {
      * @param k        sigmoid scaling constant
      * @param iter     current iteration number (controls barrier gamma annealing)
      */
-    private static double[] computeBarrierGradient(List<PositionFeatures> features,
+    static double[] computeBarrierGradient(List<PositionFeatures> features,
                                                    double[] params,
                                                    double k,
-                                                   int iter) {
+                                                   int iter,
+                                                   boolean[] groupMask) {
         double[] grad = computeGradientFromFeatures(features, params, k);
         double gamma = BARRIER_GAMMA_INIT * Math.pow(BARRIER_ANNEAL_RATE, iter - 1);
         for (int i = 0; i < grad.length; i++) {
+            // Inactive coordinates (frozen or outside the group) carry no gradient into the curvature history,
+            // the two-loop recursion or the descent check, so they cannot steer the active coordinates.
+            if (!EvalParams.isActive(i, groupMask)) { grad[i] = 0.0; continue; }
             if (!EvalParams.isScalarParam(i)) continue;
-            if (EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i]) continue;
             double dist = params[i] - EvalParams.PARAM_MIN[i];
             if (dist < 1e-4) dist = 1e-4;
             grad[i] -= gamma / dist;
@@ -764,8 +781,7 @@ public final class GradientDescent {
     static double activeGradNorm(double[] grad, boolean[] groupMask) {
         double sq = 0.0;
         for (int i = 0; i < grad.length; i++) {
-            if (EvalParams.PARAM_MIN[i] == EvalParams.PARAM_MAX[i]) continue;
-            if (groupMask != null && !groupMask[i]) continue;
+            if (!EvalParams.isActive(i, groupMask)) continue;
             sq += grad[i] * grad[i];
         }
         return Math.sqrt(sq);

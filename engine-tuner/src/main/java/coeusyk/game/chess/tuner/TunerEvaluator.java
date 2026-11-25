@@ -584,10 +584,17 @@ public final class TunerEvaluator {
 
     /**
      * Hanging piece penalty from White's perspective (positive = Black has more
-     * hanging pieces). Mirrors the engine-core {@code Evaluator.hangingPenalty()}
-     * logic without the mating-net suppression (not needed for gradient signal).
+     * hanging pieces). Mirrors the engine-core {@code Evaluator.hangingPenalty()}.
      */
     private static int hangingPenalty(PositionData pos, double[] params) {
+        return netHanging(pos) * (int) params[EvalParams.IDX_HANGING_PENALTY];
+    }
+
+    /**
+     * Net hanging count (positive = Black has more hanging pieces) after the #138 mating-net suppression. The
+     * static evaluator and the Adam/L-BFGS feature extraction both call this, so the two cannot disagree.
+     */
+    static int netHanging(PositionData pos) {
         long allOcc = pos.getWhiteOccupancy() | pos.getBlackOccupancy();
         long attackedByWhite = computeAttackedBy(pos, true,  allOcc);
         long attackedByBlack = computeAttackedBy(pos, false, allOcc);
@@ -612,8 +619,7 @@ public final class TunerEvaluator {
                 blackHanging &= ~kingRingAttackers(pos, false, allOcc, ring);
             }
         }
-        return (Long.bitCount(blackHanging) - Long.bitCount(whiteHanging))
-             * (int) params[EvalParams.IDX_HANGING_PENALTY];
+        return Long.bitCount(blackHanging) - Long.bitCount(whiteHanging);
     }
 
     /** Squares of the knights, bishops, rooks and queens of one side whose attacks reach {@code ring}. */
@@ -1312,14 +1318,8 @@ public final class TunerEvaluator {
      * (positive = Black has more hanging pieces).
      */
     private static void addHangingPenaltyFeatures(PositionData pos, float[] tmp) {
-        long allOcc = pos.getWhiteOccupancy() | pos.getBlackOccupancy();
-        long attackedByWhite = computeAttackedBy(pos, true,  allOcc);
-        long attackedByBlack = computeAttackedBy(pos, false, allOcc);
-        long whiteHanging = (pos.getWhiteOccupancy() & ~pos.getWhiteKing())
-                          & attackedByBlack & ~attackedByWhite;
-        long blackHanging = (pos.getBlackOccupancy() & ~pos.getBlackKing())
-                          & attackedByWhite & ~attackedByBlack;
-        int net = Long.bitCount(blackHanging) - Long.bitCount(whiteHanging);
+        // Same count, including the #138 mating-net suppression, as the static evaluator uses.
+        int net = netHanging(pos);
         if (net != 0) {
             tmp[EvalParams.IDX_HANGING_PENALTY] = net;
         }

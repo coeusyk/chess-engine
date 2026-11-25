@@ -232,19 +232,15 @@ public final class TunerMain {
         double[] params = EvalParams.extractFromCurrentEval();
         LOG.info("[TunerMain] Parameter count: {}", params.length);
 
-        // --- Precompute feature vectors for training partition only ---
+        // --- Precompute feature vectors: train partition for the optimiser, val partition for K only ---
         LOG.info("[TunerMain] Building precomputed feature vectors...");
         Instant featStart = Instant.now();
-        List<PositionFeatures> features = PositionFeatures.buildList(partition.train());
+        TuningData data = TuningData.of(partition);
+        List<PositionFeatures> features = data.trainFeatures();
+        List<PositionFeatures> trainFeatures = data.trainFeatures();
+        List<PositionFeatures> valFeatures = data.valFeatures();
         long featMs = Duration.between(featStart, Instant.now()).toMillis();
         LOG.info(String.format("[TunerMain] Feature vectors built in %,d ms", featMs));
-
-        // --- Feature-level 90/10 subList split for K calibration isolation ---
-        // K is fitted exclusively on valFeatures so it never sees the training signal.
-        // trainFeatures and valFeatures are O(1) views — no copy of feature data.
-        int valFeatSize = featureValSplitSize(features.size());
-        List<PositionFeatures> valFeatures   = features.subList(features.size() - valFeatSize, features.size());
-        List<PositionFeatures> trainFeatures = features.subList(0, features.size() - valFeatSize);
         LOG.info("[TunerMain] Feature split — train: {} | val (K-only): {}", trainFeatures.size(), valFeatures.size());
 
         // --- Find optimal K using val features only (never training data) ---
@@ -327,17 +323,8 @@ public final class TunerMain {
         double[] tuned;
         boolean[] groupMask = (paramGroup != null) ? EvalParams.buildGroupMask(paramGroup) : null;
         TunerRunMetrics metrics = new TunerRunMetrics();
-        if ("adam".equals(optimizer)) {
-            LOG.info(String.format("[TunerMain] Running Adam gradient descent (K=%.6f, maxIters=%d, fast-path)...", k, maxIters));
-            tuned = GradientDescent.tuneWithFeatures(trainFeatures, params, k, maxIters, recalibrateK, groupMask, valFeatures, metrics);
-        } else if ("lbfgs".equals(optimizer)) {
-            LOG.info(String.format("[TunerMain] Running L-BFGS (K=%.6f, maxIters=%d, m=10, ||\u2207L||<1e-5 convergence)...", k, maxIters));
-            tuned = GradientDescent.tuneWithFeaturesLBFGS(trainFeatures, params, k, maxIters, recalibrateK, groupMask, valFeatures, metrics);
-        } else {
-            LOG.warn("[TunerMain] WARN: coordinate descent uses full positions list; feature-level train/val split is not enforced for this optimizer.");
-            LOG.info(String.format("[TunerMain] Running coordinate descent (K=%.6f, maxIters=%d)...", k, maxIters));
-            tuned = CoordinateDescent.tune(positions, params, k, maxIters, recalibrateK, metrics);
-        }
+        LOG.info(String.format("[TunerMain] Running %s (K=%.6f, maxIters=%d)...", optimizer, k, maxIters));
+        tuned = optimize(optimizer, data, params, k, maxIters, recalibrateK, groupMask, metrics);
 
         // Final K — fitted on val features only
         LOG.info("[TunerMain] Computing final K (on val features)...");
@@ -409,9 +396,34 @@ public final class TunerMain {
         }
     }
 
-    /** Package-private for testing: size of the val split (10% of n, min 1). */
-    static int featureValSplitSize(int n) {
-        return Math.max(1, (int)(n * 0.10));
+    /**
+     * What the optimisers may see. The train partition drives the objective and the val partition is used only
+     * to calibrate K, for every optimiser. The test partition never enters.
+     */
+    record TuningData(List<LabelledPosition> trainPositions, List<LabelledPosition> valPositions,
+                      List<PositionFeatures> trainFeatures, List<PositionFeatures> valFeatures) {
+        static TuningData of(CorpusPartition partition) {
+            if (partition.train().isEmpty() || partition.val().isEmpty()) {
+                throw new IllegalArgumentException("train and val partitions must both be non-empty, got "
+                        + partition.train().size() + " / " + partition.val().size());
+            }
+            return new TuningData(partition.train(), partition.val(),
+                    PositionFeatures.buildList(partition.train()), PositionFeatures.buildList(partition.val()));
+        }
+    }
+
+    /** Runs the chosen optimiser on {@code data}; the single place the CLI hands data to an optimiser. */
+    static double[] optimize(String optimizer, TuningData data, double[] params, double k, int maxIters,
+                             boolean recalibrateK, boolean[] groupMask, TunerRunMetrics metrics) {
+        if ("adam".equals(optimizer)) {
+            return GradientDescent.tuneWithFeatures(data.trainFeatures(), params, k, maxIters, recalibrateK,
+                    groupMask, data.valFeatures(), metrics);
+        } else if ("lbfgs".equals(optimizer)) {
+            return GradientDescent.tuneWithFeaturesLBFGS(data.trainFeatures(), params, k, maxIters, recalibrateK,
+                    groupMask, data.valFeatures(), metrics);
+        }
+        return CoordinateDescent.tune(data.trainPositions(), data.valPositions(), params, k, maxIters,
+                recalibrateK, groupMask, metrics);
     }
 
     /** Prepends fingerprint, split metadata, and MSE diagnostics as comment lines in tuned_params.txt. */

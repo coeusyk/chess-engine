@@ -17,6 +17,49 @@ class TunerValidatorTest {
     private static final TunerPostRunValidator.ValidatorConfig SKIP_SMOKE =
             new TunerPostRunValidator.ValidatorConfig(true, 100, 3, 0.30);
 
+    /** Metrics for a run whose optimizer reported how it ended; the tests then set the numbers under test. */
+    private static TunerRunMetrics recorded() {
+        TunerRunMetrics m = new TunerRunMetrics();
+        m.recordTermination(true);
+        return m;
+    }
+
+    @Test
+    void convergence_fails_closed_when_the_optimizer_never_reported_termination() {
+        TunerRunMetrics m = new TunerRunMetrics();
+        m.itersCompleted = 200;
+        m.finalMse = 0.02;
+        m.minMse = 0.019;
+        for (int i = 0; i < 20; i++) m.recordRelDelta(1e-6);
+
+        assertTrue(TunerPostRunValidator.checkConvergence(m).contains("FAIL"));
+    }
+
+    @Test
+    void convergence_fails_closed_with_no_iterations_or_no_mse() {
+        TunerRunMetrics m = recorded();
+        String verdict = TunerPostRunValidator.checkConvergence(m);
+        assertTrue(verdict.contains("FAIL") && verdict.contains("no iterations"), verdict);
+    }
+
+    @Test
+    void convergence_fails_closed_when_the_cap_was_hit_with_no_delta_evidence() {
+        TunerRunMetrics m = new TunerRunMetrics();
+        m.recordTermination(false);
+        m.itersCompleted = 5;
+        m.finalMse = 0.02;
+        m.minMse = 0.02;
+        String verdict = TunerPostRunValidator.checkConvergence(m);
+        assertTrue(verdict.contains("FAIL") && verdict.contains("no relative-delta"), verdict);
+    }
+
+    @Test
+    void validate_fails_when_there_are_no_metrics() {
+        TunerPostRunValidator.ValidationResult result =
+                TunerPostRunValidator.validate(validParams, validParams, null, SKIP_SMOKE);
+        assertFalse(result.passed(), result.reportText());
+    }
+
     /** A parameter array that satisfies all default sanity constraints. */
     private double[] validParams;
 
@@ -31,7 +74,7 @@ class TunerValidatorTest {
 
     @Test
     void convergence_pass_with_low_delta_and_no_cap() {
-        TunerRunMetrics m = new TunerRunMetrics();
+        TunerRunMetrics m = recorded();
         m.itersCompleted = 200;
         m.hitIterCap = false;
         m.finalMse = 0.02;
@@ -45,7 +88,7 @@ class TunerValidatorTest {
 
     @Test
     void convergence_pass_when_cap_hit_but_delta_tiny() {
-        TunerRunMetrics m = new TunerRunMetrics();
+        TunerRunMetrics m = recorded();
         m.itersCompleted = 1500;
         m.hitIterCap = true;
         m.finalMse = 0.0250;
@@ -60,7 +103,7 @@ class TunerValidatorTest {
 
     @Test
     void convergence_fail_on_iter_cap_with_high_delta() {
-        TunerRunMetrics m = new TunerRunMetrics();
+        TunerRunMetrics m = recorded();
         m.itersCompleted = 1500;
         m.hitIterCap = true;
         m.finalMse = 0.05;
@@ -76,7 +119,7 @@ class TunerValidatorTest {
 
     @Test
     void convergence_fail_on_mse_overshoot() {
-        TunerRunMetrics m = new TunerRunMetrics();
+        TunerRunMetrics m = recorded();
         m.itersCompleted = 300;
         m.hitIterCap = false;
         m.minMse   = 100.0;
@@ -91,7 +134,7 @@ class TunerValidatorTest {
 
     @Test
     void convergence_pass_when_mse_just_below_overshoot_threshold() {
-        TunerRunMetrics m = new TunerRunMetrics();
+        TunerRunMetrics m = recorded();
         m.itersCompleted = 500;
         m.hitIterCap = false;
         m.minMse   = 100.0;
@@ -316,13 +359,13 @@ class TunerValidatorTest {
 
     @Test
     void metrics_mean_returns_nan_before_any_records() {
-        TunerRunMetrics m = new TunerRunMetrics();
+        TunerRunMetrics m = recorded();
         assertTrue(Double.isNaN(m.meanRecentRelDelta(5)));
     }
 
     @Test
     void metrics_mean_uses_last_n_entries() {
-        TunerRunMetrics m = new TunerRunMetrics();
+        TunerRunMetrics m = recorded();
         for (int i = 0; i < 25; i++) m.recordRelDelta(i * 0.001); // 0..0.024
         // After 25 records the ring holds the last 20 (indices 5..24 → values 0.005..0.024)
         double mean20 = m.meanRecentRelDelta(20);
@@ -336,7 +379,7 @@ class TunerValidatorTest {
     // =========================================================================
 
     private TunerRunMetrics buildGoodMetrics() {
-        TunerRunMetrics m = new TunerRunMetrics();
+        TunerRunMetrics m = recorded();
         m.itersCompleted = 200;
         m.hitIterCap = false;
         m.minMse   = 0.020;

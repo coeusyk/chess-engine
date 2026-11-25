@@ -1,112 +1,73 @@
 package coeusyk.game.chess.tuner;
 
+import coeusyk.game.chess.core.models.Board;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
 
+import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for the feature-level 90/10 train/val split used in K calibration isolation.
- *
- * <p>The split is performed as an O(1) subList view of the full feature list so that:
- * <ul>
- *   <li>K is fitted exclusively on {@code valFeatures} (never on training data)</li>
- *   <li>The gradient is computed exclusively on {@code trainFeatures}</li>
- *   <li>The two views are non-overlapping and together cover the full feature list</li>
- * </ul>
+ * Partition isolation along the real CLI-to-optimiser path (#274): the optimisers receive the train partition
+ * for the objective and the val partition for K, and nothing else, for coordinate descent as well as Adam and
+ * L-BFGS.
  */
 class KCalibrationIsolationTest {
 
-    // -----------------------------------------------------------------------
-    // featureValSplitSize
-    // -----------------------------------------------------------------------
-
-    @ParameterizedTest(name = "n={0} -> valSize={1}")
-    @CsvSource({
-        "100,  10",
-        "200,  20",
-        "50,    5",
-        "10,    1",
-        "1,     1",   // min-1 clamp
-        "9,     1",   // 0.10 * 9 = 0.9, cast to int = 0, clamped to 1
-        "0,     1",   // min-1 clamp even for empty list
-    })
-    void featureValSplitSize_isCorrect(int n, int expected) {
-        assertEquals(expected, TunerMain.featureValSplitSize(n));
+    private static List<LabelledPosition> corpus(int n) {
+        List<LabelledPosition> out = new ArrayList<>();
+        List<String> fens = CoreTunerParityTest.seededPositions(n, 99);
+        for (int i = 0; i < n; i++) {
+            out.add(new LabelledPosition(TunerPosition.from(new Board(fens.get(i))), (i % 3) * 0.5));
+        }
+        return out;
     }
 
-    // -----------------------------------------------------------------------
-    // Feature-level subList split properties
-    // -----------------------------------------------------------------------
-
-    @Test
-    void split100_trainIs90_valIs10() {
-        List<Integer> features = makeList(100);
-        int valSize = TunerMain.featureValSplitSize(features.size());
-
-        List<Integer> valFeatures   = features.subList(features.size() - valSize, features.size());
-        List<Integer> trainFeatures = features.subList(0, features.size() - valSize);
-
-        assertEquals(90, trainFeatures.size(), "train should be 90");
-        assertEquals(10, valFeatures.size(),   "val should be 10");
+    /** A list view that counts reads, so a test can tell which partition an optimiser touched. */
+    private static final class Counting extends AbstractList<LabelledPosition> {
+        final List<LabelledPosition> inner;
+        final AtomicInteger reads = new AtomicInteger();
+        Counting(List<LabelledPosition> inner) { this.inner = inner; }
+        @Override public LabelledPosition get(int i) { reads.incrementAndGet(); return inner.get(i); }
+        @Override public int size() { return inner.size(); }
     }
 
     @Test
-    void splitCoversFullList() {
-        List<Integer> features = makeList(100);
-        int valSize = TunerMain.featureValSplitSize(features.size());
+    void tuningDataTakesFeaturesFromTheTrainAndValPartitionsOnly() {
+        CorpusPartition p = PositionLoader.split(corpus(60), 0.6, 0.2, 7);
 
-        List<Integer> valFeatures   = features.subList(features.size() - valSize, features.size());
-        List<Integer> trainFeatures = features.subList(0, features.size() - valSize);
+        TunerMain.TuningData data = TunerMain.TuningData.of(p);
 
-        assertEquals(features.size(), trainFeatures.size() + valFeatures.size(),
-                "train + val must equal total feature count");
+        assertSame(p.train(), data.trainPositions());
+        assertSame(p.val(), data.valPositions());
+        assertEquals(p.train().size(), data.trainFeatures().size(), "the optimiser trains on the whole train partition");
+        assertEquals(p.val().size(), data.valFeatures().size(), "K is fitted on the val partition, not a slice of train");
+        assertTrue(data.trainFeatures().size() + data.valFeatures().size() < 60, "the test partition is not included");
     }
 
     @Test
-    void splitIsNonOverlapping() {
-        int n = 100;
-        List<Integer> features = makeList(n);
-        int valSize = TunerMain.featureValSplitSize(features.size());
-
-        int trainEnd = features.size() - valSize;
-        List<Integer> trainFeatures = features.subList(0, trainEnd);
-        List<Integer> valFeatures   = features.subList(trainEnd, features.size());
-
-        // The last element of train must be the element immediately before the first element of val.
-        int lastTrainVal = trainFeatures.get(trainFeatures.size() - 1);
-        int firstValVal  = valFeatures.get(0);
-        assertEquals(lastTrainVal + 1, firstValVal,
-                "train and val must form a contiguous, non-overlapping partition");
+    void anEmptyValPartitionIsRejectedInsteadOfFallingBackToTrain() {
+        CorpusPartition p = new CorpusPartition(corpus(5), List.of(), List.of());
+        assertThrows(IllegalArgumentException.class, () -> TunerMain.TuningData.of(p));
     }
 
     @Test
-    void splitWith1Element_minClampApplied() {
-        List<Integer> features = makeList(1);
-        int valSize = TunerMain.featureValSplitSize(features.size());
+    void coordinateDescentTrainsOnTrainAndCalibratesKOnVal() {
+        List<LabelledPosition> all = corpus(30);
+        Counting train = new Counting(all.subList(0, 20));
+        Counting val = new Counting(all.subList(20, 30));
+        TunerMain.TuningData data = new TunerMain.TuningData(train, val, List.of(), List.of());
+        boolean[] oneParam = new boolean[EvalParams.TOTAL_PARAMS];
+        oneParam[EvalParams.IDX_TEMPO] = true;
 
-        // Min-clamp: valSize == 1 even for a single-element list
-        assertEquals(1, valSize);
-        // trainFeatures is empty; valFeatures holds the single element
-        List<Integer> trainFeatures = features.subList(0, features.size() - valSize);
-        List<Integer> valFeatures   = features.subList(features.size() - valSize, features.size());
+        TunerRunMetrics metrics = new TunerRunMetrics();
+        TunerMain.optimize("coordinate", data, EvalParams.extractFromCurrentEval(), 1.0, 1, true, oneParam, metrics);
 
-        assertTrue(trainFeatures.isEmpty(), "train must be empty when n=1");
-        assertEquals(1, valFeatures.size(), "val must hold the single element");
-    }
-
-    // -----------------------------------------------------------------------
-    // Helpers
-    // -----------------------------------------------------------------------
-
-    /** Builds a simple integer list 0..n-1 as a stand-in for feature objects. */
-    private static List<Integer> makeList(int n) {
-        List<Integer> list = new ArrayList<>(n);
-        for (int i = 0; i < n; i++) list.add(i);
-        return list;
+        assertTrue(train.reads.get() > 0, "the objective reads the train partition");
+        assertTrue(val.reads.get() > 0, "K recalibration reads the val partition, not train");
+        assertNotEquals("NOT_RUN", metrics.terminationReason, "the run must report how it ended");
     }
 }

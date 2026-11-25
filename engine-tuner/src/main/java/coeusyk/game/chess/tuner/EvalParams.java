@@ -226,6 +226,21 @@ public final class EvalParams {
         return hi;
     }
 
+    /**
+     * True when the optimiser may move parameter {@code i}: it is not frozen ({@code min == max}) and
+     * {@code groupMask} (null means every parameter) selects it. Every optimiser uses this one definition.
+     */
+    public static boolean isActive(int i, boolean[] groupMask) {
+        return PARAM_MIN[i] != PARAM_MAX[i] && (groupMask == null || groupMask[i]);
+    }
+
+    /** Copies the {@code owned} value back over every inactive parameter, undoing side effects such as material ordering. */
+    public static void restoreInactive(double[] params, double[] owned, boolean[] groupMask) {
+        for (int i = 0; i < params.length; i++) {
+            if (!isActive(i, groupMask)) params[i] = owned[i];
+        }
+    }
+
     /** Clamps a single parameter value to its legal range. */
     public static double clampOne(int i, double value) {
         return Math.max(PARAM_MIN[i], Math.min(PARAM_MAX[i], value));

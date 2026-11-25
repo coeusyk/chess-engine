@@ -13,6 +13,15 @@ public final class TunerRunMetrics {
      *  (as opposed to a convergence criterion or plateau stop). */
     public boolean hitIterCap = false;
 
+    /** Why the run ended: {@code NOT_RUN} until an optimizer finishes, then {@code CONVERGED} or {@code ITERATION_CAP}. */
+    public String terminationReason = "NOT_RUN";
+
+    /** Records how the run ended; every optimizer calls this once on exit, converged or not. */
+    public void recordTermination(boolean converged) {
+        hitIterCap = !converged;
+        terminationReason = converged ? "CONVERGED" : "ITERATION_CAP";
+    }
+
     /** Number of optimizer iterations that actually ran. */
     public int itersCompleted = 0;
 
