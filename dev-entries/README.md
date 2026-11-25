@@ -34,6 +34,10 @@ Use the active phase file for ongoing updates and outcomes.
 - [dev-entries/phase-30.md](dev-entries/phase-30.md)
 
 ## Logging Rule
-- Add new entries to the active phase file (`phase-N.md`).
+- Phase 22 (Post-0.6.0 Engineering Hardening) is the active log. Add new entries there, tagged with a workstream.
+- `phase-23` to `phase-30` are legacy labels kept as historical logs. Do not add to them. The mapping to Phase 22 workstreams is in `phase-22.md`.
+- Phase numbers are allocated only by an explicit roadmap decision, never by creating a branch. None beyond 22 is allocated.
+- Phases 15 and 17 have no file here. Their records are in the NNUE research docs and keep their historical statuses.
+- Add entries to the active phase file (`phase-N.md`) for earlier phases only when correcting their record.
 - Use `pre-phase.md` for work done before formal phase tracking.
 - Use `misc.md` only for cross-phase or repository-wide items.

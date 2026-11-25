@@ -1,4 +1,44 @@
-# Phase 22. API input correctness
+# Phase 22. Post-0.6.0 Engineering Hardening
+
+Consolidated phase approved 2026-11-25. It covers the work since Phase 21 under four workstreams:
+
+- Engine correctness
+- NNUE and tuner integrity
+- Search and runtime performance
+- Validation infrastructure
+
+Work goes on independent `fix/`, `perf/`, `feat/`, `research/` and `infra/` branches. No phase after 22 is allocated until a roadmap decision says so, and such decisions are recorded in this file.
+
+**Exit criteria (outcome-based):**
+- Confirmed high-priority defects are fixed or explicitly dispositioned with a reason.
+- Performance changes have controlled measurements.
+- Strength changes have appropriate validation (SPRT per CLAUDE.md Section 6).
+- Unresolved blockers are identified here.
+- Closing every audit issue is not required.
+
+**Legacy label mapping.** The dated entries below and the `phase-23` to `phase-30` files were written under per-topic labels. They are kept as written.
+
+| Legacy label | Log | Workstream |
+|---|---|---|
+| Phase 22, API input correctness | this file | Engine correctness |
+| Phase 23, Opening-book correctness | `phase-23.md` | Engine correctness |
+| Phase 25, trainer contracts | `phase-25.md` | NNUE and tuner integrity |
+| Phase 26, WSL2 qualification | `phase-26.md` | Validation infrastructure |
+| Phase 27, search history and table contamination | `phase-27.md` | Engine correctness |
+| Phase 30, NNUE quantization audit | `phase-30.md` | NNUE and tuner integrity |
+| Phases 24, 28, 29, 31, 32 | no log exists | unassigned |
+
+Phases 15 and 17 keep their historical statuses. The A to E scope in `docs/NNUE_PRD.md` is NNUE planning and is separate from engine-wide phases. Frozen experiments, #296 and #260 are unaffected by this consolidation.
+
+## Roadmap decisions
+
+### [2026-11-25] Consolidate post-0.6.0 work into Phase 22
+
+**Built:** Documentation only: this header, the branch convention and phase rules in CLAUDE.md, and the logging rule in `dev-entries/README.md`.
+
+**Decisions Made:** One phase with four workstreams replaces per-topic phase labels. The one-branch-per-phase rule and the ban on per-issue branches are dropped, because per-scope branches (for example `fix/tt-collision-policy`) were already how the work was done. Phase exit is judged on outcomes rather than on closing every audit issue. Existing branches, history and the legacy logs are left alone.
+
+## Logged work
 
 ### [2026-11-24] Invalid FEN responses
 

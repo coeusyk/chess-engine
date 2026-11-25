@@ -12,8 +12,17 @@ Vex is a Java chess engine speaking the UCI protocol.
 
 ## 2. Workflow
 
-Branch convention: one branch per phase, `phase/N-short-name` (e.g. `phase/14-eval-optimization`).
-Never create per-issue branches.
+Branch convention: independent branches named by scope, `fix/`, `perf/`, `feat/`, `research/` or
+`infra/` plus a short name (e.g. `fix/tt-collision-policy`). Branch from `develop`, one scope per
+branch. Branch creation never allocates a phase. Phase numbers come only from an explicit roadmap
+decision, recorded in the phase log (Section 9).
+
+Current phase: Phase 22, Post-0.6.0 Engineering Hardening, with four workstreams: engine
+correctness, NNUE and tuner integrity, search and runtime performance, validation infrastructure.
+No phase 23 onward exists without a roadmap decision. Phase 22 exits on outcomes, not issue counts:
+confirmed high-priority defects are fixed or explicitly dispositioned, performance changes have
+controlled measurements, strength changes have appropriate validation (Section 6), and unresolved
+blockers are named. Closing every audit issue is not a requirement.
 
 ## 3. Build Commands
 
@@ -82,8 +91,10 @@ Closes #N Phase: N — name
 
 ## 9. Dev Entries (Decision Log)
 
-`dev-entries/` holds the development log, split one file per phase (`dev-entries/phase-N.md`),
-following `dev-entries/README.md`. This is where phase decisions, rationale, and measurements are
+`dev-entries/` holds the development log, split one file per phase (`dev-entries/phase-N.md`).
+Phase 22 is the active log: record new decisions there, tagged with their workstream. The legacy
+`phase-23` to `phase-30` files are historical and stay as written (mapping in `phase-22.md`). The
+log follows `dev-entries/README.md`. This is where phase decisions, rationale, and measurements are
 recorded — separate from `docs/engineering/investigations/` (Section 7, standalone case studies for
 reusable methodology) and separate from GitHub issues (which track task state, not decision
 rationale).
