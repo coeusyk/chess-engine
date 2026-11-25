@@ -156,6 +156,23 @@ the script; the only way to recover them is your own shell history. See
 throughput/concurrency investigation this was learned from, and `tools/benchmark_concurrency.ps1`
 for empirically finding the concurrency that maximizes games/hour on your own machine.
 
+**Completion is checked, not assumed (#319).** Cute Chess exits 0 under `-recover` even when its engines are killed,
+so an exit code of 0 does not mean a run finished. `sprt.ps1` and `sprt_linux.py` now check the exit code first (a
+non-zero exit fails on its own) and then run `tools/match_validation.py` on the log and PGN. They print
+`SPRT complete` only for `COMPLETE_BOUNDARY` or `COMPLETE_CAP`, and otherwise print the state (`INTERRUPTED`,
+`OVERRUN` or `INVALID_EVIDENCE`) with the reasons, keep all evidence and fail. `sprt.ps1` needs `python` and
+`match_validation.py` next to it and refuses to launch without them. You can run the check on any finished run:
+`python tools/match_validation.py --log RUN.log --pgn RUN.pgn --expected-games N [--sprt]`.
+
+**Seeded openings (opt-in).** `sprt.ps1 -Seed N` and `sprt_linux.py --seed N` add `-srand N` so the opening order
+can be replayed. Without it the arguments are unchanged.
+
+**Fixed-count matches.** `tools/fixed_count_match.py` runs a fixed number of games with no SPRT stopping rule, a
+required `--seed`, an argument manifest and a provenance record with the hashes of both JARs, the book, the launcher and
+Cute Chess. `--prepare-only` writes them and launches nothing, and `--expected-provenance-path` refuses to launch
+unless the arguments and every hash match the prepared record. Success means `COMPLETE_CAP` from the same validator.
+It runs on native Windows and on Linux. The first use is the #260 characterization.
+
 ---
 
 ## Benchmarking SPRT Concurrency

@@ -64,9 +64,11 @@ Same arguments as `sprt.ps1` builds for the historical preparation, with three d
 -engine name=OLD cmd=java arg=--add-modules arg=jdk.incubator.vector arg=-jar arg=<base.jar> proto=uci option.Threads=1
         (the same options)
 -each tc=5+0.05 -games 4000 -repeat -recover -resign movecount=5 score=400 -draw movenumber=40 movecount=8 score=10
--concurrency 6 -ratinginterval 10 -pgnout <match.pgn> -srand 260258
--openings file=<noob_3moves.epd> format=epd order=random plies=4
+-concurrency 6 -ratinginterval 10 -pgnout <match.pgn>
+-openings file=<noob_3moves.epd> format=epd order=random plies=4 -srand 260258
 ```
+
+The launcher is `tools/fixed_count_match.py`. It builds this list from the same function as `sprt_linux.py` and removes the `-sprt` group, so `-srand` comes last. Its prepare-only mode writes the argument manifest and a provenance record with the SHA-256 of both JARs, the book, the launcher and the Cute Chess executable, the game count and the seed. Launching with `--expected-provenance-path` refuses to start unless the arguments and all of those hashes equal the prepared record.
 
 `-recover` is kept so the engine settings and the game flow are the same as in the historical run. The consequence is that Cute Chess finishes a match after engines it cannot restart, so completion is decided from the log and PGN by the new launcher's own validation and not from the exit code (#319).
 
