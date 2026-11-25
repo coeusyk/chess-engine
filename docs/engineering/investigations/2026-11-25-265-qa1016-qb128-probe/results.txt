@@ -1,0 +1,24 @@
+Python half (probe265.py, develop be7cfff, one niced core), P5 control final checkpoint:
+
+base qa/qb/width: 127 64 256 positions: 393
+qa127_qb64 qa 127 qb 64 ft max |w| 19 bias range -3 4 out max |w| 46 loader violations 0
+qa1016_qb128 qa 1016 qb 128 ft max |w| 156 bias range -23 31 out max |w| 92 loader violations 0
+
+Java half (ScaleProbeTest, origin/phase/32-nnue-vector-dot 1de80b2, vector module enabled), same two exports:
+
+PROBE vectorAvailable=true lanes=32
+PROBE qa127_qb64 loaded qa=127 qb=64 width=256 dotFitsInt=true qa*sum|w|/intMax=0.0007
+PROBE qa127_qb64 positions=393 javaVsPythonMismatches=0 vectorDotVsScalarMismatches=0 accRange=[-82,50] valuesAboveQa=0 valuesBelowZero=110297
+PROBE qa127_qb64 fuzzChecks=2400 incrementalVsScalarRebuildDiverged=0 incrementalEvalVsRebuildEvalDiverged=0 accRange=[-99,46]
+PROBE qa1016_qb128 loaded qa=1016 qb=128 width=256 dotFitsInt=true qa*sum|w|/intMax=0.0106
+PROBE qa1016_qb128 positions=393 javaVsPythonMismatches=0 vectorDotVsScalarMismatches=0 accRange=[-649,391] valuesAboveQa=0 valuesBelowZero=113826
+PROBE qa1016_qb128 fuzzChecks=2400 incrementalVsScalarRebuildDiverged=0 incrementalEvalVsRebuildEvalDiverged=0 accRange=[-798,366]
+
+Artifact hashes (SHA-256):
+  score files, deterministic, reproduced bit for bit on a second run:
+    62d607d6a7c21682d53a3991d03644cccb61be7c1eb7e7dc0ff1081df41077da  qa1016_qb128.scores.tsv
+    915eb86574772cbd514be234dac619609dce65377d40ab5873aa447e167bccf4  qa127_qb64.scores.tsv
+  exported nets from the original run. The header holds the export time, so a re-export has different bytes
+  (the second run gave 92b9eb26... and de082022...) while the scores above stay identical:
+    e6121d25d5e5e69940ab849fe96409bd9b659deaeb7a16dcba62c7607cd2aa42  qa1016_qb128.nnue
+    9f05d1500eca552afbe62a90acabcec0677c7a5ab6d2d600a4b4d7735f4df69a  qa127_qb64.nnue

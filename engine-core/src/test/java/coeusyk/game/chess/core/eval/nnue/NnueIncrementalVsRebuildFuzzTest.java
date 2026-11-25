@@ -5,7 +5,7 @@ import coeusyk.game.chess.core.models.Move;
 import coeusyk.game.chess.core.models.Piece;
 import coeusyk.game.chess.core.movegen.MovesGenerator;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.util.ArrayList;
 import java.util.Random;
@@ -39,14 +39,15 @@ class NnueIncrementalVsRebuildFuzzTest {
      * ({@code loopBound(8) == 0}). 256 runs whole vector iterations; 264 adds a scalar tail
      * after them on 16- and 32-lane hardware (#269).
      */
-    @ParameterizedTest(name = "width {0}")
-    @ValueSource(ints = {8, 256, 264})
-    void incrementalAccumulatorMatchesFullRebuildOverRandomLegalGames(int width) {
-        System.out.println("[NnueFuzz] seed=" + SEED + " games=" + GAMES + " width=" + width
+    @ParameterizedTest(name = "width {0}, qa {1}, qb {2}")
+    @CsvSource({"8,127,64", "256,127,64", "264,127,64", "256,1016,128"})
+    void incrementalAccumulatorMatchesFullRebuildOverRandomLegalGames(int width, int qa, int qb) {
+        System.out.println("[NnueFuzz] seed=" + SEED + " games=" + GAMES + " width=" + width + " qa=" + qa + " qb=" + qb
                 + " vectorAvailable=" + VectorCapabilities.AVAILABLE
                 + " lanes=" + VectorCapabilities.PREFERRED_SHORT_LANES);
         requireVectorWhenQualified(width);
-        NnueNetwork network = TestNetworks.synthetic(width);
+        // About eight times the QA 127 weight scale at QA 1016, same synthetic generator and seed.
+        NnueNetwork network = TestNetworks.synthetic(width, qa, qb, 20 * qa / 127);
         NnueEvaluator incremental = new NnueEvaluator(network);
         NnueEvaluator rebuildOracle = new NnueEvaluator(network);
         Random random = new Random(SEED);

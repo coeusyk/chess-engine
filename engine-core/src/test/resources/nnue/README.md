@@ -122,3 +122,51 @@ difference. Regenerate them only through `NnueFixtureGoldenGenerator` (opt-in, n
 ```
 mvn -pl engine-core test -Dgroups=corpus-generation -Dcorpus.generate=true -Dtest=NnueFixtureGoldenGenerator
 ```
+
+---
+
+# `parity-w64-qa1016-fixture.nnue` (issue #265): the same parity check at QA 1016 / QB 128
+
+A third fixture for the larger grid the weight-scale note measured. It is synthetic: a seeded random
+network, not a trained one, so it shows that the loader, the evaluator and the Python reference agree
+exactly at this scale, and nothing about how a trained network plays. The comparison is within the scale
+(Java against Python on these bytes). No test compares its scores with a QA 127 network's. Like the other
+two it is a permanent compatibility artifact and must never be regenerated to match a later change.
+
+- `networkUuid`: `bccce5bc-0538-4c33-8350-0f15e5270496`
+- file SHA-256: `af9571a08981fb48132ae26cbeee7b1d21adb2a4a107fcda728160585953093d`, 98,784 bytes
+- `hiddenWidth = 64`, `qa = 1016`, `qb = 128`, `outputScale = 400`, `outputBias = -123`, trainer commit `eeeeeeee`,
+  `createdAtEpochSeconds = 1795583643`
+- On the 393-FEN corpus: 4,490 of 50,304 accumulator values exceed `qa` (8.93 percent) and 17,753 are below
+  zero (35.29 percent), so both clamps are reached. Scores run from -2152 to +2618 and 178 are negative, so
+  truncation toward zero is exercised. The Java and Python tests assert these.
+
+## Generation
+
+```python
+import numpy as np
+from pathlib import Path
+from trainer.export.canonical import FEATURES_PER_PERSPECTIVE, QuantizedCanonicalNetwork
+from trainer.export.exporter import export
+from trainer.reproducibility.experiment_metadata import ExperimentMetadata
+
+rng = np.random.default_rng(1016)
+width = 64
+network = QuantizedCanonicalNetwork(
+    hidden_width=width,
+    ft_weights=np.round(rng.normal(0, 128, (FEATURES_PER_PERSPECTIVE, width))).astype(np.int16),
+    ft_biases=np.round(rng.normal(240, 200, width)).astype(np.int16),
+    output_weights=np.round(rng.normal(0, 80, (2, width))).astype(np.int16),
+    output_bias=-123,
+    qa=1016, qb=128, output_scale=400,
+    architecture_id=1, feature_set_id=1,
+)
+metadata = ExperimentMetadata(seed=1016, trainer_commit="e" * 40, started_at_epoch_seconds=1700000003, config={})
+export(network, metadata, [], Path("."))
+```
+
+As with the other fixtures `export()` assigns a fresh UUID and timestamp on every call, so a re-export has
+different bytes. The golden file is `bench/nnue-corpus/fixture-w64-qa1016-golden-evals.csv`, produced by
+`NnueFixtureGoldenGenerator` with the command above, which rewrites all three CSVs (the two older ones came
+out byte-identical). The investigation that motivated it is
+`docs/engineering/investigations/2026-11-25-265-qa1016-qb128-compatibility.md`.
