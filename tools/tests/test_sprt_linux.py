@@ -67,6 +67,12 @@ class Workspace:
             argv += ["--log-path", str(self.log), "--pgn-path", str(self.pgn)]
         return argv + list(extra)
 
+    def stub_run(self, fixture, exit_code=0):
+        """A stub cutechess that prints a recorded log, writes the matching PGN where -pgnout points, and exits."""
+        folder = Path(__file__).resolve().parent / "fixtures" / "match_validation"
+        fake_executable(self.cutechess, f'cat "{folder / (fixture + ".log.txt")}"\n'
+                                        f'cp "{folder / (fixture + ".pgn")}" "{self.pgn}"\nexit {exit_code}')
+
     def prepare(self, *extra, **kw):
         manifest = self.dir / "prepared.json"
         code = sprt_linux.run(self.argv("--prepare-only", "--argument-manifest-path", str(manifest), *extra, **kw),
@@ -247,10 +253,11 @@ class LauncherBehaviour(unittest.TestCase):
 
     def test_run_tees_output_to_the_log_and_propagates_the_exit_code(self):
         ws = Workspace(self)
-        fake_executable(ws.cutechess, 'echo "Started game 1"; echo "Finished game 1 (NEW vs OLD): 1-0"; exit 0')
+        ws.stub_run("boundary-real")
         with mock.patch.dict(os.environ, ws.env):
             self.assertEqual(sprt_linux.main(ws.argv()), 0)
-        self.assertEqual(ws.log.read_text().splitlines(), ["Started game 1", "Finished game 1 (NEW vs OLD): 1-0"])
+        fixture = (Path(__file__).resolve().parent / "fixtures/match_validation/boundary-real.log.txt").read_text()
+        self.assertEqual(ws.log.read_text().splitlines(), fixture.splitlines())
 
         fake_executable(ws.cutechess, 'echo "engine stalled"; exit 3')
         with mock.patch.dict(os.environ, ws.env):
@@ -325,13 +332,129 @@ class Provenance(unittest.TestCase):
 
     def test_finished_fields_are_filled_after_a_run(self):
         ws = Workspace(self)
-        fake_executable(ws.cutechess, "echo done; exit 0")
+        ws.stub_run("boundary-real")
         path = ws.dir / "provenance.json"
         with mock.patch.object(sprt_linux, "first_line_of", return_value="x"):
             sprt_linux.run(ws.argv("--provenance-path", str(path)), env=ws.env)
         record = json.loads(path.read_text())
         self.assertEqual(record["exit_code"], 0)
         self.assertRegex(record["finished_utc"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+        self.assertEqual(record["completion"]["state"], "COMPLETE_BOUNDARY")
+
+
+class CompletionIntegrity(unittest.TestCase):
+    """#319: exit code 0 is not completion, and a non-zero exit is failure whatever the artifacts say."""
+
+    def run_main(self, ws, *extra):
+        import contextlib
+        import io
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, ws.env), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = sprt_linux.main(ws.argv(*extra))
+        return code, out.getvalue(), err.getvalue()
+
+    def test_an_interrupted_run_that_exits_zero_is_not_reported_complete(self):
+        ws = Workspace(self)
+        ws.stub_run("interrupted-296-tail", exit_code=0)
+        code, out, err = self.run_main(ws)
+        self.assertEqual(1, code)
+        self.assertNotIn("SPRT complete", out)
+        self.assertIn("INTERRUPTED", out)
+        self.assertIn("did not complete", err)
+        self.assertTrue(ws.log.is_file() and ws.pgn.is_file(), "evidence is retained")
+
+    def test_a_completed_run_still_prints_sprt_complete(self):
+        ws = Workspace(self)
+        ws.stub_run("boundary-real")
+        code, out, _ = self.run_main(ws)
+        self.assertEqual(0, code)
+        self.assertIn("SPRT complete", out)
+
+    def test_a_non_zero_exit_fails_even_when_the_artifacts_look_complete(self):
+        ws = Workspace(self)
+        ws.stub_run("boundary-real", exit_code=3)
+        code, out, err = self.run_main(ws)
+        self.assertEqual(1, code)
+        self.assertNotIn("SPRT complete", out)
+        self.assertIn("exited with code 3", err)
+
+    def test_a_non_zero_exit_fails_even_if_the_validator_would_pass_it(self):
+        ws = Workspace(self)
+        ws.stub_run("boundary-real", exit_code=2)
+        always_ok = mock.Mock()
+        always_ok.classify_files.return_value = mock.Mock(success=True, state="COMPLETE_BOUNDARY", describe=lambda: "ok")
+        with mock.patch.object(sprt_linux, "load_match_validation", return_value=always_ok):
+            code, out, _ = self.run_main(ws)
+        self.assertEqual(1, code)
+        self.assertNotIn("SPRT complete", out)
+        always_ok.classify_files.assert_not_called()
+
+    def test_a_missing_pgn_is_not_a_completed_run(self):
+        ws = Workspace(self)
+        fake_executable(ws.cutechess, 'echo "Finished match"; exit 0')
+        code, out, _ = self.run_main(ws)
+        self.assertEqual(1, code)
+        self.assertNotIn("SPRT complete", out)
+
+    def test_the_completion_state_is_recorded_in_the_provenance_of_a_failed_run(self):
+        ws = Workspace(self)
+        ws.stub_run("interrupted-296-tail")
+        path = ws.dir / "provenance.json"
+        with mock.patch.object(sprt_linux, "first_line_of", return_value="x"):
+            code, _, _ = self.run_main(ws, "--provenance-path", str(path))
+        self.assertEqual(1, code)
+        record = json.loads(path.read_text())
+        self.assertEqual("INTERRUPTED", record["completion"]["state"])
+        self.assertEqual((6, 4), (record["completion"]["abandoned"], record["completion"]["unterminated"]))
+
+
+class OptInSeed(unittest.TestCase):
+    def test_no_seed_means_no_srand_and_the_arguments_are_unchanged(self):
+        base = sprt_linux.build_arguments("java", "a", "b", "1+0", 10, 0, 10, 0.05, 0.05, 1, 1, [], [], "p", "book", "random")
+        self.assertNotIn("-srand", base)
+        self.assertEqual(base, sprt_linux.build_arguments("java", "a", "b", "1+0", 10, 0, 10, 0.05, 0.05, 1, 1, [], [], "p",
+                                                          "book", "random", None))
+
+    def test_a_seed_adds_exactly_srand_at_the_end(self):
+        base = sprt_linux.build_arguments("java", "a", "b", "1+0", 10, 0, 10, 0.05, 0.05, 1, 1, [], [], "p", "book", "random")
+        seeded = sprt_linux.build_arguments("java", "a", "b", "1+0", 10, 0, 10, 0.05, 0.05, 1, 1, [], [], "p", "book",
+                                            "random", 260258)
+        self.assertEqual(base + ["-srand", "260258"], seeded)
+
+    def test_the_seed_is_in_the_manifest_and_the_provenance_only_when_given(self):
+        ws = Workspace(self)
+        plain = ws.prepare()
+        self.assertNotIn("-srand", plain["Arguments"])
+        seeded = ws.prepare("--seed", "7")
+        self.assertEqual(["-srand", "7"], seeded["Arguments"][-2:])
+        path = ws.dir / "provenance.json"
+        with mock.patch.object(sprt_linux, "first_line_of", return_value="x"):
+            sprt_linux.run(ws.argv("--prepare-only", "--argument-manifest-path", str(ws.dir / "m2.json"),
+                                   "--provenance-path", str(path), "--seed", "7"), env=ws.env)
+        self.assertEqual(7, json.loads(path.read_text())["parameters"]["seed"])
+
+    def test_sprt_ps1_appends_srand_only_when_a_seed_is_given(self):
+        text = PS1.read_text(encoding="utf-8")
+        self.assertRegex(text, r"\[long\]\s+\$Seed = -1")
+        self.assertRegex(text, r'if \(\$Seed -ge 0\) \{\s+\$ccArgs \+= @\("-srand", "\$Seed"\)')
+
+
+class SprtPs1CompletionCheck(unittest.TestCase):
+    """sprt.ps1 cannot run here without pwsh, so its completion check is pinned statically (the validator itself
+    is tested in test_match_validation.py)."""
+
+    def test_the_validator_and_python_are_required_before_launch_and_used_after_the_exit_code_check(self):
+        text = PS1.read_text(encoding="utf-8")
+        launch = text.index("if ($PrepareOnly) { return }")
+        precheck = text.index("Cannot validate completion", launch)
+        run = text.index("& $Cutechess @ccArgs", launch)
+        self.assertLess(precheck, run, "the availability check must come before the match is launched")
+        exit_check = text.index("if ($nativeExitCode -ne 0)", run)
+        validation = text.index("& $python.Source $validator", exit_check)
+        done = text.index('Write-Host "SPRT complete', validation)
+        self.assertLess(exit_check, validation)
+        self.assertLess(validation, done)
+        self.assertRegex(text[validation:done], r"\$LASTEXITCODE -ne 0\) \{ throw")
 
 
 def ps_quote(value):
@@ -361,6 +484,7 @@ class DifferentialAgainstSprtPs1(unittest.TestCase):
                                     ["--alpha", "0.00001", "--elo0", "-0.0001", "--elo1", "999999999999999"]),
         "min-games-raises-the-cap": (["-MinGames", "30000"], ["--min-games", "30000"]),
         "min-games-below-default": (["-MinGames", "500"], ["--min-games", "500"]),
+        "opt-in-seed": (["-Seed", "260258"], ["--seed", "260258"]),
     }
 
     def setUp(self):

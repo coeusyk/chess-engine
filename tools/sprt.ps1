@@ -54,6 +54,11 @@
     Cutechess opening order, 'random' (default, unchanged behavior) or 'sequential' (use the file top to bottom,
     so a frozen opening list is played in a fixed order).
 
+.PARAMETER Seed
+    Optional, opt-in (#319): a non-negative integer passed to Cute Chess as -srand so the opening order can be
+    replayed. Default -1 means no seed: nothing is added to the argument array, so every existing invocation and
+    every prepared manifest is unchanged. The seed used is printed and is part of the argument manifest.
+
 .PARAMETER NewOptions
     Extra UCI options for the New engine only, as "Name=Value" strings (e.g.
     "EvalType=NNUE","EvalFile=C:\path\net.nnue"). Default: none -- every existing
@@ -99,6 +104,7 @@ param(
     [switch]$StrictInputs,
     [switch]$AllowStartpos,
     [ValidateSet('random','sequential')][string]$OpeningOrder = 'random',
+    [long]  $Seed = -1,
     [string[]]$NewOptions = @(),
     [string[]]$OldOptions = @(),
     [string]$LogPath = "",
@@ -241,6 +247,10 @@ $ccArgs += @(
 if ($openingsArgs.Count -gt 0) {
     $ccArgs += $openingsArgs
 }
+if ($Seed -ge 0) {
+    $ccArgs += @("-srand", "$Seed")
+    Write-Host "Opening seed: $Seed"
+}
 
 if ($PrepareOnly -and [string]::IsNullOrWhiteSpace($ArgumentManifestPath)) {
     throw 'PrepareOnly requires ArgumentManifestPath.'
@@ -258,6 +268,14 @@ if ($ArgumentManifestPath) {
     $argumentManifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $ArgumentManifestPath -Encoding UTF8
 }
 if ($PrepareOnly) { return }
+
+# Completion is validated after the run (see the end of this script). Fail now, not after hours of play, when
+# the validator or python is not available next to this script.
+$validator = Join-Path $PSScriptRoot 'match_validation.py'
+$python = Get-Command python -ErrorAction SilentlyContinue
+if (-not $python) { $python = Get-Command python3 -ErrorAction SilentlyContinue }
+if (-not (Test-Path -LiteralPath $validator -PathType Leaf)) { throw "Cannot validate completion: $validator is missing. Not launching." }
+if (-not $python) { throw "Cannot validate completion: python was not found. Not launching." }
 
 # ─── Run cutechess-cli ───────────────────────────────────────────────────────
 # Parses cutechess-cli's own "Finished game N (White vs Black): result" lines as they
@@ -327,6 +345,11 @@ try {
     $logWriter.Close()
 }
 if ($nativeExitCode -ne 0) { throw "Cute Chess exited with code $nativeExitCode. Evidence retained at $LogOut" }
+
+# Exit code 0 does not mean the SPRT finished: with -recover Cute Chess ends the match after its engines are
+# killed and still exits 0 (#296). Completion is decided from the log and PGN by tools/match_validation.py.
+& $python.Source $validator --log $LogOut --pgn $PgnOut --expected-games $maxGames --sprt --max-unterminated $Concurrency
+if ($LASTEXITCODE -ne 0) { throw "The run did not complete (see the classification above). Evidence retained at $LogOut" }
 
 Write-Host ""
 Write-Host "SPRT complete. Log: $LogOut"
