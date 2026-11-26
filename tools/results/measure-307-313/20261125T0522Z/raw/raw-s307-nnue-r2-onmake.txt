@@ -1,0 +1,38 @@
+info string NNUE network loaded: dfffd3da-7f8f-4fc9-92dc-b3873c97fb21
+Bench   : depth 13 | hash 16 MB | 31 positions | evaluator NNUE (dfffd3da-7f8f-4fc9-92dc-b3873c97fb21) | instrumentation off
+   1/31  nodes=5063427       depth=13
+   2/31  nodes=14850534      depth=13
+   3/31  nodes=25995         depth=13
+   4/31  nodes=3177976       depth=13
+   5/31  nodes=1626117       depth=13
+   6/31  nodes=9781059       depth=13
+   7/31  nodes=7390455       depth=13
+   8/31  nodes=2096065       depth=13
+   9/31  nodes=4881473       depth=13
+  10/31  nodes=1550437       depth=13
+  11/31  nodes=4674488       depth=13
+  12/31  nodes=287976        depth=13
+  13/31  nodes=29910         depth=13
+  14/31  nodes=321497        depth=13
+  15/31  nodes=9082084       depth=13
+  16/31  nodes=7242667       depth=13
+  17/31  nodes=1940472       depth=13
+  18/31  nodes=3717630       depth=13
+  19/31  nodes=7236616       depth=13
+  20/31  nodes=2783926       depth=13
+  21/31  nodes=989252        depth=13
+  22/31  nodes=2735513       depth=13
+  23/31  nodes=2497515       depth=13
+  24/31  nodes=852301        depth=13
+  25/31  nodes=106747        depth=13
+  26/31  nodes=725046        depth=13
+  27/31  nodes=60616         depth=13
+  28/31  nodes=148983        depth=13
+  29/31  nodes=2903728       depth=13
+  30/31  nodes=5198440       depth=13
+  31/31  nodes=8163184       depth=13
+
+Nodes searched: 112142129
+Time  : 640308 ms
+NPS   : 175137
+Eval time: 0.0% | Accumulator-update time: 0.0% | PV evals: 63590 | Cut evals: 112828920

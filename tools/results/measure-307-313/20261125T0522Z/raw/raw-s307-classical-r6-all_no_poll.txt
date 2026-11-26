@@ -1,0 +1,37 @@
+Bench   : depth 13 | hash 16 MB | 31 positions | evaluator Classical | instrumentation off
+   1/31  nodes=454461        depth=13
+   2/31  nodes=5101127       depth=13
+   3/31  nodes=9081          depth=13
+   4/31  nodes=852025        depth=13
+   5/31  nodes=272290        depth=13
+   6/31  nodes=1108334       depth=13
+   7/31  nodes=739121        depth=13
+   8/31  nodes=824221        depth=13
+   9/31  nodes=761551        depth=13
+  10/31  nodes=196855        depth=13
+  11/31  nodes=372253        depth=13
+  12/31  nodes=113253        depth=13
+  13/31  nodes=19767         depth=13
+  14/31  nodes=198067        depth=13
+  15/31  nodes=1331184       depth=13
+  16/31  nodes=682096        depth=13
+  17/31  nodes=640760        depth=13
+  18/31  nodes=461625        depth=13
+  19/31  nodes=1355012       depth=13
+  20/31  nodes=366780        depth=13
+  21/31  nodes=173430        depth=13
+  22/31  nodes=1697904       depth=13
+  23/31  nodes=636846        depth=13
+  24/31  nodes=163267        depth=13
+  25/31  nodes=55637         depth=13
+  26/31  nodes=228063        depth=13
+  27/31  nodes=48453         depth=13
+  28/31  nodes=69744         depth=13
+  29/31  nodes=1499244       depth=13
+  30/31  nodes=1752079       depth=13
+  31/31  nodes=1037674       depth=13
+
+Nodes searched: 23222204
+Time  : 64944 ms
+NPS   : 357572
+Eval time: 0.0% | Accumulator-update time: 0.0% | PV evals: 17543 | Cut evals: 26202800
