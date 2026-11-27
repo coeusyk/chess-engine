@@ -109,7 +109,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.shortlist:
         result = select(records)
         output["shortlist"] = {"selected": result.selected, "excluded": result.excluded,
-                               "network_count": result.network_count, "networks": result.networks}
+                               "network_count": result.network_count,
+                               "candidate_count": result.candidate_count, "networks": result.networks}
     text = json.dumps(output, indent=2, sort_keys=True)
     if args.output is not None:
         if args.output.exists():

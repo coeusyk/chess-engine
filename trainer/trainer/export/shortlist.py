@@ -14,9 +14,12 @@ Rules (the same text is in the group file):
   cost, and a comparison whose two arms are identical to each other is kept and flagged `identical_arms`. Every
   selected group lists which of its networks it deployed (`new_networks`) and which it reused and from which
   group (`reused`), so the arm relationship survives;
-* the cap counts distinct deployed network identities, once each, whatever number of checkpoints or groups use
-  them. A group that would take the count over the cap is skipped whole and the next group is considered, so
-  the tie-break at the cap is the fixed order and nothing else. A group that adds no new network always fits;
+* the budget is 10 distinct CANDIDATE networks plus the E-3 anchor, so at most 11 distinct networks (the #327
+  stage 1 budget: "about 10 nets and the E-3 anchor"). The anchor group is outside the candidate count. The
+  candidate count is distinct deployed network identities, once each, whatever number of checkpoints or groups
+  use them, and a candidate arm identical to the anchor's network reuses it and costs nothing. A group that would
+  take the candidate count over `candidate_cap` is skipped whole and the next group is considered, so the
+  tie-break at the cap is the fixed order and nothing else. A group that adds no new network always fits;
 * checkpoint-level provenance is kept: each deployed network lists every inventory label that has that identity
   (and their checkpoint hashes when the inventory carries them), including checkpoints that appear in no group;
 * groups are considered in file order, and the order is the evidence-driven priority written next to each group
@@ -40,7 +43,8 @@ GROUPS_FILE = Path(__file__).with_name("shortlist_groups.json")
 class ShortlistResult:
     selected: List[Dict[str, Any]] = field(default_factory=list)
     excluded: List[Dict[str, Any]] = field(default_factory=list)
-    network_count: int = 0
+    network_count: int = 0  # all distinct deployed networks, the anchor included
+    candidate_count: int = 0  # distinct deployed networks other than the anchor's
     networks: List[Dict[str, Any]] = field(default_factory=list)  # one entry per deployed identity, in deployment order
 
     def labels(self) -> List[str]:
@@ -53,7 +57,7 @@ def load_groups(path: Path = GROUPS_FILE) -> Dict[str, Any]:
 
 def select(records: Sequence[Mapping[str, Any]], groups: Optional[Mapping[str, Any]] = None) -> ShortlistResult:
     groups = load_groups() if groups is None else groups
-    cap = int(groups["cap"])
+    cap = int(groups["candidate_cap"])
     by_label: Dict[str, Mapping[str, Any]] = {}
     for record in records:
         label = record["label"]
@@ -65,9 +69,14 @@ def select(records: Sequence[Mapping[str, Any]], groups: Optional[Mapping[str, A
     for record in by_label.values():
         labels_by_network.setdefault(record["network_content_sha256"], []).append(record)
 
+    kinds = [g["kind"] for g in groups["groups"]]
+    if kinds.count("anchor") != 1 or kinds[0] != "anchor":
+        raise ValueError("the group file must have exactly one anchor group, and it must come first")
+
     selected: List[Dict[str, Any]] = []
     excluded: List[Dict[str, Any]] = []
     chosen: Dict[str, str] = {}  # network_content_sha256 -> id of the group that first deployed it
+    candidates: set = set()  # the identities first deployed by a non-anchor group
     for group in groups["groups"]:
         members: List[str] = list(group["members"])
         missing = [m for m in members if m not in by_label]
@@ -76,12 +85,15 @@ def select(records: Sequence[Mapping[str, Any]], groups: Optional[Mapping[str, A
             continue
         hashes = [by_label[m]["network_content_sha256"] for m in members]
         new = [h for h in dict.fromkeys(hashes) if h not in chosen]
-        if len(chosen) + len(new) > cap:
+        is_anchor = group["kind"] == "anchor"
+        if not is_anchor and len(candidates) + len(new) > cap:
             excluded.append({"group": group["id"], "reason": "cap", "detail": cap})
             continue
         reused = {h: chosen[h] for h in dict.fromkeys(hashes) if h in chosen}
         for h in new:
             chosen[h] = group["id"]
+            if not is_anchor:
+                candidates.add(h)
         selected.append({"group": group["id"], "kind": group["kind"], "members": members,
                          "network_content_sha256": hashes, "new_networks": new, "reused": reused,
                          "identical_arms": len(members) > 1 and len(set(hashes)) == 1})
@@ -89,4 +101,5 @@ def select(records: Sequence[Mapping[str, Any]], groups: Optional[Mapping[str, A
                  "labels": sorted(r["label"] for r in labels_by_network[h]),
                  "checkpoint_sha256": sorted({r["checkpoint_sha256"] for r in labels_by_network[h] if r.get("checkpoint_sha256")})}
                 for h, first in chosen.items()]
-    return ShortlistResult(selected=selected, excluded=excluded, network_count=len(chosen), networks=networks)
+    return ShortlistResult(selected=selected, excluded=excluded, network_count=len(chosen),
+                           candidate_count=len(candidates), networks=networks)
