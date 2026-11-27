@@ -1,0 +1,1389 @@
+{
+  "s307": {
+    "gate1": {
+      "classical:base": true,
+      "classical:terminal": true,
+      "classical:onmake": true,
+      "classical:poll": true,
+      "classical:all": true,
+      "classical:all_no_poll": true,
+      "classical:searchmode": true,
+      "nnue:base": true,
+      "nnue:terminal": true,
+      "nnue:onmake": true,
+      "nnue:poll": true,
+      "nnue:all": true,
+      "nnue:all_no_poll": true,
+      "nnue:searchmode": true
+    },
+    "raw": {
+      "classical": {
+        "base": {
+          "median": 361508.0,
+          "min": 346993,
+          "max": 371918,
+          "n": 10,
+          "paired_diff_to_base_pct": null
+        },
+        "base_repeat": {
+          "median": 359438.5,
+          "min": 340931,
+          "max": 372461,
+          "n": 10,
+          "paired_diff_to_base_pct": {
+            "median": -0.10716946641677177,
+            "min": -7.60927888133113,
+            "max": 4.621017384833931,
+            "n": 10
+          }
+        },
+        "terminal": {
+          "median": 357330.0,
+          "min": 331693,
+          "max": 376604,
+          "n": 10,
+          "paired_diff_to_base_pct": {
+            "median": 0.6827536404081098,
+            "min": -10.112734072247365,
+            "max": 5.243576062952586,
+            "n": 10
+          }
+        },
+        "onmake": {
+          "median": 356938.0,
+          "min": 341272,
+          "max": 375387,
+          "n": 10,
+          "paired_diff_to_base_pct": {
+            "median": -0.3462567599285886,
+            "min": -7.516869461532208,
+            "max": 4.156123060531398,
+            "n": 10
+          }
+        },
+        "poll": {
+          "median": 360477.5,
+          "min": 339466,
+          "max": 372085,
+          "n": 10,
+          "paired_diff_to_base_pct": {
+            "median": -0.29636524121185526,
+            "min": -8.006287092490718,
+            "max": 3.586464373659544,
+            "n": 10
+          }
+        },
+        "all": {
+          "median": 357384.0,
+          "min": 340976,
+          "max": 383787,
+          "n": 10,
+          "paired_diff_to_base_pct": {
+            "median": -0.16488783604610857,
+            "min": -3.7914961654155714,
+            "max": 3.9003194542205857,
+            "n": 10
+          }
+        },
+        "all_no_poll": {
+          "median": 360569.0,
+          "min": 350719,
+          "max": 374400,
+          "n": 10,
+          "paired_diff_to_base_pct": {
+            "median": 0.7864649996492872,
+            "min": -4.956776239126311,
+            "max": 4.137547443320182,
+            "n": 10
+          }
+        }
+      },
+      "nnue": {
+        "base": {
+          "median": 175180,
+          "min": 173690,
+          "max": 177968,
+          "n": 3,
+          "paired_diff_to_base_pct": null
+        },
+        "base_repeat": {
+          "median": 174533,
+          "min": 174122,
+          "max": 177098,
+          "n": 3,
+          "paired_diff_to_base_pct": {
+            "median": -0.4888519284365729,
+            "min": -0.6039502226281539,
+            "max": 0.48534745811503255,
+            "n": 3
+          }
+        },
+        "terminal": {
+          "median": 175541,
+          "min": 172849,
+          "max": 176058,
+          "n": 3,
+          "paired_diff_to_base_pct": {
+            "median": -1.3306313506108003,
+            "min": -1.3637283107075429,
+            "max": 1.3633484944441245,
+            "n": 3
+          }
+        },
+        "onmake": {
+          "median": 173922,
+          "min": 170815,
+          "max": 175137,
+          "n": 3,
+          "paired_diff_to_base_pct": {
+            "median": -0.024546181070898506,
+            "min": -4.019261889777938,
+            "max": 0.1335713051989176,
+            "n": 3
+          }
+        },
+        "poll": {
+          "median": 173378,
+          "min": 170043,
+          "max": 178735,
+          "n": 3,
+          "paired_diff_to_base_pct": {
+            "median": -1.0286562392967233,
+            "min": -2.0997178881916057,
+            "max": 0.4309763552998292,
+            "n": 3
+          }
+        },
+        "all": {
+          "median": 176552,
+          "min": 169632,
+          "max": 177374,
+          "n": 3,
+          "paired_diff_to_base_pct": {
+            "median": -0.3337678683808325,
+            "min": -3.1670281995661607,
+            "max": 1.6477632563763025,
+            "n": 3
+          }
+        },
+        "all_no_poll": {
+          "median": 169934,
+          "min": 169800,
+          "max": 172882,
+          "n": 3,
+          "paired_diff_to_base_pct": {
+            "median": -2.9946340906496176,
+            "min": -4.589589139620606,
+            "max": -0.46519661465829926,
+            "n": 3
+          }
+        }
+      }
+    },
+    "timed": {
+      "m100t1": {
+        "base": {
+          "rounds": 10,
+          "overshoot_mean": {
+            "median": -44.40856919953313,
+            "min": -44.64431110907092,
+            "max": -43.87185130974765,
+            "n": 10
+          },
+          "overshoot_median": {
+            "median": -28.80008200154407,
+            "min": -28.863442000874784,
+            "max": -28.662094003811944,
+            "n": 10
+          },
+          "overshoot_p95": {
+            "median": -27.36444599722745,
+            "min": -27.746207002201118,
+            "max": -25.077334999514278,
+            "n": 10
+          },
+          "overshoot_max": {
+            "median": -26.228787498985184,
+            "min": -26.89841600076761,
+            "max": -23.814590998517815,
+            "n": 10
+          },
+          "nps_mean": {
+            "median": 285426.0579049424,
+            "min": 273681.3610208801,
+            "max": 296473.02420225303,
+            "n": 10
+          }
+        },
+        "base_repeat": {
+          "rounds": 10,
+          "overshoot_mean": {
+            "median": -44.51093272767717,
+            "min": -44.84489356373987,
+            "max": -42.39316274549558,
+            "n": 10
+          },
+          "overshoot_median": {
+            "median": -28.813514503417537,
+            "min": -28.89130399998976,
+            "max": -28.484878997551277,
+            "n": 10
+          },
+          "overshoot_p95": {
+            "median": -27.226304498617537,
+            "min": -27.684340000269003,
+            "max": -27.07936700026039,
+            "n": 10
+          },
+          "overshoot_max": {
+            "median": -26.361191501200665,
+            "min": -27.46145300043281,
+            "max": -24.89516299974639,
+            "n": 10
+          },
+          "nps_mean": {
+            "median": 283135.70686047635,
+            "min": 242545.76103067957,
+            "max": 303543.02842464676,
+            "n": 10
+          }
+        },
+        "terminal": {
+          "rounds": 10,
+          "overshoot_mean": {
+            "median": -44.59805903659964,
+            "min": -44.92520227160474,
+            "max": -44.109466909007594,
+            "n": 10
+          },
+          "overshoot_median": {
+            "median": -28.76223950224812,
+            "min": -28.85280000336934,
+            "max": -28.01173399493564,
+            "n": 10
+          },
+          "overshoot_p95": {
+            "median": -27.319469501526328,
+            "min": -27.60654199810233,
+            "max": -26.61702900659293,
+            "n": 10
+          },
+          "overshoot_max": {
+            "median": -26.089327502268134,
+            "min": -27.16523999843048,
+            "max": -25.531493994640186,
+            "n": 10
+          },
+          "nps_mean": {
+            "median": 284750.9047588316,
+            "min": 272830.4084113023,
+            "max": 308339.2799365305,
+            "n": 10
+          }
+        },
+        "onmake": {
+          "rounds": 10,
+          "overshoot_mean": {
+            "median": -44.54181672712862,
+            "min": -44.705061872214586,
+            "max": -44.392241308312144,
+            "n": 10
+          },
+          "overshoot_median": {
+            "median": -28.816395997273503,
+            "min": -28.881446001469158,
+            "max": -28.79512600484304,
+            "n": 10
+          },
+          "overshoot_p95": {
+            "median": -27.41486350132618,
+            "min": -27.673244004836306,
+            "max": -27.078230000915937,
+            "n": 10
+          },
+          "overshoot_max": {
+            "median": -26.597361496533267,
+            "min": -27.13779599580448,
+            "max": -25.523455000075046,
+            "n": 10
+          },
+          "nps_mean": {
+            "median": 284431.83419907116,
+            "min": 278347.62779293256,
+            "max": 295363.49543779244,
+            "n": 10
+          }
+        },
+        "poll": {
+          "rounds": 10,
+          "overshoot_mean": {
+            "median": -44.98195280922863,
+            "min": -45.11429325529289,
+            "max": -44.439339090604335,
+            "n": 10
+          },
+          "overshoot_median": {
+            "median": -28.583661996526644,
+            "min": -28.696415001468267,
+            "max": -28.480610004044138,
+            "n": 10
+          },
+          "overshoot_p95": {
+            "median": -27.102069501415826,
+            "min": -27.408962001209147,
+            "max": -26.86138600402046,
+            "n": 10
+          },
+          "overshoot_max": {
+            "median": -26.07047700221301,
+            "min": -27.3114949974115,
+            "max": -24.953612993704155,
+            "n": 10
+          },
+          "nps_mean": {
+            "median": 305175.70410521736,
+            "min": 290359.7106836416,
+            "max": 321653.2617234024,
+            "n": 10
+          }
+        },
+        "all": {
+          "rounds": 10,
+          "overshoot_mean": {
+            "median": -45.07052553619195,
+            "min": -45.286481635809075,
+            "max": -44.519577054333325,
+            "n": 10
+          },
+          "overshoot_median": {
+            "median": -28.568805000395514,
+            "min": -28.66500099626137,
+            "max": -28.43973900016863,
+            "n": 10
+          },
+          "overshoot_p95": {
+            "median": -26.994487999763805,
+            "min": -27.101902998401783,
+            "max": -26.80091000511311,
+            "n": 10
+          },
+          "overshoot_max": {
+            "median": -26.446146997477626,
+            "min": -26.814881997415796,
+            "max": -25.313132000155747,
+            "n": 10
+          },
+          "nps_mean": {
+            "median": 311508.36779041006,
+            "min": 296707.73582438927,
+            "max": 322237.794371392,
+            "n": 10
+          }
+        },
+        "all_no_poll": {
+          "rounds": 10,
+          "overshoot_mean": {
+            "median": -44.61146836388666,
+            "min": -44.759513636050876,
+            "max": -44.48799081794939,
+            "n": 10
+          },
+          "overshoot_median": {
+            "median": -28.701406504842453,
+            "min": -28.85033800121164,
+            "max": -28.65863599581644,
+            "n": 10
+          },
+          "overshoot_p95": {
+            "median": -27.084447499510134,
+            "min": -27.596807006921154,
+            "max": -26.922476006438956,
+            "n": 10
+          },
+          "overshoot_max": {
+            "median": -26.437533998978324,
+            "min": -26.88942999666324,
+            "max": -25.369489996228367,
+            "n": 10
+          },
+          "nps_mean": {
+            "median": 290850.71554488584,
+            "min": 279741.9271236422,
+            "max": 298472.5249824791,
+            "n": 10
+          }
+        }
+      },
+      "m20t1": {
+        "base": {
+          "rounds": 10,
+          "overshoot_mean": {
+            "median": -17.434884800102076,
+            "min": -17.515793291148096,
+            "max": -17.38267552774315,
+            "n": 10
+          },
+          "overshoot_median": {
+            "median": -17.5070840009721,
+            "min": -17.64183500519721,
+            "max": -17.385062000830658,
+            "n": 10
+          },
+          "overshoot_p95": {
+            "median": -16.62312350119464,
+            "min": -16.849525996367447,
+            "max": -16.491293000872247,
+            "n": 10
+          },
+          "overshoot_max": {
+            "median": -15.930813500308432,
+            "min": -16.333834002143703,
+            "max": -15.812440000008792,
+            "n": 10
+          },
+          "nps_mean": {
+            "median": 19808.505432417252,
+            "min": 18129.352771021604,
+            "max": 21627.07334276879,
+            "n": 10
+          }
+        },
+        "base_repeat": {
+          "rounds": 10,
+          "overshoot_mean": {
+            "median": -17.427841045613274,
+            "min": -17.456733182083223,
+            "max": -17.35100205408261,
+            "n": 10
+          },
+          "overshoot_median": {
+            "median": -17.508215998095693,
+            "min": -17.734283002500888,
+            "max": -17.336671003722586,
+            "n": 10
+          },
+          "overshoot_p95": {
+            "median": -16.580074497614987,
+            "min": -16.76699900010135,
+            "max": -16.330442001635674,
+            "n": 10
+          },
+          "overshoot_max": {
+            "median": -15.760193502064794,
+            "min": -16.06235000101151,
+            "max": -15.548177001182921,
+            "n": 10
+          },
+          "nps_mean": {
+            "median": 20071.889230742327,
+            "min": 15810.962630162016,
+            "max": 23137.47426429884,
+            "n": 10
+          }
+        },
+        "terminal": {
+          "rounds": 10,
+          "overshoot_mean": {
+            "median": -17.438753736589042,
+            "min": -17.480926671811506,
+            "max": -17.329237999722615,
+            "n": 10
+          },
+          "overshoot_median": {
+            "median": -17.50656649848679,
+            "min": -17.653269005240873,
+            "max": -17.326249998877756,
+            "n": 10
+          },
+          "overshoot_p95": {
+            "median": -16.642604997759918,
+            "min": -16.787172996846493,
+            "max": -16.416167996358126,
+            "n": 10
+          },
+          "overshoot_max": {
+            "median": -15.999500999459997,
+            "min": -16.636944000783842,
+            "max": -15.639417000347748,
+            "n": 10
+          },
+          "nps_mean": {
+            "median": 21428.304137201972,
+            "min": 17462.651002593426,
+            "max": 22580.449760500855,
+            "n": 10
+          }
+        },
+        "onmake": {
+          "rounds": 10,
+          "overshoot_mean": {
+            "median": -17.452547563509803,
+            "min": -17.472952817704275,
+            "max": -17.370536417292897,
+            "n": 10
+          },
+          "overshoot_median": {
+            "median": -17.547577000659658,
+            "min": -17.66401800297899,
+            "max": -17.392686003877316,
+            "n": 10
+          },
+          "overshoot_p95": {
+            "median": -16.636848998605274,
+            "min": -16.788427997671533,
+            "max": -16.468744000594597,
+            "n": 10
+          },
+          "overshoot_max": {
+            "median": -15.831892498244997,
+            "min": -16.094299996912014,
+            "max": -15.677003003947902,
+            "n": 10
+          },
+          "nps_mean": {
+            "median": 19229.1182997994,
+            "min": 15354.11084757295,
+            "max": 22710.81337617118,
+            "n": 10
+          }
+        },
+        "poll": {
+          "rounds": 10,
+          "overshoot_mean": {
+            "median": -17.300600291319743,
+            "min": -17.371275509464216,
+            "max": -17.153361327020153,
+            "n": 10
+          },
+          "overshoot_median": {
+            "median": -17.193253500881838,
+            "min": -17.397127997828647,
+            "max": -17.119466002914123,
+            "n": 10
+          },
+          "overshoot_p95": {
+            "median": -16.289523995073978,
+            "min": -16.558701001049485,
+            "max": -15.598198001971468,
+            "n": 10
+          },
+          "overshoot_max": {
+            "median": -15.057443502446404,
+            "min": -15.941374996618833,
+            "max": -14.733452003856655,
+            "n": 10
+          },
+          "nps_mean": {
+            "median": 22369.368351886795,
+            "min": 20686.216692534053,
+            "max": 26125.776873556868,
+            "n": 10
+          }
+        },
+        "all": {
+          "rounds": 10,
+          "overshoot_mean": {
+            "median": -17.315207400044365,
+            "min": -17.36535423633706,
+            "max": -17.248398200000256,
+            "n": 10
+          },
+          "overshoot_median": {
+            "median": -17.249209001893178,
+            "min": -17.526450002624188,
+            "max": -17.12252099561738,
+            "n": 10
+          },
+          "overshoot_p95": {
+            "median": -16.313167499465635,
+            "min": -16.566356996481773,
+            "max": -16.085963997757062,
+            "n": 10
+          },
+          "overshoot_max": {
+            "median": -15.034119001502404,
+            "min": -15.939891996385995,
+            "max": -14.563516003836412,
+            "n": 10
+          },
+          "nps_mean": {
+            "median": 23459.698493301847,
+            "min": 19374.56952699137,
+            "max": 24233.607739046172,
+            "n": 10
+          }
+        },
+        "all_no_poll": {
+          "rounds": 10,
+          "overshoot_mean": {
+            "median": -17.446489836015232,
+            "min": -17.497679872851055,
+            "max": -17.401744981603272,
+            "n": 10
+          },
+          "overshoot_median": {
+            "median": -17.56606449955143,
+            "min": -17.60330699791666,
+            "max": -17.439427999779582,
+            "n": 10
+          },
+          "overshoot_p95": {
+            "median": -16.641755002201535,
+            "min": -16.799011001712643,
+            "max": -16.49591300112661,
+            "n": 10
+          },
+          "overshoot_max": {
+            "median": -15.911871999851428,
+            "min": -16.28949199541239,
+            "max": -15.768401000532322,
+            "n": 10
+          },
+          "nps_mean": {
+            "median": 21211.539761768938,
+            "min": 18684.376143022215,
+            "max": 22624.469691756378,
+            "n": 10
+          }
+        }
+      },
+      "m100t2": {
+        "base": {
+          "rounds": 10,
+          "overshoot_mean": {
+            "median": -46.119778336221565,
+            "min": -46.722259436104316,
+            "max": -44.85994447326944,
+            "n": 10
+          },
+          "overshoot_median": {
+            "median": -28.869732499151723,
+            "min": -28.974289003235754,
+            "max": -28.44520699873101,
+            "n": 10
+          },
+          "overshoot_p95": {
+            "median": -27.544208498147782,
+            "min": -27.831772998615634,
+            "max": -27.201090002199635,
+            "n": 10
+          },
+          "overshoot_max": {
+            "median": -26.64292099652812,
+            "min": -27.75018699467182,
+            "max": -25.116968996007927,
+            "n": 10
+          },
+          "nps_mean": {
+            "median": 281486.99010112777,
+            "min": 247834.53710457965,
+            "max": 286480.45997524203,
+            "n": 10
+          }
+        },
+        "base_repeat": {
+          "rounds": 10,
+          "overshoot_mean": {
+            "median": -46.57618853618095,
+            "min": -47.02435972735243,
+            "max": -45.029060600261964,
+            "n": 10
+          },
+          "overshoot_median": {
+            "median": -28.89842150179902,
+            "min": -28.957825002726167,
+            "max": -28.797301996382885,
+            "n": 10
+          },
+          "overshoot_p95": {
+            "median": -27.566985505109187,
+            "min": -27.74158500105841,
+            "max": -26.22306200064486,
+            "n": 10
+          },
+          "overshoot_max": {
+            "median": -26.198094501160085,
+            "min": -26.672344001417514,
+            "max": -25.415516998327803,
+            "n": 10
+          },
+          "nps_mean": {
+            "median": 283085.51302417845,
+            "min": 266503.8455518884,
+            "max": 292547.86288422823,
+            "n": 10
+          }
+        },
+        "terminal": {
+          "rounds": 10,
+          "overshoot_mean": {
+            "median": -46.53222187281989,
+            "min": -47.05976230854338,
+            "max": -45.41146739991911,
+            "n": 10
+          },
+          "overshoot_median": {
+            "median": -28.889720995357493,
+            "min": -28.94385100225918,
+            "max": -28.79813100444153,
+            "n": 10
+          },
+          "overshoot_p95": {
+            "median": -27.594991997466423,
+            "min": -27.87527600012254,
+            "max": -27.141947999189142,
+            "n": 10
+          },
+          "overshoot_max": {
+            "median": -26.486067000951152,
+            "min": -26.916005002567545,
+            "max": -25.299253001867328,
+            "n": 10
+          },
+          "nps_mean": {
+            "median": 279262.5262716705,
+            "min": 270483.2937372302,
+            "max": 301859.746465433,
+            "n": 10
+          }
+        },
+        "onmake": {
+          "rounds": 10,
+          "overshoot_mean": {
+            "median": -46.41369557291249,
+            "min": -47.015204763341565,
+            "max": -45.14998527275483,
+            "n": 10
+          },
+          "overshoot_median": {
+            "median": -28.91877150395885,
+            "min": -28.960572004143614,
+            "max": -28.863829998590518,
+            "n": 10
+          },
+          "overshoot_p95": {
+            "median": -27.55595800190349,
+            "min": -27.829805004876107,
+            "max": -27.044230993487872,
+            "n": 10
+          },
+          "overshoot_max": {
+            "median": -26.184816496970598,
+            "min": -26.851983000233304,
+            "max": -25.242468001670204,
+            "n": 10
+          },
+          "nps_mean": {
+            "median": 280221.60163800826,
+            "min": 278380.40837016713,
+            "max": 292886.53338449995,
+            "n": 10
+          }
+        },
+        "poll": {
+          "rounds": 10,
+          "overshoot_mean": {
+            "median": -46.05086183655658,
+            "min": -46.62360150885599,
+            "max": -44.982560945209116,
+            "n": 10
+          },
+          "overshoot_median": {
+            "median": -28.75302800166537,
+            "min": -28.819150998606347,
+            "max": -28.66851699363906,
+            "n": 10
+          },
+          "overshoot_p95": {
+            "median": -27.28878250272828,
+            "min": -27.661160996649414,
+            "max": -27.004331999341957,
+            "n": 10
+          },
+          "overshoot_max": {
+            "median": -26.478692999808118,
+            "min": -26.838326995493844,
+            "max": -25.376386003335938,
+            "n": 10
+          },
+          "nps_mean": {
+            "median": 296540.35038096167,
+            "min": 283935.4006393048,
+            "max": 309674.10494512646,
+            "n": 10
+          }
+        },
+        "all": {
+          "rounds": 10,
+          "overshoot_mean": {
+            "median": -46.60445087290348,
+            "min": -46.828915236586575,
+            "max": -45.09053550851108,
+            "n": 10
+          },
+          "overshoot_median": {
+            "median": -28.707190498244017,
+            "min": -28.808618999028113,
+            "max": -28.498350993322674,
+            "n": 10
+          },
+          "overshoot_p95": {
+            "median": -27.258124498621328,
+            "min": -27.542355995683465,
+            "max": -26.51194499921985,
+            "n": 10
+          },
+          "overshoot_max": {
+            "median": -26.412210501439404,
+            "min": -26.90995700104395,
+            "max": -25.32000900246203,
+            "n": 10
+          },
+          "nps_mean": {
+            "median": 294848.72790840664,
+            "min": 268729.86565265665,
+            "max": 305520.2996626812,
+            "n": 10
+          }
+        },
+        "all_no_poll": {
+          "rounds": 10,
+          "overshoot_mean": {
+            "median": -46.41774908198964,
+            "min": -46.73141719937451,
+            "max": -45.72533407230036,
+            "n": 10
+          },
+          "overshoot_median": {
+            "median": -28.887579502770677,
+            "min": -28.975634997186717,
+            "max": -28.796962994965725,
+            "n": 10
+          },
+          "overshoot_p95": {
+            "median": -27.522364003380062,
+            "min": -27.712973003508523,
+            "max": -27.378925000084564,
+            "n": 10
+          },
+          "overshoot_max": {
+            "median": -26.21969399988302,
+            "min": -27.344030002132058,
+            "max": -25.600292001035996,
+            "n": 10
+          },
+          "nps_mean": {
+            "median": 278402.5034041052,
+            "min": 268210.9479327193,
+            "max": 287476.3365444412,
+            "n": 10
+          }
+        }
+      }
+    },
+    "alloc": {
+      "classical:base": {
+        "sampled_allocation_bytes": 1297143016.0,
+        "bytes_per_node": 55.857877055941806,
+        "young_collections": 9,
+        "top_classes": [
+          [
+            "long[]",
+            732300000.0
+          ],
+          [
+            "coeusyk.game.chess.core.search.TranspositionTable$Entry",
+            279400000.0
+          ],
+          [
+            "int[]",
+            129000000.0
+          ],
+          [
+            "coeusyk.game.chess.core.models.Move",
+            49300000.0
+          ],
+          [
+            "java.lang.Object[]",
+            34700000.0
+          ],
+          [
+            "jdk.internal.org.objectweb.asm.SymbolTable$Entry[]",
+            21800000.0
+          ]
+        ],
+        "top_sites": [
+          [
+            "java.util.concurrent.atomic.AtomicLongArray.<init>(int)",
+            726400000.0
+          ],
+          [
+            "coeusyk.game.chess.core.search.TranspositionTable.unpack(long, long)",
+            279400000.0
+          ],
+          [
+            "coeusyk.game.chess.core.eval.Evaluator.setPawnHashSizeMb(int)",
+            76300000.0
+          ],
+          [
+            "coeusyk.game.chess.core.movegen.MovesGenerator.generatePawnMoves(int, int)",
+            37500000.0
+          ],
+          [
+            "coeusyk.game.chess.core.search.Searcher.<init>(boolean, boolean, boolean, boolean, boolean, boolean)",
+            29500000.0
+          ],
+          [
+            "java.util.Arrays.copyOf(Object[], int)",
+            26800000.0
+          ]
+        ]
+      },
+      "classical:terminal": {
+        "sampled_allocation_bytes": 1160542296.0,
+        "bytes_per_node": 49.97554478463801,
+        "young_collections": 9,
+        "top_classes": [
+          [
+            "long[]",
+            807000000.0
+          ],
+          [
+            "int[]",
+            149500000.0
+          ],
+          [
+            "coeusyk.game.chess.core.search.TranspositionTable$Entry",
+            126900000.0
+          ],
+          [
+            "java.lang.Integer",
+            47300000.0
+          ],
+          [
+            "byte[]",
+            24500000.0
+          ],
+          [
+            "boolean[]",
+            2700000.0
+          ]
+        ],
+        "top_sites": [
+          [
+            "java.util.concurrent.atomic.AtomicLongArray.<init>(int)",
+            804300000.0
+          ],
+          [
+            "coeusyk.game.chess.core.search.TranspositionTable.unpack(long, long)",
+            126900000.0
+          ],
+          [
+            "coeusyk.game.chess.core.eval.Evaluator.setPawnHashSizeMb(int)",
+            75200000.0
+          ],
+          [
+            "java.lang.Integer.valueOf(int)",
+            47300000.0
+          ],
+          [
+            "coeusyk.game.chess.core.search.Searcher.<init>(boolean, boolean, boolean, boolean, boolean, boolean)",
+            30400000.0
+          ],
+          [
+            "coeusyk.game.chess.core.eval.PawnStructure.evaluate(long, long)",
+            27700000.0
+          ]
+        ]
+      },
+      "classical:all": {
+        "sampled_allocation_bytes": 1139941884.0,
+        "bytes_per_node": 49.08844500720087,
+        "young_collections": 8,
+        "top_classes": [
+          [
+            "long[]",
+            743200000.0
+          ],
+          [
+            "coeusyk.game.chess.core.search.TranspositionTable$Entry",
+            167500000.0
+          ],
+          [
+            "int[]",
+            138800000.0
+          ],
+          [
+            "java.lang.Integer",
+            52800000.0
+          ],
+          [
+            "jdk.internal.org.objectweb.asm.SymbolTable$Entry",
+            21800000.0
+          ],
+          [
+            "boolean[]",
+            5300000.0
+          ]
+        ],
+        "top_sites": [
+          [
+            "java.util.concurrent.atomic.AtomicLongArray.<init>(int)",
+            740500000.0
+          ],
+          [
+            "coeusyk.game.chess.core.search.TranspositionTable.unpack(long, long)",
+            167500000.0
+          ],
+          [
+            "java.lang.Integer.valueOf(int)",
+            52800000.0
+          ],
+          [
+            "coeusyk.game.chess.core.search.Searcher.<init>(boolean, boolean, boolean, boolean, boolean, boolean)",
+            51400000.0
+          ],
+          [
+            "coeusyk.game.chess.core.eval.PawnStructure.evaluate(long, long)",
+            27800000.0
+          ],
+          [
+            "coeusyk.game.chess.core.eval.Evaluator.setPawnHashSizeMb(int)",
+            26900000.0
+          ]
+        ]
+      },
+      "nnue:base": {
+        "sampled_allocation_bytes": 2775873164.0,
+        "bytes_per_node": 24.753169827906515,
+        "young_collections": 21,
+        "top_classes": [
+          [
+            "long[]",
+            1143200000.0
+          ],
+          [
+            "int[]",
+            614900000.0
+          ],
+          [
+            "coeusyk.game.chess.core.models.Move",
+            524000000.0
+          ],
+          [
+            "java.lang.Object[]",
+            239104700.0
+          ],
+          [
+            "coeusyk.game.chess.core.search.TranspositionTable$Entry",
+            196700000.0
+          ],
+          [
+            "short[]",
+            35445400.0
+          ]
+        ],
+        "top_sites": [
+          [
+            "java.util.concurrent.atomic.AtomicLongArray.<init>(int)",
+            1140500000.0
+          ],
+          [
+            "coeusyk.game.chess.core.movegen.MovesGenerator.generateSlidingMoves(int, int)",
+            282500000.0
+          ],
+          [
+            "coeusyk.game.chess.core.search.TranspositionTable.unpack(long, long)",
+            196700000.0
+          ],
+          [
+            "coeusyk.game.chess.core.eval.Evaluator.setPawnHashSizeMb(int)",
+            184800000.0
+          ],
+          [
+            "java.util.Arrays.copyOf(Object[], int)",
+            175900000.0
+          ],
+          [
+            "coeusyk.game.chess.core.movegen.MovesGenerator.generatePawnMoves(int, int)",
+            172500000.0
+          ]
+        ]
+      },
+      "nnue:terminal": {
+        "sampled_allocation_bytes": 1438924100.0,
+        "bytes_per_node": 12.831253631719441,
+        "young_collections": 11,
+        "top_classes": [
+          [
+            "long[]",
+            981900000.0
+          ],
+          [
+            "int[]",
+            279000000.0
+          ],
+          [
+            "coeusyk.game.chess.core.search.TranspositionTable$Entry",
+            83900000.0
+          ],
+          [
+            "short[]",
+            31400000.0
+          ],
+          [
+            "jdk.internal.org.objectweb.asm.SymbolTable$Entry",
+            21800000.0
+          ],
+          [
+            "java.lang.Integer",
+            17400000.0
+          ]
+        ],
+        "top_sites": [
+          [
+            "java.util.concurrent.atomic.AtomicLongArray.<init>(int)",
+            981900000.0
+          ],
+          [
+            "coeusyk.game.chess.core.eval.Evaluator.setPawnHashSizeMb(int)",
+            220000000.0
+          ],
+          [
+            "coeusyk.game.chess.core.search.TranspositionTable.unpack(long, long)",
+            83900000.0
+          ],
+          [
+            "coeusyk.game.chess.core.search.Searcher.<init>(boolean, boolean, boolean, boolean, boolean, boolean)",
+            41700000.0
+          ],
+          [
+            "coeusyk.game.chess.core.eval.nnue.NnueEvaluator.<init>(NnueNetwork, boolean)",
+            26400000.0
+          ],
+          [
+            "jdk.internal.org.objectweb.asm.SymbolTable.addConstantMemberReference(int, String, String, String)",
+            21800000.0
+          ]
+        ]
+      },
+      "nnue:all": {
+        "sampled_allocation_bytes": 1438999000.0,
+        "bytes_per_node": 12.831921534145298,
+        "young_collections": 11,
+        "top_classes": [
+          [
+            "long[]",
+            911800000.0
+          ],
+          [
+            "int[]",
+            276400000.0
+          ],
+          [
+            "coeusyk.game.chess.core.search.TranspositionTable$Entry",
+            86600000.0
+          ],
+          [
+            "int[][]",
+            72800000.0
+          ],
+          [
+            "short[]",
+            36400000.0
+          ],
+          [
+            "jdk.internal.org.objectweb.asm.SymbolTable$Entry",
+            21800000.0
+          ]
+        ],
+        "top_sites": [
+          [
+            "java.util.concurrent.atomic.AtomicLongArray.<init>(int)",
+            911800000.0
+          ],
+          [
+            "coeusyk.game.chess.core.eval.Evaluator.setPawnHashSizeMb(int)",
+            217400000.0
+          ],
+          [
+            "coeusyk.game.chess.core.search.TranspositionTable.unpack(long, long)",
+            86600000.0
+          ],
+          [
+            "coeusyk.game.chess.core.search.Searcher.precomputeLmrReductions()",
+            79100000.0
+          ],
+          [
+            "coeusyk.game.chess.core.search.Searcher.<init>(boolean, boolean, boolean, boolean, boolean, boolean)",
+            41700000.0
+          ],
+          [
+            "coeusyk.game.chess.core.eval.nnue.NnueEvaluator.<init>(NnueNetwork, boolean)",
+            26400000.0
+          ]
+        ]
+      }
+    }
+  },
+  "s313": {
+    "gate1": {
+      "classical:base": true,
+      "classical:candidate": true,
+      "nnue:base": true,
+      "nnue:candidate": true
+    },
+    "raw": {
+      "nnue": {
+        "base": {
+          "median": 173145,
+          "min": 169604,
+          "max": 179034,
+          "n": 3,
+          "paired_diff_to_base_pct": null
+        },
+        "base_repeat": {
+          "median": 173244,
+          "min": 173066,
+          "max": 175273,
+          "n": 3,
+          "paired_diff_to_base_pct": {
+            "median": 0.05717751017932946,
+            "min": -2.1007182993174482,
+            "max": 2.0412254427961605,
+            "n": 3
+          }
+        },
+        "candidate": {
+          "median": 284530,
+          "min": 281585,
+          "max": 294595,
+          "n": 3,
+          "paired_diff_to_base_pct": {
+            "median": 64.54695756113364,
+            "min": 64.33047445782437,
+            "max": 66.02497582604184,
+            "n": 3
+          }
+        }
+      }
+    },
+    "timed": {},
+    "alloc": {
+      "nnue:base": {
+        "sampled_allocation_bytes": 2782421884.0,
+        "bytes_per_node": 24.811566436374683,
+        "young_collections": 21,
+        "top_classes": [
+          [
+            "long[]",
+            1289700000.0
+          ],
+          [
+            "coeusyk.game.chess.core.models.Move",
+            594097200.0
+          ],
+          [
+            "coeusyk.game.chess.core.search.TranspositionTable$Entry",
+            301100000.0
+          ],
+          [
+            "java.lang.Object[]",
+            267004000.0
+          ],
+          [
+            "int[]",
+            251800000.0
+          ],
+          [
+            "short[]",
+            36600000.0
+          ]
+        ],
+        "top_sites": [
+          [
+            "java.util.concurrent.atomic.AtomicLongArray.<init>(int)",
+            1284200000.0
+          ],
+          [
+            "coeusyk.game.chess.core.movegen.MovesGenerator.generateSlidingMoves(int, int)",
+            412300000.0
+          ],
+          [
+            "coeusyk.game.chess.core.search.TranspositionTable.unpack(long, long)",
+            301100000.0
+          ],
+          [
+            "java.util.Arrays.copyOf(Object[], int)",
+            237400000.0
+          ],
+          [
+            "coeusyk.game.chess.core.movegen.MovesGenerator.generatePawnMoves(int, int)",
+            140497200.0
+          ],
+          [
+            "coeusyk.game.chess.core.search.Searcher.<init>(boolean, boolean, boolean, boolean, boolean, boolean)",
+            86700000.0
+          ]
+        ]
+      },
+      "nnue:candidate": {
+        "sampled_allocation_bytes": 2910779792.0,
+        "bytes_per_node": 25.956166678447847,
+        "young_collections": 22,
+        "top_classes": [
+          [
+            "long[]",
+            968700000.0
+          ],
+          [
+            "coeusyk.game.chess.core.models.Move",
+            728900000.0
+          ],
+          [
+            "int[]",
+            550100000.0
+          ],
+          [
+            "coeusyk.game.chess.core.search.TranspositionTable$Entry",
+            223300000.0
+          ],
+          [
+            "java.lang.Object[]",
+            217600000.0
+          ],
+          [
+            "short[]",
+            56000000.0
+          ]
+        ],
+        "top_sites": [
+          [
+            "java.util.concurrent.atomic.AtomicLongArray.<init>(int)",
+            958500000.0
+          ],
+          [
+            "coeusyk.game.chess.core.movegen.MovesGenerator.generateSlidingMoves(int, int)",
+            399700000.0
+          ],
+          [
+            "coeusyk.game.chess.core.movegen.MovesGenerator.generatePawnMoves(int, int)",
+            237100000.0
+          ],
+          [
+            "coeusyk.game.chess.core.search.TranspositionTable.unpack(long, long)",
+            223300000.0
+          ],
+          [
+            "java.util.Arrays.copyOf(Object[], int)",
+            207000000.0
+          ],
+          [
+            "coeusyk.game.chess.core.eval.Evaluator.setPawnHashSizeMb(int)",
+            175100000.0
+          ]
+        ]
+      }
+    }
+  }
+}
