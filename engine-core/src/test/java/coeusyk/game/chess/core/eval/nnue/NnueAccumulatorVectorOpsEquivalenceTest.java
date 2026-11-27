@@ -170,5 +170,82 @@ class NnueAccumulatorVectorOpsEquivalenceTest {
         long expected = 127L * Short.MAX_VALUE * 512;
         assertEquals(expected, NnueEvaluator.dotCreluScalar(us, them, justFits, 127));
     }
-}
 
+    // ---- Guard rejection, fallback and the QA 1016 fixture (#265) -----------------------------------
+
+    /** Accumulators summed by hand from the network's own weights, side to move first. Independent of NnueEvaluator. */
+    private static short[][] accumulators(NnueNetwork network, coeusyk.game.chess.core.models.Board board) {
+        int width = network.hiddenWidth();
+        int us = board.getActiveColor();
+        int them = coeusyk.game.chess.core.models.Piece.isWhite(us)
+                ? coeusyk.game.chess.core.models.Piece.Black : coeusyk.game.chess.core.models.Piece.White;
+        short[][] result = new short[2][];
+        for (int perspective = 0; perspective < 2; perspective++) {
+            short[] acc = network.ftBiases().clone();
+            for (int feature : FeatureExtractor.activeFeatureIndices(board, perspective == 0 ? us : them)) {
+                for (int j = 0; j < width; j++) {
+                    acc[j] = (short) (acc[j] + network.ftWeights()[feature * width + j]);
+                }
+            }
+            result[perspective] = acc;
+        }
+        return result;
+    }
+
+    @Test
+    void guardRejectsAnOutputLayerThatExceedsInt32AndEvaluationFallsBackToTheScalarResult() throws java.io.IOException {
+        org.junit.jupiter.api.Assumptions.assumeTrue(VectorCapabilities.AVAILABLE,
+                "jdk.incubator.vector not available");
+        int width = 64;
+        int qa = 1016;
+        Random random = new Random(1016L);
+        short[] ftWeights = randomShorts(random, FeatureExtractor.FEATURES_PER_PERSPECTIVE * width, 160);
+        short[] ftBiases = new short[width];
+        java.util.Arrays.fill(ftBiases, (short) 800);
+        short[] outputWeights = new short[2 * width];
+        java.util.Arrays.fill(outputWeights, Short.MAX_VALUE);
+        NnueNetwork network = new NnueNetwork(width, ftWeights, ftBiases, outputWeights, 0, qa, 128, 400,
+                "overflow-uuid", "commit", 0L);
+
+        assertFalse(NnueEvaluator.dotFitsInt(outputWeights, qa),
+                "qa * sum|w| = " + (long) qa * 2 * width * Short.MAX_VALUE + " must exceed Integer.MAX_VALUE");
+
+        NnueEvaluator evaluator = new NnueEvaluator(network);
+        int beyondInt32 = 0;
+        int vectorWouldDiffer = 0;
+        for (String fen : NnueFixtureGoldenSupport.corpusFens().subList(0, 50)) {
+            coeusyk.game.chess.core.models.Board board = NnueCorpusCategories.toBoard(fen);
+            short[][] acc = accumulators(network, board);
+            long reference = NnueEvaluator.dotCreluScalar(acc[0], acc[1], outputWeights, qa);
+            if (Math.abs(reference) > Integer.MAX_VALUE) {
+                beyondInt32++;
+            }
+            // Negative control: the int-lane kernel really is wrong on this network, so equality below is not vacuous.
+            if (NnueAccumulatorVectorOps.dotCrelu(acc[0], acc[1], outputWeights, qa) != reference) {
+                vectorWouldDiffer++;
+            }
+            evaluator.reset(board);
+            assertEquals((int) (reference * 400 / ((long) qa * 128)), evaluator.evaluate(board), fen);
+        }
+        assertTrue(beyondInt32 > 0, "no position produced a raw sum outside int32");
+        assertTrue(vectorWouldDiffer > 0, "the int-lane kernel never disagreed, so the fallback was not exercised");
+    }
+
+    @Test
+    void vectorDotMatchesScalarOnEveryQa1016FixtureCorpusPosition() throws java.io.IOException {
+        org.junit.jupiter.api.Assumptions.assumeTrue(VectorCapabilities.AVAILABLE,
+                "jdk.incubator.vector not available");
+        NnueNetwork network = NnueNetwork.load(NnueFixtureGoldenSupport.fixturePath(
+                NnueFixtureGoldenSupport.FIXTURES.get(2)));
+        assertEquals(1016, network.qa());
+        assertTrue(NnueEvaluator.dotFitsInt(network.outputWeights(), network.qa()),
+                "the fixture is expected to take the vector path");
+        java.util.List<String> fens = NnueFixtureGoldenSupport.corpusFens();
+        assertEquals(393, fens.size());
+        for (String fen : fens) {
+            short[][] acc = accumulators(network, NnueCorpusCategories.toBoard(fen));
+            assertEquals(NnueEvaluator.dotCreluScalar(acc[0], acc[1], network.outputWeights(), network.qa()),
+                    NnueAccumulatorVectorOps.dotCrelu(acc[0], acc[1], network.outputWeights(), network.qa()), fen);
+        }
+    }
+}
