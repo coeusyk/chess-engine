@@ -1,0 +1,22 @@
+diff --git a/engine-core/src/main/java/coeusyk/game/chess/core/search/Searcher.java b/engine-core/src/main/java/coeusyk/game/chess/core/search/Searcher.java
+index c06202f..cfea0dd 100644
+--- a/engine-core/src/main/java/coeusyk/game/chess/core/search/Searcher.java
++++ b/engine-core/src/main/java/coeusyk/game/chess/core/search/Searcher.java
+@@ -43,6 +43,7 @@ public class Searcher {
+     private static final Logger LOG = LoggerFactory.getLogger(Searcher.class);
+     private static final int INF = 1_000_000;
+     private static final int MATE_SCORE = 100_000;
++    private static final boolean DIAG_SKIP_MATE_TT = Boolean.getBoolean("diag.skipMateTt");
+     private static final int MAX_PLY = 128;
+     private static final int ASPIRATION_INITIAL_DELTA_CP = 25;
+     private static final int NULL_MOVE_DEPTH_THRESHOLD = 4; // C-5 SPRT: threshold=4 won (+90.3 Elo vs baseline, H1 accepted)
+@@ -1142,6 +1143,9 @@ public class Searcher {
+         boolean ttScoreUsable = ttEntry != null
+                 && !fiftyMoveSensitive(board.getHalfmoveClock(), ttEntry.depth());
+         Integer ttScore = ttScoreUsable ? applyTtBound(ttEntry, effectiveDepth, alpha, beta, ply) : null;
++        if (ttScore != null && DIAG_SKIP_MATE_TT && Math.abs(ttScore) >= MATE_SCORE - MAX_PLY) {
++            ttScore = null; // DIAGNOSTIC ONLY (not for commit): no cutoff on a mate-range TT score
++        }
+         if (ttScore != null) {
+             ttHits++;
+             return ttScore;

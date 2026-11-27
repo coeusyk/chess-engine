@@ -1,0 +1,18 @@
+--- 2500_white move 44: played Rc1 (c3c1) in-game Vex None; fresh Vex now: c3c1 d18 ('cp', 55)
+    FEN 8/2b5/2P2p2/2Nkpp1p/p2r3P/P1R2KP1/5P2/8 w - - 2 44
+    SF top3 @6s: [('c5d7', 'cp', 0, 'd47'), ('c5a6', 'cp', 0, 'd47'), ('f3g2', 'cp', 0, 'd46')]
+--- 2500_white move 45: played Na6 (c5a6) in-game Vex 21; fresh Vex now: c5a6 d18 ('cp', 13)
+    FEN 8/2b5/2P2p2/2Nkp2p/p2r1p1P/P4KP1/5P2/2R5 w - - 0 45
+    SF top3 @6s: [('f3e2', 'cp', 0, 'd50'), ('g3f4', 'cp', 0, 'd50'), ('f3g2', 'cp', 0, 'd49')]
+--- 2500_white move 46: played Ke2 (f3e2) in-game Vex None; fresh Vex now: f3e2 d19 ('cp', 0)
+    FEN 8/2b5/N1P2p2/3k3p/p2rpp1P/P4KP1/5P2/2R5 w - - 0 46
+    SF top3 @6s: [('f3g2', 'cp', 16, 'd33'), ('f3e2', 'cp', -8, 'd33')]
+--- 2500_white move 47: played Ke1 (e2e1) in-game Vex None; fresh Vex now: e2e1 d20 ('cp', 0)
+    FEN 8/2b5/N1P2p2/3k3p/p2rp2P/P4pP1/4KP2/2R5 w - - 0 47
+    SF top3 @6s: [('e2e1', 'cp', -135, 'd21'), ('e2f1', 'cp', -373, 'd21'), ('e2e3', 'mate', -1, 'd20')]
+--- 2500_white move 48: played Kf1 (e1f1) in-game Vex 0; fresh Vex now: e1f1 d20 ('cp', 0)
+    FEN 8/2b5/N1Pk1p2/7p/p2rp2P/P4pP1/5P2/2R1K3 w - - 2 48
+    SF top3 @6s: [('a6c7', 'cp', -106, 'd21'), ('a6c5', 'cp', -349, 'd21'), ('c1c5', 'cp', -374, 'd21')]
+--- 2500_white move 49: played Nb4 (a6b4) in-game Vex -63; fresh Vex now: f1g1 d17 ('cp', -65)
+    FEN 8/2b5/N1Pk1p2/3r3p/p3p2P/P4pP1/5P2/2R2K2 w - - 4 49
+    SF top3 @6s: [('a6b4', 'cp', -372, 'd20'), ('f1e1', 'cp', -397, 'd20'), ('f1g1', 'cp', -403, 'd20')]

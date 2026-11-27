@@ -1,0 +1,36 @@
+run,jar,disable_mate_tt,start_ply,mode,threads,hash_mb,contempt,outcome,vex_moves,vex_moves_under_50ms
+b93_cleared_t1_1,demo,False,93,cleared,1,256,0,checkmate vex,12,4
+b93_cleared_t1_2,demo,False,93,cleared,1,256,0,checkmate vex,13,5
+b93_cleared_t8_1,demo,False,93,cleared,8,256,0,checkmate vex,11,5
+b93_cleared_t8_2,demo,False,93,cleared,8,256,0,checkmate vex,11,6
+b93_cleared_t8_3,demo,False,93,cleared,8,256,0,checkmate vex,10,5
+b93_persistent_t1_1,demo,False,93,persistent,1,256,0,checkmate vex,11,8
+b93_persistent_t1_2,demo,False,93,persistent,1,256,0,draw-threefold,7,5
+b93_persistent_t8_1,demo,False,93,persistent,8,256,0,draw-threefold,6,3
+b93_persistent_t8_2,demo,False,93,persistent,8,256,0,draw-threefold,8,7
+b93_persistent_t8_3,demo,False,93,persistent,8,256,0,checkmate vex,11,9
+b97_cleared_t8_1,demo,False,97,cleared,8,256,0,checkmate vex,8,4
+b97_persistent_t8_1,demo,False,97,persistent,8,256,0,checkmate vex,8,7
+conv93_cleared,demo,False,93,cleared,8,256,0,checkmate vex,10,5
+conv93_fresh,demo,False,93,fresh,8,256,0,checkmate vex,11,0
+conv93_persistent,demo,False,93,persistent,8,256,0,draw-threefold,8,7
+d93_base_1,diagnostic,False,93,persistent,8,256,0,draw-threefold,8,7
+d93_base_2,diagnostic,False,93,persistent,8,256,0,checkmate vex,17,14
+d93_base_3,diagnostic,False,93,persistent,8,256,0,checkmate vex,13,11
+d93_base_4,diagnostic,False,93,persistent,8,256,0,draw-threefold,9,7
+d93_base_5,diagnostic,False,93,persistent,8,256,0,draw-threefold,13,11
+d93_skip_1,diagnostic,True,93,persistent,8,256,0,checkmate vex,10,6
+d93_skip_2,diagnostic,True,93,persistent,8,256,0,checkmate vex,9,7
+d93_skip_3,diagnostic,True,93,persistent,8,256,0,checkmate vex,10,5
+d93_skip_4,diagnostic,True,93,persistent,8,256,0,checkmate vex,10,6
+d93_skip_5,diagnostic,True,93,persistent,8,256,0,checkmate vex,10,5
+p93_cleared_1,demo,False,93,cleared,1,64,50,checkmate vex,11,4
+p93_cleared_2,demo,False,93,cleared,1,64,50,checkmate vex,9,4
+p93_cleared_3,demo,False,93,cleared,1,64,50,checkmate vex,10,4
+p93_cleared_4,demo,False,93,cleared,1,64,50,checkmate vex,11,3
+p93_cleared_5,demo,False,93,cleared,1,64,50,checkmate vex,10,5
+p93_persistent_1,demo,False,93,persistent,1,64,50,draw-threefold,12,10
+p93_persistent_2,demo,False,93,persistent,1,64,50,draw-threefold,8,5
+p93_persistent_3,demo,False,93,persistent,1,64,50,checkmate vex,12,7
+p93_persistent_4,demo,False,93,persistent,1,64,50,draw-threefold,10,6
+p93_persistent_5,demo,False,93,persistent,1,64,50,draw-threefold,5,2
