@@ -254,3 +254,13 @@ Phase 15 keeps its status (the self-play/Stage-3 line is paused and every `[P15]
 **Broke / Fixed:** The 2500 Black game reached its third occurrence on 63.Kh2. The warm-table failure remains open. The 2500 White case identifies weak sensitivity to the f3 pawn and its tactical and king-restriction effects.
 
 **Measurements:** Recovered 11/16 persistent repetitions, 12/12 cleared or fresh mates, and 5/5 mates with mate-range TT returns disabled. Moving Black's f3 pawn back to f4 in the move-52 comparison improved the White score by 46 cp in Vex's static evaluation and 295 cp in Stockfish 18 at depth 18. The net passed-pawn term was unchanged.
+
+### [2026-11-27] Fixed-depth trace of the manual-game mate cutoff (#287)
+
+**Built:** A disposable trace build and deterministic replay of the played 2500 Black prefixes. The case study records the exact stored entry, its lookup in a different reversible history, the descendant sequence, and the early-stop control.
+
+**Decisions Made:** Use ply 109 to test the cutoff and early stop separately. Keep ply 123 as a full-history versus FEN-only control for the played move that allowed threefold. The plan proposes comparing bounded root verification against continuing search and against the blanket mate-cutoff reference. Candidate choice awaits review.
+
+**Broke / Fixed:** A depth-13 EXACT entry learned after `53...Kxf6` returned at depth 2 after `55...Kf6`. Suppressing the cutoff let the engine reach a repetition under that child, but another line still returned the same move and mate. The production search remains at its existing policy.
+
+**Measurements:** Ply 109 with cutoff and stop enabled returned Kf6 at depth 2, M8. Suppressing that single key returned the same move at depth 4. Disabling the stop while retaining all cutoffs changed the preferred move to Kf5 at depth 6 and returned M6 at depth 13. At ply 123 the forced played move produced the contempt draw score with the full prefix and M10 with a FEN-only root.

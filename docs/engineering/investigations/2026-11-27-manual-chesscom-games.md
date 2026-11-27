@@ -19,6 +19,38 @@ The 11/16 combined control runs include GUI-profile runs and Threads=8, Hash=256
 
 The source already adjudicates repetition at the probed node. A cutoff can skip a descendant that would draw under the current game history. The table key does not encode that history, and iterative deepening stops once the root receives a mate-range score. The intervention skipped all applicable mate-range TT returns after score conversion and left move ordering intact. It establishes that the cutoff path matters in these replays. The logs do not identify the entry that first hid a descendant repetition or distinguish stale score reuse from other tree changes caused by the guard. A short PV is consistent with a table cutoff and can also accompany a correct mate. See [the #287 plan](../../superpowers/plans/2026-11-27-mate-tt-repetition.md).
 
+### Fixed-depth trace of the cutoff and the early stop
+
+I replayed the original Black game at one thread, Hash=64, Contempt=50, maximum depth 13. The script searches each actual Black prefix starting at ply 93, keeps one table and then advances the PGN by the moves that were played. This controls the history and isolates the search decisions from timed Stockfish play. The diagnostic build was based on `0301ded`.
+
+1. At root ply 105, after `53.f6+`, Vex examined `53...Kxf6`. Generation 7 stored key `4d4b309b56cd9ad3` as EXACT at effective depth 13 with node-relative score `-99986` and TT move `g3h3` (packed `3054`). White had no prior occurrence of the position in the reversible window because Black had just captured.
+2. At root ply 109, after `55.Kg3`, Vex examined `55...Kf6`. The placement, rights and side to move gave it the same key, now with halfmove clock 4 and one earlier occurrence. The local repetition check passed. At iteration depth 2, ply 1 and effective depth 1, the entry returned `-99985` in both the null window `[-996,-995]` and the re-search window `[-1000000,-995]`. The root reported mate in eight and stopped with a one-move PV.
+3. Suppressing just that key's mate-range return kept the hash move and the rest of the table. At depth 2 the immediate replacement result for that child was a `-973` lower bound. At depth 4 the searched line `e6f6 g3h3 c6d7 h3g3 d7c6` reached the same key at ply 5 and the repetition guard adjudicated it. This was occurrence three with the PGN prefix. The FEN-only control also adjudicated the line, as a cycle inside the search. The line uses a voluntary Black bishop retreat, so it establishes a skipped adjudication without proving that the position after `55...Kf6` cannot be won.
+
+| Arm at root ply 109 | Returned move | Depth | Score | PV moves |
+| --- | --- | ---: | ---: | ---: |
+| Full history, warm table | Kf6 | 2 | M8 | 1 |
+| Warm table, target root reconstructed from FEN | Kf6 | 2 | M8 | 1 |
+| Full history, suppress the one key | Kf6 | 4 | M8 | 3 |
+| Full history, keep cutoffs and bypass the mate stop | Kf5 | 13 | M6 | 11 |
+| Full history, suppress the one key and bypass the stop | Kf5 | 13 | M6 | 11 |
+| Full history, cold table at target | Ke5 | 10 | M6 | 11 |
+
+With just the early stop bypassed, Kf6 and M8 persisted through depth 5 and Kf5 took over at depth 6. The second exact entry I tested, key `e0679513e43cac91` on ply 121, was immediately replaced by a mate coming from a deeper cutoff when bypassed. A key-specific patch would leave other paths to the same shallow stop.
+
+I also forced the played `62...Kf6` at root ply 123. With the complete prefix, White's `63.Kh2` was adjudicated as a draw, returning the contempt score `-50` from the Black root at depth 13. With the same table and target reconstructed from FEN, that exact reply remained in a mate PV and the search stopped at depth 4 on M10. The unrestricted deterministic replay chooses Bd4 over the played Kf6 on that final Black turn. The exact ply-109 entry is established for this controlled replay. The original live search had no node trace, and no reverse case of a cached repetition score suppressing mate was established here.
+
+Reproduce on a disposable checkout of `0301ded` with `git apply --unidiff-zero /path/to/trace-mate-tt.patch`, then package as below. With the working directory set to the fixture folder, run:
+
+```sh
+python3 trace_mate_tt.py /path/to/diagnostic.jar games/2500_black.pgn --target 109 --to-ply 109
+python3 trace_mate_tt.py /path/to/diagnostic.jar games/2500_black.pgn --target 109 --to-ply 109 --key 4d4b309b56cd9ad3
+python3 trace_mate_tt.py /path/to/diagnostic.jar games/2500_black.pgn --target 109 --to-ply 109 --ignore-stop
+python3 trace_mate_tt.py /path/to/diagnostic.jar games/2500_black.pgn --target 123 --to-ply 123 --force g7f6
+```
+
+Add `--fen-only` for the no-history target control and `--from-ply 109 --cold` for the cold ply-109 control. The raw stderr trace and JSONL results are in the ignored `mate-tt-trace/` directory beside the archive.
+
 ## Ponderhit timing
 
 In a separate Cute Chess run, `go ponder movetime 2000` was sent at 2448 ms, `ponderhit` at 4451 ms and `bestmove g1f3 ponder b8c6` at 4452 ms. The next hit-to-bestmove interval was also 1 ms. Baseline Vex replaces the fixed budget with a clock allocation using zero clocks. In the manual PGNs, 90 of 411 Vex moves are annotated as 0.001 s. The missing engine annotations on some moves and exact timing of individual manual ponder hits remain unverified. A packaged-JAR probe at 700 ms measured 2 ms on the demo and 670 ms with the correction in [PR #335](https://github.com/coeusyk/chess-engine/pull/335).

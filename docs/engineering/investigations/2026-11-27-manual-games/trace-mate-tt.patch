@@ -1,0 +1,71 @@
+diff --git a/engine-core/src/main/java/coeusyk/game/chess/core/models/Board.java b/engine-core/src/main/java/coeusyk/game/chess/core/models/Board.java
+index 583e052..e33e9c0 100644
+--- a/engine-core/src/main/java/coeusyk/game/chess/core/models/Board.java
++++ b/engine-core/src/main/java/coeusyk/game/chess/core/models/Board.java
+@@ -1189,0 +1190,18 @@ public class Board {
++    public String replayHistory() {
++        StringBuilder history = new StringBuilder(toFen()).append(" history=");
++        int current = zobristSP - 1;
++        int first = Math.max(repetitionFloor, current - Math.max(0, halfmoveClock));
++        for (int i = first; i <= current; i++) {
++            if (i == searchRootIndex) history.append('|');
++            history.append(String.format("%016x,", zobristStack[i]));
++        }
++        history.append(" line=");
++        for (int i = 0; i < unmakeSP; i++) {
++            int move = unmakePool[i].packedMove;
++            int from = Move.from(move), to = Move.to(move);
++            history.append((char) ('a' + from % 8)).append(8 - from / 8);
++            history.append((char) ('a' + to % 8)).append(8 - to / 8).append(',');
++        }
++        return history.toString();
++    }
++
+diff --git a/engine-core/src/main/java/coeusyk/game/chess/core/search/Searcher.java b/engine-core/src/main/java/coeusyk/game/chess/core/search/Searcher.java
+index c06202f..709bbb7 100644
+--- a/engine-core/src/main/java/coeusyk/game/chess/core/search/Searcher.java
++++ b/engine-core/src/main/java/coeusyk/game/chess/core/search/Searcher.java
+@@ -45,0 +46,7 @@ public class Searcher {
++    private static final boolean REPLAY_TRACE = Boolean.getBoolean("replay.trace");
++    private static final int REPLAY_TARGET = Integer.getInteger("replay.target", -1);
++    private static final String REPLAY_KEY = System.getProperty("replay.key", "");
++    private static final boolean REPLAY_IGNORE_STOP = Boolean.getBoolean("replay.ignoreStop");
++    private int replayRoot;
++    private int replayDepth;
++    private int replaySuppressedAt = Integer.MAX_VALUE;
+@@ -479,0 +487,4 @@ public class Searcher {
++        if (REPLAY_TRACE) {
++            replayRoot = (board.getFullMoves() - 1) * 2 + (Piece.isWhite(board.getActiveColor()) ? 0 : 1);
++            replaySuppressedAt = Integer.MAX_VALUE;
++        }
+@@ -550,0 +562 @@ public class Searcher {
++            replayDepth = depth;
+@@ -755 +767,4 @@ public class Searcher {
+-                break;
++                if (REPLAY_TRACE) System.err.printf("MATE root=%d depth=%d score=%d from=%d to=%d pvsize=%d%n",
++                        replayRoot, depth, bestScore, previousBestMove.startSquare,
++                        previousBestMove.targetSquare, bestPrincipalVariation.size());
++                if (!REPLAY_IGNORE_STOP || replayRoot != REPLAY_TARGET) break;
+@@ -1098,0 +1114,4 @@ public class Searcher {
++                if (REPLAY_TRACE && replayRoot == REPLAY_TARGET && replaySuppressedAt < ply && ply <= 12) {
++                    System.err.printf("REPEAT root=%d depth=%d ply=%d key=%016x %s%n",
++                            replayRoot, replayDepth, ply, board.getZobristHash(), board.replayHistory());
++                }
+@@ -1144,0 +1164,11 @@ public class Searcher {
++        if (REPLAY_TRACE && ttScore != null && Math.abs(ttScore) >= MATE_SCORE - MAX_PLY
++                && (ply == 1 || replayRoot == REPLAY_TARGET && ply <= 4 && replayDepth <= 5)) {
++            System.err.printf("HIT root=%d depth=%d ply=%d effective=%d alpha=%d beta=%d key=%016x score=%d %s %s%n",
++                    replayRoot, replayDepth, ply, effectiveDepth, alpha, beta, zobrist, ttScore, ttEntry,
++                    board.replayHistory());
++            if (replayRoot == REPLAY_TARGET && REPLAY_KEY.equals(Long.toUnsignedString(zobrist, 16))) {
++                System.err.println("SUPPRESS key=" + REPLAY_KEY);
++                replaySuppressedAt = ply;
++                ttScore = null;
++            }
++        }
+@@ -1515,0 +1546,5 @@ public class Searcher {
++                if (REPLAY_TRACE && !REPLAY_KEY.isEmpty() && REPLAY_KEY.equals(Long.toUnsignedString(zobrist, 16))) {
++                    System.err.printf("STORE root=%d depth=%d ply=%d effective=%d score=%d bound=%s move=%d %s%n",
++                            replayRoot, replayDepth, ply, searchedDepth, scoreToTT(bestScore, ply),
++                            bound, bestMove, board.replayHistory());
++                }
