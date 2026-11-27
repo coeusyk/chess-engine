@@ -32,6 +32,7 @@ Use the active phase file for ongoing updates and outcomes.
 - [dev-entries/phase-26.md](dev-entries/phase-26.md)
 - [dev-entries/phase-27.md](dev-entries/phase-27.md)
 - [dev-entries/phase-30.md](dev-entries/phase-30.md)
+- [dev-entries/phase-32.md](dev-entries/phase-32.md)
 
 ## Logging Rule
 - Phase 22 (Post-0.6.0 Engineering Hardening) is the active log. Add new entries there, tagged with a workstream.
