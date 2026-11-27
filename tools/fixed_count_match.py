@@ -48,6 +48,7 @@ def _load(name: str):
 
 
 sprt_linux = _load("sprt_linux")
+nnue_preflight = _load("nnue_preflight")
 LauncherError = sprt_linux.LauncherError
 
 
@@ -82,6 +83,49 @@ def build_record(*, args: argparse.Namespace, cutechess: str, java: str, new_jar
                                       else sprt_linux.AUTHORITATIVE_REASON)
     record["cutechess"] = {"file": Path(cutechess).name, "sha256": sprt_linux.file_sha256(Path(cutechess))}
     return record
+
+
+def verify_nnue_sides(args: argparse.Namespace, cc_args: Sequence[str]) -> Dict[str, Any]:
+    """Pre-flight of the exact engine configurations in `cc_args` when any side runs EvalType=NNUE (#330).
+
+    The engine's StrictNnue option only acts on what the engine is told, so a misspelled or duplicated option,
+    a JAR without the option or a network that is not the pinned one is caught here, before Cute Chess starts.
+    Every side of an NNUE run is checked (duplicate and unadvertised options matter on the baseline too); an
+    NNUE side also needs its pinned uuid and SHA-256. A Classical-only run returns {} and is not touched."""
+    configs = {side: nnue_preflight.effective_engine_config(cc_args, name) for side, name in (("new", "NEW"), ("old", "OLD"))}
+    nnue_sides = [side for side, config in configs.items() if config.option("EvalType") == "NNUE"]
+    pins = {side: (getattr(args, f"{side}_nnue_uuid"), getattr(args, f"{side}_nnue_sha256")) for side in configs}
+    if not nnue_sides:
+        if any(uuid or sha for uuid, sha in pins.values()):
+            raise LauncherError("NNUE pins were given but no side has EvalType=NNUE.")
+        return {}
+    records: Dict[str, Any] = {}
+    for side, config in configs.items():
+        uuid, sha = pins[side]
+        if side in nnue_sides:
+            if not uuid or not sha:
+                raise LauncherError(f"The {side} engine runs EvalType=NNUE and needs --{side}-nnue-uuid and "
+                                    f"--{side}-nnue-sha256: a screening run must name the network it tests.")
+            side_pins = nnue_preflight.Pins(uuid, sha)
+        elif uuid or sha:
+            raise LauncherError(f"NNUE pins were given for the {side} engine, which is not EvalType=NNUE.")
+        else:
+            side_pins = None
+        try:
+            records[side] = nnue_preflight.preflight(config, side_pins)
+        except nnue_preflight.PreflightError as error:
+            raise LauncherError(f"NNUE pre-flight failed for the {side} engine (status {error.code}): {error}") from error
+    return records
+
+
+def recheck_nnue_sides(records: Mapping[str, Any], cc_args: Sequence[str]) -> None:
+    """Immediately before launch: the network files must still be the ones the pre-flight verified."""
+    for side, record in records.items():
+        config = nnue_preflight.effective_engine_config(cc_args, side.upper())
+        try:
+            nnue_preflight.recheck(record, config.option("EvalFile"))
+        except nnue_preflight.PreflightError as error:
+            raise LauncherError(f"The {side} network file failed the re-check before launch: {error}") from error
 
 
 def refuse_aliases(outputs: Mapping[str, Optional[str]], inputs: Mapping[str, Optional[str]]) -> None:
@@ -136,6 +180,10 @@ def parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     p.add_argument("--opening-order", choices=("random", "sequential"), default="random")
     p.add_argument("--new-option", action="append", default=[], metavar="NAME=VALUE")
     p.add_argument("--old-option", action="append", default=[], metavar="NAME=VALUE")
+    p.add_argument("--new-nnue-uuid", default="", help="Pinned uuid of the candidate network (required with EvalType=NNUE).")
+    p.add_argument("--new-nnue-sha256", default="", help="Pinned SHA-256 of the candidate network file.")
+    p.add_argument("--old-nnue-uuid", default="", help="Pinned uuid of the baseline network (EvalType=NNUE baseline only).")
+    p.add_argument("--old-nnue-sha256", default="", help="Pinned SHA-256 of the baseline network file.")
     p.add_argument("--log-path", required=True)
     p.add_argument("--pgn-path", required=True)
     p.add_argument("--prepare-only", action="store_true")
@@ -184,8 +232,11 @@ def run(argv: Optional[Sequence[str]] = None, env: Optional[Mapping[str, str]] =
         expected = json.loads(Path(args.expected_argument_manifest_path).read_text(encoding="utf-8-sig"))
         if expected.get("Executable") != manifest["Executable"] or list(expected.get("Arguments", [])) != cc_args:
             raise LauncherError("Actual Cute Chess arguments differ from the prepared manifest.")
+    nnue_records = verify_nnue_sides(args, cc_args)
     record = build_record(args=args, cutechess=cutechess, java=java, new_jar=new_jar, old_jar=old_jar, book=book,
                           cc_args=cc_args, wsl=sprt_linux.is_wsl(env=env))
+    if nnue_records:
+        record["nnue_preflight"] = nnue_records
     if args.expected_provenance_path:
         check_expected(json.loads(Path(args.expected_provenance_path).read_text(encoding="utf-8-sig")), record)
     if args.argument_manifest_path:
@@ -199,6 +250,7 @@ def run(argv: Optional[Sequence[str]] = None, env: Optional[Mapping[str, str]] =
     if args.prepare_only:
         return 0
 
+    recheck_nnue_sides({side: r for side, r in nnue_records.items() if r.get("nnue_sha256")}, cc_args)
     exit_code = sprt_linux.stream_cutechess(cutechess, cc_args, log_out)
     record["finished_utc"] = sprt_linux.utc_now()
     record["exit_code"] = exit_code
