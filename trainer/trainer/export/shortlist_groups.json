@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "cap": 10,
+  "rule": "Groups are taken in this fixed order. A group is kept whole or dropped whole, so a comparison is never split across the cap. One network per distinct network_content_sha256: a group whose network duplicates one already selected is dropped as a duplicate. The cap counts distinct networks, and a group that would exceed it is skipped whole and the next group considered. No measured quality of any network is an input.",
+  "groups": [
+    {"id": "anchor-e3", "kind": "anchor", "members": ["E-3"]},
+    {"id": "baseline-p1-g04", "kind": "baseline", "members": ["P1-G04"]},
+    {"id": "baseline-p3a-001", "kind": "baseline", "members": ["P3A-001"]},
+    {"id": "baseline-p4iv-001", "kind": "baseline", "members": ["P4IV-001"]},
+    {"id": "pair-p5-selected", "kind": "pair", "members": ["P5-control-selected", "P5-treatment-selected"]},
+    {"id": "pair-e15", "kind": "pair", "members": ["E15-control-final", "E15-treatment-final"]},
+    {"id": "pair-e16-seed42", "kind": "pair", "members": ["E16-control-s42-final", "E16-treatment-s42-final"]},
+    {"id": "baseline-m1-seed42", "kind": "baseline", "members": ["M1-s42-final"]},
+    {"id": "pair-p5-final", "kind": "pair", "members": ["P5-control-final", "P5-treatment-final"]},
+    {"id": "pair-e16-seed43", "kind": "pair", "members": ["E16-control-s43-final", "E16-treatment-s43-final"]},
+    {"id": "pair-e16-seed44", "kind": "pair", "members": ["E16-control-s44-final", "E16-treatment-s44-final"]},
+    {"id": "baseline-m1-seed43", "kind": "baseline", "members": ["M1-s43-final"]},
+    {"id": "baseline-m1-seed44", "kind": "baseline", "members": ["M1-s44-final"]}
+  ]
+}
