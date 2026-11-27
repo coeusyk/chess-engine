@@ -25,13 +25,13 @@ I replayed the original Black game at one thread, Hash=64, Contempt=50, maximum 
 
 1. At root ply 105, after `53.f6+`, Vex examined `53...Kxf6`. Generation 7 stored key `4d4b309b56cd9ad3` as EXACT at effective depth 13 with node-relative score `-99986` and TT move `g3h3` (packed `3054`). White had no prior occurrence of the position in the reversible window because Black had just captured.
 2. At root ply 109, after `55.Kg3`, Vex examined `55...Kf6`. The placement, rights and side to move gave it the same key, now with halfmove clock 4 and one earlier occurrence. The local repetition check passed. At iteration depth 2, ply 1 and effective depth 1, the entry returned `-99985` in both the null window `[-996,-995]` and the re-search window `[-1000000,-995]`. The root reported mate in eight and stopped with a one-move PV.
-3. Suppressing just that key's mate-range return kept the hash move and the rest of the table. At depth 2 the immediate replacement result for that child was a `-973` lower bound. At depth 4 the searched line `e6f6 g3h3 c6d7 h3g3 d7c6` reached the same key at ply 5 and the repetition guard adjudicated it. This was occurrence three with the PGN prefix. The FEN-only control also adjudicated the line, as a cycle inside the search. The line uses a voluntary Black bishop retreat, so it establishes a skipped adjudication without proving that the position after `55...Kf6` cannot be won.
+3. Suppressing that key at the traced probe kept the hash move and the rest of the table. The switch is scoped to the target root and the trace filter, which includes ply 1 and, through iteration depth 5, plies 2 to 4. At depth 2 the immediate replacement result for that child was a `-973` lower bound. At depth 4 the searched line `e6f6 g3h3 c6d7 h3g3 d7c6` reached the same key at ply 5 and the repetition guard adjudicated it. This was occurrence three with the PGN prefix. The FEN-only control also adjudicated the line, as a cycle inside the search. The line uses a voluntary Black bishop retreat, so it establishes a skipped adjudication without proving that the position after `55...Kf6` cannot be won.
 
 | Arm at root ply 109 | Returned move | Depth | Score | PV moves |
 | --- | --- | ---: | ---: | ---: |
 | Full history, warm table | Kf6 | 2 | M8 | 1 |
 | Warm table, target root reconstructed from FEN | Kf6 | 2 | M8 | 1 |
-| Full history, suppress the one key | Kf6 | 4 | M8 | 3 |
+| Full history, suppress the key at the traced probe | Kf6 | 4 | M8 | 3 |
 | Full history, keep cutoffs and bypass the mate stop | Kf5 | 13 | M6 | 11 |
 | Full history, suppress the one key and bypass the stop | Kf5 | 13 | M6 | 11 |
 | Full history, cold table at target | Ke5 | 10 | M6 | 11 |
@@ -46,10 +46,11 @@ Reproduce on a disposable checkout of `0301ded` with `git apply --unidiff-zero /
 python3 trace_mate_tt.py /path/to/diagnostic.jar games/2500_black.pgn --target 109 --to-ply 109
 python3 trace_mate_tt.py /path/to/diagnostic.jar games/2500_black.pgn --target 109 --to-ply 109 --key 4d4b309b56cd9ad3
 python3 trace_mate_tt.py /path/to/diagnostic.jar games/2500_black.pgn --target 109 --to-ply 109 --ignore-stop
+python3 trace_mate_tt.py /path/to/diagnostic.jar games/2500_black.pgn --target 109 --to-ply 109 --key 4d4b309b56cd9ad3 --ignore-stop
 python3 trace_mate_tt.py /path/to/diagnostic.jar games/2500_black.pgn --target 123 --to-ply 123 --force g7f6
 ```
 
-Add `--fen-only` for the no-history target control and `--from-ply 109 --cold` for the cold ply-109 control. The raw stderr trace and JSONL results are in the ignored `mate-tt-trace/` directory beside the archive.
+Add `--fen-only` for the no-history target control and `--from-ply 109 --cold` for the cold ply-109 control. Capture stderr separately from the JSONL on stdout. The raw results are in the ignored `mate-tt-trace/` directory beside the archive.
 
 ## Ponderhit timing
 
