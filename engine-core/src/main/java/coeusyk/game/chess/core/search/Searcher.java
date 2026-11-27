@@ -480,6 +480,8 @@ public class Searcher {
         evaluator.reset(board);
 
         Move previousBestMove = null;
+        // Best root move of an iteration that was cut off before any depth completed.
+        Move partialBestMove = null;
         int bestScore = 0;
         int depthReached = 0;
         List<Move> bestPrincipalVariation = List.of();
@@ -670,6 +672,8 @@ public class Searcher {
                     bestScore = iteration.bestScore;
                     depthReached = depth;
                     bestPrincipalVariation = iteration.principalVariation;
+                } else if (pvIndex == 0 && previousBestMove == null && partialBestMove == null) {
+                    partialBestMove = iteration.bestMove;
                 }
 
                 excludedMoves.add(iteration.bestMove);
@@ -782,6 +786,13 @@ public class Searcher {
             }
         }
 
+        // The budget ran out before any iteration completed: a nonterminal root still needs a legal answer.
+        // Prefer what the cut-off first iteration had found, then the first legal move.
+        Move resultMove = previousBestMove;
+        if (resultMove == null && aborted) {
+            resultMove = partialBestMove != null ? partialBestMove : firstLegalRootMove(board);
+        }
+
         double ebf = 0.0;
         if (depthReached >= 3 && nodesPerDepth[depthReached - 2] > 0) {
             ebf = Math.sqrt((double) nodesPerDepth[depthReached] / nodesPerDepth[depthReached - 2]);
@@ -790,7 +801,7 @@ public class Searcher {
         long accumulatorNanos = (evaluator instanceof NnueEvaluator ne ? ne.accumulatorUpdateNanos() : 0L) - accumulatorNanosBefore;
 
         return new SearchResult(
-            previousBestMove,
+            resultMove,
             bestScore,
             depthReached,
             bestPrincipalVariation,
@@ -812,6 +823,17 @@ public class Searcher {
             totalPvNodeEvals,
             totalCutNodeEvals
         );
+    }
+
+    /** First legal root move that the searchmoves restriction allows, or null when the root has none (terminal). */
+    private Move firstLegalRootMove(Board board) {
+        ArrayList<Move> moves = rootMoveList;
+        moves.clear();
+        new MovesGenerator(board, moves);
+        if (!searchMoves.isEmpty()) {
+            moves.removeIf(m -> !isExcludedMove(m, searchMoves));
+        }
+        return moves.isEmpty() ? null : moves.get(0);
     }
 
     private RootResult searchRootWithAspiration(

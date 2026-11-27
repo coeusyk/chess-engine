@@ -11,6 +11,8 @@ public class TimeManager {
     private volatile long softLimitMs = 1;
     private volatile long hardLimitMs = 1;
     private volatile long startNanos;
+    private boolean originPending;
+    private long pendingOriginNanos;
 
     /**
      * Multiplier applied to softLimitMs inside shouldStopSoft().
@@ -75,7 +77,10 @@ public class TimeManager {
         configurePonderHit(activeColor, wtimeMs, btimeMs, wincMs, bincMs, 0);
     }
 
-    public void configurePonderHit(int activeColor, long wtimeMs, long btimeMs, long wincMs, long bincMs, int moveNumber) {
+    public synchronized void configurePonderHit(int activeColor, long wtimeMs, long btimeMs, long wincMs, long bincMs, int moveNumber) {
+        // The ponderhit clock starts now. A go-receipt origin that is still pending belongs to the ponder
+        // search, which was never charged to this budget, so it must not be applied afterwards.
+        originPending = false;
         startNanos = System.nanoTime();
         configureClock(activeColor, wtimeMs, btimeMs, wincMs, bincMs, moveNumber);
     }
@@ -126,8 +131,20 @@ public class TimeManager {
                 moveNumber, divisor, softLimitMs, hardLimitMs));
     }
 
-    public void startNow() {
-        startNanos = System.nanoTime();
+    /**
+     * Records the monotonic time ({@link System#nanoTime()}) at which the request for this search arrived, so that
+     * the work between the request and the search itself is charged to the budget. The next {@link #startNow()}
+     * uses it as the clock origin instead of "now". It is consumed by that call: a manager that is reused for a
+     * later search starts that search's clock at the later {@code startNow()}, unless this is called again.
+     */
+    public synchronized void markRequestReceived(long originNanos) {
+        pendingOriginNanos = originNanos;
+        originPending = true;
+    }
+
+    public synchronized void startNow() {
+        startNanos = originPending ? pendingOriginNanos : System.nanoTime();
+        originPending = false;
     }
 
     public boolean shouldStopSoft() {

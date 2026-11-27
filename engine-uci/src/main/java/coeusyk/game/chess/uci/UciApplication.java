@@ -231,6 +231,8 @@ public class UciApplication {
 
         String line;
         while ((line = in.readLine()) != null) {
+            // The request clock starts here, before any parsing or search setup, so a go is charged for all of it.
+            long receivedNanos = System.nanoTime();
             line = line.trim();
             if (line.isEmpty()) {
                 continue;
@@ -274,7 +276,7 @@ public class UciApplication {
             } else if (line.startsWith("setoption")) {
                 handleSetOption(line);
             } else if (line.startsWith("go")) {
-                handleGo(line);
+                handleGo(line, receivedNanos);
             } else if (line.startsWith("bench")) {
                 String[] benchParts = line.split("\\s+");
                 int benchDepth = DEFAULT_BENCH_DEPTH;
@@ -719,7 +721,7 @@ public class UciApplication {
         }
     }
 
-    private void handleGo(String command) {
+    private void handleGo(String command, long receivedNanos) {
         drainSearch();
 
         long searchId = SMP_DIAGNOSTICS ? searchSequence.incrementAndGet() : 0L;
@@ -771,7 +773,7 @@ public class UciApplication {
 
         // Built and published here, before the worker exists, so ponderhit and stop can never beat it.
         GoSession goSession = new GoSession(hold, isGoPonder,
-                hold && !isGoPonder ? null : buildTimeManager(goParts, searchBoard, isGoPonder));
+                hold && !isGoPonder ? null : buildTimeManager(goParts, searchBoard, isGoPonder, receivedNanos));
         session = goSession;
         Thread worker = new Thread(() -> runSearch(command, snapshot, searchBoard, searchId, legalMoves, goSession),
                 "uci-search-thread");
@@ -780,8 +782,11 @@ public class UciApplication {
         worker.start();
     }
 
-    /** Time control for a go command, or null when it is a depth or infinite search. */
-    private TimeManager buildTimeManager(String[] parts, Board searchBoard, boolean ponder) {
+    /**
+     * Time control for a go command, or null when it is a depth or infinite search. The manager keeps
+     * {@code receivedNanos} as its clock origin, so everything between the request and the search is charged.
+     */
+    TimeManager buildTimeManager(String[] parts, Board searchBoard, boolean ponder, long receivedNanos) {
         TimeManager manager;
         if (contains(parts, "movetime")) {
             manager = new TimeManager();
@@ -797,6 +802,7 @@ public class UciApplication {
         } else {
             return null;
         }
+        manager.markRequestReceived(receivedNanos);
         if (ponder) {
             manager.configurePonder();
         }
