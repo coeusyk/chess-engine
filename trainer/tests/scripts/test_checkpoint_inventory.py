@@ -69,3 +69,12 @@ def test_a_checkpoint_needing_full_unpickling_is_refused_unless_trusted(tmp_path
     else:
         raise AssertionError("weights_only loading must refuse a pickled object")
     assert build_inventory([("T", path)], trust_checkpoint=True)[0]["loaded_with_trust"] is True
+
+
+def test_same_named_files_in_different_directories_need_distinct_labels(tmp_path):
+    import pytest
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    a, b = _save(tmp_path / "a", "net.pt", seed=1), _save(tmp_path / "b", "net.pt", seed=2)
+    with pytest.raises(ValueError, match="used twice"):
+        build_inventory([("net.pt", a), ("net.pt", b)])

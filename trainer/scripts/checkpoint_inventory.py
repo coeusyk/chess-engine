@@ -5,7 +5,7 @@
     python -m scripts.checkpoint_inventory CKPT.pt [CKPT.pt ...] --output OUT.json
 
 `LABELS.json` maps a label (for example `P1-G04`, the names in `trainer/export/shortlist_groups.json`) to a path
-relative to `--root`, in the order duplicates should be resolved. The record for each checkpoint holds its base
+relative to `--root`, in the order `duplicate_of` should be resolved (the shortlist resolves duplicates by its own group order, so the two can name different representatives of one network). The record for each checkpoint holds its base
 name, the file SHA-256, `tensor_sha256` (the float network), `network_content_sha256` (the int16 network the
 engine would load), the trainer commit and seed when the checkpoint records them, the inference-relevant
 parameters, and `duplicate_of` (the label of the first earlier record with the same network). File hashes
@@ -68,7 +68,11 @@ def inventory_record(label: str, path: Path, trust_checkpoint: bool) -> Dict[str
 def build_inventory(entries: Sequence[Tuple[str, Path]], trust_checkpoint: bool = False) -> List[Dict[str, Any]]:
     records: List[Dict[str, Any]] = []
     first_by_network: Dict[str, str] = {}
+    seen_labels = set()
     for label, path in entries:
+        if label in seen_labels:
+            raise ValueError(f"label {label!r} is used twice (give same-named files in different directories distinct labels with --input)")
+        seen_labels.add(label)
         record = inventory_record(label, path, trust_checkpoint)
         record["duplicate_of"] = first_by_network.get(record["network_content_sha256"])
         first_by_network.setdefault(record["network_content_sha256"], label)
@@ -87,7 +91,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     if args.input is not None:
-        labels = json.loads(args.input.read_text(encoding="utf-8"))
+        def no_duplicate_keys(pairs):
+            keys = [k for k, _ in pairs]
+            if len(keys) != len(set(keys)):
+                raise ValueError("LABELS.json repeats a label")
+            return dict(pairs)
+
+        labels = json.loads(args.input.read_text(encoding="utf-8"), object_pairs_hook=no_duplicate_keys)
         entries = [(label, args.root / relative) for label, relative in labels.items()]
     else:
         entries = [(path.name, path) for path in args.checkpoints]

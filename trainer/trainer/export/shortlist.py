@@ -47,7 +47,10 @@ def select(records: Sequence[Mapping[str, Any]], groups: Optional[Mapping[str, A
     cap = int(groups["cap"])
     by_label: Dict[str, Mapping[str, Any]] = {}
     for record in records:
-        by_label.setdefault(record["label"], record)  # the first record with a label wins; order is irrelevant otherwise
+        label = record["label"]
+        if label in by_label:
+            raise ValueError(f"label {label!r} appears more than once in the inventory; the result would depend on its order")
+        by_label[label] = record
 
     selected: List[Dict[str, Any]] = []
     excluded: List[Dict[str, Any]] = []

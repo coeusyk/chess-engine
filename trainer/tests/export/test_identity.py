@@ -79,3 +79,11 @@ def test_identities_are_stable_hex_digests_and_carry_a_schema_version():
     assert len(tensor_sha256(canonical)) == 64 and len(network_content_sha256(quantize(canonical))) == 64
     assert tensor_sha256(canonical) == tensor_sha256(checkpoint_to_canonical(checkpoint(seed=1)))
     assert tensor_sha256(canonical) != network_content_sha256(quantize(canonical))
+
+
+def test_an_array_of_the_wrong_dtype_is_refused_instead_of_cast_into_the_hash():
+    import pytest
+    q = quantize(checkpoint_to_canonical(checkpoint(seed=1)))
+    wide = dataclasses.replace(q, ft_weights=q.ft_weights.astype(np.int64) + 70000)
+    with pytest.raises(ValueError, match="dtype"):
+        network_content_sha256(wide)

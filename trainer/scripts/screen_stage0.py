@@ -46,15 +46,23 @@ from trainer.validation.orientation import (
 Scorer = Callable[[Sequence[str]], List[int]]
 
 
+_preflight_module = None
+
+
 def _parse_eval_score(output: str) -> int:
-    path = repo_root(Path(__file__).resolve()) / "tools" / "nnue_preflight.py"
-    spec = importlib.util.spec_from_file_location("nnue_preflight_for_stage0", path)
-    if spec is None or spec.loader is None:
-        raise SystemExit("tools/nnue_preflight.py is missing: the engine parity check needs its eval-score parser")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules.setdefault("nnue_preflight_for_stage0", module)
-    spec.loader.exec_module(module)
-    return module.parse_eval_score(output)
+    """The engine score parser of tools/nnue_preflight.py, loaded once (the module lives outside the trainer package)."""
+    global _preflight_module
+    if _preflight_module is None:
+        path = repo_root(Path(__file__).resolve()) / "tools" / "nnue_preflight.py"
+        if not path.is_file():
+            raise SystemExit("tools/nnue_preflight.py is missing: the engine parity check needs its eval-score parser")
+        spec = importlib.util.spec_from_file_location("nnue_preflight_for_stage0", path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules.setdefault("nnue_preflight_for_stage0", module)
+        spec.loader.exec_module(module)
+        _preflight_module = module
+    return _preflight_module.parse_eval_score(output)
 
 
 def engine_fen(fen: str) -> str:
@@ -155,7 +163,7 @@ def stage0(net_path: Path, *, engine_scorer: Optional[Scorer] = None, fens: Opti
         mismatches = [{"fen": f, "java": j, "python": p}
                       for f, j, p in zip(fens + controlled_fens, engine_scores, python_scores) if j != p]
         parity = {"status": "pass" if len(engine_scores) == len(python_scores) and not mismatches else "failed",
-                  "positions": len(python_scores), "mismatches": len(mismatches), "first_mismatches": mismatches[:5],
+                  "positions": len(python_scores), "engine_scores": len(engine_scores), "mismatches": len(mismatches), "first_mismatches": mismatches[:5],
                   "max_abs_difference": max((abs(m["java"] - m["python"]) for m in mismatches), default=0)}
     gates["java_python_parity"] = parity["status"]
 
@@ -182,8 +190,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.output.exists():
         raise SystemExit(f"{args.output.name} already exists; refusing to overwrite")
 
-    scorer = EngineScorer(args.engine_jar, args.net, args.java) if args.engine_jar else None
+    scorer: Optional[EngineScorer] = None
     try:
+        scorer = EngineScorer(args.engine_jar, args.net, args.java) if args.engine_jar else None
         report = stage0(args.net, engine_scorer=scorer)
     finally:
         if scorer is not None:

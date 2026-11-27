@@ -92,3 +92,11 @@ def test_the_committed_group_file_is_well_formed_and_the_p1_g04_duplicate_is_res
     assert [g["group"] for g in result.selected][:7] == ["anchor-e3", "baseline-p1-g04", "baseline-p3a-001",
                                                          "baseline-p4iv-001", "pair-p5-selected", "pair-e15", "pair-e16-seed42"]
     assert json.loads(GROUPS_FILE.read_text())["groups"][0]["id"] == "anchor-e3"
+
+
+def test_a_repeated_label_is_an_error_not_an_order_dependent_choice():
+    import pytest
+    records = full()
+    records.append(rec(records[0]["label"], net="f" * 64))
+    with pytest.raises(ValueError, match="more than once"):
+        select(records)

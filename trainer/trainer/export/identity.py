@@ -34,7 +34,9 @@ IDENTITY_SCHEMA = 1
 
 
 def _update_array(digest: "hashlib._Hash", name: str, array: np.ndarray, dtype: str) -> None:
-    data = np.ascontiguousarray(array, dtype=np.dtype(dtype))
+    if array.dtype != np.dtype(dtype):
+        raise ValueError(f"{name} has dtype {array.dtype}, expected {dtype}: refusing to cast it into a hash")
+    data = np.ascontiguousarray(array)
     digest.update(f"array:{name}:{data.dtype.str}:{','.join(str(d) for d in data.shape)}\n".encode("ascii"))
     digest.update(data.tobytes())
 

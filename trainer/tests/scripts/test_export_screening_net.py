@@ -141,3 +141,93 @@ def test_cli_reports_a_refusal_and_the_no_java_claim(tmp_path, capsys, monkeypat
     assert "no Java loadability is claimed" in captured.err
     assert main([str(ckpt), "--out-dir", str(out)]) == 2
     assert "already exported" in capsys.readouterr().err
+
+
+def test_an_engine_failure_that_echoes_the_absolute_path_is_redacted_in_the_sidecar(tmp_path):
+    """The strict engine names the EvalFile it could not load. The record must not carry the local layout."""
+    def bad(path, uuid, sha):
+        resolved = path.resolve()
+        raise RuntimeError(f"engine: cannot load EvalFile '{resolved}'")
+
+    import scripts.export_screening_net as mod
+    real_gate = mod.engine_loading_gate
+
+    class FakePre:
+        class PreflightError(Exception):
+            def __init__(self, code, text):
+                super().__init__(text)
+                self.code = code
+
+        class EngineConfig:
+            def __init__(self, *a):
+                pass
+
+        class Pins:
+            def __init__(self, *a):
+                pass
+
+        @staticmethod
+        def preflight(config, pins):
+            raise FakePre.PreflightError(4, "NNUE strict mode: cannot load EvalFile '" + str(FakePre.nnue) + "': corrupt")
+
+    out = tmp_path / "out"
+    ckpt = _ckpt(tmp_path, seed=9)
+    mod._load_preflight, saved = (lambda: FakePre), mod._load_preflight
+    try:
+        gate = real_gate(tmp_path / "engine.jar", "java")
+
+        def wrapped(path, uuid, sha):
+            FakePre.nnue = path.resolve()
+            return gate(path, uuid, sha)
+
+        result = run(tmp_path, ckpt, out, engine_gate=wrapped)
+    finally:
+        mod._load_preflight = saved
+
+    assert result["exit_status"] == 3 and result["hard_gates"]["loader_safety_engine"].startswith("failed")
+    assert str(tmp_path) not in (out / f"{result['uuid']}{SIDECAR_SUFFIX}").read_text()
+
+
+def test_a_network_the_loader_rejects_gives_exit_3_through_the_real_path_without_a_traceback(tmp_path):
+    payload = checkpoint(seed=3)
+    payload["model_state_dict"]["ft.weight"] = torch.full_like(payload["model_state_dict"]["ft.weight"], 1500.0)
+    path = tmp_path / "huge.pt"
+    torch.save(payload, path)
+
+    result = run(tmp_path, path, tmp_path / "out")
+
+    assert result["exit_status"] == 3 and result["exported"] is False
+    assert "accumulator" in result["error"]
+    assert not (tmp_path / "out").exists()
+
+
+def test_a_crash_in_the_read_back_still_leaves_a_sidecar_that_says_failed(tmp_path, monkeypatch):
+    import scripts.export_screening_net as mod
+    monkeypatch.setattr(mod, "read_nnue", lambda path: (_ for _ in ()).throw(OSError("disk")))
+    out = tmp_path / "out"
+
+    result = run(tmp_path, _ckpt(tmp_path, seed=10), out)
+
+    assert result["exit_status"] == 3 and result["hard_gates"]["identity"] == "failed"
+    assert len(list(out.glob("*.screening.json"))) == 1
+
+
+def test_an_engine_gate_that_cannot_start_the_engine_is_a_failed_gate_not_a_crash(tmp_path):
+    def missing(path, uuid, sha):
+        raise FileNotFoundError("java")
+
+    result = run(tmp_path, _ckpt(tmp_path, seed=11), tmp_path / "out", engine_gate=missing)
+
+    assert result["exit_status"] == 3 and len(list((tmp_path / "out").glob("*.screening.json"))) == 1
+
+
+def test_a_failed_export_does_not_block_exporting_the_same_network_again(tmp_path):
+    def bad(path, uuid, sha):
+        raise RuntimeError("status 4: wrong jar")
+
+    out = tmp_path / "out"
+    assert run(tmp_path, _ckpt(tmp_path, seed=12), out, engine_gate=bad)["exit_status"] == 3
+
+    again = run(tmp_path, _ckpt(tmp_path, "again.pt", seed=12), out)
+
+    assert again["exit_status"] == 0 and again["duplicate_of"] is None

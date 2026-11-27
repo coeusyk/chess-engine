@@ -90,15 +90,6 @@ def test_negating_the_output_layer_of_a_quantized_network_negates_every_score_ex
     assert (eval_quantized_fens(negated, fens) == -eval_quantized_fens(network, fens)).all()
 
 
-def test_parity_cannot_stand_in_for_orientation():
-    """Float-versus-quantized parity of an inverted network is as good as the original's. The gate sees the sign."""
-    fens = [f for f, _ in POSITIONS]
-    good = material_oracle(fens)
-    inverted = [-s for s in good]
-    assert np.abs(np.array(good) + np.array(inverted)).max() == 0  # the two are exact mirror images of each other
-    assert controlled_orientation(good, POSITIONS).passed and not controlled_orientation(inverted, POSITIONS).passed
-
-
 def test_diagnostics_report_per_side_sign_agreement_correlation_and_gap_with_no_verdict():
     report = corpus_diagnostics(material_oracle(CORPUS), CORPUS, material_oracle([mirror_fen(f) for f in CORPUS]))
 
@@ -130,3 +121,38 @@ def test_mismatched_lengths_are_an_error():
         controlled_orientation([1], POSITIONS)
     with pytest.raises(ValueError):
         corpus_diagnostics([1, 2], CORPUS)
+
+
+def _material_network(hidden=2, qa=255, qb=64, output_scale=1600):
+    """A small quantized network that really knows material: unit 0 sums the mover's piece values, unit 1 the
+    opponent's, and the output is their difference taken from the mover's accumulator. Feature layout
+    (checked against `active_feature_indices`): block 0 = the perspective's own pieces, block 1 = the opponent's,
+    index = block * 384 + piece_type * 64 + square, piece_type order p, n, b, r, q, k."""
+    ft = np.zeros((768, hidden), dtype=np.int16)
+    for block in (0, 1):
+        for piece_type, value in enumerate((1, 3, 3, 5, 9)):
+            ft[block * 384 + piece_type * 64: block * 384 + piece_type * 64 + 64, block] = 5 * value
+    out = np.zeros((2, hidden), dtype=np.int16)
+    out[0, 0], out[0, 1] = 64, -64
+    return QuantizedCanonicalNetwork(hidden_width=hidden, ft_weights=ft, ft_biases=np.zeros(hidden, dtype=np.int16),
+                                     output_weights=out, output_bias=0, qa=qa, qb=qb, output_scale=output_scale,
+                                     architecture_id=1, feature_set_id=1)
+
+
+def test_a_network_that_knows_material_passes_the_gate_through_the_real_evaluator():
+    """Ties the gate's expected signs to the Python reference's own side-to-move convention: if the reference
+    returned White-relative scores, this would fail for the Black-to-move forms."""
+    scores = eval_quantized_fens(_material_network(), [f for f, _ in POSITIONS])
+    assert controlled_orientation([int(s) for s in scores], POSITIONS).passed
+
+
+def test_the_same_network_with_its_output_layer_negated_fails_all_24_through_the_real_evaluator():
+    net = _material_network()
+    negated = dataclasses.replace(net, output_weights=-net.output_weights)
+    fens = [f for f, _ in POSITIONS]
+
+    good, inverted = eval_quantized_fens(net, fens), eval_quantized_fens(negated, fens)
+
+    assert (np.abs(good) == np.abs(inverted)).all(), "identical in magnitude, so a magnitude comparison cannot tell them apart"
+    result = controlled_orientation([int(s) for s in inverted], POSITIONS)
+    assert not result.passed and len(result.failures) == 24

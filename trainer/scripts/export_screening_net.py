@@ -26,6 +26,10 @@ Exit status: 0 every gate that ran passed, 2 an identical network was already ex
 (refused unless `--allow-duplicate REASON`, which is recorded), 3 a hard gate failed (the files are kept for
 inspection and the sidecar says `failed`; a network that fails `assert_java_loadable` is not exported at all).
 Records hold base names only, never a local path.
+
+The sidecar is written last. A process killed between `export()` and that write leaves a `.nnue` and a `.json`
+with no sidecar, which this script's duplicate scan does not see; such a pair has no identity record and should
+be deleted and exported again. Two concurrent runs into one directory can both pass the duplicate scan.
 """
 
 from __future__ import annotations
@@ -67,17 +71,20 @@ def _existing_exports(out_dir: Path) -> Dict[str, str]:
     found: Dict[str, str] = {}
     for sidecar in sorted(Path(out_dir).glob(f"*{SIDECAR_SUFFIX}")):
         try:
-            found.setdefault(json.loads(sidecar.read_text(encoding="utf-8"))["network_content_sha256"], sidecar.name)
-        except (OSError, ValueError, KeyError):
+            record = json.loads(sidecar.read_text(encoding="utf-8"))
+            if record.get("result") == "exported":  # a failed export does not block exporting the network again
+                found.setdefault(record["network_content_sha256"], sidecar.name)
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
             continue
     return found
 
 
 def _load_preflight():
     path = repo_root(Path(__file__).resolve()) / "tools" / "nnue_preflight.py"
-    spec = importlib.util.spec_from_file_location("nnue_preflight", path)
-    if spec is None or spec.loader is None:
+    if not path.is_file():
         raise SystemExit("tools/nnue_preflight.py is missing: the engine loading check cannot run")
+    spec = importlib.util.spec_from_file_location("nnue_preflight", path)
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules.setdefault("nnue_preflight", module)
     spec.loader.exec_module(module)
@@ -94,7 +101,12 @@ def engine_loading_gate(jar: Path, java: str) -> Callable[[Path, str, str], Dict
         try:
             return pre.preflight(config, pre.Pins(uuid, sha256))
         except pre.PreflightError as error:
-            raise RuntimeError(f"status {error.code}: {error}") from error
+            # The engine echoes the EvalFile path in its refusal; records carry base names only.
+            resolved = Path(nnue_path).resolve()
+            text = str(error).replace(str(resolved), resolved.name).replace(str(resolved.parent), "<dir>")
+            raise RuntimeError(f"status {error.code}: {text}") from error
+        except OSError as error:
+            raise RuntimeError(f"engine could not be started: {type(error).__name__}") from error
 
     return gate
 
@@ -120,12 +132,13 @@ def export_screening_net(checkpoint_path: Path, out_dir: Path, *, trust_checkpoi
     if not recorded:
         return {"exit_status": 3, "error": "the checkpoint records no experiment_metadata, which export() requires"}
 
-    parity, quantized = compute_quantization_parity(canonical, fens)
-    content_hash = network_content_sha256(quantized)
     try:
+        # compute_quantization_parity runs the loader bound itself, so an unloadable network raises here.
+        parity, quantized = compute_quantization_parity(canonical, fens)
         assert_java_loadable(quantized)
     except ValueError as error:
         return {"exit_status": 3, "exported": False, "hard_gates": {"loader_safety": "failed"}, "error": str(error)}
+    content_hash = network_content_sha256(quantized)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     existing = _existing_exports(out_dir).get(content_hash)
@@ -139,10 +152,13 @@ def export_screening_net(checkpoint_path: Path, out_dir: Path, *, trust_checkpoi
     nnue_sha = file_sha256(result.nnue_path)
 
     gates: Dict[str, Any] = {"java_python_parity": "pending-stage0", "orientation": "pending-stage0"}
-    read_back, header_uuid = read_nnue(result.nnue_path)
-    gates["identity"] = "pass" if (_networks_equal(read_back, quantized) and header_uuid == result.network_uuid
-                                   and manifest.get("network_uuid") == result.network_uuid
-                                   and manifest.get("nnue_sha256") == nnue_sha) else "failed"
+    try:
+        read_back, header_uuid = read_nnue(result.nnue_path)
+        identical = (_networks_equal(read_back, quantized) and header_uuid == result.network_uuid
+                     and manifest.get("network_uuid") == result.network_uuid and manifest.get("nnue_sha256") == nnue_sha)
+    except Exception:  # an unreadable file is a failed identity gate, and the sidecar must still be written
+        identical = False
+    gates["identity"] = "pass" if identical else "failed"
     gates["loader_safety_python"] = "pass"
     engine_record: Optional[Dict[str, Any]] = None
     if engine_gate is None:
@@ -151,7 +167,7 @@ def export_screening_net(checkpoint_path: Path, out_dir: Path, *, trust_checkpoi
         try:
             engine_record = engine_gate(result.nnue_path, result.network_uuid, nnue_sha)
             gates["loader_safety_engine"] = "pass"
-        except RuntimeError as error:
+        except Exception as error:  # any failure of the gate is a failed gate; the sidecar is still written
             gates["loader_safety_engine"] = f"failed: {error}"
 
     sidecar = {
