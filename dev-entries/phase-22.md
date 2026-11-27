@@ -153,3 +153,13 @@ Phase 15 keeps its status (the self-play/Stage-3 line is paused and every `[P15]
 **Broke / Fixed:** Nothing was broken. My first mutation check of the new test ran against code the patch had not been applied to (the `git apply` failed on a path I had wrong, and the chain hid it), so I redid it. With `evaluateTerminal` forced to always return mate, the stalemate root test fails with 0 expected and -100000 returned. The trap test did not fail under that mutant.
 
 **Measurements:** Sampled allocation per node over a depth-13 bench (JFR, SerialGC, 512 MiB heap, two runs per build, WSL2, same host session): Classical 55.8 and 55.8 for base against 50.0 and 49.1 for this change (about 11 percent less), NNUE 24.8 and 24.9 against 12.8 and 12.8 (about 48.5 percent less), with young collections in NNUE 21 against 11. Every run searched the Gate 1 node count (23,222,204 Classical, 112,142,129 NNUE) and none had a CPU sample above 8.6 percent. The figures are allocation samples, not timings, and no speed claim is made. Locally, engine-core passes with 548 tests, 0 failures and 6 skipped, including `NodeCountRegressionTest` and Perft. CI is pending.
+
+### [2026-11-27] Guard rejection and vector fallback tests at QA 1016 (#265; NNUE integrity)
+
+**Built:** Two tests in `NnueAccumulatorVectorOpsEquivalenceTest`, the planned Task 5 of #265, now that #313 is merged. One builds a QA 1016 network whose output layer has `qa * sum|w|` above int32 and checks that `dotFitsInt` rejects it and that `evaluate` equals an independent long reference on 50 corpus positions. The other compares `dotCrelu` with `dotCreluScalar` on the accumulators of all 393 corpus positions of the QA 1016 fixture.
+
+**Decisions Made:** Test code and the case study note only. No production file, quantization default or existing fixture changed, and #265 stays open. The fallback test also asserts that the int-lane kernel disagrees with the reference on that network, because otherwise equality would hold whether or not the guard worked. Accumulators are summed by hand from the network weights so the check does not depend on the evaluator's own incremental state.
+
+**Broke / Fixed:** Nothing failed. There is no accessor for the evaluator's chosen path, so the fallback is shown through its result and not by reading the flag.
+
+**Measurements:** 8 tests in the class, 0 failures, 0 skipped, with the vector module on.
