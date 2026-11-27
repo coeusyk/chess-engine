@@ -782,6 +782,9 @@ public class Searcher {
             }
         }
 
+        // The budget ran out before any iteration completed: a nonterminal root still needs a legal answer.
+        Move resultMove = previousBestMove == null && aborted ? firstLegalRootMove(board) : previousBestMove;
+
         double ebf = 0.0;
         if (depthReached >= 3 && nodesPerDepth[depthReached - 2] > 0) {
             ebf = Math.sqrt((double) nodesPerDepth[depthReached] / nodesPerDepth[depthReached - 2]);
@@ -790,7 +793,7 @@ public class Searcher {
         long accumulatorNanos = (evaluator instanceof NnueEvaluator ne ? ne.accumulatorUpdateNanos() : 0L) - accumulatorNanosBefore;
 
         return new SearchResult(
-            previousBestMove,
+            resultMove,
             bestScore,
             depthReached,
             bestPrincipalVariation,
@@ -812,6 +815,17 @@ public class Searcher {
             totalPvNodeEvals,
             totalCutNodeEvals
         );
+    }
+
+    /** First legal root move that the searchmoves restriction allows, or null when the root has none (terminal). */
+    private Move firstLegalRootMove(Board board) {
+        ArrayList<Move> moves = rootMoveList;
+        moves.clear();
+        new MovesGenerator(board, moves);
+        if (!searchMoves.isEmpty()) {
+            moves.removeIf(m -> !isExcludedMove(m, searchMoves));
+        }
+        return moves.isEmpty() ? null : moves.get(0);
     }
 
     private RootResult searchRootWithAspiration(
