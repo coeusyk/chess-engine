@@ -92,3 +92,9 @@ def test_cli_refuses_to_overwrite_and_exits_one_on_a_failed_gate(tmp_path, monke
         assert "already exists" in str(exit_)
     else:
         raise AssertionError("must refuse to overwrite")
+
+
+def test_four_field_fens_get_move_clocks_before_they_are_sent_to_the_engine():
+    from scripts.screen_stage0 import engine_fen
+    assert engine_fen("4k3/8/8/8/8/8/4Q3/4K3 w - -") == "4k3/8/8/8/8/8/4Q3/4K3 w - - 0 1"
+    assert engine_fen("4k3/8/8/8/8/8/4Q3/4K3 b - - 7 30") == "4k3/8/8/8/8/8/4Q3/4K3 b - - 7 30"

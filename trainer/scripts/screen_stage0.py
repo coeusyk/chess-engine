@@ -57,6 +57,14 @@ def _parse_eval_score(output: str) -> int:
     return module.parse_eval_score(output)
 
 
+def engine_fen(fen: str) -> str:
+    """The engine's `position fen` needs the move clocks; the corpus files carry four fields. The clocks do not
+    enter an NNUE evaluation. Without them the engine kept its previous position and every score was the start
+    position's, which the parity gate reported as hundreds of mismatches."""
+    fields = fen.split()
+    return " ".join(fields[:4] + (["0", "1"] if len(fields) == 4 else fields[4:]))
+
+
 class EngineScorer:
     """Scores FENs with the real engine: `position fen F`, `eval`, the `int16 score` line. One process, strict."""
 
@@ -100,7 +108,7 @@ class EngineScorer:
     def __call__(self, fens: Sequence[str]) -> List[int]:
         scores = []
         for fen in fens:
-            self._send(f"position fen {fen}")
+            self._send(f"position fen {engine_fen(fen)}")
             self._send("eval")
             lines = self._until(lambda l: "float32 oracle score" in l, f"the eval of {fen}")
             scores.append(_parse_eval_score("\n".join(lines)))
