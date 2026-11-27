@@ -174,3 +174,13 @@ Phase 15 keeps its status (the self-play/Stage-3 line is paused and every `[P15]
 
 **Measurements:** 608 pairs, 1,216 games: 491 wins, 432 draws, 293 losses for NEW, paired score 0.5814, Elo +57.1, nominal 95 percent interval +41.6 to +72.8. Half-width about 15.6 Elo against about 8.6 planned at 4,000 games. The interval is nominal because the sample size came from the outage and the stopping decision was made after the numbers were seen. No match or benchmark was run for this entry; the work read the preserved artifacts only.
 
+
+### [2026-11-27] NNUE strength assessment (NNUE and tuner integrity)
+
+**Built:** `docs/engineering/investigations/2026-11-27-nnue-strength-assessment.md`. A read-only assessment with no training, export or match. No engine, trainer or default changed.
+
+**Decisions Made:** E-3's -636 Elo is consistent with Cute Chess's `0 - 95 - 5` (wins, losses, draws from the NNUE side; the PGN has Classical winning 95 and 5 draws), though both E-4 gauntlets used one start position and their intervals are not real 100-game intervals. The E-5 "parity at 60+0.6" is withdrawn as reliable strength evidence because its two sides show identical score and depth statistics, like a known Classical against Classical run. A silent Classical fallback for an unloadable network is one hypothesis and is not proven, since the E-5 launch command is not in the artifacts. Inverted Stage 1 labels for Black to move are a confirmed training-data defect (#263), measured on the local shards: mover-material against label correlation +0.37 for White to move and -0.30 for Black to move, with Black to move 47.4 percent of Stage 1. Existing checkpoint metrics (held-out correlation, quantization error) do not establish playing strength, and only E-3 has ever been played. Higher-QA requantization stays deferred until a net is near contention. Roadmap: Threads=1 screening may use the qualified WSL2 setup under `CLAUDE.md` section 6, assess failing closed when a requested network cannot load, consider an early original-label against corrected-label comparison with the same recipe, seed, split and budget, and do not label all 725,000 Stage 2 positions before repaired data is shown to help.
+
+**Broke / Fixed:** Nothing changed. The footprint check found the checked networks are not sign-confused on the 393-position corpus (float evaluation against mover material 0.94 to 0.98 for both colours), so the effect of the inverted rows on play is unmeasured.
+
+**Measurements:** E-4 gauntlets 0-95-5 (-636.4 Elo) and 1-87-12 (-449.4 Elo). Mean absolute score on the bench corpus 110 cp (E-3) and 244 to 258 cp (P1-G04, P3A-001, P5 control, E-15 control). No match or benchmark was run.
