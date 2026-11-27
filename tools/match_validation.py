@@ -75,6 +75,9 @@ _PGN_CLASSES = {"": NORMAL, "normal": NORMAL, "adjudication": ADJUDICATION, "tim
 _FINISHED = re.compile(r"^Finished game (\d+) \((\S+) vs (\S+)\): (1-0|0-1|1/2-1/2|\*) \{(.*)\}$")
 _SCORE = re.compile(r"^Score of (\S+) vs (\S+): (\d+) - (\d+) - (\d+)\s+\[[0-9.]+\]\s+(\d+)$")
 _SPRT = re.compile(r"^SPRT: llr (-?[0-9.]+) \([^)]*\), lbound (-?[0-9.]+), ubound (-?[0-9.]+)(?: - (H[01]) was accepted)?$")
+# Cute Chess 1.5.1 prints this exact line every rating interval of a match run without `-sprt` (the test is inactive).
+# It is not a statistic and is never evidence of an SPRT; any other SPRT line must still match _SPRT.
+_SPRT_INACTIVE = re.compile(r"^SPRT: llr 0 \(0\.0%\), lbound -inf, ubound inf$")
 _TAG = re.compile(r'^\[(\w+) "(.*)"\]$')
 _RESULT_TOKENS = ("1-0", "0-1", "1/2-1/2", "*")
 
@@ -127,11 +130,12 @@ def _classify_log_text(text: str, result: str) -> str:
 
 
 def parse_log(log_text: str):
-    """Finished games, the last Score line, the last SPRT line and whether the log ends with `Finished match`."""
+    """Finished games, the last Score line, the last SPRT line (None when the log only has the inactive status line) and whether the log ends with `Finished match`."""
     games: List[Tuple[int, str, str, str, str]] = []
     ids = set()
     score = None
     sprt = None
+    inactive_sprt = False
     last_line = ""
     for raw in log_text.splitlines():
         line = raw.rstrip("\r").strip()
@@ -155,11 +159,16 @@ def parse_log(log_text: str):
             continue
         if line.startswith("Score of "):
             raise _Invalid(f"unparseable 'Score of' line: {line[:80]}")
+        if _SPRT_INACTIVE.match(line):
+            inactive_sprt = True
+            continue
         m = _SPRT.match(line)
         if m:
             sprt = (float(m.group(1)), float(m.group(2)), float(m.group(3)), m.group(4))
         elif line.startswith("SPRT:"):
             raise _Invalid(f"unparseable 'SPRT:' line: {line[:80]}")
+    if inactive_sprt and sprt is not None:
+        raise _Invalid("the log has both an inactive SPRT status line and an SPRT statistics line")
     return games, score, sprt, last_line == "Finished match"
 
 
