@@ -54,6 +54,14 @@ public class UciApplication {
     // PR C-3 (issue #187): gates the sampled rebuild assertion inside NnueEvaluator's
     // onMake (zero overhead when false) and the nnue features/acc/verify UCI commands.
     private boolean nnueDebug = false;
+    // Opt-in (default false): when true, an engine told EvalType=NNUE that cannot use the requested
+    // network ends the process (status 2) instead of falling back to Classical, so an NNUE experiment
+    // can never silently play Classical. It only covers what the engine is told: an option that arrives
+    // under a misspelled name is ignored under the UCI rules and leaves Classical selected.
+    private boolean strictNnue = false;
+    // The raw value of the last EvalType setoption that was neither Classical nor NNUE (null once a
+    // valid value has been set). Only strict mode acts on it.
+    private String rejectedEvalType;
     // Cache of the last successfully loaded network, keyed by evalFile's value at
     // load time, so a network isn't re-read from disk on every go.
     private NnueNetwork nnueNetwork;
@@ -259,8 +267,10 @@ public class UciApplication {
                 System.out.println("option name EvalType type combo default Classical var Classical var NNUE");
                 System.out.println("option name EvalFile type string default <empty>");
                 System.out.println("option name NnueDebug type check default false");
+                System.out.println("option name StrictNnue type check default false");
                 System.out.println("uciok");
             } else if ("isready".equals(line)) {
+                enforceStrictNnue();
                 System.out.println("readyok");
             } else if ("ucinewgame".equals(line)) {
                 drainSearch();
@@ -276,8 +286,10 @@ public class UciApplication {
             } else if (line.startsWith("setoption")) {
                 handleSetOption(line);
             } else if (line.startsWith("go")) {
+                enforceStrictNnue();
                 handleGo(line, receivedNanos);
             } else if (line.startsWith("bench")) {
+                enforceStrictNnue();
                 String[] benchParts = line.split("\\s+");
                 int benchDepth = DEFAULT_BENCH_DEPTH;
                 if (benchParts.length > 1) {
@@ -296,8 +308,10 @@ public class UciApplication {
             } else if ("quit".equals(line)) {
                 break;
             } else if ("eval".equals(line)) {
+                enforceStrictNnue();
                 handleEval();
             } else if (line.startsWith("nnue ")) {
+                enforceStrictNnue();
                 handleNnueDebug(line);
             }
 
@@ -618,11 +632,14 @@ public class UciApplication {
             String trimmed = valuePart.trim();
             if ("classical".equalsIgnoreCase(trimmed)) {
                 evalType = "Classical";
+                rejectedEvalType = null;
             } else if ("nnue".equalsIgnoreCase(trimmed)) {
                 // Whether this actually resolves to NNUE (valid EvalFile, loads OK) is
                 // decided lazily at go-time — EvalFile may not be set yet.
                 evalType = "NNUE";
+                rejectedEvalType = null;
             } else {
+                rejectedEvalType = trimmed;
                 System.out.println("info string Unknown EvalType value '" + trimmed
                         + "' — expected Classical or NNUE. Keeping " + evalType + ".");
             }
@@ -630,6 +647,8 @@ public class UciApplication {
             evalFile = valuePart.trim();
         } else if ("nnuedebug".equals(optionNameLower)) {
             nnueDebug = "true".equalsIgnoreCase(valuePart);
+        } else if ("strictnnue".equals(optionNameLower)) {
+            strictNnue = "true".equalsIgnoreCase(valuePart.trim());
         }
         // Unknown options are silently ignored per UCI spec.
     }
@@ -718,6 +737,51 @@ public class UciApplication {
 
         if (!openingBook.isOpen()) {
             LOG.warn("Book file '{}' not found at any location — book disabled", safeLog);
+        }
+    }
+
+    /**
+     * Why strict mode cannot use the evaluator the options ask for, or null when strict mode is off or the
+     * request can be honoured. A network that loads is cached exactly as the normal resolver does, so the
+     * search that follows uses it without reading the file again. Never reports the "falling back" lines
+     * of the non-strict path: strict mode has no fallback.
+     */
+    String strictNnueFailure() {
+        if (!strictNnue) {
+            return null;
+        }
+        if (rejectedEvalType != null) {
+            return "unknown EvalType value '" + rejectedEvalType + "', expected Classical or NNUE";
+        }
+        if (!"NNUE".equals(evalType)) {
+            return null;
+        }
+        if (evalFile.isEmpty()) {
+            return "EvalType=NNUE was requested but EvalFile is not set";
+        }
+        if (nnueNetwork != null && evalFile.equals(loadedNnueFilePath)) {
+            return null;
+        }
+        try {
+            NnueNetwork loaded = NnueNetwork.load(Path.of(evalFile));
+            nnueNetwork = loaded;
+            loadedNnueFilePath = evalFile;
+            System.out.println("info string NNUE network loaded: " + loaded.networkUuid());
+            return null;
+        } catch (Exception e) {
+            nnueNetwork = null;
+            loadedNnueFilePath = null;
+            return "cannot load EvalFile '" + evalFile + "': " + e.getMessage();
+        }
+    }
+
+    /** Ends the process (status 2) when strict mode cannot honour the requested evaluator. */
+    private void enforceStrictNnue() {
+        String failure = strictNnueFailure();
+        if (failure != null) {
+            System.out.println("info string NNUE strict mode: " + failure);
+            System.out.flush();
+            System.exit(2);
         }
     }
 
