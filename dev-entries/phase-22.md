@@ -244,3 +244,13 @@ Phase 15 keeps its status (the self-play/Stage-3 line is paused and every `[P15]
 **Broke / Fixed:** Writing the Stage 2 comparison showed that the production Stage 2 reader rejects a legacy shard (it has no header), so the sequence's held-out steps could not have read `stage2-quiet-sf-wdl`. They now read the `-v1` copy, whose equality with the legacy shard the comparison establishes.
 
 **Measurements:** None on real data. Tests only: shortlist 18, rescoring 12, Stage 2 comparison 10, and the full trainer suite passes (688). The focused review of this change found no defect in the core logic, and its weaker findings (a perspective guard on both Stage 1 directories, checkpoint hash binding to the inventory, per-network errors, runbook wording) are fixed. Mutations that fail tests: cap charged per member or arms not reused, the corrected set built from the original labels, a wrong seed or held-out fraction, a comparison that cannot tell order from content, a reader that swallows only one exception type.
+
+### [2026-11-27] Manual Chess.com games and mate conversion
+
+**Built:** Archived the original game records and Claude's experiment artifacts under the ignored tools output directory. Recorded the full PGNs, replay tools, diagnostic patch and conversion matrix in the [case study](../docs/engineering/investigations/2026-11-27-manual-chesscom-games.md).
+
+**Decisions Made:** Keep the whole move prefix in the regression. The current-node draw guard comes before the table probe, so the [#287 plan](../docs/superpowers/plans/2026-11-27-mate-tt-repetition.md) calls for tracing the skipped descendant and isolating the early stop before choosing a production fix.
+
+**Broke / Fixed:** The 2500 Black game reached its third occurrence on 63.Kh2. The warm-table failure remains open. The 2500 White case identifies weak sensitivity to the f3 pawn and its tactical and king-restriction effects.
+
+**Measurements:** Recovered 11/16 persistent repetitions, 12/12 cleared or fresh mates, and 5/5 mates with mate-range TT returns disabled. Moving Black's f3 pawn back to f4 in the move-52 comparison improved the White score by 46 cp in Vex's static evaluation and 295 cp in Stockfish 18 at depth 18. The net passed-pawn term was unchanged.

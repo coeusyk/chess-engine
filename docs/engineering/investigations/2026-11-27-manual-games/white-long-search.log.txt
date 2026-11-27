@@ -1,0 +1,9 @@
+move 49 FEN 8/2b5/N1Pk1p2/3r3p/p3p2P/P4pP1/5P2/2R2K2 w - - 4 49
+  Vex by depth: [(12, 0), (14, -38), (16, -22), (18, -32), (20, -56)] best f1e1 (game Nb4 )
+  SF: depth 25 score cp -395 a6b4
+move 52 FEN 8/2b5/N1Pk4/5p1p/p3p2P/P2r1pP1/5P2/2R3K1 w - - 2 52
+  Vex by depth: [(12, -120), (14, -131), (16, -153)] best c1a1 (game Kf1 )
+  SF: depth 21 score cp -496 a6c5
+move 59 FEN 8/4k3/N1Pb4/5p1p/2r1p2P/p4pP1/5P2/R5K1 w - - 4 59
+  Vex by depth: [(12, -351), (14, -394), (16, -417), (18, -406), (19, -437)] best c6c7 (game c7 )
+  SF: depth 21 score cp -753 c6c7
