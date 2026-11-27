@@ -13,14 +13,16 @@ public class TimeManager {
     private volatile long startNanos;
     private boolean originPending;
     private long pendingOriginNanos;
+    private long ponderSoftLimitMs;
+    private long ponderHardLimitMs;
 
     /**
      * Multiplier applied to softLimitMs inside shouldStopSoft().
      * Values below 1.0 allow early termination on stable positions;
      * values above 1.0 extend time when the best move changes.
-     * Written and read only by the main search thread — no volatile needed.
+     * Updated by the search thread and reset by the command thread on ponderhit.
      */
-    private double stabilityScale = 1.0;
+    private volatile double stabilityScale = 1.0;
 
     public void setMoveOverheadMs(long moveOverheadMs) {
         if (moveOverheadMs < 0) {
@@ -59,30 +61,26 @@ public class TimeManager {
     }
 
     /**
-     * Configures the time manager for ponder mode: both limits are set to
-     * effectively infinite so the search runs until {@code stop} or
-     * {@code ponderhit} arrives.
+     * Suspends the configured budget until {@code ponderhit}.
      */
     public void configurePonder() {
+        ponderSoftLimitMs = softLimitMs;
+        ponderHardLimitMs = hardLimitMs;
         softLimitMs = Long.MAX_VALUE / 2;
         hardLimitMs = Long.MAX_VALUE / 2;
         stabilityScale = 1.0;
     }
 
-    /**
-     * Reconfigures the time manager when a {@code ponderhit} command is received.
-     * Resets the clock origin to "now" and calculates normal clock-based limits.
-     */
-    public void configurePonderHit(int activeColor, long wtimeMs, long btimeMs, long wincMs, long bincMs) {
-        configurePonderHit(activeColor, wtimeMs, btimeMs, wincMs, bincMs, 0);
-    }
-
-    public synchronized void configurePonderHit(int activeColor, long wtimeMs, long btimeMs, long wincMs, long bincMs, int moveNumber) {
-        // The ponderhit clock starts now. A go-receipt origin that is still pending belongs to the ponder
-        // search, which was never charged to this budget, so it must not be applied afterwards.
-        originPending = false;
-        startNanos = System.nanoTime();
-        configureClock(activeColor, wtimeMs, btimeMs, wincMs, bincMs, moveNumber);
+    /** Restores the original budget and charges it from receipt of {@code ponderhit}. */
+    public synchronized void configurePonderHit(long receivedNanos) {
+        // If the worker has yet to consume its origin, it must pick up the hit time.
+        if (startNanos == 0 || originPending) {
+            markRequestReceived(receivedNanos);
+        }
+        startNanos = receivedNanos;
+        stabilityScale = 1.0;
+        softLimitMs = ponderSoftLimitMs;
+        hardLimitMs = ponderHardLimitMs;
     }
 
     /**
@@ -148,11 +146,11 @@ public class TimeManager {
     }
 
     public boolean shouldStopSoft() {
-        return elapsedMs() >= (long) (softLimitMs * stabilityScale);
+        return (long) (softLimitMs * stabilityScale) <= elapsedMs();
     }
 
     public boolean shouldStopHard() {
-        return elapsedMs() >= hardLimitMs;
+        return hardLimitMs <= elapsedMs();
     }
 
     public long getSoftLimitMs() {

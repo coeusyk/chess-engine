@@ -121,6 +121,24 @@ class UciSearchLifecycleTest {
         assertEquals(30, harness.bestmoveCount());
     }
 
+    @Test
+    void fixedMovetimeStartsAtPonderHit() throws Exception {
+        harness = UciHarness.start();
+        harness.send("position startpos");
+        harness.send("go ponder movetime 700");
+        assertNotNull(harness.awaitLine(l -> l.startsWith("info depth 2 "), LONG));
+        assertEquals(0, harness.bestmoveCount());
+
+        long hit = System.nanoTime();
+        harness.send("ponderhit");
+        String bestmove = harness.awaitLine(l -> l.startsWith("bestmove "), LONG);
+        assertTrue(isLegalFrom(START, bestmove));
+        assertTrue(System.nanoTime() - hit >= Duration.ofMillis(350).toNanos(),
+                "the fixed budget was replaced by the zero-clock allocation");
+        harness.barrier();
+        assertEquals(1, harness.bestmoveCount());
+    }
+
     /**
      * Waits until the worker reports it has finished searching and is holding its bestmove. Only then is "no bestmove
      * yet" a statement about a worker that is blocked, and not about one that has not got there. The isready round

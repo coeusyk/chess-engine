@@ -54,13 +54,14 @@ class RequestOriginTimingTest {
     }
 
     @Test
-    void ponderHitDiscardsAPendingRequestOrigin() {
+    void ponderHitReplacesAPendingRequestOrigin() {
         TimeManager manager = new TimeManager();
+        manager.configureClock(Piece.White, 60_000, 60_000, 0, 0);
         manager.configurePonder();
         manager.markRequestReceived(System.nanoTime() - 5 * SECOND_NANOS);
 
         // ponderhit lands before the worker reaches startNow(): the ponder time was never this move's budget.
-        manager.configurePonderHit(Piece.White, 60_000, 60_000, 0, 0, 0);
+        manager.configurePonderHit(System.nanoTime());
         manager.startNow();
 
         assertTrue(manager.elapsedMs() < 100, "ponderhit restarts the clock, was " + manager.elapsedMs());
@@ -69,12 +70,13 @@ class RequestOriginTimingTest {
     @Test
     void ponderHitAfterStartNowRestartsTheClock() {
         TimeManager manager = new TimeManager();
+        manager.configureClock(Piece.White, 60_000, 60_000, 0, 0);
         manager.configurePonder();
         manager.markRequestReceived(System.nanoTime() - 5 * SECOND_NANOS);
         manager.startNow();
         assertTrue(manager.elapsedMs() >= 5_000);
 
-        manager.configurePonderHit(Piece.White, 60_000, 60_000, 0, 0, 0);
+        manager.configurePonderHit(System.nanoTime());
 
         assertTrue(manager.elapsedMs() < 100, "ponderhit restarts the clock, was " + manager.elapsedMs());
     }
