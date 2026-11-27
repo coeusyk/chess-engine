@@ -69,6 +69,10 @@ def select(records: Sequence[Mapping[str, Any]], groups: Optional[Mapping[str, A
     for record in by_label.values():
         labels_by_network.setdefault(record["network_content_sha256"], []).append(record)
 
+    kinds = [g["kind"] for g in groups["groups"]]
+    if kinds.count("anchor") != 1 or kinds[0] != "anchor":
+        raise ValueError("the group file must have exactly one anchor group, and it must come first")
+
     selected: List[Dict[str, Any]] = []
     excluded: List[Dict[str, Any]] = []
     chosen: Dict[str, str] = {}  # network_content_sha256 -> id of the group that first deployed it

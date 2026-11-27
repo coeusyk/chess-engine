@@ -37,6 +37,7 @@ import torch
 from scripts import train_candidate_net as tcn
 from scripts.audit_checkpoint_quantization import file_sha256, load_checkpoint
 from trainer.contracts import PositionRecord
+from trainer.dataset.lichess_perspective import UnsafeStage1PerspectiveError, require_mover_relative_stage1
 from trainer.dataset.transform import position_key
 from trainer.model.batching import encode_batch
 from trainer.model.network import NnueNet
@@ -81,6 +82,15 @@ def _side(fen: str) -> str:
 
 def build_held_out(original_stage1: Path, corrected_stage1: Path, stage2_dir: Path, seed: int,
                    drop_duplicates: bool = False) -> HeldOut:
+    require_mover_relative_stage1(corrected_stage1)  # the production gate: the corrected side must be marked
+    try:
+        require_mover_relative_stage1(original_stage1)
+    except UnsafeStage1PerspectiveError:
+        pass
+    else:
+        raise ValueError("the original Stage 1 directory is marked mover-relative; --original-stage1 and "
+                         "--corrected-stage1 look swapped or are the same directory")
+
     def stage1(directory: Path) -> List[PositionRecord]:
         provider = tcn.TextDatasetProvider(directory=directory, identifier="stage1", source_ref=directory.name)
         return tcn._load_all(provider)
@@ -136,6 +146,10 @@ def predict(model: NnueNet, records: Sequence[PositionRecord]) -> np.ndarray:
         return model(batch.us_indices, batch.us_offsets, batch.them_indices, batch.them_offsets).numpy().astype(np.float32)
 
 
+def _finite(value: float) -> Optional[float]:
+    return None if value != value else value  # a bare NaN is not valid JSON
+
+
 def _score(model: NnueNet, k: float, records: List[PositionRecord]) -> Dict[str, Any]:
     if not records:
         return {"records": 0}
@@ -147,7 +161,7 @@ def _score(model: NnueNet, k: float, records: List[PositionRecord]) -> Dict[str,
             return {"records": len(records), "error": str(error)}
     skipped = sum("skipped" in str(w.message) for w in caught)
     return {"records": len(records), "scored": report.position_count, "wdl_only_skipped": skipped > 0,
-            "correlation": report.label_correlation, "loss": report.held_out_loss}
+            "correlation": _finite(report.label_correlation), "loss": _finite(report.held_out_loss)}
 
 
 def groups(held: HeldOut) -> Dict[str, List[int]]:
@@ -178,13 +192,24 @@ def rescore_network(model: NnueNet, k: float, held: HeldOut) -> Dict[str, Any]:
 
 
 def select_checkpoints(inventory: Dict[str, Any], labels: Dict[str, str], root: Path) -> List[Dict[str, Any]]:
+    """One checkpoint per deployed network: the member of the first selected group that has that identity (so the
+    network of P1-G04 is scored from the `P1-G04` checkpoint, not from the later label `M1-s42-final`), else the
+    first label with a path. The loaded file's hash is later checked against the inventory's."""
+    if "shortlist" not in inventory:
+        raise ValueError("the inventory has no shortlist: run checkpoint_inventory with --shortlist")
+    preferred: Dict[str, str] = {}
+    for group in inventory["shortlist"]["selected"]:
+        for member, digest in zip(group["members"], group["network_content_sha256"]):
+            preferred.setdefault(digest, member)
     chosen = []
     for network in inventory["shortlist"]["networks"]:
-        label = next((l for l in network["labels"] if l in labels), None)
+        digest = network["network_content_sha256"]
+        candidates = [preferred[digest]] if digest in preferred else []
+        label = next((l for l in candidates + list(network["labels"]) if l in labels), None)
         if label is None:
             raise ValueError(f"none of the labels {network['labels']} has a path in the labels file")
         chosen.append({"label": label, "labels": network["labels"], "path": Path(root) / labels[label],
-                       "network_content_sha256": network["network_content_sha256"]})
+                       "network_content_sha256": digest, "inventory_checkpoint_sha256": network.get("checkpoint_sha256", [])})
     return chosen
 
 
@@ -218,11 +243,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     networks = []
     for entry in chosen:
-        model, k = load_model(load_checkpoint(entry["path"], args.trust_checkpoint))
-        networks.append({"label": entry["label"], "labels": entry["labels"],
-                         "network_content_sha256": entry["network_content_sha256"],
-                         "checkpoint_file": entry["path"].name, "checkpoint_sha256": file_sha256(entry["path"]), "k": k,
-                         **rescore_network(model, k, held)})
+        record = {"label": entry["label"], "labels": entry["labels"],
+                  "network_content_sha256": entry["network_content_sha256"], "checkpoint_file": entry["path"].name}
+        try:
+            record["checkpoint_sha256"] = file_sha256(entry["path"])
+            known = entry["inventory_checkpoint_sha256"]
+            if known and record["checkpoint_sha256"] not in known:
+                raise ValueError("the checkpoint file is not the one the inventory hashed for this network")
+            model, k = load_model(load_checkpoint(entry["path"], args.trust_checkpoint))
+            record.update({"k": k, **rescore_network(model, k, held)})
+        except (Exception, SystemExit) as error:  # one unusable checkpoint must not discard the others' results
+            record["error"] = f"{type(error).__name__}: {error}".replace(str(entry["path"]), entry["path"].name)
+        networks.append(record)
     report = {"held_out": held.identity(),
               "datasets": {"original_stage1": dataset_hashes(args.original_stage1),
                            "corrected_stage1": dataset_hashes(args.corrected_stage1),
@@ -232,7 +264,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     text = json.dumps(report, indent=2, sort_keys=True) + "\n"
     args.output.write_text(text, encoding="utf-8")
     print(text, end="")
-    return 0
+    failed = [n["label"] for n in networks if "error" in n]
+    if failed:
+        print("could not score: " + ", ".join(failed), file=sys.stderr)
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

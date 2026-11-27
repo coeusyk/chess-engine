@@ -143,7 +143,7 @@ def test_cli_writes_a_report_with_hashes_and_no_local_path_and_refuses_to_overwr
     net(tmp_path, seed=1, name="a.pt")
     net(tmp_path, seed=2, name="b.pt")
     (tmp_path / "labels.json").write_text(json.dumps({"A": "a.pt", "B-copy": "b.pt", "B": "b.pt"}))
-    (tmp_path / "inventory.json").write_text(json.dumps({"shortlist": {"networks": [
+    (tmp_path / "inventory.json").write_text(json.dumps({"shortlist": {"selected": [], "networks": [
         {"network_content_sha256": "n1", "labels": ["A"]}, {"network_content_sha256": "n2", "labels": ["B", "B-copy"]}]}}))
     out = tmp_path / "rescore.json"
     argv = ["--inventory", str(tmp_path / "inventory.json"), "--labels", str(tmp_path / "labels.json"), "--root", str(tmp_path),
@@ -172,3 +172,55 @@ def test_differing_predictions_for_the_two_label_sets_are_refused(datasets, tmp_
 
     with pytest.raises(ValueError, match="predictions differ"):
         rescore_network(model, k, held)
+
+
+def _marked(directory):
+    manifest = json.loads((directory / "manifest.json").read_text())
+    return manifest.get("label_perspective") == "mover-relative"
+
+
+def test_swapped_or_identical_stage1_directories_are_refused(datasets):
+    original, repaired, stage2 = datasets
+    assert _marked(repaired) and not _marked(original)
+    with pytest.raises(Exception, match="legacy White-perspective"):
+        build_held_out(original, original, stage2, seed=42)  # the unmarked directory as "corrected"
+    with pytest.raises(ValueError, match="swapped or are the same"):
+        build_held_out(repaired, repaired, stage2, seed=42)
+    with pytest.raises(Exception, match="legacy White-perspective"):
+        build_held_out(repaired, original, stage2, seed=42)  # swapped: the unmarked original is not an acceptable "corrected"
+
+
+def _cli_files(tmp_path, original, repaired, stage2, inventory):
+    (tmp_path / "labels.json").write_text(json.dumps({"A": "a.pt", "B": "b.pt", "B-copy": "b.pt"}))
+    (tmp_path / "inventory.json").write_text(json.dumps(inventory))
+    return ["--inventory", str(tmp_path / "inventory.json"), "--labels", str(tmp_path / "labels.json"), "--root", str(tmp_path),
+            "--original-stage1", str(original), "--corrected-stage1", str(repaired), "--stage2-dir", str(stage2),
+            "--seed", "42", "--output", str(tmp_path / "out.json")]
+
+
+def test_the_checkpoint_hash_is_checked_against_the_inventory_and_one_bad_network_does_not_discard_the_rest(datasets, tmp_path):
+    from scripts.audit_checkpoint_quantization import file_sha256
+    original, repaired, stage2 = datasets
+    a, b = net(tmp_path, seed=1, name="a.pt"), net(tmp_path, seed=2, name="b.pt")
+    inventory = {"shortlist": {"selected": [], "networks": [
+        {"network_content_sha256": "n1", "labels": ["A"], "checkpoint_sha256": [file_sha256(a)]},
+        {"network_content_sha256": "n2", "labels": ["B"], "checkpoint_sha256": ["0" * 64]}]}}
+
+    code = main(_cli_files(tmp_path, original, repaired, stage2, inventory))
+
+    report = json.loads((tmp_path / "out.json").read_text())
+    assert code == 1
+    assert "groups" in report["networks"][0] and "error" not in report["networks"][0]
+    assert "not the one the inventory hashed" in report["networks"][1]["error"] and "groups" not in report["networks"][1]
+    assert str(tmp_path) not in (tmp_path / "out.json").read_text()
+
+
+def test_the_checkpoint_scored_for_a_network_is_the_first_selected_group_member_not_a_later_label(tmp_path):
+    from scripts.rescore_held_out import select_checkpoints
+    inventory = {"shortlist": {
+        "selected": [{"group": "g", "members": ["P1-G04"], "network_content_sha256": ["n1"]}],
+        "networks": [{"network_content_sha256": "n1", "labels": ["M1-s42-final", "P1-G04"]}]}}
+    chosen = select_checkpoints(inventory, {"P1-G04": "p.pt", "M1-s42-final": "m.pt"}, tmp_path)
+    assert chosen[0]["label"] == "P1-G04"
+    with pytest.raises(ValueError, match="--shortlist"):
+        select_checkpoints({}, {}, tmp_path)

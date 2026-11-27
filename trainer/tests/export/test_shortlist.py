@@ -188,3 +188,15 @@ def test_a_candidate_arm_identical_to_the_anchor_network_is_reused_at_no_candida
     pair = next(g for g in result.selected if g["group"] == "pair1")
     assert pair["reused"] == {"net-A": "anchor"} and pair["new_networks"] == ["net-C-trt"]
     assert result.candidate_count == 2 and result.network_count == 3
+
+
+def test_a_group_file_without_exactly_one_leading_anchor_is_refused():
+    import pytest
+    late_anchor = copy.deepcopy(GROUPS)
+    late_anchor["groups"].append({"id": "second-anchor", "kind": "anchor", "members": ["E"]})
+    with pytest.raises(ValueError, match="exactly one anchor"):
+        select(full(), late_anchor)
+    moved = copy.deepcopy(GROUPS)
+    moved["groups"].insert(0, moved["groups"].pop(1))
+    with pytest.raises(ValueError, match="come first"):
+        select(full(), moved)
