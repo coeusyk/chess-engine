@@ -92,6 +92,7 @@ class Pins:
 
 def effective_engine_config(cc_args: Sequence[str], engine_name: str) -> EngineConfig:
     """Parses the `-engine name=<engine_name> ...` block of a Cute Chess argument array."""
+    _refuse_each_engine_options(cc_args)
     for i, token in enumerate(cc_args):
         if token != "-engine" or i + 1 >= len(cc_args) or cc_args[i + 1] != f"name={engine_name}":
             continue
@@ -114,6 +115,19 @@ def effective_engine_config(cc_args: Sequence[str], engine_name: str) -> EngineC
     raise PreflightError(EXIT_REJECTED, [f"no -engine block named {engine_name}"])
 
 
+def _refuse_each_engine_options(cc_args: Sequence[str]) -> None:
+    """`-each option.X=Y` and `-each initstr=...` apply to every engine and are not part of any `-engine` block,
+    so they would reach the engines unverified. The launchers emit only `-each tc=...`; anything else is refused."""
+    for i, token in enumerate(cc_args):
+        if token != "-each":
+            continue
+        for item in cc_args[i + 1:]:
+            if item.startswith("-"):
+                break
+            if item.startswith(("option.", "initstr=")):
+                raise PreflightError(EXIT_REJECTED, [f"-each {item.split('=')[0]} reaches the engines unverified; give engine options per -engine"])
+
+
 def file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with Path(path).open("rb") as handle:
@@ -131,7 +145,16 @@ def parse_eval_score(output: str) -> int:
 
 
 def _looks_absolute(value: str) -> bool:
+    """Absolute in either path style. Used to redact local paths from records, where both styles must go."""
     return value.startswith(("/", "\\\\")) or (len(value) > 2 and value[1] == ":" and value[2] in "\\/")
+
+
+def _absolute_on_this_host(value: str) -> bool:
+    """Absolute for the engine's host: `C:\\x` and `\\\\server\\x` on Windows, a leading `/` elsewhere. A leading
+    `/` is drive-relative on Windows and `C:\\x` is relative on POSIX, so neither style is accepted on the other."""
+    if os.name == "nt":
+        return len(value) > 2 and value[1] == ":" and value[2] in "\\/" or value.startswith("\\\\")
+    return value.startswith("/")
 
 
 def validate_options(config: EngineConfig, advertised: Sequence[str]) -> List[str]:
@@ -161,7 +184,7 @@ def validate_options(config: EngineConfig, advertised: Sequence[str]) -> List[st
     if eval_type == "NNUE":
         if not eval_file:
             reasons.append("EvalType=NNUE without an EvalFile")
-        elif not _looks_absolute(eval_file):
+        elif not _absolute_on_this_host(eval_file):
             reasons.append("EvalFile must be an absolute path so the match engine reads the file that was verified")
         if strict != "true":
             reasons.append("EvalType=NNUE without StrictNnue=true")
@@ -181,10 +204,25 @@ def _redact(value: str) -> str:
     return value
 
 
-def _read_json(path: Path) -> Optional[dict]:
+def _hash(path: Path) -> str:
+    try:
+        return file_sha256(path)
+    except OSError as error:
+        raise PreflightError(EXIT_PIN, [f"cannot read the network file: {error.__class__.__name__}"]) from error
+
+
+def _read_manifest(path: Path) -> Optional[dict]:
+    """The sibling manifest, None when absent. One that exists but cannot be read or is not a JSON object is a
+    pin failure, never an unhandled exception and never silently treated as absent."""
     if not path.is_file():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise PreflightError(EXIT_PIN, [f"the sibling manifest {path.name} cannot be read: {error.__class__.__name__}"]) from error
+    if not isinstance(manifest, dict):
+        raise PreflightError(EXIT_PIN, [f"the sibling manifest {path.name} is not a JSON object"])
+    return manifest
 
 
 class _Engine:
@@ -253,11 +291,17 @@ def preflight(config: EngineConfig, pins: Optional[Pins], *, timeout: float = 20
     eval_file = config.option("EvalFile") if is_nnue else None
     if is_nnue and pins is None:
         raise PreflightError(EXIT_PIN, ["a pinned uuid and SHA-256 are required for an NNUE screening run"])
+    if is_nnue and eval_file and not _absolute_on_this_host(eval_file):
+        raise PreflightError(EXIT_REJECTED, ["EvalFile must be an absolute path so the match engine reads the file that was verified"])
+    pin_sha = pins.nnue_sha256.strip().lower() if pins else None
+    pin_uuid = pins.uuid.strip().lower() if pins else None
     nnue_sha = None
-    if is_nnue and eval_file and Path(eval_file).is_file():
-        nnue_sha = file_sha256(Path(eval_file))
-        if pins is not None and nnue_sha != pins.nnue_sha256:
-            raise PreflightError(EXIT_PIN, [f"network file SHA-256 {nnue_sha} differs from the pin {pins.nnue_sha256}"])
+    if is_nnue and eval_file:
+        if not Path(eval_file).is_file():
+            raise PreflightError(EXIT_REJECTED, ["the network file named by EvalFile does not exist"])
+        nnue_sha = _hash(Path(eval_file))
+        if nnue_sha != pin_sha:
+            raise PreflightError(EXIT_PIN, [f"network file SHA-256 {nnue_sha} differs from the pin {pin_sha}"])
 
     engine = _Engine(config.command)
     try:
@@ -286,16 +330,16 @@ def preflight(config: EngineConfig, pins: Optional[Pins], *, timeout: float = 20
         if is_nnue:
             if reported is None:
                 raise PreflightError(EXIT_ENGINE_FAILED, ["readyok arrived without an 'NNUE network loaded' line"])
-            if pins is not None and reported != pins.uuid:
-                raise PreflightError(EXIT_PIN, [f"the engine loaded uuid {reported}, the pin is {pins.uuid}"])
+            if reported.lower() != pin_uuid:
+                raise PreflightError(EXIT_PIN, [f"the engine loaded uuid {reported}, the pin is {pin_uuid}"])
             assert eval_file is not None  # validate_options refused NNUE without an EvalFile
-            if file_sha256(Path(eval_file)) != nnue_sha:
+            if _hash(Path(eval_file)) != nnue_sha:
                 raise PreflightError(EXIT_PIN, ["the network file changed during the handshake"])
-            manifest = _read_json(Path(eval_file).with_suffix(".json"))
+            manifest = _read_manifest(Path(eval_file).with_suffix(".json"))
             if manifest is None:
                 manifest_state = "unverified-manifest-absent"
             else:
-                if manifest.get("nnue_sha256") != nnue_sha or manifest.get("network_uuid") != reported:
+                if str(manifest.get("nnue_sha256", "")).lower() != nnue_sha or str(manifest.get("network_uuid", "")).lower() != reported.lower():
                     raise PreflightError(EXIT_PIN, ["the sibling manifest disagrees with the network file or the loaded uuid"])
                 manifest_state = "manifest-verified"
     finally:
@@ -313,7 +357,7 @@ def preflight(config: EngineConfig, pins: Optional[Pins], *, timeout: float = 20
         "readyok": True,
         "nnue_file": _redact(eval_file) if eval_file else None,
         "nnue_sha256": nnue_sha,
-        "pinned_uuid": pins.uuid if pins else None,
+        "pinned_uuid": pin_uuid,
         "uuid_reported": reported,
         "provenance": manifest_state,
     }
@@ -324,8 +368,8 @@ def recheck(record: Mapping[str, object], eval_file: Optional[str]) -> None:
     launcher immediately before the match starts."""
     if record.get("nnue_sha256") is None:
         return
-    if not eval_file or not Path(eval_file).is_file() or file_sha256(Path(eval_file)) != record["nnue_sha256"]:
-        raise PreflightError(EXIT_PIN, ["the network file changed between verification and launch"])
+    if not eval_file or not Path(eval_file).is_file() or _hash(Path(eval_file)) != record["nnue_sha256"]:
+        raise PreflightError(EXIT_PIN, ["the network file changed since it was verified"])
 
 
 def parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:

@@ -49,8 +49,9 @@ public class UciApplication {
     // resolved lazily at go-time (resolveNnueNetworkForSearch), since EvalFile may
     // not be set yet, or may point to a file that fails to load — either falls back
     // to Classical with an info string rather than crashing (PRD US-2).
-    private String evalType = "Classical";
-    private String evalFile = "";
+    // Volatile because the search worker resolves the network after the command thread has applied later options.
+    private volatile String evalType = "Classical";
+    private volatile String evalFile = "";
     // PR C-3 (issue #187): gates the sampled rebuild assertion inside NnueEvaluator's
     // onMake (zero overhead when false) and the nnue features/acc/verify UCI commands.
     private boolean nnueDebug = false;
@@ -58,10 +59,10 @@ public class UciApplication {
     // network ends the process (status 2) instead of falling back to Classical, so an NNUE experiment
     // can never silently play Classical. It only covers what the engine is told: an option that arrives
     // under a misspelled name is ignored under the UCI rules and leaves Classical selected.
-    private boolean strictNnue = false;
+    private volatile boolean strictNnue = false;
     // The raw value of the last EvalType setoption that was neither Classical nor NNUE (null once a
     // valid value has been set). Only strict mode acts on it.
-    private String rejectedEvalType;
+    private volatile String rejectedEvalType;
     // Cache of the last successfully loaded network, keyed by evalFile's value at
     // load time, so a network isn't re-read from disk on every go.
     private NnueNetwork nnueNetwork;
@@ -921,6 +922,12 @@ public class UciApplication {
             // prints exactly once; each thread below still gets its own NnueEvaluator
             // instance — never the same instance shared across threads.
             NnueNetwork nnueNetworkForSearch = resolveNnueNetworkForSearch();
+            // The check at go ran on the command thread. An EvalFile or EvalType option that arrived after it
+            // (UCI forbids setoption during a search, but nothing here enforces that) must not turn a strict
+            // NNUE request into a Classical search, so strict mode re-checks where the network is resolved.
+            if (nnueNetworkForSearch == null) {
+                enforceStrictNnue();
+            }
             // Issue #259: the shared table's entries are scores from one particular evaluator, and its
             // key does not say which. When the effective evaluator changes (Classical or NNUE, or a
             // different network, after any fallback has been applied) the entries are meaningless to

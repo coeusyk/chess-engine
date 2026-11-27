@@ -203,4 +203,4 @@ Phase 15 keeps its status (the self-play/Stage-3 line is paused and every `[P15]
 
 **Broke / Fixed:** Nothing changed in the default behavior. The native Windows run found that `fixed_count_match.py` loads helper modules without registering them in `sys.modules`, which breaks a dataclass under `from __future__ import annotations` on Python 3.12 (not on 3.15). The pre-flight avoids that import.
 
-**Measurements:** No match or benchmark was run. engine-uci tests 82 to 93 (11 new), tools tests 46 new, all passing; native Windows `--prepare-only` accepted the pinned strict configuration and refused the four bad ones.
+**Measurements:** No match or benchmark was run. engine-uci tests 82 to 96 (14 new), tools tests 61 new, all passing; native Windows `--prepare-only` accepted the pinned strict configuration and refused the four bad ones.

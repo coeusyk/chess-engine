@@ -10,6 +10,7 @@ import re
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -37,6 +38,8 @@ FAKE_ENGINE = textwrap.dedent('''
     advertised = os.environ.get("FAKE_OPTIONS", "").split(",")
     if os.environ.get("FAKE_ARGV_OUT"):
         open(os.environ["FAKE_ARGV_OUT"], "w").write(json.dumps(sys.argv[1:]))
+    if os.environ.get("FAKE_PID_OUT"):
+        open(os.environ["FAKE_PID_OUT"], "w").write(str(os.getpid()))
     options = {}
     for line in sys.stdin:
         line = line.strip()
@@ -154,6 +157,37 @@ class ConfigRejections(Case):
         self.assertFalse(self.argv_out.exists())
 
 
+class EachOptions(unittest.TestCase):
+    def test_each_engine_options_are_refused_because_they_reach_the_engines_unverified(self):
+        for each in ("option.EvalType=NNUE", "initstr=setoption name EvalType value NNUE"):
+            cc = ["-engine", "name=NEW", "cmd=java", "arg=-jar", "arg=/w/c.jar", "proto=uci", "-each", "tc=5+0.05", each]
+            with self.assertRaises(pre.PreflightError) as caught:
+                pre.effective_engine_config(cc, "NEW")
+            self.assertEqual(caught.exception.code, pre.EXIT_REJECTED)
+
+    def test_each_tc_alone_is_fine(self):
+        cc = ["-engine", "name=NEW", "cmd=java", "arg=-jar", "arg=/w/c.jar", "proto=uci", "-each", "tc=5+0.05", "proto=uci"]
+        self.assertEqual(pre.effective_engine_config(cc, "NEW").jar, "/w/c.jar")
+
+
+class AbsolutePaths(unittest.TestCase):
+    def test_absolute_is_judged_for_the_engine_host(self):
+        with mock.patch.object(pre.os, "name", "posix"):
+            self.assertTrue(pre._absolute_on_this_host("/net/x.nnue"))
+            for relative in ("net.nnue", "C:\\net.nnue", "C:/net.nnue", "\\\\srv\\share\\x"):
+                self.assertFalse(pre._absolute_on_this_host(relative), relative)
+        with mock.patch.object(pre.os, "name", "nt"):
+            for absolute in ("C:\\net.nnue", "C:/net.nnue", "\\\\srv\\share\\x.nnue"):
+                self.assertTrue(pre._absolute_on_this_host(absolute), absolute)
+            for relative in ("/net.nnue", "net.nnue", "\\net.nnue", "C:net.nnue"):
+                self.assertFalse(pre._absolute_on_this_host(relative), relative)
+
+    def test_redaction_removes_either_style_of_absolute_path(self):
+        self.assertEqual(pre._redact("EvalFile=C:\\Tools\\net.nnue"), "EvalFile=net.nnue")
+        self.assertEqual(pre._redact("/home/someone/net.nnue"), "net.nnue")
+        self.assertEqual(pre._redact("Threads=8"), "Threads=8")
+
+
 class LaunchedExactly(Case):
     def test_the_launched_command_line_is_exactly_the_configured_one(self):
         config = self.config(jvm_args=("-Xmx64m", "-Dsome.flag=1"))
@@ -227,6 +261,11 @@ class PinnedIdentity(Case):
         with self.assertRaises(pre.PreflightError):
             pre.recheck(record, str(self.net))
 
+    def test_pins_are_compared_case_insensitively(self):
+        record = self.run_pre(pins=pre.Pins(UUID.upper(), (" " + self.sha.upper() + "\n")))
+        self.assertEqual(record["uuid_reported"], UUID)
+        self.assertEqual(record["pinned_uuid"], UUID)
+
     def test_a_classical_engine_needs_no_pin(self):
         record = self.run_pre(self.config([("Threads", "1"), ("EvalType", "Classical")]), pins=None)
         self.assertEqual((record["nnue_sha256"], record["provenance"]), (None, "not-applicable"))
@@ -243,10 +282,25 @@ class HandshakeFailures(Case):
             self.fails(pre.EXIT_ENGINE_FAILED, fragment="without an 'NNUE network loaded' line")
 
     def test_a_hung_engine_times_out_and_is_killed(self):
-        with mock.patch.dict(os.environ, {"FAKE_MODE": "hang"}):
-            started = __import__("time").monotonic()
+        pid_file = self.dir / "pid.txt"
+        with mock.patch.dict(os.environ, {"FAKE_MODE": "hang", "FAKE_PID_OUT": str(pid_file)}):
+            started = time.monotonic()
             self.fails(pre.EXIT_TIMEOUT, timeout=1.0)
-        self.assertLess(__import__("time").monotonic() - started, 10)
+        self.assertLess(time.monotonic() - started, 10)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(int(pid_file.read_text()), 0)
+
+    def test_a_corrupt_or_non_object_manifest_is_a_pin_failure_not_a_traceback(self):
+        manifest = self.dir / f"{UUID}.json"
+        for text in ("{not json", "[1, 2]", ""):
+            manifest.write_text(text)
+            error = self.fails(pre.EXIT_PIN)
+            self.assertIn("manifest", str(error))
+
+    def test_a_missing_network_file_is_rejected_before_any_engine_starts(self):
+        self.net.unlink()
+        self.fails(pre.EXIT_REJECTED, fragment="does not exist")
+        self.assertFalse(self.argv_out.exists())
 
 
 class LoadedByPath(unittest.TestCase):

@@ -186,6 +186,47 @@ class StrictNnueIntegrationTest {
         assertStrictExit("cannot load EvalFile");
     }
 
+    @Test
+    void strictAlsoGuardsEvalNnueAndBenchWithoutAnIsready(@TempDir Path dir) throws Exception {
+        for (String command : new String[]{"eval", "nnue features", "bench 1"}) {
+            engine = Engine.start();
+            engine.send("setoption name EvalType value NNUE");
+            engine.send("setoption name EvalFile value " + dir.resolve("none.nnue"));
+            engine.send("setoption name StrictNnue value true");
+            engine.send(command);
+
+            assertTrue(engine.awaitExit(10), command + ": engine must exit");
+            assertEquals(2, engine.exitValue(), command);
+            assertTrue(engine.history().stream().anyMatch(l -> l.startsWith("info string NNUE strict mode:")), command);
+            engine.close();
+        }
+    }
+
+    @Test
+    void strictTreatsAnyCaseOfNnueAsARequestForNnue(@TempDir Path dir) throws Exception {
+        engine = Engine.start();
+        engine.send("setoption name EvalType value nnue");
+        engine.send("setoption name EvalFile value " + dir.resolve("none.nnue"));
+        engine.send("setoption name StrictNnue value true");
+        engine.send("isready");
+
+        assertStrictExit("cannot load EvalFile");
+    }
+
+    @Test
+    void strictLoadedLineIsPrintedAtIsreadyNotAtFirstGo(@TempDir Path dir) throws Exception {
+        Path net = dir.resolve("tiny.nnue");
+        writeTinyNnueFile(net, "33333333-3333-3333-3333-333333333333");
+        engine = Engine.start();
+        engine.send("setoption name EvalType value NNUE");
+        engine.send("setoption name EvalFile value " + net);
+        engine.send("setoption name StrictNnue value true");
+        engine.send("isready");
+
+        assertNotNull(engine.await(l -> l.equals("info string NNUE network loaded: 33333333-3333-3333-3333-333333333333"), 5));
+        assertNotNull(engine.await(l -> l.equals("readyok"), 5));
+    }
+
     /** The engine only knows what it is told: a misspelled option name is ignored under the UCI rules. */
     @Test
     void misspelledOptionNameIsOutOfScopeForTheEngine() throws Exception {
