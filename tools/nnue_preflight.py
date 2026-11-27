@@ -47,7 +47,7 @@ SCHEMA = "nnue-preflight/1"
 EXIT_REJECTED, EXIT_ENGINE_FAILED, EXIT_TIMEOUT, EXIT_PIN = 3, 4, 5, 6
 _LOADED = re.compile(r"^info string NNUE network loaded: (\S+)$")
 _OPTION_LINE = re.compile(r"^option name (.+?) type ")
-_SCORE_LINE = re.compile(r"^\s*int16 score\s+([+-]\d+) cp\s*$", re.MULTILINE)
+_SCORE_LINE = re.compile(r"^(?:info string )?\s*int16 score\s+([+-]\d+) cp\s*$", re.MULTILINE)
 
 
 class PreflightError(Exception):
@@ -137,7 +137,8 @@ def file_sha256(path: Path) -> str:
 
 
 def parse_eval_score(output: str) -> int:
-    """The integer score from the UCI `eval` breakdown of an NNUE engine (`  int16 score   +37 cp`)."""
+    """The integer score from the UCI `eval` breakdown of an NNUE engine. The engine prints every breakdown line
+    behind `info string `, so both `info string   int16 score           +37 cp` and the bare line are accepted."""
     match = _SCORE_LINE.search(output)
     if match is None:
         raise ValueError("no 'int16 score' line in the eval output")

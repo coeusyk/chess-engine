@@ -322,6 +322,8 @@ class EvalScore(unittest.TestCase):
     def test_parses_positive_and_negative_scores(self):
         self.assertEqual(pre.parse_eval_score("x\n  int16 score           +37 cp\n  float32 oracle score  +37.0000 cp"), 37)
         self.assertEqual(pre.parse_eval_score("  int16 score           -5 cp"), -5)
+        self.assertEqual(pre.parse_eval_score("info string --- nnue eval breakdown ---\ninfo string   int16 score           +37 cp\n"
+                                              "info string   float32 oracle score  +37.2000 cp  delta=0.2000"), 37)
 
     def test_raises_without_the_line(self):
         with self.assertRaises(ValueError):
