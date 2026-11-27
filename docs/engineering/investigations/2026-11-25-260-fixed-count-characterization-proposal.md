@@ -1,6 +1,6 @@
 # #260 fixed-count paired characterization
 
-2026-11-25. Approved by the owner as a fixed-count characterization (see the last section); nothing is launched and nothing here authorizes a launch. It describes a fixed-count native comparison of the merged #258 tree against its first parent, where the question is how large the strength difference is, not whether a stopping rule fires. It also lists where that conflicts with the preparation already on disk, and what 4,000 games can and cannot show.
+2026-11-25, with the outcome added on 2026-11-27 (last section). Approved by the owner as a fixed-count characterization. The sections up to "Status and what is still needed to launch" are the proposal as it stood on 2026-11-25. The run was launched later and was interrupted by a power outage at 1,217 of 4,000 games, so read the last section for what actually happened. It describes a fixed-count native comparison of the merged #258 tree against its first parent, where the question is how large the strength difference is, not whether a stopping rule fires. It also lists where that conflicts with the preparation already on disk, and what 4,000 games can and cannot show.
 
 ## What is being compared
 
@@ -76,7 +76,7 @@ The launcher is `tools/fixed_count_match.py`. It builds this list from the same 
 
 The #296 run was lost to a host power off, and the launcher reported it as finished (#319). The new launcher validates the log and PGN after the run, and for this run the pre-registered rule is: if it ends before 4,000 games for any reason, or any game ended abandoned, disconnected or unterminated, it is recorded as interrupted and inconclusive and is not resumed. The result is not read until that validation has passed.
 
-## Status and what is still needed to launch
+## Status and what is still needed to launch (as of 2026-11-25, before the launch)
 
 The owner approved the 4,000 game fixed-count characterization on 2026-11-25 (an estimate, not a non-inferiority experiment). That covers the design above, the seed and the analysis plan. Still to do before a launch:
 
@@ -85,3 +85,31 @@ The owner approved the 4,000 game fixed-count characterization on 2026-11-25 (an
 3. A new run folder is prepared from the frozen builds with the launcher's prepare-only mode. The jar, book, runner and toolchain hashes are compared with the table above and recorded, and the argument list is compared with the one above.
 4. The #307 and #313 measurements are finished and the host-idle checks pass.
 5. Explicit launch authorization. None has been given.
+
+## Outcome (2026-11-27): interrupted by a power outage, interim characterization only
+
+This is not a completed fixed-count experiment, and it is not an SPRT result of any kind.
+
+**What ran.** The run was launched on native Windows from `tools/results/vex-followup/20261127T0100Z/fixed-260/` with `tools/fixed_count_match.py`, the seed and arguments of the prepared manifest (4,000 games, `-srand 260258`, `noob_3moves.epd`, 5+0.05, six concurrent games). The launcher's provenance record has the same JAR, book, launcher and Cute Chess hashes as the preparation. The Windows host lost power while the match was running. The last finished game ended at 2026-11-27 08:00 UTC, 44 minutes after the 07:16 UTC launch. The launcher never reached its validation step: `run-provenance.json` has `finished_utc` and `exit_code` as null and no `completion` block. A second folder from the same day, `20261127T0003Z/fixed-260/`, holds only a prepared manifest and the two JARs. It was never launched.
+
+**What the artifacts contain.** 1,217 finished games, numbered 1 to 1217 without a gap, and the log and the PGN agree on every one of them. Pairs 1 to 608 (games 1 to 1216) are complete, each with both colours on the same opening. Game 1217 is the first game of opening 609 (NEW as White, lost by NEW) and its partner, game 1218, never finished. Games 1218 to 1223 were in flight when the power went. Cute Chess writes a PGN record only when a game ends, so they exist only as `Started game` lines in the log. No game ended abandoned, disconnected, unterminated, on time or by an illegal move.
+
+**The validator.** The first run of `tools/match_validation.py` over these files returned INVALID_EVIDENCE, not INTERRUPTED, and it would have returned the same for a fully completed fixed-count run. Cute Chess 1.5.1 prints `SPRT: llr 0 (0.0%), lbound -inf, ubound inf` at every rating interval of a match run without `-sprt` (121 times in this log). The validator did not recognize that line, and it also rejected any `SPRT:` line in a fixed-count run. The correction accepts exactly that inactive line and nothing else, so finite bounds, acceptance messages, malformed lines and the inactive line inside an SPRT run are still rejected. With it, the preserved log and PGN classify as INTERRUPTED: 1,217 games, 608 complete pairs, one orphan opening, and the log does not end with `Finished match`. The launcher's own `launcher.out.txt` classifies the same way.
+
+**The interim evidence.** I am keeping the 608 complete opening pairs as the interim characterization of #258 against its first parent and excluding the orphan game 1217 from the paired analysis.
+
+| | |
+|---|---|
+| Games in the 608 pairs | 1,216 |
+| NEW wins / draws / losses | 491 / 432 / 293 |
+| Paired score | 0.5814 |
+| Paired Elo | +57.1 |
+| Nominal 95% interval | +41.6 to +72.8 |
+
+For comparison, all 1,217 finished games (orphan included) are 492 / 432 / 293 and give +57.3 with an interval of +41.7 to +73.2 on a game-level calculation. The pre-registered analysis was the pair-level one, so the table above is the figure to quote. The planned 4,000 games would have given a half-width of about 8.6 Elo; 608 pairs give about 15.6.
+
+**How far this can be read.** The interval is nominal. It is the normal-approximation interval of the pre-registered analysis computed on a sample whose size was set by a power outage, and then not extended after the interim numbers had been seen, so it does not carry the coverage of a fixed 4,000-game sample. The pre-registered rule for an interrupted run (see "Interruption" above) was to record it as interrupted and inconclusive and not to resume it. I have followed the no-resume part. Reading the interim pairs at all is a departure from the "inconclusive" part and it was the owner's decision, made after the validator was corrected and the artifacts were classified. The estimate supports no Elo-gain claim and no non-inferiority claim, and it is not a confirmatory result.
+
+**Decision.** Further sampling was declined after reviewing the interim evidence. The run is not resumed or restarted, the opening schedule beyond opening 609 has not been reconstructed, and no further match is authorized for #260. All original logs, PGNs, manifests and provenance in both run folders are untouched. The run folders have no `SHA256SUMS` file, so the JAR, book and launcher hashes in the provenance records are the checksums that exist.
+
+**Regression coverage.** `tools/tests/test_match_validation.py` has fixtures cut from this run: a tail of the real log and PGN that classifies as INTERRUPTED, and the first 30 games of the real log with a closing `Finished match` added by hand that classifies as COMPLETE_CAP. A test over the full preserved run is skipped unless `MATCH_VALIDATION_260_DIR` points at the run folder.

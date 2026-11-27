@@ -1,0 +1,39 @@
+Indexing opening suite...
+Finished game 1189 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Finished game 1191 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Finished game 1192 (OLD vs NEW): 1-0 {White wins by adjudication}
+Finished game 1190 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Finished game 1194 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Finished game 1195 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Finished game 1193 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Finished game 1197 (NEW vs OLD): 1-0 {White wins by adjudication}
+Finished game 1198 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Finished game 1196 (OLD vs NEW): 1/2-1/2 {Draw by insufficient mating material}
+Finished game 1200 (OLD vs NEW): 1-0 {White wins by adjudication}
+Finished game 1199 (NEW vs OLD): 1-0 {White wins by adjudication}
+Finished game 1204 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Finished game 1203 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Finished game 1202 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Finished game 1201 (NEW vs OLD): 1/2-1/2 {Draw by adjudication}
+Finished game 1205 (NEW vs OLD): 1-0 {White wins by adjudication}
+Finished game 1207 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Finished game 1206 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Finished game 1208 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Finished game 1210 (OLD vs NEW): 1-0 {White wins by adjudication}
+Finished game 1209 (NEW vs OLD): 1-0 {White wins by adjudication}
+Finished game 1211 (NEW vs OLD): 1-0 {White wins by adjudication}
+Finished game 1212 (OLD vs NEW): 1-0 {White wins by adjudication}
+Finished game 1214 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Finished game 1213 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Finished game 1216 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Finished game 1217 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Finished game 1215 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Started game 1218 of 4000 (OLD vs NEW)
+Started game 1219 of 4000 (NEW vs OLD)
+Started game 1220 of 4000 (OLD vs NEW)
+Started game 1221 of 4000 (NEW vs OLD)
+Started game 1222 of 4000 (OLD vs NEW)
+Started game 1223 of 4000 (NEW vs OLD)
+Score of NEW vs OLD: 10 - 9 - 10  [0.517] 29
+Elo difference: 58.0 +/- 15.8, LOS: 100.0 %, DrawRatio: 35.5 %
+SPRT: llr 0 (0.0%), lbound -inf, ubound inf

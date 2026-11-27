@@ -1,0 +1,36 @@
+Indexing opening suite...
+Finished game 1 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Finished game 4 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Finished game 3 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Finished game 6 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Finished game 5 (NEW vs OLD): 1-0 {White mates}
+Finished game 8 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Finished game 2 (OLD vs NEW): 1/2-1/2 {Draw by adjudication}
+Finished game 7 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Finished game 10 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Finished game 9 (NEW vs OLD): 1-0 {White wins by adjudication}
+Finished game 11 (NEW vs OLD): 1-0 {White wins by adjudication}
+Finished game 12 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Finished game 13 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Finished game 14 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Finished game 15 (NEW vs OLD): 1/2-1/2 {Draw by insufficient mating material}
+Finished game 19 (NEW vs OLD): 1-0 {White wins by adjudication}
+Finished game 16 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Finished game 18 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Finished game 20 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Finished game 17 (NEW vs OLD): 1/2-1/2 {Draw by insufficient mating material}
+Finished game 22 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Finished game 21 (NEW vs OLD): 1/2-1/2 {Draw by 3-fold repetition}
+Finished game 23 (NEW vs OLD): 0-1 {Black mates}
+Finished game 25 (NEW vs OLD): 0-1 {Black wins by adjudication}
+Finished game 26 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Finished game 27 (NEW vs OLD): 1-0 {White wins by adjudication}
+Finished game 24 (OLD vs NEW): 1/2-1/2 {Draw by insufficient mating material}
+Finished game 28 (OLD vs NEW): 1/2-1/2 {Draw by 3-fold repetition}
+Finished game 30 (OLD vs NEW): 0-1 {Black wins by adjudication}
+Finished game 29 (NEW vs OLD): 1-0 {White wins by adjudication}
+Score of NEW vs OLD: 13 - 3 - 14  [0.667] 30
+Elo difference: 58.0 +/- 15.8, LOS: 100.0 %, DrawRatio: 35.5 %
+SPRT: llr 0 (0.0%), lbound -inf, ubound inf
+
+Finished match

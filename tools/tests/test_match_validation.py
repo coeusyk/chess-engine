@@ -5,6 +5,13 @@ Two kinds of input. The real-artifact fixtures under tools/tests/fixtures/match_
 last 30 games of the interrupted #296 run (movetext removed from both, and the excerpt's Score line recomputed
 because an excerpt cannot carry the full run's totals). The focused regressions build small runs in memory so
 each rule can be broken on its own.
+
+The `fixed-260-*` fixtures are cut from the real #260 fixed-count run (Cute Chess 1.5.1, no `-sprt`, interrupted by a
+power outage after 1,217 of 4,000 games): real `Finished game` lines, the real inactive `SPRT:` status line, the real
+`Started game` lines of the abandoned in-flight games, movetext removed, and the excerpt's Score line recomputed. The
+Elo line is the run's own and is not parsed. `fixed-260-head-complete` is games 1 to 30 of that run with a closing
+`Finished match` added by hand, because the real run never reached one: it stands in for a normally completed
+fixed-count match and its only claim is the real log format.
 """
 
 import os
@@ -107,6 +114,69 @@ class RealArtifacts(unittest.TestCase):
         # 5,382 pairs counts the three pairs completed by the abandoned games; the 5,379 clean pairs of the
         # #296 note are those without them.
         self.assertEqual(5382, v.complete_pairs)
+
+
+class InactiveSprtStatus(unittest.TestCase):
+    """Cute Chess 1.5.1 prints `SPRT: llr 0 (0.0%), lbound -inf, ubound inf` in a match run without `-sprt` (#260)."""
+
+    INACTIVE = "SPRT: llr 0 (0.0%), lbound -inf, ubound inf"
+
+    def test_the_real_260_head_is_a_complete_fixed_count_run(self):
+        log = read("fixed-260-head-complete.log.txt")
+        self.assertIn(self.INACTIVE, log)
+        v = mv.classify_run(log, read("fixed-260-head-complete.pgn"), expected_games=30)
+        self.assertEqual(mv.COMPLETE_CAP, v.state, v.describe())
+        self.assertEqual((30, 15, 0), (v.games, v.complete_pairs, v.orphan_openings))
+
+    def test_the_real_260_tail_is_interrupted_not_invalid(self):
+        log = read("fixed-260-interrupted-tail.log.txt")
+        self.assertIn(self.INACTIVE, log)
+        v = mv.classify_run(log, read("fixed-260-interrupted-tail.pgn"), expected_games=4000)
+        self.assertEqual(mv.INTERRUPTED, v.state, v.describe())
+        self.assertEqual((29, 14, 1, 1), (v.games, v.complete_pairs, v.orphan_openings, v.unexplained_orphans))
+        self.assertTrue(any("Finished match" in r for r in v.reasons))
+
+    @unittest.skipUnless(os.environ.get("MATCH_VALIDATION_260_DIR"), "set MATCH_VALIDATION_260_DIR to the fixed-260 run folder")
+    def test_the_full_260_run_when_available(self):
+        folder = Path(os.environ["MATCH_VALIDATION_260_DIR"])
+        v = mv.classify_files(str(folder / "match.log"), str(folder / "match.pgn"), 4000)
+        self.assertEqual(mv.INTERRUPTED, v.state, v.describe())
+        self.assertEqual((1217, 608, 1, 1, 0, 0), (v.games, v.complete_pairs, v.orphan_openings, v.unexplained_orphans,
+                                                   v.abandoned, v.unterminated))
+
+    def test_the_inactive_line_is_not_accepted_for_an_sprt_run(self):
+        log, pgn = build(cap_run(2), sprt_line=self.INACTIVE)
+        v = mv.classify_run(log, pgn, sprt=True)
+        self.assertEqual(mv.INVALID_EVIDENCE, v.state, v.describe())
+        self.assertTrue(any("no 'SPRT:' statistics line" in r for r in v.reasons))
+
+    def test_a_finite_sprt_line_in_a_fixed_count_run_is_still_invalid(self):
+        log, pgn = build(cap_run(2), sprt_line="SPRT: llr 0.10 (3.4%), lbound -2.94, ubound 2.94")
+        self.assertEqual(mv.INVALID_EVIDENCE, mv.classify_run(log, pgn, expected_games=4).state)
+
+    def test_an_acceptance_message_on_the_infinite_bounds_is_invalid(self):
+        for line in (self.INACTIVE + " - H1 was accepted", self.INACTIVE + " - H0 was accepted"):
+            log, pgn = build(cap_run(2), sprt_line=line)
+            self.assertEqual(mv.INVALID_EVIDENCE, mv.classify_run(log, pgn, expected_games=4).state, line)
+
+    def test_other_infinite_or_nonzero_variants_are_malformed(self):
+        for line in ("SPRT: llr 0 (0.0%), lbound -inf, ubound 2.94", "SPRT: llr 0 (0.0%), lbound -2.94, ubound inf",
+                     "SPRT: llr 1.20 (40.0%), lbound -inf, ubound inf", "SPRT: llr 0 (0.0%), lbound inf, ubound -inf",
+                     "SPRT: llr 0 (0.0%), lbound -inf, ubound inf extra", "SPRT: llr 0 (0.0%), lbound -inf, ubound inf "
+                     "- H1 was accepted"):
+            log, pgn = build(cap_run(2), sprt_line=line)
+            self.assertEqual(mv.INVALID_EVIDENCE, mv.classify_run(log, pgn, expected_games=4).state, line)
+
+    def test_an_inactive_line_mixed_with_a_finite_statistic_is_contradictory(self):
+        log, pgn = build(cap_run(2), sprt_line="SPRT: llr 0.10 (3.4%), lbound -2.94, ubound 2.94")
+        log = log.replace("Finished match", self.INACTIVE + "\nFinished match")
+        for sprt in (False, True):
+            v = mv.classify_run(log, pgn, expected_games=4, sprt=sprt)
+            self.assertEqual(mv.INVALID_EVIDENCE, v.state, v.describe())
+
+    def test_a_complete_fixed_count_run_with_the_inactive_line_is_complete(self):
+        log, pgn = build(cap_run(2), sprt_line=self.INACTIVE)
+        self.assertEqual(mv.COMPLETE_CAP, mv.classify_run(log, pgn, expected_games=4).state)
 
 
 class BoundaryRules(unittest.TestCase):

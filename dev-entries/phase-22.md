@@ -163,3 +163,14 @@ Phase 15 keeps its status (the self-play/Stage-3 line is paused and every `[P15]
 **Broke / Fixed:** Nothing failed. There is no accessor for the evaluator's chosen path, so the fallback is shown through its result and not by reading the flag.
 
 **Measurements:** 8 tests in the class, 0 failures, 0 skipped, with the vector module on.
+
+### [2026-11-27] Interrupted #260 fixed-count run and the validator's inactive SPRT line (#260, #319; validation infrastructure)
+
+**Built:** A narrow correction to `tools/match_validation.py` so it recognizes the line Cute Chess 1.5.1 prints in a match run without `-sprt` (`SPRT: llr 0 (0.0%), lbound -inf, ubound inf`), regression tests and two fixtures cut from the real #260 run, and an outcome section in `docs/engineering/investigations/2026-11-25-260-fixed-count-characterization-proposal.md`.
+
+**Decisions Made:** The #260 run was interrupted by a power outage at 1,217 of 4,000 games. The owner kept the 608 complete opening pairs as interim characterization evidence, excluded the orphan game 1217 from the paired analysis, and declined further sampling after reviewing the interim numbers. It is recorded as an interrupted run and an interim estimate, not as a completed fixed-count experiment or an SPRT result. The run is not resumed, the remaining opening schedule is not reconstructed and no resumability was built. For the validator I accepted only the exact inactive line. Finite bounds, acceptance messages, malformed lines, the inactive line inside an SPRT run and the inactive line next to a finite statistic all stay invalid. I did not make the fixed-count check ignore `SPRT:` lines in general because that would also let a stray genuine SPRT line through.
+
+**Broke / Fixed:** Both the launcher and the validator would have judged any complete fixed-count run INVALID_EVIDENCE, because the #319 tests never had a real fixed-count log. The #260 files showed it. After the correction the preserved #260 log and PGN classify as INTERRUPTED (1,217 games, 608 complete pairs, one orphan, no `Finished match`).
+
+**Measurements:** 608 pairs, 1,216 games: 491 wins, 432 draws, 293 losses for NEW, paired score 0.5814, Elo +57.1, nominal 95 percent interval +41.6 to +72.8. Half-width about 15.6 Elo against about 8.6 planned at 4,000 games. The interval is nominal because the sample size came from the outage and the stopping decision was made after the numbers were seen. No match or benchmark was run for this entry; the work read the preserved artifacts only.
+
