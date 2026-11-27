@@ -194,3 +194,13 @@ Phase 15 keeps its status (the self-play/Stage-3 line is paused and every `[P15]
 **Broke / Fixed:** Fixed the late first move. No other behaviour changed. The deterministic tests fail on the old `startNow()` (5 of 11 in the engine-core class) and pass on the new one.
 
 **Measurements:** Native Windows, packaged jar, direct pipes, go sent to bestmove, overshoot against `movetime` (negative means early), 5 fresh processes per row unless noted. White cold, Threads=1, Hash=64, movetime 1000: +12.8 ms median before, -29.1 after. Same at movetime 15000 (3 runs): +12.6 before, -29.0 after. Threads=8, Hash=256: +24.2 before, -28.6 after. Black cold: -20.2 before, -29.0 after (Threads=8: -8.5 before, -28.5 after). Warm second and later searches: about -28 before, about -29.6 after. Clock-based `go wtime/btime` times are within run-to-run noise of before. After the fix every case finishes about 29 ms inside the limit, which is MoveOverhead less about 1 ms.
+
+### [2026-11-27] Fail-closed NNUE experiments (NNUE and tuner integrity)
+
+**Built:** `StrictNnue` UCI option in `UciApplication` (exit status 2 before `readyok` when an explicitly requested NNUE network cannot be used), `tools/nnue_preflight.py` (verifies the exact engine command, options and pinned network identity), pin and pre-flight wiring in `tools/fixed_count_match.py` and `tools/nnue-gauntlet.ps1`. Write-up: `docs/engineering/investigations/2026-11-27-nnue-strict-mode.md`. Issue #330.
+
+**Decisions Made:** Strict mode is opt-in, because the PRD (US-2) intends the Classical fallback and existing scripts rely on it. The engine and the launcher are separate guarantees: the engine cannot see an option sent under a misspelled name, so the pre-flight checks the effective options against what the engine advertises, rejects duplicates and conflicts, and requires a pinned uuid and file hash that it rechecks before launch. An absent manifest never counts as verified provenance. The engine does not take an expected-uuid option; the pin is checked from outside. SPRT scripts are unchanged (they hard-code Classical), and strict verification is recorded as a prerequisite for any future NNUE SPRT.
+
+**Broke / Fixed:** Nothing changed in the default behavior. The native Windows run found that `fixed_count_match.py` loads helper modules without registering them in `sys.modules`, which breaks a dataclass under `from __future__ import annotations` on Python 3.12 (not on 3.15). The pre-flight avoids that import.
+
+**Measurements:** No match or benchmark was run. engine-uci tests 82 to 96 (14 new), tools tests 61 new, all passing; native Windows `--prepare-only` accepted the pinned strict configuration and refused the four bad ones.
