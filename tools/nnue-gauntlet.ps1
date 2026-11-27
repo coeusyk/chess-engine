@@ -21,6 +21,14 @@
 .PARAMETER NnueFile
     Path to the candidate .nnue file (E-3's exported network).
 
+.PARAMETER NnueUuid
+    The network uuid the engine must report (the pin recorded when the network was exported).
+
+.PARAMETER NnueSha256
+    The SHA-256 of the .nnue file (the pin recorded when the network was exported). Both pins are
+    mandatory: the NNUE side runs with StrictNnue=true, and nnue_preflight.py verifies the exact
+    engine command, options and network identity before any match starts (#330).
+
 .PARAMETER Games
     Number of games to play (default: 100, matching match.ps1's default).
 
@@ -29,11 +37,14 @@
 
 .EXAMPLE
     .\tools\nnue-gauntlet.ps1 -Engine engine-uci\target\engine-uci-0.6.0-SNAPSHOT.jar `
-        -NnueFile trainer\outputs\nets\dfffd3da-7f8f-4fc9-92dc-b3873c97fb21.nnue
+        -NnueFile trainer\outputs\nets\dfffd3da-7f8f-4fc9-92dc-b3873c97fb21.nnue `
+        -NnueUuid dfffd3da-7f8f-4fc9-92dc-b3873c97fb21 -NnueSha256 <sha256-of-the-file>
 #>
 param(
     [Parameter(Mandatory)][string]$Engine,
     [Parameter(Mandatory)][string]$NnueFile,
+    [Parameter(Mandatory)][string]$NnueUuid,
+    [Parameter(Mandatory)][string]$NnueSha256,
     [int]$Games = 100,
     [string]$TC = '10+0.1'
 )
@@ -67,15 +78,36 @@ $TS     = Get-Date -Format 'yyyyMMdd_HHmmss'
 $PgnOut = Join-Path $ResultsDir "gauntlet_nnue_$TS.pgn"
 $LogOut = Join-Path $ResultsDir "gauntlet_nnue_$TS.log"
 
+$PreflightOut = Join-Path $ResultsDir "gauntlet_nnue_$TS.preflight.json"
+$Python = if ($env:PYTHON) { $env:PYTHON } else { 'python' }
+
+# Verify what the match will launch before anything starts (#330): the same Java, JVM arguments and JAR,
+# the NNUE options in the order used below, and the pinned network identity. StrictNnue=true makes the
+# engine end instead of playing Classical, and this check covers what the engine cannot see (a misspelled
+# option, a JAR without strict mode, a network that is not the pinned one).
+& $Python (Join-Path $PSScriptRoot 'nnue_preflight.py') `
+    --jar $EngineJar --eval-file $NnuePath --expected-uuid $NnueUuid --expected-nnue-sha256 $NnueSha256 `
+    --java $Java '--jvm-arg=--add-modules' '--jvm-arg=jdk.incubator.vector' --output $PreflightOut
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "NNUE pre-flight failed (exit $LASTEXITCODE); no match was started."
+    exit 1
+}
+# The file must still be the verified one at the moment of launch.
+if ((Get-FileHash -Algorithm SHA256 -LiteralPath $NnuePath).Hash -ine $NnueSha256) {
+    Write-Error "The network file changed after the pre-flight; no match was started."
+    exit 1
+}
+
 Write-Host "Gauntlet: Vex-NNUE vs Vex-Classical  games=$Games  TC=$TC"
 Write-Host "ENGINE : $EngineJar"
 Write-Host "NNUE   : $NnuePath"
+Write-Host "PREFLIGHT: $PreflightOut"
 Write-Host "PGN    : $PgnOut"
 Write-Host "LOG    : $LogOut"
 Write-Host ""
 
 & $Cutechess `
-    -engine "name=Vex-NNUE" "cmd=$Java" "arg=--add-modules" "arg=jdk.incubator.vector" "arg=-jar" "arg=$EngineJar" proto=uci "option.EvalType=NNUE" "option.EvalFile=$NnuePath" `
+    -engine "name=Vex-NNUE" "cmd=$Java" "arg=--add-modules" "arg=jdk.incubator.vector" "arg=-jar" "arg=$EngineJar" proto=uci "option.EvalType=NNUE" "option.EvalFile=$NnuePath" "option.StrictNnue=true" `
     -engine "name=Vex-Classical" "cmd=$Java" "arg=--add-modules" "arg=jdk.incubator.vector" "arg=-jar" "arg=$EngineJar" proto=uci "option.EvalType=Classical" `
     -each tc=$TC `
     -games $Games `
