@@ -1,0 +1,34 @@
+# Controlled orientation positions (#265, plan #329). Quiet positions with a decisive, unambiguous material difference.
+# Each base position appears in four forms: the advantaged colour is White or Black, and it is to move or not.
+# `fen;expected` where expected is the sign of the side-to-move's score: +1 when the mover has the advantage, -1 otherwise.
+# Written before any network was scored. Regenerate with trainer.validation.orientation.controlled_forms, never by hand.
+# base: 4k3/8/8/8/8/8/PPP5/3QK3 w - -
+4k3/8/8/8/8/8/PPP5/3QK3 w - -;+1
+4k3/8/8/8/8/8/PPP5/3QK3 b - -;-1
+3qk3/ppp5/8/8/8/8/8/4K3 b - -;+1
+3qk3/ppp5/8/8/8/8/8/4K3 w - -;-1
+# base: 4k3/pp6/8/8/8/8/8/R3K2R w KQ -
+4k3/pp6/8/8/8/8/8/R3K2R w KQ -;+1
+4k3/pp6/8/8/8/8/8/R3K2R b KQ -;-1
+r3k2r/8/8/8/8/8/PP6/4K3 b kq -;+1
+r3k2r/8/8/8/8/8/PP6/4K3 w kq -;-1
+# base: 6k1/5ppp/8/8/8/8/5PPP/1Q2R1K1 w - -
+6k1/5ppp/8/8/8/8/5PPP/1Q2R1K1 w - -;+1
+6k1/5ppp/8/8/8/8/5PPP/1Q2R1K1 b - -;-1
+1q2r1k1/5ppp/8/8/8/8/5PPP/6K1 b - -;+1
+1q2r1k1/5ppp/8/8/8/8/5PPP/6K1 w - -;-1
+# base: 8/5k2/8/8/8/2Q5/1P6/4K3 w - -
+8/5k2/8/8/8/2Q5/1P6/4K3 w - -;+1
+8/5k2/8/8/8/2Q5/1P6/4K3 b - -;-1
+4k3/1p6/2q5/8/8/8/5K2/8 b - -;+1
+4k3/1p6/2q5/8/8/8/5K2/8 w - -;-1
+# base: 2r2rk1/8/8/8/8/8/PPPPPPPP/RNBQKBNR w KQ -
+2r2rk1/8/8/8/8/8/PPPPPPPP/RNBQKBNR w KQ -;+1
+2r2rk1/8/8/8/8/8/PPPPPPPP/RNBQKBNR b KQ -;-1
+rnbqkbnr/pppppppp/8/8/8/8/8/2R2RK1 b kq -;+1
+rnbqkbnr/pppppppp/8/8/8/8/8/2R2RK1 w kq -;-1
+# base: 4k3/8/8/8/8/8/3PPP2/RNBQKBNR w KQ -
+4k3/8/8/8/8/8/3PPP2/RNBQKBNR w KQ -;+1
+4k3/8/8/8/8/8/3PPP2/RNBQKBNR b KQ -;-1
+rnbqkbnr/3ppp2/8/8/8/8/8/4K3 b kq -;+1
+rnbqkbnr/3ppp2/8/8/8/8/8/4K3 w kq -;-1
