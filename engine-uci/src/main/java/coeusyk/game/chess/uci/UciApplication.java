@@ -84,11 +84,6 @@ public class UciApplication {
     private int bookVariance = 50;
     private int contempt = 0;
 
-    // Pondering. The ponder clock parameters are read and written on the command thread only.
-    private int ponderActiveColor;
-    private long ponderWtime, ponderBtime, ponderWinc, ponderBinc;
-    private int ponderMoveNumber;
-
     // Shared transposition table — a single instance sized by Hash setoption,
     // cleared on ucinewgame, and injected into every Searcher (main + helpers).
     private final TranspositionTable sharedTT = new TranspositionTable(64, SMP_DIAGNOSTICS);
@@ -131,7 +126,7 @@ public class UciApplication {
         final boolean ponder;
         /** Null for depth and infinite searches. For ponder it starts in ponder mode. */
         final TimeManager timeManager;
-        final AtomicBoolean ponderHit = new AtomicBoolean(false);
+        volatile boolean ponderHit;
         final AtomicBoolean bestmoveEmitted = new AtomicBoolean(false);
 
         GoSession(boolean hold, boolean ponder, TimeManager timeManager) {
@@ -305,7 +300,7 @@ public class UciApplication {
                 // The running search prints its own bestmove. A stop with nothing running prints nothing.
                 requestStop();
             } else if ("ponderhit".equals(line)) {
-                handlePonderHit();
+                handlePonderHit(receivedNanos);
             } else if ("quit".equals(line)) {
                 break;
             } else if ("eval".equals(line)) {
@@ -793,20 +788,10 @@ public class UciApplication {
         stopRequested.set(false);
         latestIterativeBestMove = null;
 
-        // Detect ponder flag and save time params for ponderhit reconfiguration.
         String[] goParts = command.split("\\s+");
         boolean isGoPonder = contains(goParts, "ponder");
         // go infinite and go ponder answer only after stop (or ponderhit), however early the search finishes.
         boolean hold = isGoPonder || contains(goParts, "infinite");
-        if (isGoPonder) {
-            ponderActiveColor = board.getActiveColor();
-            ponderWtime = parseLongArg(goParts, "wtime", 0L);
-            ponderBtime = parseLongArg(goParts, "btime", 0L);
-            ponderWinc  = parseLongArg(goParts, "winc",  0L);
-            ponderBinc  = parseLongArg(goParts, "binc",  0L);
-            ponderMoveNumber = Math.max(1, board.getFullMoves()) - 1;
-        }
-
         Board.SearchSnapshot snapshot = board.snapshotForSearch();
         Board searchBoard = snapshot.newBoard();
 
@@ -874,16 +859,16 @@ public class UciApplication {
         return manager;
     }
 
-    private void handlePonderHit() {
+    private void handlePonderHit(long receivedNanos) {
         GoSession current = session;
-        if (current == null || !current.ponder || !current.ponderHit.compareAndSet(false, true)) {
+        if (current == null || !current.ponder || current.ponderHit) {
             return;
         }
         if (current.timeManager != null) {
-            current.timeManager.configurePonderHit(
-                    ponderActiveColor, ponderWtime, ponderBtime, ponderWinc, ponderBinc, ponderMoveNumber);
+            current.timeManager.configurePonderHit(receivedNanos);
         }
         synchronized (holdMonitor) {
+            current.ponderHit = true;
             holdMonitor.notifyAll();
         }
     }
@@ -892,7 +877,7 @@ public class UciApplication {
     private void awaitRelease(GoSession current) {
         synchronized (holdMonitor) {
             try {
-                while (!stopRequested.get() && !(current.ponder && current.ponderHit.get())) {
+                while (!stopRequested.get() && !(current.ponder && current.ponderHit)) {
                     holdMonitor.wait();
                 }
             } catch (InterruptedException e) {

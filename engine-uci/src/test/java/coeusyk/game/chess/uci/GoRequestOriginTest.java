@@ -53,9 +53,24 @@ class GoRequestOriginTest {
         assertTrue(manager.getHardLimitMs() > 1_000_000_000L, "ponder is unbounded until ponderhit");
         assertFalse(manager.shouldStopHard());
 
-        manager.configurePonderHit(board.getActiveColor(), 60_000, 60_000, 0, 0, 0);
+        manager.configurePonderHit(System.nanoTime());
+        assertEquals(2_910, manager.getHardLimitMs());
         assertTrue(manager.elapsedMs() < 100, "the ponderhit clock must not include the ponder time");
         assertFalse(manager.shouldStopHard());
+    }
+
+    @Test
+    void fixedMovetimeKeepsItsBudgetWhenPonderHitPrecedesWorkerStart() {
+        long go = System.nanoTime() - 5 * SECOND_NANOS;
+        TimeManager manager = build("go ponder movetime 1000 wtime 60000 btime 60000", true, go);
+        assertFalse(manager.shouldStopHard());
+
+        manager.configurePonderHit(System.nanoTime() - 2 * SECOND_NANOS);
+        manager.startNow();
+
+        assertEquals(970, manager.getSoftLimitMs());
+        assertEquals(970, manager.getHardLimitMs());
+        assertTrue(manager.shouldStopHard(), "worker startup must charge time since the hit");
     }
 
     @Test

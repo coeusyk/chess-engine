@@ -104,9 +104,6 @@ class UciApplicationIntegrationTest {
         assertNotNull(harness.awaitDiagnostic(line -> line.contains(ponderClock), Duration.ofSeconds(5)));
         assertNotNull(harness.awaitLine(line -> line.startsWith("info depth "), Duration.ofSeconds(5)));
         harness.send("ponderhit");
-        assertNotNull(harness.awaitDiagnostic(line -> line.contains(ponderClock)
-                && harness.diagnosticHistory.stream().filter(entry -> entry.contains(ponderClock)).count() == 2,
-                Duration.ofSeconds(5)));
         assertNotNull(harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(5)));
     }
 

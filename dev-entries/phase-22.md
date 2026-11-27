@@ -185,6 +185,16 @@ Phase 15 keeps its status (the self-play/Stage-3 line is paused and every `[P15]
 
 **Measurements:** E-4 gauntlets 0-95-5 (-636.4 Elo) and 1-87-12 (-449.4 Elo). Mean absolute score on the bench corpus 110 cp (E-3) and 244 to 258 cp (P1-G04, P3A-001, P5 control, E-15 control). No match or benchmark was run.
 
+### [2026-11-27] Ponderhit retains the original move budget (#268 follow-up)
+
+**Built:** A timed `go ponder` keeps its fixed or clock-based allocation in its per-search `TimeManager`. `ponderhit` restores the allocation and uses its UCI receipt timestamp, including when the worker has yet to start.
+
+**Decisions Made:** Allocate once using the position and options from `go`. Restore that result at the hit before releasing a held response. The same transition fixes the clock-origin overwrite noted in #268. A backdated hit in the ordering test makes startup delay observable without waiting or coordinating two threads.
+
+**Broke / Fixed:** With `go ponder movetime`, the old hit path treated missing clocks as zero and fell back to a 1 ms hard limit. The first integrated run exposed a test waiting for a duplicate allocation log. It now checks the logged game age at `go` and the response after the hit.
+
+**Measurements:** The new subprocess test failed on the baseline and passed with the fix. The final core and UCI runs reported 564 and 98 tests, with zero failures and six and eight skips. On the demo and updated packaged JARs, a 700 ms fixed ponderhit took 2 ms and 670 ms respectively. The ordinary fixed-time control took 671 ms on both and the clock-based ponder control took 510 ms on both. One independent review found no actionable issues.
+
 ### [2026-11-27] First-search time origin (search correctness)
 
 **Built:** `TimeManager.markRequestReceived(nanos)`. The UCI loop takes `System.nanoTime()` right after a line is read, and `go` hands that value to the time manager it builds. `startNow()` uses the marked origin once and clears it, so a manager that is reused starts its next clock fresh. `Searcher` now returns a legal root move when the budget runs out before depth 1 completes (the cut-off first iteration's best move if it had one, else the first legal move; it respects `searchmoves`, and still returns none for a mated or stalemated root). Tests: `RequestOriginTimingTest` (engine-core) and `GoRequestOriginTest` (engine-uci). Write-up: `docs/engineering/investigations/2026-11-27-first-search-time-origin.md`.
