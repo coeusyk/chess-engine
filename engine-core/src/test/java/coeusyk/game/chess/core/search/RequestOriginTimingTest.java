@@ -167,13 +167,15 @@ class RequestOriginTimingTest {
         TimeManager manager = new TimeManager();
         manager.setMoveOverheadMs(0);
         manager.configureMovetime(300);
-        // 200 ms were already spent before the search began, so only about 100 ms remain.
-        manager.markRequestReceived(System.nanoTime() - 200_000_000L);
+        // 250 ms were already spent before the search began, so only about 50 ms remain. Ignoring the origin
+        // would let the search run the full 300 ms from its own start.
+        manager.markRequestReceived(System.nanoTime() - 250_000_000L);
 
+        long started = System.nanoTime();
         searcher.searchWithTimeManager(board, 40, manager);
+        long wallMs = (System.nanoTime() - started) / 1_000_000L;
 
-        long total = manager.elapsedMs();
-        assertTrue(total >= 300, "the budget runs from the request origin, was " + total);
-        assertTrue(total < 400, "search ran more than 100 ms past its request-relative budget, was " + total);
+        assertTrue(wallMs < 200, "search ran " + wallMs + " ms of a budget that had about 50 ms left");
+        assertTrue(manager.elapsedMs() >= 300, "the budget runs from the request origin, was " + manager.elapsedMs());
     }
 }

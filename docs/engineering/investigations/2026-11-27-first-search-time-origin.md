@@ -32,7 +32,7 @@ Other cases, checked and tested:
 - `ponderhit` restarts the clock at the hit and throws away any pending origin, so ponder time is not charged. A bare `go ponder` has no limits until the hit.
 - Depth, `nodes` and infinite searches have no time manager. (`go nodes` is parsed but not enforced; that is separate and unchanged.)
 - Each `go` builds its own manager, and a manager that is reused gets a fresh clock on its next `startNow()`.
-- If the budget is already spent when the search starts, `Searcher` now returns the first legal root move (respecting `searchmoves`) instead of none. A mated or stalemated root still returns none. `UciApplication` already had a last-resort fallback to the first legal move; this makes the search layer itself safe for the other callers.
+- If the budget is already spent when the search starts, `Searcher` now returns the best move of the cut-off first iteration if it had one, otherwise the first legal root move (respecting `searchmoves`), instead of none. A mated or stalemated root still returns none. `UciApplication` already had a last-resort fallback to the first legal move; this makes the search layer itself safe for the other callers.
 
 I did not add a warm-up search at `isready` and did not raise MoveOverhead.
 
@@ -42,13 +42,13 @@ Same harness, native Windows, packaged jar, 5 fresh processes per row unless not
 
 | Condition | Before | After |
 |---|---|---|
-| White cold, Threads=1, Hash=64, movetime 1000 | +12.8 ms | -29.1 ms |
+| White cold, Threads=1, Hash=64, movetime 1000 | +12.8 ms | -29.0 ms |
 | White cold, Threads=1, Hash=64, movetime 15000 (3 runs) | +12.6 ms | -29.0 ms |
-| White cold, Threads=8, Hash=256, movetime 1000 | +24.2 ms | -28.5 ms |
-| Black cold, Threads=1 | -20.2 ms | -28.9 ms |
+| White cold, Threads=8, Hash=256, movetime 1000 | +24.2 ms | -28.6 ms |
+| Black cold, Threads=1 | -20.2 ms | -29.0 ms |
 | Black cold, Threads=8 | -8.5 ms | -28.5 ms |
 | Warm, Threads=1 | -28.3 ms | -29.6 ms |
-| Warm, Threads=8 | -26.9 ms | -29.7 ms |
+| Warm, Threads=8 | -26.9 ms | -29.6 ms |
 
 Clock-based searches (`go wtime 40000 btime 40000`) were within run-to-run noise of before. These are medians; per-condition minimum and maximum are within about 3 ms of the median for the fixed-movetime rows.
 
