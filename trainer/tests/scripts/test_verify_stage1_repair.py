@@ -212,3 +212,80 @@ def test_main_exits_nonzero_on_a_failed_check(tmp_path, capsys):
     shutil.copytree(original, other)
 
     assert main([str(original), str(other)]) == 1
+
+
+# --- review follow-ups: tail rows, compensating moves across shards, terminators, the repaired manifest's own hashes
+
+def _two_shard_pair(tmp_path):
+    """Original with two shards; the repaired copy is produced by the real repair tool."""
+    original = _make_historical(tmp_path, rows=HISTORICAL_ROWS[:4])
+    second = HISTORICAL_ROWS[4:]
+    (original / "stage1-b.csv").write_bytes(("\r\n".join(second) + "\r\n").encode("ascii"))
+    repaired = tmp_path / "stage1-lichess-v2"
+    repair(original, repaired, "stage1-lichess-v2", confirm_white_perspective=True)
+    return original, repaired
+
+
+def test_a_dropped_tail_row_fails_identity_and_order_not_only_the_count(tmp_path):
+    original, repaired = _repaired(tmp_path)
+    _write_lines(repaired, _lines(repaired)[:-1])
+
+    report = verify(original, repaired)
+
+    assert report["rows_equal"] is False
+    assert report["source_record_identity"] is False
+    assert report["row_order_identical"] is False
+    assert report["fen_column_sha256_original"] != report["fen_column_sha256_repaired"]
+
+
+def test_a_row_moved_between_shards_is_caught_even_though_the_total_count_is_unchanged(tmp_path):
+    original, repaired = _two_shard_pair(tmp_path)
+    first = (repaired / "stage1.csv").read_bytes().decode("ascii").split("\r\n")[:-1]
+    second = (repaired / "stage1-b.csv").read_bytes().decode("ascii").split("\r\n")[:-1]
+    assert verify(original, repaired)["all_checks_pass"] is True
+    (repaired / "stage1.csv").write_bytes(("\r\n".join(first[:-1]) + "\r\n").encode("ascii"))
+    (repaired / "stage1-b.csv").write_bytes(("\r\n".join(second + [first[-1]]) + "\r\n").encode("ascii"))
+
+    report = verify(original, repaired)
+
+    assert report["rows_original"] == report["rows_repaired"] == 6
+    assert report["rows_equal"] is False and report["row_order_identical"] is False
+    assert report["all_checks_pass"] is False
+
+
+def test_a_crlf_to_lf_conversion_is_caught(tmp_path):
+    original, repaired = _repaired(tmp_path)
+    (repaired / "stage1.csv").write_bytes((repaired / "stage1.csv").read_bytes().replace(b"\r\n", b"\n"))
+
+    report = verify(original, repaired)
+
+    assert report["line_terminators_preserved"] is False and report["all_checks_pass"] is False
+
+
+def test_a_repaired_shard_edited_after_the_manifest_was_written_is_caught(tmp_path):
+    original, repaired = _repaired(tmp_path)
+    manifest = json.loads((repaired / "manifest.json").read_text())
+    manifest["shard_sha256"]["stage1.csv"] = "0" * 64
+    (repaired / "manifest.json").write_text(json.dumps(manifest))
+
+    report = verify(original, repaired)
+
+    assert report["repaired_manifest_hashes_match_files"] is False and report["all_checks_pass"] is False
+
+
+def test_a_missing_manifest_is_a_clean_failure_from_main(tmp_path, capsys):
+    original, repaired = _repaired(tmp_path)
+    (repaired / "manifest.json").unlink()
+
+    assert main([str(original), str(repaired)]) == 1
+    assert "cannot verify" in capsys.readouterr().err
+
+
+def test_split_recipe_matches_production_with_drop_duplicates_too(tmp_path, fake_stage2):
+    _, repaired = _repaired(tmp_path, rows=_large_rows())
+
+    ours = split_membership(repaired, tmp_path / "stage2", seed=42, drop_duplicates=True)
+    training, held_out, _ = tcn.combine_and_split(repaired, tmp_path / "stage2", seed=42, drop_duplicates=True)
+
+    assert ours["held_out_fens"] == [r.fen for r in held_out]
+    assert ours["training_fens"] == [r.fen for r in training]

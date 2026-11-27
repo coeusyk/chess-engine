@@ -12,14 +12,24 @@ For each side to move it computes the Pearson correlation of `eval_cp` with
 White-perspective labels follow (a) for both sides to move. Mover-relative labels follow (b) for both, so for
 Black to move their correlation with (a) is negative. Verdict:
 
-  white-perspective   (a) is at least `MIN_CORRELATION` for both sides and (b) is not
-  mover-relative      (b) is at least `MIN_CORRELATION` for both sides and (a) is not
+  white-perspective   (a) is at least `MIN_CORRELATION` for both sides, (b) is not, and no contiguous tenth of
+                      either side's rows (file order) has a correlation with (a) below zero
+  mover-relative      (b) is at least `MIN_CORRELATION` for both sides, (a) is not, and no contiguous tenth
+                      has a correlation with (b) below zero
   inconclusive        anything else, including fewer than `--min-rows` rows with a cp label on either side
 
 The exit status is 0 only for a definite verdict, so the result can gate a repair. The report carries the
 SHA-256 of the manifest it was measured on and the directory's base name only, never a local path. Material
-is a crude proxy for the score, which is why the threshold is a sign test far below the measured values
-(about 0.2 to 0.26 on the real files), not a fit.
+is a crude proxy for the score, which is why the threshold is a sign test, not a fit.
+
+What this establishes, and what it cannot: the MAJORITY convention of the file. The real files measure about
++0.20 (Black to move) against a threshold of 0.10, a margin of about two, and with labels this noisy a minority
+of rows that were already corrected, interleaved at random, is not visible: a quarter of the Black-to-move rows
+flipped back still gives a verdict of white-perspective, and about a third pushes the correlation under the
+threshold. The contiguous-tenth check catches a block of mostly flipped rows, such as a re-acquired segment or a
+shard that was repaired separately, and nothing finer. That the whole file was written by one adapter version is
+therefore a claim for the acquisition-code evidence, not for this probe, and the repair is only as justified
+as both together.
 
 Nothing is written to the directory. Rows without an `eval_cp` (mate-only rows) are skipped.
 """
@@ -65,6 +75,14 @@ def _pearson(xs: List[float], ys: List[float]) -> Optional[float]:
     return sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys)) / math.sqrt(sxx * syy)
 
 
+CHUNKS = 10
+
+
+def _chunk_correlations(xs: List[float], ys: List[float], chunks: int = CHUNKS) -> List[Optional[float]]:
+    n = len(xs)
+    return [_pearson(xs[i * n // chunks:(i + 1) * n // chunks], ys[i * n // chunks:(i + 1) * n // chunks]) for i in range(chunks)]
+
+
 def probe(directory: Path, min_rows: int = DEFAULT_MIN_ROWS) -> Dict[str, Any]:
     directory = Path(directory)
     shards = sorted(directory.glob("*.csv"))
@@ -86,11 +104,24 @@ def probe(directory: Path, min_rows: int = DEFAULT_MIN_ROWS) -> Dict[str, Any]:
         sign = 1 if side == "w" else -1
         r_white = _pearson(white_balance[side], labels[side])
         r_mover = None if r_white is None else sign * r_white  # mover balance = sign * (white - black)
+        chunk_white = _chunk_correlations(white_balance[side], labels[side]) if len(labels[side]) >= CHUNKS * 2 else []
         sides[name] = {
             "rows_with_cp": len(labels[side]),
             "correlation_with_white_minus_black_material": None if r_white is None else round(r_white, 4),
             "correlation_with_mover_material_balance": None if r_mover is None else round(r_mover, 4),
+            "chunk_correlations_with_white_minus_black_material": [None if c is None else round(c, 3) for c in chunk_white],
         }
+
+    def chunks_agree(perspective: str) -> bool:
+        """No contiguous tenth with a correlation of the wrong sign (an undefined one counts as disagreeing).
+        Against White-minus-Black material the expected sign is positive for both sides under White-perspective
+        labels, and positive for White to move but negative for Black to move under mover-relative labels."""
+        for side, name in (("w", "white_to_move"), ("b", "black_to_move")):
+            chunk = sides[name]["chunk_correlations_with_white_minus_black_material"]
+            expected = 1 if (perspective == "white" or side == "w") else -1
+            if not chunk or any(c is None or expected * c < 0 for c in chunk):
+                return False
+        return True
 
     def follows(key: str) -> bool:
         return all(sides[s][key] is not None and sides[s][key] >= MIN_CORRELATION
@@ -98,9 +129,9 @@ def probe(directory: Path, min_rows: int = DEFAULT_MIN_ROWS) -> Dict[str, Any]:
 
     enough = all(sides[s]["rows_with_cp"] >= min_rows for s in sides)
     white, mover = follows("correlation_with_white_minus_black_material"), follows("correlation_with_mover_material_balance")
-    if enough and white and not mover:
+    if enough and white and not mover and chunks_agree("white"):
         verdict = "white-perspective"
-    elif enough and mover and not white:
+    elif enough and mover and not white and chunks_agree("mover"):
         verdict = "mover-relative"
     else:
         verdict = "inconclusive"

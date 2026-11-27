@@ -113,3 +113,40 @@ def test_mate_only_rows_are_skipped_and_an_empty_directory_is_an_error(tmp_path)
     empty.mkdir()
     with pytest.raises(ValueError, match="no \\*.csv shards"):
         probe(empty)
+
+
+def _write_mixed(root: Path, *, flip_fraction: float = 0.0, flip_block: bool = False, rows: int = 2000, noise: float = 1500.0) -> Path:
+    """White-perspective data in which Black-to-move rows were negated again: at random with probability
+    `flip_fraction`, or as one contiguous block covering the 6th tenth of the file (a re-acquired segment)."""
+    rng = random.Random(11)
+    directory = root / f"mixed-{flip_fraction}-{flip_block}"
+    directory.mkdir()
+    lines = []
+    for index in range(rows):
+        side = rng.choice("wb")
+        fen = _fen(rng, side)
+        cp = 100 * _material_white_minus_black(fen) + rng.gauss(0, noise)
+        if side == "b" and (rng.random() < flip_fraction or (flip_block and rows * 5 // 10 <= index < rows * 7 // 10)):
+            cp = -cp
+        lines.append(f"{fen},{int(cp)},")
+    (directory / "stage1.csv").write_text("\n".join(lines) + "\n", encoding="ascii")
+    (directory / "manifest.json").write_text(json.dumps({"stage": "public"}))
+    return directory
+
+
+def test_a_contiguous_block_of_flipped_rows_makes_the_verdict_inconclusive(tmp_path):
+    assert probe(_write_mixed(tmp_path))["verdict"] == "white-perspective"
+    assert probe(_write_mixed(tmp_path, flip_block=True))["verdict"] == "inconclusive"
+
+
+def test_documented_limit_a_small_interleaved_minority_is_not_detected_and_half_is(tmp_path):
+    """The probe establishes the majority convention only. A tenth of the Black rows already flipped back is
+    invisible to it (this test pins that, so the limit stays documented), and the verdict is withdrawn well
+    before the contamination reaches a half."""
+    assert probe(_write_mixed(tmp_path, flip_fraction=0.1))["verdict"] == "white-perspective"
+    assert probe(_write_mixed(tmp_path, flip_fraction=0.5))["verdict"] == "inconclusive"
+
+
+def test_every_side_reports_its_chunk_correlations(tmp_path):
+    report = probe(_write(tmp_path, "white"))
+    assert len(report["white_to_move"]["chunk_correlations_with_white_minus_black_material"]) == 10
