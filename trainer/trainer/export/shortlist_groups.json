@@ -1,20 +1,122 @@
 {
-  "schema": 1,
+  "schema": 2,
   "cap": 10,
-  "rule": "Groups are taken in this fixed order. A group is kept whole or dropped whole, so a comparison is never split across the cap. One network per distinct network_content_sha256: a group whose network duplicates one already selected is dropped as a duplicate. The cap counts distinct networks, and a group that would exceed it is skipped whole and the next group considered. No measured quality of any network is an input.",
+  "rule": "Groups are taken in this fixed order. A group is kept whole or dropped whole, so a comparison is never split across the cap. Network execution is deduplicated and experimental relationships are not: a comparison that has an arm identical to an already selected network reuses it and adds only its distinct counterpart, a comparison whose arms are all selected costs nothing and is kept, and the record lists what each group deployed and reused. The cap of 10 counts distinct network_content_sha256 identities (the E-3 anchor included, the reading of the #327 stage 1 budget 'about 10 nets and the E-3 anchor' that keeps the total at 10). A group that would exceed the cap is skipped whole and the next one considered. No measured quality of any network is an input.",
+  "priority": "Evidence-driven, not chronological. Tier A: the reference (E-3 is the only net that has played) and the base recipe. Tier B: one representative of each distinct training signal, because nets that share a recipe are expected to land in the same place on a 60 game screen that only drops nets below 0.10. Tier C: replicates of an already represented recipe, which give the spread needed to read any difference between recipes: M-1 seeds 43 and 44 are pure seed replicates of the base recipe, and P3A-001 differs from it by 75 sentinel rows with a held-out figure (+0.0002) inside the M-1 seed spread (0.5898 to 0.5977), so it is no more informative than a seed replicate and precedes none of them. Tier D: later checkpoints and further seeds of recipes already represented.",
   "groups": [
-    {"id": "anchor-e3", "kind": "anchor", "members": ["E-3"]},
-    {"id": "baseline-p1-g04", "kind": "baseline", "members": ["P1-G04"]},
-    {"id": "baseline-p3a-001", "kind": "baseline", "members": ["P3A-001"]},
-    {"id": "baseline-p4iv-001", "kind": "baseline", "members": ["P4IV-001"]},
-    {"id": "pair-p5-selected", "kind": "pair", "members": ["P5-control-selected", "P5-treatment-selected"]},
-    {"id": "pair-e15", "kind": "pair", "members": ["E15-control-final", "E15-treatment-final"]},
-    {"id": "pair-e16-seed42", "kind": "pair", "members": ["E16-control-s42-final", "E16-treatment-s42-final"]},
-    {"id": "baseline-m1-seed42", "kind": "baseline", "members": ["M1-s42-final"]},
-    {"id": "pair-p5-final", "kind": "pair", "members": ["P5-control-final", "P5-treatment-final"]},
-    {"id": "pair-e16-seed43", "kind": "pair", "members": ["E16-control-s43-final", "E16-treatment-s43-final"]},
-    {"id": "pair-e16-seed44", "kind": "pair", "members": ["E16-control-s44-final", "E16-treatment-s44-final"]},
-    {"id": "baseline-m1-seed43", "kind": "baseline", "members": ["M1-s43-final"]},
-    {"id": "baseline-m1-seed44", "kind": "baseline", "members": ["M1-s44-final"]}
+    {
+      "id": "anchor-e3",
+      "kind": "anchor",
+      "tier": "A",
+      "members": [
+        "E-3"
+      ],
+      "why": "The only network that has played games; the reference level."
+    },
+    {
+      "id": "baseline-p1-g04",
+      "kind": "baseline",
+      "tier": "A",
+      "members": [
+        "P1-G04"
+      ],
+      "why": "The base recipe (20,000 steps, cosine, per-epoch reshuffle). M-1 seed 42 is the same network and is recorded as a label of it."
+    },
+    {
+      "id": "baseline-p4iv-001",
+      "kind": "baseline",
+      "tier": "B",
+      "members": [
+        "P4IV-001"
+      ],
+      "why": "A different supervision objective (outcome blended into the target)."
+    },
+    {
+      "id": "pair-p5-selected",
+      "kind": "pair",
+      "tier": "B",
+      "members": [
+        "P5-control-selected",
+        "P5-treatment-selected"
+      ],
+      "why": "Auxiliary WDL head, at the selected step 3,999 because that run recorded a selection rule."
+    },
+    {
+      "id": "pair-e16-seed42",
+      "kind": "pair",
+      "tier": "B",
+      "members": [
+        "E16-control-s42-final",
+        "E16-treatment-s42-final"
+      ],
+      "why": "Stage 3 self-play data with a shared opening prefix, the cleaner of the two self-play designs."
+    },
+    {
+      "id": "pair-e15",
+      "kind": "pair",
+      "tier": "B",
+      "members": [
+        "E15-control-final",
+        "E15-treatment-final"
+      ],
+      "why": "Stage 3 self-play data, the earlier design whose control collapsed."
+    },
+    {
+      "id": "baseline-m1-seed43",
+      "kind": "baseline",
+      "tier": "C",
+      "members": [
+        "M1-s43-final"
+      ],
+      "why": "Seed replicate of the base recipe."
+    },
+    {
+      "id": "baseline-m1-seed44",
+      "kind": "baseline",
+      "tier": "C",
+      "members": [
+        "M1-s44-final"
+      ],
+      "why": "Seed replicate of the base recipe."
+    },
+    {
+      "id": "baseline-p3a-001",
+      "kind": "baseline",
+      "tier": "C",
+      "members": [
+        "P3A-001"
+      ],
+      "why": "Base recipe without 75 sentinel rows; held-out +0.0002, inside the seed spread."
+    },
+    {
+      "id": "pair-p5-final",
+      "kind": "pair",
+      "tier": "D",
+      "members": [
+        "P5-control-final",
+        "P5-treatment-final"
+      ],
+      "why": "The same P5 runs at their final step 19,999."
+    },
+    {
+      "id": "pair-e16-seed43",
+      "kind": "pair",
+      "tier": "D",
+      "members": [
+        "E16-control-s43-final",
+        "E16-treatment-s43-final"
+      ],
+      "why": "Further seed of E-16."
+    },
+    {
+      "id": "pair-e16-seed44",
+      "kind": "pair",
+      "tier": "D",
+      "members": [
+        "E16-control-s44-final",
+        "E16-treatment-s44-final"
+      ],
+      "why": "Further seed of E-16."
+    }
   ]
 }

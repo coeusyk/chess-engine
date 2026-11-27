@@ -47,24 +47,80 @@ def test_the_cap_tie_break_ignores_every_measured_quality_field():
     assert select(low, GROUPS).labels() == select(high, GROUPS).labels() == ["A", "B", "C-ctl", "C-trt"]
 
 
-def test_a_group_whose_network_duplicates_an_earlier_one_is_dropped_as_a_duplicate_of_the_earlier_group():
+def test_a_baseline_identical_to_an_earlier_network_is_kept_at_no_cost_with_its_provenance():
     records = full()
     records[6] = rec("E", net="net-B")  # E is the same network as B
     groups = copy.deepcopy(GROUPS)
     groups["cap"] = 10
     result = select(records, groups)
-    assert {"group": "late", "reason": "duplicate-of", "detail": "base"} in result.excluded
-    assert "E" not in result.labels()
+    late = next(g for g in result.selected if g["group"] == "late")
+    assert late["new_networks"] == [] and late["reused"] == {"net-B": "base"}
+    assert result.network_count == 6
+    shared = next(n for n in result.networks if n["network_content_sha256"] == "net-B")
+    assert shared["first_group"] == "base" and shared["labels"] == ["B", "E"]
 
 
-def test_a_pair_with_a_duplicated_member_is_dropped_not_half_kept():
+def test_a_comparison_may_reuse_an_identical_arm_and_adds_only_its_distinct_counterpart():
+    records = full()
+    records[2] = rec("C-ctl", net="net-B")  # the control of pair1 is the baseline B again
+    groups = copy.deepcopy(GROUPS)
+    groups["cap"] = 10
+    result = select(records, groups)
+    pair = next(g for g in result.selected if g["group"] == "pair1")
+    assert pair["members"] == ["C-ctl", "C-trt"], "the comparison keeps both arms"
+    assert pair["network_content_sha256"] == ["net-B", "net-C-trt"]
+    assert pair["new_networks"] == ["net-C-trt"] and pair["reused"] == {"net-B": "base"}
+    assert result.network_count == 6  # A, B, C-trt, D-ctl, D-trt, E
+
+
+def test_a_shared_arm_costs_one_cap_slot_not_two():
+    records = full()
+    records[2] = rec("C-ctl", net="net-B")
+    # cap 4: A, B, then pair1 reuses B and adds C-trt (3), pair2 would add two and exceed, E fits (4)
+    result = select(records, GROUPS)
+    assert [g["group"] for g in result.selected] == ["anchor", "base", "pair1", "late"]
+    assert {"group": "pair2", "reason": "cap", "detail": 4} in result.excluded
+    assert result.network_count == 4
+
+
+def test_a_fully_duplicate_comparison_is_kept_at_no_cost_and_does_not_use_the_cap():
+    records = full()
+    records[4], records[5] = rec("D-ctl", net="net-B"), rec("D-trt", net="net-C-trt")  # pair2 = {B, C-trt}, both selected
+    groups = copy.deepcopy(GROUPS)
+    groups["cap"] = 4
+    result = select(records, groups)  # A, B, C-ctl, C-trt = 4 networks; pair2 adds none
+    pair2 = next(g for g in result.selected if g["group"] == "pair2")
+    assert pair2["new_networks"] == [] and pair2["reused"] == {"net-B": "base", "net-C-trt": "pair1"}
+    assert pair2["members"] == ["D-ctl", "D-trt"] and pair2["identical_arms"] is False
+    assert result.network_count == 4
+
+
+def test_a_pair_whose_two_arms_are_identical_is_kept_flagged_and_counted_once():
     records = full()
     records[3] = rec("C-trt", net="net-C-ctl")  # both arms identical
     groups = copy.deepcopy(GROUPS)
     groups["cap"] = 10
     result = select(records, groups)
-    assert {"group": "pair1", "reason": "duplicate-within-group", "detail": ["C-ctl", "C-trt"]} in result.excluded
-    assert not any(l.startswith("C-") for l in result.labels())
+    pair = next(g for g in result.selected if g["group"] == "pair1")
+    assert pair["identical_arms"] is True and pair["new_networks"] == ["net-C-ctl"]
+    assert result.network_count == 6  # A, B, C, D-ctl, D-trt, E
+
+
+def test_the_cap_counts_identities_not_checkpoints_and_never_splits_a_comparison():
+    records = [rec(x) for x in ["A", "B", "C-ctl", "C-trt", "D-ctl", "D-trt", "E"]]
+    groups = copy.deepcopy(GROUPS)
+    groups["cap"] = 5  # A, B, pair1 = 4; pair2 needs two new, would be 6, so it is skipped whole; E fits as the 5th
+    result = select(records, groups)
+    assert [g["group"] for g in result.selected] == ["anchor", "base", "pair1", "late"]
+    assert not any(label.startswith("D-") for label in result.labels())
+    assert result.network_count == 5
+
+
+def test_checkpoints_that_are_in_no_group_still_appear_as_labels_of_their_network():
+    records = full() + [rec("EXTRA-copy-of-A", net="net-A", checkpoint_sha256="ff" * 32)]
+    result = select(records, GROUPS)
+    anchor = result.networks[0]
+    assert anchor["labels"] == ["A", "EXTRA-copy-of-A"] and anchor["checkpoint_sha256"] == ["ff" * 32]
 
 
 def test_a_missing_member_drops_the_whole_group_and_is_reported():
@@ -74,24 +130,36 @@ def test_a_missing_member_drops_the_whole_group_and_is_reported():
     assert "C-ctl" not in result.labels()
 
 
-def test_the_committed_group_file_is_well_formed_and_the_p1_g04_duplicate_is_resolved_by_order():
+def test_the_committed_group_file_is_well_formed_and_its_priority_is_written_down():
     groups = load_groups()
     ids = [g["id"] for g in groups["groups"]]
     assert groups["cap"] == 10 and len(ids) == len(set(ids))
     labels = [m for g in groups["groups"] for m in g["members"]]
     assert len(labels) == len(set(labels)), "a checkpoint label may appear in one group only"
     assert all(len(g["members"]) == 2 for g in groups["groups"] if g["kind"] == "pair")
-    # M-1 seed 42 is bit-identical to P1-G04, so given equal hashes the later group is the duplicate.
-    records = [rec(l) for l in labels]
-    for r in records:
-        if r["label"] == "M1-s42-final":
-            r["network_content_sha256"] = "net-P1-G04"
-    result = select(records, groups)
-    assert {"group": "baseline-m1-seed42", "reason": "duplicate-of", "detail": "baseline-p1-g04"} in result.excluded
-    assert result.network_count == 10
-    assert [g["group"] for g in result.selected][:7] == ["anchor-e3", "baseline-p1-g04", "baseline-p3a-001",
-                                                         "baseline-p4iv-001", "pair-p5-selected", "pair-e15", "pair-e16-seed42"]
+    assert all(g["tier"] in "ABCD" and g["why"] for g in groups["groups"]) and groups["priority"]
+    tiers = [g["tier"] for g in groups["groups"]]
+    assert tiers == sorted(tiers), "the file order must follow the tiers"
     assert json.loads(GROUPS_FILE.read_text())["groups"][0]["id"] == "anchor-e3"
+
+
+def test_committed_order_with_all_distinct_networks_takes_the_tiers_in_order_and_cuts_inside_tier_c():
+    groups = load_groups()
+    labels = [m for g in groups["groups"] for m in g["members"]]
+    result = select([rec(l) for l in labels] + [rec("M1-s42-final", net="net-P1-G04")] , groups)
+    assert [g["group"] for g in result.selected] == ["anchor-e3", "baseline-p1-g04", "baseline-p4iv-001", "pair-p5-selected",
+                                                     "pair-e16-seed42", "pair-e15", "baseline-m1-seed43"]
+    assert result.network_count == 10
+    assert {"group": "baseline-p3a-001", "reason": "cap", "detail": 10} in result.excluded
+
+
+def test_with_p1_g04_and_m1_seed42_identical_the_networks_record_both_labels_and_count_once():
+    groups = load_groups()
+    labels = [m for g in groups["groups"] for m in g["members"]]
+    records = [rec(l) for l in labels] + [rec("M1-s42-final", net="net-P1-G04")]
+    result = select(records, groups)
+    p1 = next(n for n in result.networks if n["network_content_sha256"] == "net-P1-G04")
+    assert p1["labels"] == ["M1-s42-final", "P1-G04"] and p1["first_group"] == "baseline-p1-g04"
 
 
 def test_a_repeated_label_is_an_error_not_an_order_dependent_choice():
