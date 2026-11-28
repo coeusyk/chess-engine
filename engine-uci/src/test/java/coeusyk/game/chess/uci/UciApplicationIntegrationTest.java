@@ -78,6 +78,86 @@ class UciApplicationIntegrationTest {
     }
 
     @Test
+    void warmTableAndFullPositionHistoryRejectPrematureMateCutoff() throws Exception {
+        List<String> moves = List.of(
+                "g1f3", "d7d5", "g2g3", "c7c5", "f1g2", "b8c6", "e1g1", "e7e5",
+                "d2d3", "g8f6", "b1c3", "f8e7", "c1g5", "d5d4", "g5f6", "e7f6",
+                "c3e4", "f6e7", "c2c3", "e8g8", "c3d4", "c5d4", "a1c1", "d8b6",
+                "d1c2", "c8e6", "e4c5", "c6b4", "c5a4", "b6b5", "c2c7", "e7d8",
+                "c7e5", "b5a4", "f3d4", "b4d3", "b2b3", "d3e5", "b3a4", "e6a2",
+                "c1c2", "a2c4", "g2b7", "a8b8", "b7g2", "b8b4", "f1c1", "c4d3",
+                "c2c5", "b4d4", "c5e5", "d3a6", "e2e3", "d4a4", "g2f3", "a4a2",
+                "f3e4", "d8b6", "e4c6", "f8c8", "e5e8", "c8e8", "c6e8", "a2d2",
+                "e8a4", "g7g6", "a4c6", "a6d3", "c6d5", "d3c2", "d5b7", "a7a5",
+                "b7c6", "d2d1", "c1d1", "c2d1", "h2h4", "a5a4", "g1g2", "d1b3",
+                "c6a4", "b3a4", "g2h3", "h7h5", "g3g4", "a4d7", "f2f3", "b6e3",
+                "h3g3", "d7c6", "f3f4", "c6e4", "g4h5", "g6h5", "f4f5", "g8g7",
+                "g3h2", "e4c6", "h2g3", "c6e4", "g3h2", "e4c6", "h2g3", "e3d4",
+                "f5f6", "g7f6", "g3f4", "f6e6", "f4g3", "e6f6", "g3f4", "f6e6",
+                "f4g3"
+        );
+        harness = UciHarness.start();
+        harness.send("setoption name OwnBook value false");
+        harness.send("setoption name Threads value 1");
+        harness.send("setoption name Hash value 64");
+        harness.send("setoption name Contempt value 50");
+        harness.barrier();
+
+        for (int ply = 93; ply <= 109; ply += 2) {
+            String prefix = String.join(" ", moves.subList(0, ply));
+            harness.send("position startpos moves " + prefix);
+            harness.send("go depth 13");
+            String bestmove = harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(30));
+            assertNotNull(bestmove, "missing bestmove at ply " + ply);
+            if (ply == 109) {
+                assertEquals("e6e5", bestmove.split("\\s+")[1], "UCI ply 109 must play e6e5 rather than e6f6");
+            }
+        }
+    }
+
+    @Test
+    void fullPositionHistoryAdjudicatesPly123ForcedMoveAsDrawOverUci() throws Exception {
+        List<String> moves = List.of(
+                "g1f3", "d7d5", "g2g3", "c7c5", "f1g2", "b8c6", "e1g1", "e7e5",
+                "d2d3", "g8f6", "b1c3", "f8e7", "c1g5", "d5d4", "g5f6", "e7f6",
+                "c3e4", "f6e7", "c2c3", "e8g8", "c3d4", "c5d4", "a1c1", "d8b6",
+                "d1c2", "c8e6", "e4c5", "c6b4", "c5a4", "b6b5", "c2c7", "e7d8",
+                "c7e5", "b5a4", "f3d4", "b4d3", "b2b3", "d3e5", "b3a4", "e6a2",
+                "c1c2", "a2c4", "g2b7", "a8b8", "b7g2", "b8b4", "f1c1", "c4d3",
+                "c2c5", "b4d4", "c5e5", "d3a6", "e2e3", "d4a4", "g2f3", "a4a2",
+                "f3e4", "d8b6", "e4c6", "f8c8", "e5e8", "c8e8", "c6e8", "a2d2",
+                "e8a4", "g7g6", "a4c6", "a6d3", "c6d5", "d3c2", "d5b7", "a7a5",
+                "b7c6", "d2d1", "c1d1", "c2d1", "h2h4", "a5a4", "g1g2", "d1b3",
+                "c6a4", "b3a4", "g2h3", "h7h5", "g3g4", "a4d7", "f2f3", "b6e3",
+                "h3g3", "d7c6", "f3f4", "c6e4", "g4h5", "g6h5", "f4f5", "g8g7",
+                "g3h2", "e4c6", "h2g3", "c6e4", "g3h2", "e4c6", "h2g3", "e3d4",
+                "f5f6", "g7f6", "g3f4", "f6e6", "f4g3", "e6f6", "g3f4", "f6e6",
+                "f4g3", "d4e3", "g3h3", "e6f6", "h3h2", "f6g7", "h2g3", "g7f6",
+                "g3h2", "f6g7", "h2g3"
+        );
+        harness = UciHarness.start();
+        harness.send("setoption name OwnBook value false");
+        harness.send("setoption name Threads value 1");
+        harness.send("setoption name Hash value 64");
+        harness.send("setoption name Contempt value 50");
+        harness.barrier();
+
+        for (int ply = 93; ply < 123; ply += 2) {
+            harness.send("position startpos moves " + String.join(" ", moves.subList(0, ply)));
+            harness.send("go depth 13");
+            assertNotNull(harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(30)));
+        }
+        harness.send("position startpos moves " + String.join(" ", moves));
+        harness.send("go depth 13 searchmoves g7f6");
+        String depth13Info = harness.awaitLine(line -> line.startsWith("info depth 13 "), Duration.ofSeconds(30));
+        assertNotNull(depth13Info, "ply 123 full-history search should reach depth 13");
+        assertTrue(depth13Info.contains(" score cp -50 "), depth13Info);
+        String bestmove = harness.awaitLine(line -> line.startsWith("bestmove "), Duration.ofSeconds(30));
+        assertNotNull(bestmove);
+        assertEquals("g7f6", bestmove.split("\\s+")[1]);
+    }
+
+    @Test
     void clockUsesGameAgeForBareAndReplayedFen(@TempDir Path tempDir) throws Exception {
         Path logging = tempDir.resolve("logback.xml");
         Files.writeString(logging, """

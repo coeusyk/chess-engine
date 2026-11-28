@@ -467,6 +467,43 @@ class SearcherTest {
         assertNull(searcher.applyTtBound(exact, 5, -100, 100, 0));
     }
 
+    @Test
+    void ttBoundRejectsMateRangeScoresOfBothSignsAcrossAllBounds() {
+        Searcher searcher = new Searcher();
+        int mateBoundary = 100_000 - 128; // MATE_SCORE - MAX_PLY
+
+        for (int sign : new int[]{1, -1}) {
+            for (int convertedScore : new int[]{sign * mateBoundary, sign * 99_997}) {
+                for (TTBound bound : TTBound.values()) {
+                    TranspositionTable.Entry ply0Entry = new TranspositionTable.Entry(
+                            1L, Move.NONE, 6, convertedScore, bound, (byte) 0);
+                    assertNull(searcher.applyTtBound(ply0Entry, 4, -1_000_000, 1_000_000, 0),
+                            "mate-range TT score " + convertedScore + " (" + bound + ") must not cut off");
+                    assertNull(searcher.applyTtBound(ply0Entry, 4, -1_000_000, 1_000_000, 4),
+                            "stored mate-range TT score " + convertedScore + " (" + bound + ") at deeper ply must not cut off");
+
+                    int ply4Stored = convertedScore + sign * 4;
+                    TranspositionTable.Entry ply4Entry = new TranspositionTable.Entry(
+                            1L, Move.NONE, 6, ply4Stored, bound, (byte) 0);
+                    assertNull(searcher.applyTtBound(ply4Entry, 4, -1_000_000, 1_000_000, 4),
+                            "ply-adjusted mate-range TT score " + convertedScore + " (" + bound + ") must not cut off");
+                }
+            }
+        }
+
+        // Negative controls: scores just below the mate threshold and TB scores keep normal cutoff behavior.
+        int maxCentipawn = mateBoundary - 1;
+        int tbWin = 100_000 - 2 * 128;
+        for (int cpScore : new int[]{maxCentipawn, -maxCentipawn, tbWin, -tbWin}) {
+            TranspositionTable.Entry exact = new TranspositionTable.Entry(1L, Move.NONE, 6, cpScore, TTBound.EXACT, (byte) 0);
+            assertEquals(cpScore, searcher.applyTtBound(exact, 4, -1_000_000, 1_000_000, 2));
+        }
+        TranspositionTable.Entry lower = new TranspositionTable.Entry(1L, Move.NONE, 6, maxCentipawn, TTBound.LOWER_BOUND, (byte) 0);
+        TranspositionTable.Entry upper = new TranspositionTable.Entry(1L, Move.NONE, 6, -maxCentipawn, TTBound.UPPER_BOUND, (byte) 0);
+        assertEquals(maxCentipawn, searcher.applyTtBound(lower, 4, -1_000_000, maxCentipawn, 0));
+        assertEquals(-maxCentipawn, searcher.applyTtBound(upper, 4, -maxCentipawn, 1_000_000, 0));
+    }
+
     private Move findMove(Board board, int startSquare, int targetSquare) {
         List<Move> moves = new MovesGenerator(board).getActiveMoves(board.getActiveColor());
         for (Move move : moves) {

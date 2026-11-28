@@ -26,7 +26,7 @@ class NodeCountRegressionTest {
         1287,
         32082, // #262: pin-aware SEE (was 32267). Same best move, score and PV.
         6128, // Legal EP hashing omits c6 when b5xc6 would expose the king to the h5 rook.
-        7829,
+        7831, // #287: blanket mate-range TT cutoff guard (was 7829). Same best move d7d2, score 1567 and 8-move PV.
     };
 
     @Test
