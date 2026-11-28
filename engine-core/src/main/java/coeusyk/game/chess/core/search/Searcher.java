@@ -1893,6 +1893,13 @@ public class Searcher {
             return null;
         }
 
+        // Issue #287: TT keys omit repetition history, so a cached mate-range cutoff of either
+        // sign can bypass a descendant repetition draw. Check the stored score before ply
+        // adjustment so even deep probe plies (distance + ply > MAX_PLY) cannot slip below
+        // the threshold, while leaving the probed TT best move in place for move ordering.
+        if (Math.abs(entry.score()) >= MATE_SCORE - MAX_PLY) {
+            return null;
+        }
         int score = scoreFromTT(entry.score(), ply);
         return switch (entry.bound()) {
             case EXACT -> score;
